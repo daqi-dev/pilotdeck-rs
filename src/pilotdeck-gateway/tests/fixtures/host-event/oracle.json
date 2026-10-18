@@ -1,0 +1,1805 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/modules/transport/agentLoopSidecarClient.ts": "0897981fa636cdec2e1ac9f6f5b0b974d8cb49d6bcf154d5a74577a0f863eb11",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e",
+    "src/agent/protocol/events.ts": "d62ecf8a7c90a792ec07c52b78cb73d8492c4fd77338f4045158e4184adcf4ac"
+  },
+  "turn": {
+    "sessionId": "session",
+    "turnId": "turn"
+  },
+  "cases": [
+    {
+      "name": "accept-session-only",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-1",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "session_started",
+                "sessionId": "session"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-1",
+            "inReplyTo": "call-1",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "session_started",
+              "sessionId": "session"
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "accept-turn",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-2",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-2",
+            "inReplyTo": "call-2",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half"
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "accept-empty-type",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-3",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-3",
+            "inReplyTo": "call-3",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half"
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "accept-lone-surrogate-type",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-4",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "\ud800",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-4",
+            "inReplyTo": "call-4",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "\ud800",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half"
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "accept-extra-fields",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-5",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half",
+                "timeline": {
+                  "sequence": 7,
+                  "nested": {
+                    "keep": [
+                      1,
+                      null,
+                      "中文😀"
+                    ]
+                  }
+                },
+                "streamBoundary": {
+                  "reason": "boundary"
+                },
+                "moduleId": "module-1",
+                "lone": "\ud800",
+                "extra": {
+                  "arbitrary": true,
+                  "list": [
+                    false,
+                    0.25,
+                    null
+                  ]
+                }
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-5",
+            "inReplyTo": "call-5",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half",
+              "timeline": {
+                "sequence": 7,
+                "nested": {
+                  "keep": [
+                    1,
+                    null,
+                    "中文😀"
+                  ]
+                }
+              },
+              "streamBoundary": {
+                "reason": "boundary"
+              },
+              "moduleId": "module-1",
+              "lone": "\ud800",
+              "extra": {
+                "arbitrary": true,
+                "list": [
+                  false,
+                  0.25,
+                  null
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "ordering",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-6",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half",
+                "sequence": 1
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-6",
+            "inReplyTo": "call-6",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          }
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-7",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half",
+                "sequence": 2
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-7",
+            "inReplyTo": "call-7",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          }
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-8",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half",
+                "sequence": 3
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-8",
+            "inReplyTo": "call-8",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half",
+              "sequence": 1
+            },
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half",
+              "sequence": 2
+            },
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half",
+              "sequence": 3
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "failed-emit-does-not-buffer",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-9",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "other",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-9",
+            "inReplyTo": "call-9",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          }
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-10",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half",
+                "sequence": "after-error"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-10",
+            "inReplyTo": "call-10",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "result": null
+            }
+          },
+          "drained": [
+            {
+              "type": "tool_progress",
+              "sessionId": "session",
+              "turnId": "turn",
+              "toolCallId": "tool-1",
+              "toolName": "read",
+              "message": "half",
+              "sequence": "after-error"
+            }
+          ]
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-mismatch",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-11",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "other",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-11",
+            "inReplyTo": "call-11",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-undefined",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-12",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": {
+                  "__pdrsUndefined": true
+                },
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-12",
+            "inReplyTo": "call-12",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-null",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-13",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": null,
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-13",
+            "inReplyTo": "call-13",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-14",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": 3,
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-14",
+            "inReplyTo": "call-14",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-array",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-15",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": [
+                  "turn"
+                ],
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-15",
+            "inReplyTo": "call-15",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-turn-lone-surrogate",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-16",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "\ud800",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-16",
+            "inReplyTo": "call-16",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-missing",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-17",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "turn_started",
+                "turnId": "turn"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-17",
+            "inReplyTo": "call-17",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-mismatch",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-18",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "other",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-18",
+            "inReplyTo": "call-18",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-empty",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-19",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-19",
+            "inReplyTo": "call-19",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-null",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-20",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": null,
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-20",
+            "inReplyTo": "call-20",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-21",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": 3,
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-21",
+            "inReplyTo": "call-21",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-session-lone-surrogate",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-22",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "\ud800",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-22",
+            "inReplyTo": "call-22",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-type-missing",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-23",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "sessionId": "session",
+                "turnId": "turn"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-23",
+            "inReplyTo": "call-23",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-type-undefined",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-24",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": {
+                  "__pdrsUndefined": true
+                },
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-24",
+            "inReplyTo": "call-24",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-type-null",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-25",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": null,
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-25",
+            "inReplyTo": "call-25",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-type-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-26",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": 3,
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-26",
+            "inReplyTo": "call-26",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-null",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-27",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": null
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-27",
+            "inReplyTo": "call-27",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-array",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-28",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": [
+                {
+                  "type": "tool_progress",
+                  "sessionId": "session",
+                  "turnId": "turn",
+                  "toolCallId": "tool-1",
+                  "toolName": "read",
+                  "message": "half"
+                }
+              ]
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-28",
+            "inReplyTo": "call-28",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-string",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-29",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": "event"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-29",
+            "inReplyTo": "call-29",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-30",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": 7
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-30",
+            "inReplyTo": "call-30",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-boolean",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-31",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": false
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-31",
+            "inReplyTo": "call-31",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-missing",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-32",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-32",
+            "inReplyTo": "call-32",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "reject-event-undefined",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-33",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "__pdrsUndefined": true
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-33",
+            "inReplyTo": "call-33",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar host event does not match the active turn."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-unknown",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-34",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "unknown"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-34",
+            "inReplyTo": "call-34",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Unsupported sidecar event operation."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-uppercase",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-35",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "Emit"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-35",
+            "inReplyTo": "call-35",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Unsupported sidecar event operation."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-space",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-36",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": " "
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-36",
+            "inReplyTo": "call-36",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Unsupported sidecar event operation."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-empty",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-37",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": ""
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-37",
+            "inReplyTo": "call-37",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-null",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-38",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": null
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-38",
+            "inReplyTo": "call-38",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-39",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": 7
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-39",
+            "inReplyTo": "call-39",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-lone-surrogate",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-40",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "\ud800"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-40",
+            "inReplyTo": "call-40",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Unsupported sidecar event operation."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "operation-undefined",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-41",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": {
+                "__pdrsUndefined": true
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-41",
+            "inReplyTo": "call-41",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "payload-missing-operation",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-42",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {}
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-42",
+            "inReplyTo": "call-42",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "payload-event-without-operation",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-43",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-43",
+            "inReplyTo": "call-43",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "payload-array",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-44",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": []
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-44",
+            "inReplyTo": "call-44",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "payload-string",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-45",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": "emit"
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-45",
+            "inReplyTo": "call-45",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    },
+    {
+      "name": "payload-number",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-46",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": 7
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-46",
+            "inReplyTo": "call-46",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": []
+    }
+  ]
+}
