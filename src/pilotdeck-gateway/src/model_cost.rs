@@ -52,8 +52,10 @@ impl PricingSource {
 
 /// Operator-supplied rates keyed by `provider/model` (or a model substring).
 ///
-/// JavaScript object entry order is observable in `lookupModelPricing`'s
-/// substring scan, so insertion order is preserved exactly like `Object.entries`.
+/// JavaScript property enumeration order is observable in `lookupModelPricing`'s
+/// substring scan. Like `Object.entries`, array-index keys (canonical decimal
+/// strings in `0..=4294967294`) enumerate first in ascending numeric order, and
+/// every other key follows in insertion order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PricingMap {
     entries: Vec<(String, ModelPricing)>,
@@ -95,10 +97,45 @@ impl PricingMap {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &ModelPricing)> {
-        self.entries
+        let mut indexed: Vec<(u32, &str, &ModelPricing)> = self
+            .entries
             .iter()
-            .map(|(key, value)| (key.as_str(), value))
+            .filter_map(|(key, pricing)| {
+                array_index(key).map(|index| (index, key.as_str(), pricing))
+            })
+            .collect();
+        indexed.sort_unstable_by_key(|(index, _, _)| *index);
+        indexed
+            .into_iter()
+            .map(|(_, key, pricing)| (key, pricing))
+            .chain(
+                self.entries
+                    .iter()
+                    .filter(|(key, _)| array_index(key).is_none())
+                    .map(|(key, pricing)| (key.as_str(), pricing)),
+            )
     }
+}
+
+/// ECMAScript "array index" property key: a canonical decimal integer in
+/// `0..=4294967294`. `Object.entries` enumerates these before every other key,
+/// in ascending numeric order, which visibly changes the substring scan order.
+fn array_index(key: &str) -> Option<u32> {
+    let bytes = key.as_bytes();
+    if bytes.is_empty() || (bytes.len() > 1 && bytes[0] == b'0') {
+        return None;
+    }
+    let mut value = 0u64;
+    for &byte in bytes {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value * 10 + u64::from(byte - b'0');
+        if value > u64::from(u32::MAX - 1) {
+            return None;
+        }
+    }
+    Some(value as u32)
 }
 
 struct DefaultRate {
@@ -165,9 +202,13 @@ fn default_pricing() -> &'static [DefaultRate] {
         DEFAULT_PRICING
             .iter()
             .map(|(pattern, input, output, cache_read)| DefaultRate {
-                // JS `/i` (without `u`) and the regex crate's Unicode simple
-                // folding agree for this ASCII table.
-                pattern: Regex::new(&format!("(?i){pattern}"))
+                // `(?i)` would apply Unicode simple folding: it makes `K`
+                // (U+212A) match `k` and `ſ` (U+017F) match `s`, while JS `/i`
+                // without `u` refuses to fold a non-ASCII code unit onto an
+                // ASCII one. In addition, JS `.` excludes all four line
+                // terminators, whereas the regex crate's `.` excludes only
+                // `\n`. Rewrite the source to the exact JS semantics instead.
+                pattern: Regex::new(&js_regex_source(pattern))
                     .expect("static model pricing pattern must compile"),
                 input: *input,
                 output: *output,
@@ -175,6 +216,47 @@ fn default_pricing() -> &'static [DefaultRate] {
             })
             .collect()
     })
+}
+
+/// Translate the ASCII-only `/i` (no `u`) sources in `DEFAULT_PRICING` to the
+/// regex crate: ASCII letters become explicit two-case classes (JS
+/// `Canonicalize` in non-Unicode mode never folds a non-ASCII code point onto
+/// an ASCII one), and `.` becomes the four-line-terminator-excluding class.
+/// Every current pattern uses `.` only inside `.*`; a single `.` would differ
+/// for non-BMP input because JS counts UTF-16 code units, not scalar values.
+/// The only character classes in the table are digit lists; an alphabetic
+/// class or range would need the same explicit two-case expansion here.
+fn js_regex_source(source: &str) -> String {
+    let mut output = String::new();
+    let mut chars = source.chars();
+    let mut in_class = false;
+    while let Some(character) = chars.next() {
+        match character {
+            '\\' => {
+                output.push(character);
+                if let Some(escaped) = chars.next() {
+                    output.push(escaped);
+                }
+            }
+            '[' => {
+                in_class = true;
+                output.push(character);
+            }
+            ']' => {
+                in_class = false;
+                output.push(character);
+            }
+            '.' if !in_class => output.push_str("[^\\n\\r\\u{2028}\\u{2029}]"),
+            letter if letter.is_ascii_alphabetic() && !in_class => {
+                output.push('[');
+                output.push(letter.to_ascii_lowercase());
+                output.push(letter.to_ascii_uppercase());
+                output.push(']');
+            }
+            _ => output.push(character),
+        }
+    }
+    output
 }
 
 pub fn lookup_model_pricing(
@@ -399,7 +481,7 @@ fn estimate_block_tokens(block: &ContentBlock) -> Result<usize, TokenizeError> {
         | ContentBody::MediaReference(_) => Ok(MULTIMEDIA_TOKENS),
         ContentBody::ToolCall(call) => {
             let mut units = call.name.units().to_vec();
-            units.extend(safe_json_stringify(&call.input).encode_utf16());
+            units.extend(tool_input_json(&call.input).encode_utf16());
             count_tokens(&JsString::from_utf16(units))
         }
         ContentBody::ToolResult(result) => count_tokens(&flatten_tool_result_text(result)),
@@ -415,18 +497,30 @@ fn estimate_tool_schemas(tools: &[ToolSchema]) -> Result<usize, TokenizeError> {
             units.extend_from_slice(description.units());
         }
         let schema = JsValue::Object(tool.input_schema.clone());
-        units.extend(safe_json_stringify(&schema).encode_utf16());
+        units.extend(schema_json(&schema).encode_utf16());
         total += count_tokens(&JsString::from_utf16(units))?;
     }
     Ok(total)
 }
 
-/// `safeJsonStringify`: `undefined`/`null` cost the name string only, and any
-/// serialization failure degrades to `""`.
-fn safe_json_stringify(value: &JsValue) -> String {
+/// `TokenBudgetManager.ts:261-268` `safeJsonStringify` (tool-call input):
+/// `undefined`/`null` cost the name string only, and serialization failures
+/// degrade to `""`. This is NOT the `TokenAccountingRuntime.ts:480-486`
+/// variant, which has no null special case (`JSON.stringify(null) == "null"`).
+fn tool_input_json(value: &JsValue) -> String {
     if matches!(value, JsValue::Undefined | JsValue::Null) {
         return String::new();
     }
+    json_or_empty(value)
+}
+
+/// `TokenAccountingRuntime.ts:480-486` `safeJsonStringify` (tool schema): the
+/// only special case is a serialization failure, which degrades to `""`.
+fn schema_json(value: &JsValue) -> String {
+    json_or_empty(value)
+}
+
+fn json_or_empty(value: &JsValue) -> String {
     match stringify_json(value) {
         Ok(Some(text)) => text,
         _ => String::new(),
@@ -464,19 +558,30 @@ fn append_tool_result_item(units: &mut Vec<u16>, item: &ToolResultItem) {
             units.extend(pdf.data.len_utf16().to_string().encode_utf16());
             units.extend(" base64 characters".encode_utf16());
             if let Some(pages) = pdf.pages.filter(|pages| *pages != 0.0 && !pages.is_nan()) {
-                units.extend(format!(", {} pages", number_string(pages)).encode_utf16());
+                units.extend(format!(", {} pages", js_number_string(pages)).encode_utf16());
             }
             units.push(u16::from(b']'));
         }
     }
 }
 
-/// `String(number)` for page counts; integer values avoid a trailing `.0`.
-fn number_string(value: f64) -> String {
-    if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e21 {
-        format!("{value:.0}")
-    } else {
-        format!("{value}")
+/// ECMAScript `String(number)` / `Number::toString`. `stringify_json` already
+/// routes finite numbers through the protocol's JS-compatible number formatter
+/// (`ryu-js`) and spells `-0` as `"0"`, so only the three non-finite values
+/// need a local branch: `JSON.stringify` would write them as `null`.
+fn js_number_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value == f64::INFINITY {
+        return "Infinity".to_string();
+    }
+    if value == f64::NEG_INFINITY {
+        return "-Infinity".to_string();
+    }
+    match stringify_json(&JsValue::Number(value)) {
+        Ok(Some(text)) => text,
+        _ => unreachable!("a finite number always has JSON text"),
     }
 }
 

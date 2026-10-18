@@ -57,6 +57,7 @@ const CONFIGURED: Record<string, ConfiguredPricing> = {
   insertionOrder: { model: { input: 1, output: 2 }, 'zzz-model': { input: 3, output: 4 } },
   catalogOverride: { gpt: { input: 11, output: 22, cacheRead: 3 } },
   empty: {},
+  integerKeys: { '12': { input: 12, output: 24 }, '2': { input: 2, output: 4 } },
 };
 
 const catalogRoutes: Array<{ provider: string; model: string }> = [];
@@ -73,6 +74,7 @@ const configuredRoutes = [
   { provider: 'openai', model: 'gpt-4o' },
   { provider: 'unknown', model: 'claude-sonnet-x' },
 ];
+const integerKeyRoutes = [{ provider: 'custom', model: 'model12' }];
 const syntheticRoutes = [
   { provider: 'unknown', model: 'unknown-model' },
   { provider: 'deepseek', model: 'deepseek-v3' },
@@ -106,6 +108,23 @@ const syntheticRoutes = [
   { provider: 'volc_ark', model: 'doubao-pro' },
   { provider: 'CaseSensitive', model: 'CLAUDE-SONNET-X' },
 ];
+// Kept separate so the new boundary cases append after the pre-existing
+// corpus instead of shifting every configured block.
+const boundaryRoutes = [
+  // JS `/i` (no `u`) canonicalization and `.` line-terminator boundaries.
+  // U+212A KELVIN SIGN and U+017F LATIN SMALL LETTER LONG S uppercase into
+  // ASCII, but JS step 5 keeps a non-ASCII code unit unfolded, so these must
+  // NOT match `kimi` / `mistral.*small`.
+  { provider: 'unknown', model: '\u212Aimi' },
+  { provider: 'unknown', model: 'mi\u017Fstral-large' },
+  // Each JS line terminator must stop `.`; \v and \t are ordinary chars.
+  { provider: 'unknown', model: 'claude\rsonnet' },
+  { provider: 'unknown', model: 'claude\nsonnet' },
+  { provider: 'unknown', model: 'deepseek\u2028flash' },
+  { provider: 'unknown', model: 'deepseek\u2029flash' },
+  { provider: 'unknown', model: 'deepseek\u000Bflash' },
+  { provider: 'unknown', model: 'deepseek\tflash' },
+];
 
 const pricingJson = (pricing: any) => ({
   ...(pricing.input !== undefined ? { input: pricing.input } : {}),
@@ -137,6 +156,11 @@ for (const route of syntheticRoutes) {
 for (const [name, map] of Object.entries(CONFIGURED)) {
   for (const route of configuredRoutes) pushLookup(route.provider, route.model, name, map);
 }
+for (const route of boundaryRoutes) {
+  pushLookup(route.provider, route.model, 'none');
+  pushLookup(route.provider, route.model, 'catalogOverride', CONFIGURED.catalogOverride);
+}
+for (const route of integerKeyRoutes) pushLookup(route.provider, route.model, 'integerKeys', CONFIGURED.integerKeys);
 
 const TOKEN_COUNTS = [0, 1_000_000, 1_234_567, 999_999_999, 0.5];
 const costs: any[] = [];
@@ -157,6 +181,8 @@ for (const route of [...catalogRoutes, ...syntheticRoutes]) pushCosts(route, nul
 for (const [name, map] of Object.entries(CONFIGURED)) {
   for (const route of configuredRoutes) pushCosts(route, name, map);
 }
+for (const route of boundaryRoutes) pushCosts(route, null);
+for (const route of integerKeyRoutes) pushCosts(route, 'integerKeys', CONFIGURED.integerKeys);
 
 const collectorFor = (modelPricing: ConfiguredPricing | undefined) =>
   new TokenStatsCollector({ enabled: false, modelPricing } as any);
@@ -241,6 +267,8 @@ for (const route of syntheticRoutes) pushUsageCosts(route, null);
 for (const [name, map] of Object.entries(CONFIGURED)) {
   for (const route of configuredRoutes) pushUsageCosts(route, name, map, USAGES.slice(0, 4));
 }
+for (const route of boundaryRoutes) pushUsageCosts(route, null);
+for (const route of integerKeyRoutes) pushUsageCosts(route, 'integerKeys', CONFIGURED.integerKeys, USAGES.slice(0, 4));
 
 // Request shapes. Every object key order is deliberate: the oracle keeps the
 // JSON.stringify order and the Rust replay re-serializes with JS key ordering.
@@ -408,6 +436,13 @@ add('all-blocks', request([
 }));
 add('metadata-ignored', request([message('user', [text('with metadata')], { model: 'other', synthetic: true, toolCallId: 'x' })]));
 add('fractional-pages', request([message('user', [pdf('i'.repeat(3), 3, 2.5)])]));
+// `String(pages)` boundaries: JS switches to exponential notation outside
+// [1e-6, 1e21), keeps the shortest round-trip digits, and drops a -0 sign.
+add('pdf-pages-tiny', request([message('user', [toolResult('call-12', [pdf('j'.repeat(3), 3, 1e-7)])])]));
+add('pdf-pages-large', request([message('user', [toolResult('call-13', [pdf('k'.repeat(3), 3, 1e21)])])]));
+add('pdf-pages-2.5e21', request([message('user', [toolResult('call-14', [pdf('l'.repeat(3), 3, 2.5e21)])])]));
+add('pdf-pages-float', request([message('user', [toolResult('call-15', [pdf('m'.repeat(3), 3, 0.1 + 0.2)])])]));
+add('pdf-pages-negative-zero', request([message('user', [toolResult('call-16', [pdf('n'.repeat(3), 3, -0)])])]));
 
 const runtime = new TokenAccountingRuntime({ modelConfig: { providers: {} } as any });
 const requests = shapes.map(({ name, request: value }) => {
@@ -425,12 +460,35 @@ const requests = shapes.map(({ name, request: value }) => {
 });
 assert.ok(requests.length >= 20);
 
+// `Object.entries` puts canonical array-index keys first in numeric order, then
+// the remaining keys in insertion order. Both orders are recorded so the Rust
+// replay can insert in source order and still observe the JS scan order.
+const integerKeyPricing: ConfiguredPricing = { '12': { input: 12, output: 24 }, '2': { input: 2, output: 4 } };
+const mixedKeyPricing: ConfiguredPricing = { gpt: { input: 1 }, '100': { input: 100 }, zz: { input: 3 }, '10': { input: 10 } };
+const propertyOrder = {
+  integerKeys: {
+    insertionOrder: ['12', '2'],
+    entries: ['12', '2'].map((key) => ({ key, pricing: integerKeyPricing[key] })),
+    objectEntries: Object.entries(integerKeyPricing).map(([key]) => key),
+    lookup: (() => {
+      const result = lookupModelPricingWithSource('custom', 'model12', integerKeyPricing);
+      return { provider: 'custom', model: 'model12', pricing: pricingJson(result.pricing), source: result.source };
+    })(),
+  },
+  mixedKeys: {
+    insertionOrder: ['gpt', '100', 'zz', '10'],
+    entries: ['gpt', '100', 'zz', '10'].map((key) => ({ key, pricing: mixedKeyPricing[key] })),
+    objectEntries: Object.entries(mixedKeyPricing).map(([key]) => key),
+  },
+};
+
 const oracle = JSON.stringify({
   sourceCommit,
   sourceSha256,
   pricingLookups,
   costs,
   usageCosts,
+  propertyOrder,
   requests,
 }, null, 2) + '\n';
 for (const path of [baseline, fixtureDir]) assert.ok(!oracle.includes(path), `oracle.json contains ${path}`);
