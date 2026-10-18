@@ -25,3 +25,14 @@ regexes = [
   '''bc02317428c4ab6959a8addfbc62ae966d42db83ab1c6a3736c620a637d4359b''',
   '''cf9b1f894a7fc3b1e52cb4dde6514555bde96cfa9b4d64f68ae85940f76e17ae''',
 ]
+
+[[allowlists]]
+description = "A6.6-pr2 compaction / A6.7-pr5 async-hooks 夹具 sourceSha256（import 传递闭包）：固定基线 cc7c4e6 公开源文件 outputTokenRetry.ts / authToken.ts / tokenLimitParsing.ts / RouterTokenMeter.ts / countTokens.ts 的 SHA-256（文件名含 Token 触发 generic-api-key），已用 git show cc7c4e6:<path> | shasum -a 256 复算一致，不是凭据"
+regexTarget = "match"
+regexes = [
+  '''e8547f19c9a0ea8694a5e3d69fea2c5fc1ac8edf2c7985dfb159b0e35c933c73''',
+  '''655d743fa4230b0cf5fe7bfa0c8aacaa21489463e0b9b8e700c6bfad0b374741''',
+  '''78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959''',
+  '''5b2dfda51cbcd6cd2a161c46cec1664c3106caeaae964a5eb70036862257aced''',
+  '''491823e98e155481cac880726797f6830a612d3396f4b4101726dd13c16c9a74''',
+]
