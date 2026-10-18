@@ -9,7 +9,11 @@
   解除阻塞       project-mark.py 19 --status "In Progress"   （自动清空阻塞原因）
   补录           project-mark.py 255 --group A --impl codex   （不在看板上会先加入）
 实现方不给时按 PR 分支前缀推断（codex/ glm/ deepseek/ claude/）。字段与选项 ID 见同目录 project-fields.json。
-退出码：0 成功 · 1 gh 调用失败 · 2 参数错
+
+看板是汇总视图，不是正本（READY 与 PR 结果块才是）：
+- **尽力而为**：GitHub 调用失败只往 stderr 告警、退出码 0，不打断协调者用 && 串起来的主流程；`--strict` 才按失败退出 1。
+- **计数允许偶发少计**：评审轮数 / 重派次数是读后写，不是原子操作；两个会话同时对同一条加 1 会少记一次。以 PR 描述的评审表为准。
+退出码：0 成功或已告警 · 1 失败且给了 --strict · 2 参数错
 """
 from __future__ import annotations
 
@@ -27,6 +31,13 @@ PROJECT = FIELDS["project"]["id"]
 PREFIX_IMPL = {"codex/": "codex", "glm/": "GLM", "deepseek/": "DeepSeek", "claude/": "Claude"}
 
 
+STRICT = "--strict" in sys.argv
+
+
+class GhFailed(Exception):
+    pass
+
+
 def gql(query: str, variables: dict) -> dict:
     last = ""
     for _ in range(4):  # 网络 EOF 偶发，重试
@@ -40,8 +51,7 @@ def gql(query: str, variables: dict) -> dict:
         else:
             last = r.stderr.strip()[:400]
         time.sleep(3)
-    print(f"project-mark: gh 调用失败：{last}", file=sys.stderr)
-    sys.exit(1)
+    raise GhFailed(last)
 
 
 ITEM_Q = """query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issueOrPullRequest(number:$n){
@@ -59,12 +69,14 @@ def find_item(n: int) -> tuple[str, str, str, dict]:
         sys.exit(2)
     nums: dict[str, float] = {}
     item = ""
-    for it in node["projectItems"]["nodes"]:
-        if it["project"]["id"] == PROJECT:
-            item = it["id"]
-            for fv in it["fieldValues"]["nodes"]:
-                if fv and "number" in fv:
-                    nums[fv["field"]["name"]] = fv["number"]
+    mine = [it for it in node["projectItems"]["nodes"] if it["project"]["id"] == PROJECT]
+    if len(mine) > 1:
+        print(f"project-mark: 警告：#{n} 在看板上有 {len(mine)} 条，只改第一条", file=sys.stderr)
+    if mine:
+        item = mine[0]["id"]
+        for fv in mine[0]["fieldValues"]["nodes"]:
+            if fv and "number" in fv:
+                nums[fv["field"]["name"]] = fv["number"]
     if not item:
         item = gql("mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}",
                    {"p": PROJECT, "c": node["id"]})["addProjectV2ItemById"]["item"]["id"]
@@ -99,7 +111,16 @@ def main() -> int:
     ap.add_argument("--blocked", help="阻塞原因：等人批/等前置/通道不可用/CI（同时把状态设为 Blocked）")
     ap.add_argument("--review+1", dest="review_inc", action="store_true", help="评审轮数加 1")
     ap.add_argument("--redispatch+1", dest="redispatch_inc", action="store_true", help="重派次数加 1")
+    ap.add_argument("--strict", action="store_true", help="GitHub 调用失败时退出 1（默认只告警）")
     a = ap.parse_args()
+    try:
+        return run(a)
+    except GhFailed as e:
+        print(f"project-mark: 警告：看板未更新（{e}）", file=sys.stderr)
+        return 1 if a.strict else 0
+
+
+def run(a: argparse.Namespace) -> int:
 
     item, kind, head, nums = find_item(a.number)
     done = []
