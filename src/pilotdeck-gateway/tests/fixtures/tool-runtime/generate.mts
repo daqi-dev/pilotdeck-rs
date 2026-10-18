@@ -10,9 +10,9 @@ import assert from 'node:assert/strict';
 import { bindSourceTree } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE);
-assert.ok(process.argv[2], 'output must be a newly-created per-run directory');
+assert.ok(process.argv[2], 'provide an output parent directory; each run writes into its own mkdtemp child');
 const baseline = resolve(process.env.PDRS_BASELINE!);
-const output = resolve(process.argv[2]);
+const outputParent = resolve(process.argv[2]);
 const git = realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 bindSourceTree(baseline, commit, git);
@@ -76,6 +76,48 @@ const scenarios: any[] = [
   { name: 'permission-unknown-type-executes', calls: [call('a', 'read_file', { decision: 'weird', delay: 1 })] },
   { name: 'noncooperative-tool-finishes-after-cancel', cancelAt: 2, calls: [call('a', 'read_file', { delay: 6, ignoreAbort: true }), call('b', 'fast', { delay: 1 }), call('c', 'slow', { delay: 1 })] },
   { name: 'success-preserves-content-preview-metadata', context: { maxResultBytes: 3 }, calls: [call('a', 'read_file', { value: 'long output 中文', data: { n: 1 }, metadata: { own: true }, supplementalMessages: [{ role: 'user', content: [{ type: 'text', text: 'extra' }] }] })] },
+  // Round 2. `schemaJson` / `inputJson` are raw JSON text parsed by both sides,
+  // so own `__proto__` keys and non-sorted integer keys reach the validator.
+  { name: 'schema-proto-property-reads-object-prototype', definitions: [
+    tool('read_file', true, { schemaJson: '{"type":"object","properties":{"__proto__":{"type":"object","required":["missing","toString"]}}}' }),
+    tool('fast', true, { schemaJson: '{"type":"object","properties":{"__proto__":{"additionalProperties":false,"properties":{"__proto__":{"type":"object"},"toString":{"enum":[1]},"valueOf":{"type":"object"}}}}}' }),
+    tool('slow', false, { schemaJson: '{"type":"object","properties":{"__proto__":{"type":"object"}}}' }),
+    tool('write_file', false, { schemaJson: '{"properties":{"__proto__":{"type":"number"}}}' }),
+  ], calls: [call('a', 'read_file'), call('b', 'fast'), call('c', 'slow'), { id: 'd', name: 'slow', inputJson: '{"__proto__":5}' }, call('e', 'write_file')] },
+  { name: 'schema-integer-keys-ordered-like-object-keys', definitions: [
+    tool('read_file', false, { schemaJson: '{"type":"object","additionalProperties":false,"properties":{"b":{"type":"string"},"10":{"type":"string"},"2":{"type":"string"}}}' }),
+  ], calls: [{ id: 'a', name: 'read_file', inputJson: '{"z":1,"b":0,"7":1,"10":1,"2":2,"01":3}' }] },
+  { name: 'schema-abnormal-shapes-without-throw', definitions: [
+    tool('p1', false, { schemaJson: '{"type":"object","required":"ab\\ud83d\\ude00","properties":{"a":{}}}' }),
+    tool('p2', false, { schemaJson: '{"type":"object","additionalProperties":false,"properties":["s",{"type":"number"}]}' }),
+    tool('p3', false, { schemaJson: '{"type":["string",null,["a",null]]}' }),
+    tool('p4', false, { schemaJson: '{"type":"object","required":[5,null,true,{"a":1},["x",null]],"properties":{"items":{"type":"array","items":null},"e":{"enum":0,"type":"string"},"s":"str","n":{"enum":null}}}' }),
+    tool('p5', false, { schemaJson: '"plain"' }),
+    tool('p6', false, { schemaJson: '{"properties":"ab","required":null}' }),
+  ], calls: [
+    call('a', 'p1', { a: 1 }),
+    { id: 'b', name: 'p2', inputJson: '{"x":4,"0":1,"1":"x","length":2,"map":3}' },
+    call('c', 'p3', 1),
+    { id: 'd', name: 'p4', inputJson: '{"5":1,"items":[1],"e":"v","s":1,"n":2}' },
+    call('e', 'p5', { x: 1 }),
+    { id: 'f', name: 'p6', inputJson: '{"1":2,"0":{}}' },
+  ] },
+  ...([
+    ['null', '{}'], ['{"properties":{"a":null}}', '{"a":1}'], ['{"enum":"abc"}', '1'], ['{"enum":{"a":1}}', '1'],
+    ['{"type":"object","required":5}', '{}'], ['{"required":{}}', '{}'], ['{"required":true}', '{}'],
+    ['{"properties":"ab","additionalProperties":false}', '{"x":1}'], ['{"properties":5,"additionalProperties":false}', '{"x":1}'],
+    ['{"properties":false,"additionalProperties":false}', '{"x":1}'], ['{"type":"array","items":{"items":null,"type":"array"},"enum":null}', '[[1]]'],
+    ['{"type":"array","items":{"type":"object","properties":{"k":null}}}', '[{"k":1}]'],
+  ] as const).map(([schemaJson, inputJson], i) => ({ name: `schema-abnormal-shape-${i}`, definitions: [tool('p', false, { schemaJson })], calls: [{ id: 'a', name: 'p', inputJson }] })),
+  { name: 'configured-alias-string-entries', definitions: [tool('r', false), tool('fast', true)], context: { toolAliases: 'xr' }, calls: [call('a', '1'), call('b', '0')] },
+  { name: 'configured-alias-array-entries', context: { toolAliases: ['fast', 'read'] }, calls: [call('a', '0', { delay: 1 }), call('b', '1', { delay: 2 })] },
+  { name: 'configured-alias-truthy-primitive-has-no-entries', context: { toolAliases: true }, calls: [call('a', '0')] },
+  { name: 'configured-alias-number-has-no-entries', context: { toolAliases: 7 }, calls: [call('a', '0')] },
+  { name: 'configured-alias-array-null-target-throws', context: { toolAliases: [null] }, calls: [call('a', '0')] },
+  { name: 'concurrent-error-lets-started-siblings-finish', drain: true, calls: [call('a', 'read_file', { decision: 'throw' }), call('b', 'fast', { delay: 5 }), call('c', 'slow', { delay: 1 }), call('d', 'read_file', { delay: 2 })] },
+  { name: 'preview-binary-content-reports-original-bytes', context: { maxResultBytes: 1 }, calls: [call('a', 'read_file', { content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'text', text: '中文' }, { type: 'pdf', data: 'QUJD', mimeType: 'application/pdf', pages: 2 }] })] },
+  { name: 'preview-head-tail-separator', context: { maxResultBytes: 122 }, calls: [call('a', 'read_file', { content: [{ type: 'text', text: 'é'.repeat(30) + 'x'.repeat(41) + '中'.repeat(20) }, { type: 'json', value: { a: [1, 'ü'] } }, { type: 'file', path: '/w/a.txt', mimeType: 'text/plain', description: 'notes' }, { type: 'file', path: '/w/b' }] })] },
+  { name: 'preview-tool-level-limit-overrides-context', definitions: [tool('read_file', true, { maxResultBytes: 4 }), tool('fast', true, { maxResultBytes: null })], context: { maxResultBytes: 1000 }, calls: [call('a', 'read_file', { value: 'abcdefgh' }), call('b', 'fast', { value: 'abcdefgh' })] },
 ];
 
 async function run(spec: any) {
@@ -88,7 +130,9 @@ async function run(spec: any) {
   const sleep = (delay: number) => new Promise<void>((resolve) => pending.push({ at: ms + delay, run: resolve }));
   const registry = new ToolRegistry();
   for (const def of spec.definitions ?? definitions) registry.register({
-    name: def.name, aliases: def.aliases, description: def.name, kind: 'builtin', inputSchema: def.schema ?? { type: 'object' },
+    name: def.name, aliases: def.aliases, description: def.name, kind: 'builtin',
+    inputSchema: def.schemaJson !== undefined ? JSON.parse(def.schemaJson) : def.schema ?? { type: 'object' },
+    ...('maxResultBytes' in def ? { maxResultBytes: def.maxResultBytes } : {}),
     isReadOnly: () => true,
     isConcurrencySafe: (input: any) => { if (def.predicateError) throw Error('predicate failed'); return input.safe ?? def.safe; },
     requiresUserInteraction: () => def.interaction ?? false,
@@ -113,7 +157,7 @@ async function run(spec: any) {
         if (input.fail === 'nonError') throw 'opaque failure';
         if (input.fail) throw new PilotDeckToolRuntimeError(input.fail, 'fake failure', { stderr: 'ENOENT detail' });
         events.push(['end', id, ms]);
-        return { content: [{ type: 'text', text: input.value ?? id }], data: input.data,
+        return { content: input.content ?? [{ type: 'text', text: input.value ?? id }], data: input.data,
           metadata: input.metadata, supplementalMessages: input.supplementalMessages };
       } catch (error) { events.push(['error', id, ms]); throw error; }
       finally { context.abortSignal.removeEventListener('abort', abort!); }
@@ -134,7 +178,9 @@ async function run(spec: any) {
     now: () => new Date(epoch + ms), abortSignal: signal.signal, ...spec.context };
   const execution = spec.deadline === undefined ? {} : { operationDeadline: new Date(epoch + spec.deadline).toISOString() };
   let settled = false, outcome: any;
-  port.executeAll(spec.calls, context, execution).then((results: any) => { outcome = { results }; settled = true; }, (e: Error) => { outcome = { error: e.message }; settled = true; });
+  const calls = spec.calls.map((c: any) => c.inputJson === undefined ? c : { id: c.id, name: c.name, input: JSON.parse(c.inputJson) });
+  let settledAt: number | undefined;
+  port.executeAll(calls, context, execution).then((results: any) => { outcome = { results }; settled = true; settledAt = ms; }, (e: Error) => { outcome = { error: e.message }; settled = true; settledAt = ms; });
   for (let iteration = 0; !settled && iteration < 100; iteration++) {
     // Flush the real runtime's Promise continuations before advancing virtual time.
     for (let i = 0; i < 100; i++) await Promise.resolve();
@@ -147,6 +193,20 @@ async function run(spec: any) {
     for (const timer of due) timer.run();
   }
   assert.ok(settled, spec.name);
+  if (spec.drain) {
+    // Promise.all has rejected; let the already-started siblings finish.
+    for (let iteration = 0; pending.length && iteration < 100; iteration++) {
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+      const next = Math.min(...pending.map(p => p.at));
+      ms = next;
+      const due = pending.filter(p => p.at === next);
+      for (const timer of due) pending.splice(pending.indexOf(timer), 1);
+      for (const timer of due) timer.run();
+    }
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    assert.equal(pending.length, 0, spec.name);
+    return clean({ ...spec, events, ...outcome, settledAt });
+  }
   return clean({ ...spec, events, ...outcome });
 }
 
@@ -175,9 +235,10 @@ try {
   const sourceSha256: Record<string, string> = {};
   for (const source of [...sources].sort()) sourceSha256[source] = createHash('sha256').update(await readFile(join(baseline, source))).digest('hex');
   bindSourceTree(baseline, commit, git);
-  await mkdir(output, { recursive: true });
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: commit, sourceSha256, definitions, scenarios: recorded }, null, 2) + '\n');
-  console.log(`recorded ${recorded.length} runtime scenarios from ${sources.size} bound TS source files`);
+  await mkdir(outputParent, { recursive: true });
+  const output = await mkdtemp(join(outputParent, 'tool-runtime-'));
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: commit, sourceSha256, definitions, scenarios: recorded }, null, 2) + '\n', { flag: 'wx' });
+  console.log(`recorded ${recorded.length} runtime scenarios from ${sources.size} bound TS source files into ${output}`);
 } finally {
   const current = await lstat(scratch);
   assert.equal(current.dev, owner.dev); assert.equal(current.ino, owner.ino);

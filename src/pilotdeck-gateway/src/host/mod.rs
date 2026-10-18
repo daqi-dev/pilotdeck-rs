@@ -321,6 +321,16 @@ impl Cancellation {
     pub fn is_cancelled(&self) -> bool {
         self.0.borrow().is_some()
     }
+    /// Resolves once cancelled; watch retains a cancellation that happened
+    /// before the call, so no polling task or timer is involved.
+    pub async fn cancelled(&self) {
+        let mut receiver = self.0.subscribe();
+        while receiver.borrow_and_update().is_none() {
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
     pub(super) fn reason(&self) -> Option<JsString> {
         self.0.borrow().clone()
     }
