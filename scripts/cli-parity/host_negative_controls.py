@@ -8,7 +8,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import ROOT, SCRIPT, baseline_path, output_path, save
+from common import ROOT, SCRIPT, baseline_path, output_path, read_plain, save
 
 
 def main():
@@ -35,12 +35,13 @@ def main():
             '--output', str(output / 'recording')]
     with (output / 'runner.stdout.log').open('wb') as stdout, (output / 'runner.stderr.log').open('wb') as stderr:
         result = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=2380)
-    summary = json.loads((output / 'recording/summary.json').read_text())
+    # Evidence leaves are read like compare.py: plain single-link files only.
+    summary = json.loads(read_plain(output / 'recording/summary.json'))
     case = output / 'recording/rust/cases/help-long'
     passed = (result.returncode == 1 and summary['status'] == 'FAIL'
               and summary.get('rustComparison', {}).get('status') == 'FAIL'
-              and (case / 'stderr.bin').read_bytes() == b'D0 exec-node denied\n'
-              and json.loads((case / 'record.json').read_text())['exitCode'] == 126)
+              and read_plain(case / 'stderr.bin') == b'D0 exec-node denied\n'
+              and json.loads(read_plain(case / 'record.json'))['exitCode'] == 126)
     report = {'status': 'PASS' if passed else 'BLOCKED' if summary['status'] == 'BLOCKED' else 'FAIL',
               'control': 'native-execv-node-as-rust', 'runnerExit': result.returncode,
               'compileArgv': compile_argv, 'runnerArgv': argv, 'summary': summary}
