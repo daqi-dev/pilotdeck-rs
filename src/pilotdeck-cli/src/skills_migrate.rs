@@ -455,6 +455,8 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), Failure> {
             copy_tree(&source.join(&name), &target.join(&name))?;
         }
         if destination.is_none() {
+            // Node 22 fs.promises.cp (mkDirAndCopy) chmods after copying;
+            // unlike cpSync's fast path, the final mode is not masked by umask.
             fs::set_permissions(target, metadata.permissions())
                 .map_err(|e| fs_failure(e, "chmod", target))?;
         }
@@ -509,7 +511,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
     let mut options = SkillManagerOptions::new(pilot_home.to_string_lossy());
     options.home_dir = Some(home.to_string_lossy().into_owned());
     options.env = Some(env.strings());
-    let manager = SkillManager::new(options);
+    let manager = SkillManager::new(options).map_err(|e| Failure::Error(e.message))?;
     let mut items = Vec::new();
     for source in &sources {
         let Some(dirs) = discover(&source.path, env)? else {
@@ -897,6 +899,92 @@ mod tests {
         assert_eq!(
             field(&r, "targetRoot"),
             &path_string(&f.path.join("project/~/custom/skills"))
+        );
+    }
+    #[test]
+    fn explicit_pilot_home_keeps_tilde_while_custom_source_expands_it() {
+        let f = Fixture::new("tilde");
+        f.skill("home/imports/sample", VALID);
+        let r = f.report(&[
+            "--from",
+            "hermes",
+            "--pilot-home",
+            "~/custom",
+            "--source",
+            "~/imports",
+        ]);
+        assert_eq!(
+            field(&r, "targetRoot"),
+            &path_string(&f.path.join("project/~/custom/skills"))
+        );
+        let items = custom_items(&r);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            field(items[0], "sourcePath"),
+            &path_string(&f.path.join("home/imports/sample"))
+        );
+        assert_eq!(
+            field(items[0], "destinationPath"),
+            &path_string(&f.path.join("project/~/custom/skills/sample"))
+        );
+        assert_eq!(count(&r, "would_migrate"), 1.0);
+        assert!(!f.path.join("project/~").exists());
+        assert!(!f.path.join("home/custom").exists());
+    }
+    #[test]
+    fn copy_tree_preserves_modes_like_node_async_cp() {
+        // umask is process-wide: set it only in an exec child running this test.
+        if std::env::var_os("PDRS_TEST_COPY_UMASK").is_none() {
+            let mut child = std::process::Command::new("/bin/sh");
+            child
+                .args(["-c", "umask 022; exec \"$@\"", "pdrs-copy-umask-test"])
+                .arg(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "skills_migrate::tests::copy_tree_preserves_modes_like_node_async_cp",
+                    "--nocapture",
+                ])
+                .env("PDRS_TEST_COPY_UMASK", "1");
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let f = Fixture::new("copy-modes");
+        f.skill("source", VALID);
+        fs::create_dir(f.path.join("source/nested")).unwrap();
+        fs::create_dir(f.path.join("source/private")).unwrap();
+        for (path, mode) in [
+            ("source", 0o777),
+            ("source/nested", 0o777),
+            ("source/private", 0o700),
+            ("source/SKILL.md", 0o777),
+        ] {
+            fs::set_permissions(f.path.join(path), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        copy_tree(&f.path.join("source"), &f.path.join("target")).unwrap();
+        for (path, mode) in [
+            ("target", 0o777),
+            ("target/nested", 0o777),
+            ("target/private", 0o700),
+            ("target/SKILL.md", 0o777),
+        ] {
+            assert_eq!(
+                fs::metadata(f.path.join(path)).unwrap().mode() & 0o777,
+                mode,
+                "{path}"
+            );
+        }
+        fs::create_dir(f.path.join("existing")).unwrap();
+        fs::set_permissions(f.path.join("existing"), fs::Permissions::from_mode(0o711)).unwrap();
+        copy_tree(&f.path.join("source"), &f.path.join("existing")).unwrap();
+        assert_eq!(
+            fs::metadata(f.path.join("existing")).unwrap().mode() & 0o777,
+            0o711
         );
     }
     #[test]
