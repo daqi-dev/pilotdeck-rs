@@ -1,6 +1,6 @@
 //! Persistent hook parsing and matching, following the fixed TS baseline.
 use super::{protocol::*, regexp};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{CodecError, JsObject, JsString, JsValue, stringify_json};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ParseHooksConfigResult {
@@ -258,10 +258,69 @@ pub struct HookConditionInput<'a> {
     pub tool_name: Option<&'a JsString>,
     pub tool_input: Option<&'a JsValue>,
 }
-pub fn match_hook_condition(condition: Option<&JsString>, input: HookConditionInput<'_>) -> bool {
+
+// Node 22.22.0: real HookRuntime.run, with 0/32 extra synchronous frames,
+// serializes 6500 nested arrays/objects but throws at 7000. Stay at 4000.
+// [上界, V8 实际阈值) 这段属于已接受的不可判定带；见夹具 README。
+const MAX_STRINGIFY_DEPTH: usize = 4000;
+
+/// Unlike matcher regex errors, TS does not catch condition serialization errors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HookConditionError {
+    StackOverflow,
+    Serialization(CodecError),
+}
+impl HookConditionError {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::StackOverflow => "RangeError",
+            Self::Serialization(_) => "Error",
+        }
+    }
+    pub fn message(&self) -> &str {
+        match self {
+            Self::StackOverflow => "Maximum call stack size exceeded",
+            Self::Serialization(error) => &error.message,
+        }
+    }
+}
+impl std::fmt::Display for HookConditionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.name(), self.message())
+    }
+}
+impl std::error::Error for HookConditionError {}
+
+fn check_stringify_depth(value: &JsValue) -> Result<(), HookConditionError> {
+    let mut pending = vec![(value, 0)];
+    while let Some((value, parent_depth)) = pending.pop() {
+        if matches!(value, JsValue::Array(_) | JsValue::Object(_)) {
+            let depth = parent_depth + 1;
+            if depth > MAX_STRINGIFY_DEPTH {
+                return Err(HookConditionError::StackOverflow);
+            }
+            match value {
+                JsValue::Array(items) => {
+                    pending.extend(items.iter().map(|item| (item, depth)));
+                }
+                JsValue::Object(object) => {
+                    // JSON.stringify visits own properties only, never prototypes.
+                    pending.extend(object.entries().iter().map(|(_, item)| (item, depth)));
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn match_hook_condition(
+    condition: Option<&JsString>,
+    input: HookConditionInput<'_>,
+) -> Result<bool, HookConditionError> {
     let condition = condition.map(JsString::units).unwrap_or_default();
     if condition.is_empty() {
-        return true;
+        return Ok(true);
     }
     let text = trim(condition);
     let name_len = text
@@ -269,7 +328,7 @@ pub fn match_hook_condition(condition: Option<&JsString>, input: HookConditionIn
         .take_while(|c| matches!(c, 65..=90 | 97..=122 | 48..=57 | 95 | 46 | 58 | 45))
         .count();
     if name_len == 0 {
-        return false;
+        return Ok(false);
     }
     let tail = &text[name_len..];
     let pattern = if tail.is_empty() {
@@ -280,27 +339,28 @@ pub fn match_hook_condition(condition: Option<&JsString>, input: HookConditionIn
     {
         &tail[1..tail.len() - 1]
     } else {
-        return false;
+        return Ok(false);
     };
     if let Some(name) = input.tool_name.filter(|n| !n.is_empty())
         && normalize(&text[..name_len]) != normalize(name.units())
     {
-        return false;
+        return Ok(false);
     }
     if pattern.is_empty() || pattern == [42] {
-        return true;
+        return Ok(true);
     }
     let empty = JsValue::Object(JsObject::new());
     let value = input
         .tool_input
         .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
         .unwrap_or(&empty);
-    let Ok(Some(json)) = stringify_json(value) else {
-        return false;
-    };
+    check_stringify_depth(value)?;
+    let json = stringify_json(value)
+        .map_err(HookConditionError::Serialization)?
+        .expect("nullish values were replaced with an object");
     let haystack: Vec<_> = json.encode_utf16().collect();
     let needle: Vec<_> = pattern.iter().copied().filter(|c| *c != 42).collect();
-    needle.is_empty() || haystack.windows(needle.len()).any(|part| part == needle)
+    Ok(needle.is_empty() || haystack.windows(needle.len()).any(|part| part == needle))
 }
 fn normalize(name: &[u16]) -> Vec<u16> {
     name.iter()

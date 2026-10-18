@@ -7,6 +7,16 @@
 use super::config::whitespace;
 use std::collections::HashMap;
 
+// Empty expansion work = captures + quantifiers, multiplying mandatory nested
+// repetitions. Node 22.22.0 succeeds at 2M work across the measured families in
+// real HookRuntime.run (+0/32 frames); 40M throws. See probe-resources.mts.
+// This is a conservative budget, not an exact model of V8's pattern-dependent
+// stack: [上界, V8 实际阈值) 这段属于已接受的不可判定带。
+const MAX_EMPTY_REPEAT_WORK: usize = 2_000_000;
+
+#[derive(Debug)]
+struct BudgetExceeded;
+
 #[derive(Clone, Debug)]
 enum ClassItem {
     Range(u16, u16),
@@ -481,6 +491,64 @@ impl<'a> Parser<'a> {
 fn word(c: u16) -> bool {
     matches!(c, 65..=90 | 97..=122 | 48..=57 | 95)
 }
+
+fn empty_repeat_costs(nodes: &[Node], capture_count: usize) -> Vec<usize> {
+    // Backreferences can consume only if their capture has a consuming source.
+    // The least fixed point keeps (\1){1e9} and mutually empty references free,
+    // just like V8, while retaining costs for references to consuming groups.
+    let mut consumes = vec![false; nodes.len()];
+    let mut captures = vec![false; capture_count + 1];
+    loop {
+        let mut changed = false;
+        for (id, node) in nodes.iter().enumerate() {
+            let can_consume = match &node.kind {
+                Kind::Literal(_) | Kind::Dot | Kind::Class(..) => true,
+                Kind::Sequence(children) => children.iter().any(|id| consumes[*id]),
+                Kind::Capture(_, body) => consumes[*body],
+                Kind::Repeat { body, max, .. } => *max > 0 && consumes[*body],
+                Kind::Backref(index) => captures[*index],
+                _ => false,
+            };
+            if can_consume && !consumes[id] {
+                consumes[id] = true;
+                changed = true;
+            }
+            if let Kind::Capture(index, _) = node.kind {
+                captures[index] = consumes[id];
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // Parser children precede parents. Even empty captures cost register saves
+    // inside a consuming repeat. Assertions retain their capture-save cost;
+    // their own dynamic repetitions are checked in their atomic search scope.
+    let mut costs = vec![0usize; nodes.len()];
+    for (id, node) in nodes.iter().enumerate() {
+        costs[id] = match &node.kind {
+            Kind::Sequence(children) => children
+                .iter()
+                .fold(0usize, |sum, id| sum.saturating_add(costs[*id])),
+            Kind::Capture(_, body) => costs[*body].saturating_add(1),
+            Kind::Repeat { body, min, .. } if consumes[id] => {
+                costs[*body].saturating_mul((*min).max(1)).saturating_add(1)
+            }
+            Kind::Repeat { body, .. } => costs[*body],
+            Kind::Look { .. } => node.captures.len(),
+            Kind::Backref(_) if consumes[id] => 1,
+            _ => 0,
+        };
+    }
+    // Exempt only the entire nonconsuming body, after its captures have been
+    // counted in consuming ancestors. This preserves static/self-ref billions.
+    for (cost, consumes) in costs.iter_mut().zip(consumes) {
+        if !consumes {
+            *cost = 0;
+        }
+    }
+    costs
+}
 #[derive(Clone)]
 struct State {
     pos: usize,
@@ -500,19 +568,22 @@ enum Step {
         count: usize,
         reverse: bool,
         start: usize,
+        empty_work: usize,
     },
 }
 #[derive(Clone)]
 struct Branch {
     state: State,
     tasks: Vec<Step>,
+    empty_work: usize,
 }
 struct Matcher<'a> {
     nodes: &'a [Node],
     text: &'a [u16],
+    empty_costs: &'a [usize],
 }
 impl Matcher<'_> {
-    fn run(&self, initial: Branch) -> Option<State> {
+    fn run(&self, initial: Branch) -> Result<Option<State>, BudgetExceeded> {
         // Each assertion owns a search frame; returning discards its remaining
         // choices, implementing atomic lookaround without native recursion.
         struct Search {
@@ -527,7 +598,7 @@ impl Matcher<'_> {
             let Some(mut branch) = searches.last_mut().unwrap().choices.pop() else {
                 let search = searches.pop().unwrap();
                 match search.caller {
-                    None => return None,
+                    None => return Ok(None),
                     Some((caller, false)) => searches.last_mut().unwrap().choices.push(caller),
                     Some((_, true)) => {}
                 }
@@ -545,6 +616,7 @@ impl Matcher<'_> {
                         count,
                         reverse,
                         start,
+                        empty_work,
                     } => {
                         let Kind::Repeat { body, min, .. } = self.nodes[id].kind else {
                             unreachable!()
@@ -555,27 +627,42 @@ impl Matcher<'_> {
                             failed = true;
                             break;
                         }
+                        // Only statically zero-width bodies can skip repetitions.
+                        // A nullable consuming body may choose empty now and consume
+                        // later (e.g. (a*?){2}b\1), changing its final captures.
+                        let next_count = if self.nodes[body].zero_width {
+                            min
+                        } else if start == branch.state.pos {
+                            // Internal captures reset on each iteration. At most N
+                            // further iterations can consume the N remaining units;
+                            // one final empty iteration may overwrite captures. Keep
+                            // that entire suffix, compressing only redundant empties.
+                            let remaining = if reverse {
+                                start
+                            } else {
+                                self.text.len() - start
+                            };
+                            (count + 1).max(min.saturating_sub(remaining.saturating_add(1)))
+                        } else {
+                            count + 1
+                        };
+                        if start == branch.state.pos {
+                            // Replace the current iteration's nested cost with its
+                            // full expansion, including all compressed iterations.
+                            // Budget state is branch-local and restored on backtrack.
+                            let work = self.empty_costs[body]
+                                .saturating_mul(next_count.saturating_sub(count));
+                            branch.empty_work =
+                                branch.empty_work.max(empty_work.saturating_add(work));
+                            if branch.empty_work > MAX_EMPTY_REPEAT_WORK {
+                                // A resource error must escape negative assertions;
+                                // treating it as a miss would incorrectly invert it.
+                                return Err(BudgetExceeded);
+                            }
+                        }
                         branch.tasks.push(Step::Repeat {
                             id,
-                            // Only statically zero-width bodies can skip repetitions.
-                            // A nullable consuming body may choose empty now and consume
-                            // later (e.g. (a*?){2}b\1), changing its final captures.
-                            count: if self.nodes[body].zero_width {
-                                min
-                            } else if start == branch.state.pos {
-                                // Internal captures reset on each iteration. At most N
-                                // further iterations can consume the N remaining units;
-                                // one final empty iteration may overwrite captures. Keep
-                                // that entire suffix, compressing only redundant empties.
-                                let remaining = if reverse {
-                                    start
-                                } else {
-                                    self.text.len() - start
-                                };
-                                (count + 1).max(min.saturating_sub(remaining.saturating_add(1)))
-                            } else {
-                                count + 1
-                            },
+                            count: next_count,
                             reverse,
                         });
                     }
@@ -601,6 +688,7 @@ impl Matcher<'_> {
                             count,
                             reverse,
                             start: more.state.pos,
+                            empty_work: more.empty_work,
                         });
                         more.tasks.push(Step::Node(body, reverse));
                         if count < min {
@@ -682,6 +770,7 @@ impl Matcher<'_> {
                                 let child = Branch {
                                     state: branch.state.clone(),
                                     tasks: vec![Step::Node(*body, *behind)],
+                                    empty_work: branch.empty_work,
                                 };
                                 searches.push(Search {
                                     choices: vec![child],
@@ -719,7 +808,7 @@ impl Matcher<'_> {
             if !failed {
                 let search = searches.pop().unwrap();
                 match search.caller {
-                    None => return Some(branch.state),
+                    None => return Ok(Some(branch.state)),
                     Some((mut caller, true)) => {
                         caller.state.captures = branch.state.captures;
                         searches.last_mut().unwrap().choices.push(caller);
@@ -746,19 +835,25 @@ pub(super) fn test(pattern: &[u16], query: &[u16]) -> bool {
             node.kind = Kind::Backref(*index);
         }
     }
+    let empty_costs = empty_repeat_costs(&parser.nodes, parser.count);
     let matcher = Matcher {
         nodes: &parser.nodes,
         text: query,
+        empty_costs: &empty_costs,
     };
-    (0..=query.len()).any(|pos| {
-        matcher
-            .run(Branch {
-                state: State {
-                    pos,
-                    captures: vec![None; parser.count + 1],
-                },
-                tasks: vec![Step::Node(root, false)],
-            })
-            .is_some()
-    })
+    for pos in 0..=query.len() {
+        match matcher.run(Branch {
+            state: State {
+                pos,
+                captures: vec![None; parser.count + 1],
+            },
+            tasks: vec![Step::Node(root, false)],
+            empty_work: 0,
+        }) {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            Err(BudgetExceeded) => return false,
+        }
+    }
+    false
 }
