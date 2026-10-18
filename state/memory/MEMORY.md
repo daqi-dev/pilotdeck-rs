@@ -26,3 +26,4 @@
 - [收敛后的 P2 只修一批](20261017-p2-fix-cycle.md) — 两家无 P0/P1 后剩余 P2 一次修完、只做一轮确认；确认轮新 P2 走跟进，不再开下一轮。
 - [DeepSeek 空回复是思考吃光额度](20261018-deepseek-thinking.md) — finish_reason=length 空回复看 reasoning_tokens，评审默认关思考；任务书写明无工具；别把它误判成大输入不可用。
 - [shell-text-edits](20261018-shell-text-edits.md) — 中文文本编辑用 python 不用 sed；停进程按 PID 不用宽模式 pkill
+- [auto-merge-armed](20261018-auto-merge-armed.md) — 入队失败也可能已开 auto-merge；再推修复前先 --disable-auto，合入后核最后一个提交在 main 里
