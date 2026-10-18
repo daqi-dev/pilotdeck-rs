@@ -55,19 +55,22 @@ VENDOR_DOMAINS = {"anthropic.com": "claude", "openai.com": "codex", "deepseek.co
 
 
 def trailer_family_of(line: str) -> set[str]:
-    m = re.match(r"\s*([^<]*?)\s*(?:<([^>]*)>)?\s*$", line)
-    name, email = (m.group(1), m.group(2) or "") if m else (line, "")
-    if not email and re.fullmatch(r"\S+@\S+", name.strip()):
-        name, email = "", name.strip()  # 裸邮箱：只按域名判，不拆词
+    """一条署名值 → 谱系。邮箱（尖括号里的、或裸写的）只按已知厂商域名判；其余文字按模型名单词判。
+    一行里有多个地址、地址后还有文字，都逐个看，不因格式不规整整条漏计。"""
+    emails = re.findall(r"<([^<>]*)>", line)
+    rest = re.sub(r"<[^<>]*>", " ", line)
+    emails += re.findall(r"[^\s<>,;]+@[^\s<>,;]+", rest)
+    rest = re.sub(r"[^\s<>,;]+@[^\s<>,;]+", " ", rest)
     out = set()
     words = {k: v for k, v in {**FAMILY, **TRAILER_NAME_EXTRA}.items() if k not in NAME_SKIP}
-    for tok in re.findall(r"[a-z0-9]+", name.lower()):
+    for tok in re.findall(r"[a-z0-9]+", rest.lower()):
         if tok in words:
             out.add(words[tok])
-    domain = email.lower().rsplit("@", 1)[-1] if "@" in email else ""
-    for d, f in VENDOR_DOMAINS.items():
-        if domain == d or domain.endswith("." + d):
-            out.add(f)
+    for email in emails:
+        domain = email.strip().lower().rsplit("@", 1)[-1] if "@" in email else email.strip().lower()
+        for d, f in VENDOR_DOMAINS.items():
+            if domain == d or domain.endswith("." + d):
+                out.add(f)
     return out
 
 
@@ -138,7 +141,7 @@ def strip_code(body: str) -> str:
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    raw, body = body, strip_code(body)  # 标记声明去掉代码引用再看；结果块与 check() 同口径读原文
+    body = strip_code(body)
     am = [x.strip() for x in AUTHOR.findall(body)]
     if len(am) > 1:
         return [f"有 {len(am)} 个 author 标记；只许一个（多家写成 author: A,B）"]
@@ -171,7 +174,7 @@ def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) 
     if clash:
         src = "（含提交署名）" if trailers and set(clash) & trailers else ""
         errs.append(f"作者谱系 {clash}{src} 出现在评审里（谁写谁不审）")
-    for m in MARKER.finditer(raw):
+    for m in MARKER.finditer(body):
         rn = re.search(r"(?:^|\s)runner=(\S+)", m.group(1))
         if rn and family(rn.group(1)) in authors:
             errs.append(f"角色审计用的 runner={rn.group(1)} 与作者同谱系（{family(rn.group(1))}）；改用 --runner 另一家重跑")
@@ -220,8 +223,10 @@ def check_block(attrs: str, head: str) -> list[str]:
 
 def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    blocks = list(MARKER.finditer(body))  # 结果块读原文（与 runner 检查同口径；贴进围栏也照样校验）
-    prose = strip_code(body)  # 豁免与 issue 关联这类「声明」不认代码里引用的写法，免得示例文字被当成真声明
+    # 所有标记（结果块、豁免、issue、reviewers/author）统一不认代码里引用的写法，与 runner 检查同口径。
+    # 真结果块被塞进围栏 = 缺结果块 → FAIL，方向是拦而不是放。
+    prose = strip_code(body)
+    blocks = list(MARKER.finditer(prose))
     w = WAIVER.search(prose)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒

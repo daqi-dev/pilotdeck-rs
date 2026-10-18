@@ -55,7 +55,6 @@ CASES = [
     ("只有逗号的 author 标记", BASE + "<!-- author: , , -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
     ("行内代码里引用标记写法不算标记", BASE + "<!-- author: claude -->\n说明：写法是 `<!-- author: A,B -->`\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
     ("代码块里的 reviewers 不算标记", BASE + "```\n<!-- reviewers: claude,glm -->\n```\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
-    ("结果块放进代码围栏也照样查 runner", "```\n" + GLM_BLOCK + "```\n<!-- reviewers: codex,deepseek -->", "glm/x", False, "runner=zai"),
     ("注释里的 ``` 不能吞掉后面的真 author", BASE + "<!-- explanation: ``` -->\n<!-- author: codex,claude -->\n<!-- end explanation: ``` -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
     ("~~~ 围栏里的标记不算", BASE + "~~~\n<!-- reviewers: claude,glm -->\n~~~\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
     ("双反引号行内代码里的标记不算", BASE + "<!-- author: claude -->\n写法 `` <!-- author: A,B --> ``\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
@@ -137,10 +136,12 @@ def main() -> int:
         fails += not bad_range_raised
     for name, body, want in [
         ("代码里引用的 waiver 不算豁免", "说明：写法是 `<!-- pr-gate:waiver 纯文档更新足够长 -->`\nRefs #1\n<!-- reviewers: codex,deepseek -->", "缺角色审计结果块"),
+        ("真结果块塞进围栏 = 缺结果块（拦）", "```\n" + GLM_BLOCK + "```\n<!-- reviewers: codex,deepseek -->", "缺角色审计结果块"),
+        ("文档里围栏引用的示例结果块不当真块", "<!-- pr-gate:waiver 纯文档更新足够长 -->\nRefs #1\n```\n" + GLM_BLOCK.replace("Refs #1\n","") + "```\n<!-- reviewers: codex,deepseek -->", None),
         ("代码里引用的 Refs 不算 issue 关联", "<!-- pr-gate:waiver 纯文档更新足够长 -->\n```\nRefs #1\n```\n<!-- reviewers: codex,deepseek -->", "缺 issue 关联"),
     ]:
-        e = gate.check(body, "", "claude/x")
-        good = any(want in x for x in e)
+        e = gate.check(body, "", "glm/x" if "GLM_BLOCK" in name or "结果块" in name else "claude/x")
+        good = (not e) if want is None else any(want in x for x in e)
         print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
         fails += not good
     # 署名误识别负例：普通人的邮箱/缩写不算模型
@@ -148,7 +149,9 @@ def main() -> int:
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
                        ("opencode <glm-5.3@opencode>", {"glm"}), ("GLM-5.3 <noreply@zhipu.com>", {"glm"}),
                        ("alex@gpt.example.org", set()), ("ci@openai.com", {"codex"}),
-                       ("OpenAI <noreply@example.org>", {"codex"}), ("Zhipu <noreply@example.org>", {"glm"})]:
+                       ("OpenAI <noreply@example.org>", {"codex"}), ("Zhipu <noreply@example.org>", {"glm"}),
+                       ("小助手 <bot@bigmodel.cn>, Codex <noreply@openai.com>", {"glm", "codex"}),
+                       ("Assistant <a@z.ai> (pair)", {"glm"}), ("x <a@example.org> y <b@anthropic.com>", {"claude"})]:
         got = gate.trailer_family_of(line)
         good = got == want
         print(f"{'PASS' if good else 'FAIL'} 署名识别「{line}」→ {sorted(got)}")
