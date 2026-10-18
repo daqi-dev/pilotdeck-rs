@@ -144,7 +144,8 @@ export async function verifyNodeModules(ui) {
   const uiDeclared = Object.keys({ ...uiManifest.dependencies, ...uiManifest.devDependencies, ...uiManifest.optionalDependencies });
   let installedXterm = [];
   try {
-    installedXterm = (await readdir(resolve(ui, 'node_modules', '@xterm'))).map(entry => `@xterm/${entry}`);
+    // Dot entries (e.g. Finder's .DS_Store) are not package names.
+    installedXterm = (await readdir(resolve(ui, 'node_modules', '@xterm'))).filter(entry => !entry.startsWith('.')).map(entry => `@xterm/${entry}`);
   } catch (error) {
     if (!(error && error.code === 'ENOENT')) throw error;
   }
