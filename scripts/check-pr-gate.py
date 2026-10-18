@@ -147,8 +147,9 @@ def strip_code(body: str) -> str:
             continue  # 缩进代码块（≥4 空格或 tab）：其中的标记写法不算标记
         kept = _strip_inline(line)
         lines.append(kept)
-        last = kept.rfind("<!--")  # 按剥掉行内代码后的文本判注释状态：反引号里的 <!-- 不开启注释
-        comment = last >= 0 and "-->" not in kept[last:]
+        # 只有块级注释起始（原始行首 ≤3 空格就是 <!--，CommonMark type-2 HTML 块）才开启跨行注释状态；
+        # 行内的 <!--（含转义、属性值里、剥掉行内代码后拼出来的）只是文字，不能跳过下一行的围栏
+        comment = bool(re.match(r"^ {0,3}<!--", line)) and "-->" not in line
     return "\n".join(lines)
 
 

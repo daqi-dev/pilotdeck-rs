@@ -92,6 +92,10 @@ def main() -> int:
         ("空格+Tab 混合缩进的标记不算", "Refs #1\n \t" + GLM_BLOCK.split("\n")[0] + "\n \t<!-- reviewers: deepseek,glm -->\n", "claude/x", False, "缺角色审计结果块"),
         ("两空格缩进的 reviewers 不算", "<!-- pr-gate:waiver 纯文档测试用例足够长 -->\nRefs #1\n  <!-- reviewers: deepseek,glm -->\n", "claude/x", False, "恰好一个"),
         ("行内代码里的 <!-- 不开启注释、不跳过真围栏", "标记前缀为 `<!--`。\n```\n<!-- pr-gate:waiver 纯文档测试用例足够长 -->\n<!-- reviewers: deepseek,glm -->\nRefs #275\n```\n", "claude/x", False, "缺角色审计结果块"),
+        ("行内裸 <!-- 不开启注释", "标记以 <!-- 开头。\n```\n<!-- pr-gate:waiver 纯文档测试用例足够长 -->\n<!-- reviewers: deepseek,glm -->\nRefs #275\n```\n", "claude/x", False, "缺角色审计结果块"),
+        ("剥行内代码拼出的 <!-- 不开启注释", "<`x`!--\n```\n<!-- pr-gate:waiver 纯文档测试用例足够长 -->\n<!-- reviewers: deepseek,glm -->\nRefs #275\n```\n", "claude/x", False, "缺角色审计结果块"),
+        ("转义的 \\<!-- 不开启注释", "说明：\\<!--\n```\n<!-- pr-gate:waiver 纯文档测试用例足够长 -->\n<!-- reviewers: deepseek,glm -->\nRefs #275\n```\n", "claude/x", False, "缺角色审计结果块"),
+        ("属性值里的 <!-- 不开启注释", "<span title=\"<!--\">\n```\n<!-- pr-gate:waiver 纯文档测试用例足够长 -->\n<!-- reviewers: deepseek,glm -->\nRefs #275\n```\n", "claude/x", False, "缺角色审计结果块"),
     ]:
         e = gate.check(body, "", ref)
         good = (not e) if ok else (bool(e) and any(want in x for x in e))
@@ -269,7 +273,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 35} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 39} 例）")
     return 1 if fails else 0
 
 
