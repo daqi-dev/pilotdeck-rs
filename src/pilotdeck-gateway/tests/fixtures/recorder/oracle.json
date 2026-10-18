@@ -971,6 +971,2330 @@
       "files": {
         "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"before restart\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"r\",\"name\":\"read_file\",\"input\":{\"path\":\"r.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"r\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result r\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"after restart\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"r2\",\"name\":\"read_file\",\"input\":{\"path\":\"r2.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":12,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"r2\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result r2\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":13,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-14>\",\"parentEntryId\":\"<id-13>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":14,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"<id-14>\"}\n"
       }
+    },
+    {
+      "name": "interleaved-writer",
+      "steps": [
+        {
+          "op": "writerAcceptedInput",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "mixed"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "writerMetadata",
+          "metadata": {
+            "title": "between turn and step"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "mixed"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "writerAcceptedInput",
+          "messages": [],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "mixed",
+              "name": "read_file",
+              "input": {
+                "path": "mixed.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "writerMetadata",
+          "metadata": {
+            "title": "between call and result"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "mixed",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result mixed"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "reopen",
+          "outcome": {
+            "entries": 11,
+            "sequence": 11
+          }
+        },
+        {
+          "op": "writerMetadata",
+          "metadata": {
+            "title": "after restore"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "after",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 13,
+            "diagnostics": 0,
+            "sequence": 13
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"mixed\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"between turn and step\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"mixed\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"accepted_input\",\"messages\":[],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"mixed\",\"name\":\"read_file\",\"input\":{\"path\":\"mixed.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"between call and result\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"mixed\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result mixed\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after restore\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":12,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"after\",\"sequence\":13,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n"
+      }
+    },
+    {
+      "name": "proto-payloads",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {
+            "__proto__": {
+              "keep": 1
+            },
+            "ok": 2,
+            "nested": {
+              "__proto__": null,
+              "ok": 3
+            }
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done",
+            "nested": {
+              "__proto__": {
+                "keep": 1
+              },
+              "ok": 2,
+              "nested": {
+                "__proto__": null,
+                "ok": 3
+              }
+            },
+            "list": [
+              {
+                "__proto__": {
+                  "keep": 1
+                },
+                "ok": 2,
+                "nested": {
+                  "__proto__": null,
+                  "ok": 3
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "proto",
+              "name": "read_file",
+              "input": {
+                "__proto__": {
+                  "keep": 1
+                },
+                "ok": 2,
+                "nested": {
+                  "__proto__": null,
+                  "ok": 3
+                }
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "proto",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result proto"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z",
+              "metadata": {
+                "__proto__": {
+                  "keep": 1
+                },
+                "ok": 2,
+                "nested": {
+                  "__proto__": null,
+                  "ok": 3
+                }
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"__proto__\":{\"keep\":1},\"ok\":2,\"nested\":{\"__proto__\":null,\"ok\":3}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\",\"nested\":{\"ok\":2,\"nested\":{\"ok\":3}},\"list\":[{\"ok\":2,\"nested\":{\"ok\":3}}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"proto\",\"name\":\"read_file\",\"input\":{\"ok\":2,\"nested\":{\"ok\":3}}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"proto\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result proto\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{\"ok\":2,\"nested\":{\"ok\":3}}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n"
+      }
+    },
+    {
+      "name": "typed-tool-ids",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": 1
+            },
+            {
+              "id": 2
+            },
+            {
+              "id": true
+            },
+            {
+              "id": false
+            },
+            {
+              "id": null
+            },
+            {},
+            {
+              "id": "1"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": 1
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_tool_call",
+              "message": "Tool call 1 is already open."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": 3
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result 3 has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": 1
+            },
+            {
+              "toolCallId": 2
+            },
+            {
+              "toolCallId": true
+            },
+            {
+              "toolCallId": false
+            },
+            {
+              "toolCallId": null
+            },
+            {},
+            {
+              "toolCallId": "1"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":1},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":2},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":true},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":false},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":null},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"1\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":1},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":2},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":12,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":true},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":13,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":false},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":14,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-14>\",\"parentEntryId\":\"<id-13>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":null},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":15,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-15>\",\"parentEntryId\":\"<id-14>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":16,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-16>\",\"parentEntryId\":\"<id-15>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"1\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":17,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-17>\",\"parentEntryId\":\"<id-16>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":18,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-18>\",\"parentEntryId\":\"<id-17>\"}\n"
+      }
+    },
+    {
+      "name": "reference-tool-ids",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": {
+                "x": 1
+              }
+            },
+            {
+              "id": {
+                "x": 1
+              }
+            },
+            {
+              "id": [
+                1
+              ]
+            },
+            {
+              "id": [
+                1
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": {
+                "x": 1
+              }
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result [object Object] has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": [
+                1
+              ]
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result 1 has no open call in step 1."
+            }
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":{\"x\":1}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":{\"x\":1}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":[1]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":[1]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n"
+      }
+    },
+    {
+      "name": "numeric-id-mismatch",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": 1
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": 2
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result 2 has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": 1
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":1},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":1},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n"
+      }
+    },
+    {
+      "name": "id-coercion-error",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": {
+                "toString": null
+              }
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot convert object to primitive value"
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": [
+                {
+                  "toString": 1
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot convert object to primitive value"
+            }
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-3\"}\n"
+      }
+    },
+    {
+      "name": "request-failure-source-order",
+      "options": {
+        "tickingClock": true,
+        "uuids": [
+          "id-1",
+          "id-2",
+          "",
+          "id-4",
+          "id-5",
+          "id-6",
+          "id-7"
+        ]
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event entryId must be a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "model_request_missing",
+              "message": "Step 1 emitted a model event before its request."
+            }
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": 1
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "model_request_missing",
+              "message": "Step 1 emitted tool call 1 before its request."
+            }
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [],
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "failure-source-order",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has not started."
+            }
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_turn_start",
+              "message": "Turn turn-1 has already started."
+            }
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "a"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "a"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_tool_call",
+              "message": "Tool call a is already open."
+            }
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            null
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'id')"
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            null
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'toolCallId')"
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "missing"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result missing has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_has_open_tool_calls",
+              "message": "Step 1 completed with unresolved tool calls."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "a"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 6,
+            "lastEntryId": "id-12"
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"a\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"a\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:10.000Z\",\"entryId\":\"id-11\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:11.000Z\",\"entryId\":\"id-12\",\"parentEntryId\":\"id-11\"}\n"
+      }
+    },
+    {
+      "name": "restore-outside-turn",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "event_outside_turn",
+              "message": "model_request requires an active turn history."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-duplicate-turn",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_turn_start",
+              "message": "Turn history has already started."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-event-before-request",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_stream_event",
+              "step": 1,
+              "event": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "model_request_missing",
+              "message": "Step 1 emitted a model event before its request."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-open-tool",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "call": {
+                "id": "a"
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 4,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-4",
+              "parentEntryId": "history-3"
+            },
+            {
+              "type": "step_completed",
+              "step": 1,
+              "outcome": "completed",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 5,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-5",
+              "parentEntryId": "history-4"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_has_open_tool_calls",
+              "message": "Step 1 completed with unresolved tool calls."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-invalid-step",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1.5,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_step",
+              "message": "Step 1.5 must increase within turn history."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-step-already-open",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "step_started",
+              "step": 2,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_already_open",
+              "message": "Turn history already has open step 1."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-duplicate-request",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 4,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-4",
+              "parentEntryId": "history-3"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_model_request",
+              "message": "Step 1 already has a model request."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-wrong-step-type",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            },
+            {
+              "type": "model_stream_event",
+              "step": "1",
+              "event": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 4,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-4",
+              "parentEntryId": "history-3"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_not_open",
+              "message": "model_stream_event requires open step 1 in turn history."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-call-before-request",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "call": {
+                "id": 1
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "model_request_missing",
+              "message": "Step 1 emitted tool call 1 before its request."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-duplicate-call",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "call": {
+                "id": 1
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 4,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-4",
+              "parentEntryId": "history-3"
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "call": {
+                "id": 1
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 5,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-5",
+              "parentEntryId": "history-4"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_tool_call",
+              "message": "Tool call 1 is already open."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "restore-wrong-result-id",
+      "options": {
+        "tickingClock": true,
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "request": {},
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "turn_started",
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "step_started",
+              "step": 1,
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            },
+            {
+              "type": "model_request",
+              "step": 1,
+              "request": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 3,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-3",
+              "parentEntryId": "history-2"
+            },
+            {
+              "type": "tool_call",
+              "step": 1,
+              "call": {
+                "id": 1
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 4,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-4",
+              "parentEntryId": "history-3"
+            },
+            {
+              "type": "tool_result",
+              "step": 1,
+              "result": {
+                "toolCallId": 2
+              },
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 5,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-5",
+              "parentEntryId": "history-4"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result 2 has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 4,
+            "lastEntryId": "id-4"
+          }
+        },
+        {
+          "op": "modelEvent",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "results": [
+            {
+              "toolCallId": "live"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:01.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:02.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:03.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:04.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"toolCallId\":\"live\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:05.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:06.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+      }
+    },
+    {
+      "name": "envelope-empty-id",
+      "options": {
+        "uuids": [
+          "",
+          "valid"
+        ]
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event entryId must be a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 0,
+            "lastEntryId": null
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 1,
+            "diagnostics": 0,
+            "sequence": 1
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"valid\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "envelope-self-parent",
+      "options": {
+        "uuids": [
+          "same",
+          "same",
+          "next"
+        ]
+      },
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "second",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "self_parent",
+              "message": "Session event same cannot reference itself as parent."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 1,
+            "lastEntryId": "same"
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "second",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 2,
+            "diagnostics": 0,
+            "sequence": 2
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"same\",\"parentEntryId\":null}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"second\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"next\",\"parentEntryId\":\"same\"}\n"
+      }
+    },
+    {
+      "name": "envelope-history-duplicate",
+      "options": {
+        "uuids": [
+          "history-1",
+          "new"
+        ]
+      },
+      "steps": [
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "session_metadata",
+              "metadata": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            },
+            {
+              "type": "session_metadata",
+              "metadata": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-2",
+              "parentEntryId": "history-1"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "duplicate_entry_id",
+              "message": "Session event entryId must be unique: history-1."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 2,
+            "lastEntryId": "history-2"
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 1,
+            "diagnostics": 0,
+            "sequence": 3
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"new\",\"parentEntryId\":\"history-2\"}\n"
+      }
+    },
+    {
+      "name": "envelope-unsafe-sequence",
+      "options": {
+        "deterministicIds": true
+      },
+      "steps": [
+        {
+          "op": "restore",
+          "entries": [
+            {
+              "type": "session_metadata",
+              "metadata": {},
+              "sessionId": "s1",
+              "turnId": "history",
+              "sequence": 9007199254740991,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "history-1",
+              "parentEntryId": null
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 9007199254740992."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 9007199254740991,
+            "lastEntryId": "history-1"
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 0,
+            "diagnostics": 1,
+            "sequence": 0
+          }
+        }
+      ],
+      "files": {}
     }
   ]
 }
