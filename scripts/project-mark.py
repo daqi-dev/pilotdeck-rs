@@ -44,7 +44,12 @@ def gql(query: str, variables: dict) -> dict:
         r = subprocess.run(["gh", "api", "graphql", "--input", "-"],
                            input=json.dumps({"query": query, "variables": variables}), capture_output=True, text=True)
         if r.returncode == 0:
-            data = json.loads(r.stdout)
+            try:
+                data = json.loads(r.stdout)
+            except ValueError:
+                last = f"响应不是 JSON：{r.stdout[:200]!r}"
+                time.sleep(3)
+                continue
             if "errors" not in data:
                 return data["data"]
             last = json.dumps(data["errors"], ensure_ascii=False)[:400]
@@ -117,6 +122,9 @@ def main() -> int:
         return run(a)
     except GhFailed as e:
         print(f"project-mark: 警告：看板未更新（{e}）", file=sys.stderr)
+        return 1 if a.strict else 0
+    except Exception as e:  # noqa: BLE001 —— 尽力而为：任何意外都不打断协调者主流程
+        print(f"project-mark: 警告：看板未更新（{type(e).__name__}: {e}）", file=sys.stderr)
         return 1 if a.strict else 0
 
 
