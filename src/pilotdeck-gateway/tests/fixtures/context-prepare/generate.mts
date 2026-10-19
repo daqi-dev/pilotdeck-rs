@@ -11,6 +11,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -142,6 +143,7 @@ const files: Record<string, string | Buffer> = {
   'project/.pilotdeck/rules/20-second.md': 'second rule\n',
   'project/.pilotdeck/rules/SKILL.md': 'excluded skill\n',
   'project/.pilotdeck/rules/notes.txt': 'excluded text\n',
+  'project/.pilotdeck/rules/link-target.txt': 'symlink target content\n',
   'project/.pilotdeck/rules/B.md': 'upper B rule\n',
   'project/.pilotdeck/rules/a.md': 'lower a rule\n',
   'project/.pilotdeck/rules/😀.md': 'astral rule\n',
@@ -153,6 +155,9 @@ const files: Record<string, string | Buffer> = {
   'project/sub/deep/PILOTDECK.md': invalid,
   'project/sub/deep/.pilotdeck/PILOTDECK.md': '\uFEFF  bom wrapped  \uFEFF\n',
   'project/sub/deep/PILOTDECK.local.md': ' \n\t\n ',
+  'project2/PILOTDECK.md': 'outside cwd instructions\n',
+  'project-file-rules/PILOTDECK.md': 'file-rules project instructions\n',
+  'project-file-rules/.pilotdeck/rules': 'a regular file where a directory is expected\n',
   'home/PILOTDECK.md': 'user global instructions\n',
   'home/rules/b.md': 'user rule b\n',
   'home/rules/a.md': 'user rule a\n',
@@ -167,12 +172,25 @@ const directories = [
   'emptyproject/.pilotdeck/rules',
   'home/rules',
   'managed',
+  'project/.pilotdeck/rules/x.md',
+  'project2',
+  'project-file-rules',
+];
+// Dirent.kind for a symlink is "symlink", so TS `tryAddRulesDir` never reads
+// these even though the name ends in `.md`; the replayed Rust uses
+// `DirEntry::file_type()` (lstat) for the same filter.
+const symlinks = [
+  { path: 'project/.pilotdeck/rules/link.md', target: 'link-target.txt' },
 ];
 async function materialize(root: string): Promise<void> {
   for (const dir of directories) await mkdir(join(root, dir), { recursive: true });
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
+  }
+  for (const link of symlinks) {
+    await mkdir(dirname(join(root, link.path)), { recursive: true });
+    await symlink(link.target, join(root, link.path));
   }
 }
 await materialize(output);
@@ -205,9 +223,25 @@ type Extension = {
   mcp?: any[];
   promptContributions?: { name: string; content: string }[];
 };
+type DynamicText =
+  | { kind: 'string'; value: string }
+  /** Runtime non-string despite the TS `string` type; `resolveText` rejects it. */
+  | { kind: 'non-string'; value: unknown }
+  | { kind: 'throw'; message: string };
 type Contributions = {
-  sections?: { name: string; order: number; text: string; complete?: boolean }[];
-  runtimeContexts?: { name: string; order: number; text: string }[];
+  sections?: {
+    name: string;
+    order: number;
+    text?: string;
+    dynamic?: DynamicText;
+    complete?: boolean;
+  }[];
+  runtimeContexts?: {
+    name: string;
+    order: number;
+    text?: string;
+    dynamic?: DynamicText;
+  }[];
   variables?: { name: string; value: string }[];
 };
 type Discovery = {
@@ -538,6 +572,66 @@ const cases: Case[] = [
     steps: [{ clockMs: baseClock, input: baseInput({ cwd: '<fixture>/emptyproject' }) }],
   },
   {
+    // `project/.pilotdeck/rules` contains a symlink named `link.md` and a
+    // directory named `x.md`; `tryAddRulesDir` filters both by Dirent.kind.
+    name: 'instructions-rules-boundaries',
+    setup: {
+      discovery: {
+        projectRoot: '<fixture>/project',
+        cwd: '<fixture>/project',
+        pilotHome: '<fixture>/emptyhome',
+        managed: null,
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({ cwd: '<fixture>/project', messages: [user(text('rules boundaries'))] }),
+      },
+    ],
+  },
+  {
+    // `.pilotdeck/rules` is a regular file: readDirectory throws ENOTDIR and
+    // TS swallows it like a missing directory.
+    name: 'instructions-file-rules',
+    setup: {
+      discovery: {
+        projectRoot: '<fixture>/project-file-rules',
+        cwd: '<fixture>/project-file-rules',
+        pilotHome: '<fixture>/emptyhome',
+        managed: null,
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({
+          cwd: '<fixture>/project-file-rules',
+          messages: [user(text('file rules'))],
+        }),
+      },
+    ],
+  },
+  {
+    // cwd is outside projectRoot: the chain still walks root -> filesystem
+    // root -> cwd, so the sibling project2 instructions are loaded last.
+    name: 'instructions-outside-cwd',
+    setup: {
+      discovery: {
+        projectRoot: '<fixture>/project',
+        cwd: '<fixture>/project2',
+        pilotHome: '<fixture>/emptyhome',
+        managed: null,
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({ cwd: '<fixture>/project2', messages: [user(text('outside cwd'))] }),
+      },
+    ],
+  },
+  {
     name: 'input-boundaries',
     steps: [
       {
@@ -661,6 +755,90 @@ const cases: Case[] = [
     ],
   },
   {
+    // A rejected dynamic text provider propagates its own error; TS does not
+    // wrap it in the `must resolve to a string` message.
+    name: 'contributions-dynamic-provider-error',
+    setup: {
+      contributions: {
+        sections: [
+          {
+            name: 'dynamic',
+            order: 0,
+            dynamic: { kind: 'throw', message: 'dynamic provider boom' },
+          },
+        ],
+      },
+    },
+    steps: [{ clockMs: baseClock, input: baseInput() }],
+  },
+  {
+    // Resolving to a non-string is the *only* case with the TypeError text.
+    name: 'contributions-dynamic-provider-non-string',
+    setup: {
+      contributions: {
+        runtimeContexts: [
+          { name: 'dynamic', order: 0, dynamic: { kind: 'non-string', value: 42 } },
+        ],
+      },
+    },
+    steps: [{ clockMs: baseClock, input: baseInput() }],
+  },
+  {
+    // Dynamic providers keep working when they resolve to a string (the
+    // `JsValue` conversion is not only on the error path).
+    name: 'contributions-dynamic-provider-string',
+    setup: {
+      contributions: {
+        sections: [
+          { name: 'dynamic', order: 0, dynamic: { kind: 'string', value: 'DYN {{model}}' } },
+        ],
+      },
+    },
+    steps: [{ clockMs: baseClock, input: baseInput() }],
+  },
+  {
+    // TS captures tool schemas before sorting / the multiple-complete check /
+    // provider resolution, so the duplicate schema error wins.
+    name: 'contributions-tool-capture-first',
+    setup: {
+      contributions: {
+        sections: [
+          { name: 'dynamic', order: 0, dynamic: { kind: 'throw', message: 'provider ran too early' } },
+          { name: 'b', order: 1, text: 'B', complete: true },
+          { name: 'a', order: 2, text: 'A', complete: true },
+        ],
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({ tools: [{ name: 'same' }, { name: 'same' }] }),
+      },
+    ],
+  },
+  {
+    // Same ordering proof without a second early error: a late capture would
+    // invoke this provider and surface its thrown message instead.
+    name: 'contributions-tool-capture-before-provider',
+    setup: {
+      contributions: {
+        sections: [
+          {
+            name: 'dynamic',
+            order: 0,
+            dynamic: { kind: 'throw', message: 'provider ran too early' },
+          },
+        ],
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({ tools: [{ name: 'same' }, { name: 'same' }] }),
+      },
+    ],
+  },
+  {
     name: 'date-rollover',
     steps: [
       { clockMs: Date.UTC(2026, 0, 1, 23, 59, 59), input: baseInput() },
@@ -718,7 +896,7 @@ const cases: Case[] = [
     ],
   },
 ];
-assert.equal(cases.length, 29, 'case count');
+assert.equal(cases.length, 37, 'case count');
 
 // ---------------------------------------------------------------- execute
 function substitute(value: any, root: string): any {
@@ -749,6 +927,16 @@ function resolver(extension: Extension | undefined) {
     listMcpInstructions: () => extension?.mcp ?? [],
   };
 }
+// `PromptTextProvider` is `string | ((context) => string | Promise<string>)`
+// at the type level, but a plain JS caller can return anything at runtime.
+function textProvider(spec: { text?: string; dynamic?: DynamicText }): any {
+  if (!spec.dynamic) return spec.text;
+  const dynamic = spec.dynamic;
+  return async () => {
+    if (dynamic.kind === 'throw') throw new Error(dynamic.message);
+    return dynamic.value;
+  };
+}
 
 const recordedCases: any[] = [];
 for (const spec of cases) {
@@ -764,7 +952,7 @@ for (const spec of cases) {
       promptContributions.registerSection({
         name: section.name,
         order: section.order,
-        text: section.text,
+        text: textProvider(section),
         complete: section.complete,
       });
     }
@@ -772,7 +960,7 @@ for (const spec of cases) {
       promptContributions.registerRuntimeContext({
         name: context.name,
         order: context.order,
-        text: context.text,
+        text: textProvider(context),
       });
     }
     for (const variable of setup.contributions.variables ?? []) {
@@ -853,6 +1041,7 @@ const oracle = {
   environment,
   directories: [...directories].sort(),
   files: sortedFiles,
+  symlinks,
   cases: recordedCases,
 };
 assert.equal(bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).sha256, binding.sha256);

@@ -445,8 +445,11 @@ pub struct ContributionContext {
     pub run_mode: Option<String>,
     pub additional_working_directories: Vec<String>,
 }
+/// A dynamic text provider returns a JS value, not a `String`: TS validates
+/// `typeof value !== "string"` *after* the provider resolves, so the value can
+/// be non-string at runtime even though the TS type says `string`.
 pub type DynamicTextProvider =
-    Arc<dyn Fn(&ContributionContext) -> ProviderFuture<String> + Send + Sync>;
+    Arc<dyn Fn(&ContributionContext) -> ProviderFuture<JsValue> + Send + Sync>;
 #[derive(Clone)]
 pub enum TextProvider {
     Static(String),
@@ -785,6 +788,7 @@ impl PromptContributionRegistry {
                     .collect::<Vec<_>>(),
             )
         };
+        let tools = capture_tool_schemas(options.tool_schemas)?;
         sections.sort_by(compare_sections);
         runtime_contexts.sort_by(compare_runtime_contexts);
         variables.sort_by(|left, right| compare_names(&left.0, &right.0));
@@ -840,7 +844,6 @@ impl PromptContributionRegistry {
                 assembled_variables.push((name, value));
             }
         }
-        let tools = capture_tool_schemas(options.tool_schemas)?;
         Ok(PromptContributionSnapshot {
             generation,
             sections: assembled_sections,
@@ -939,9 +942,16 @@ async fn resolve_text(
 ) -> Result<String, String> {
     match provider {
         TextProvider::Static(text) => Ok(text.clone()),
-        TextProvider::Dynamic(provider) => provider(context)
-            .await
-            .map_err(|error| format!("{label} must resolve to a string: {error}")),
+        // A rejected provider propagates its own error unchanged, exactly like
+        // TS `await provider(context)`. Only a resolved non-string hits the
+        // TypeError-shaped message below.
+        TextProvider::Dynamic(provider) => {
+            let value = provider(context).await?;
+            match &value {
+                JsValue::String(text) => Ok(String::from_utf16_lossy(text.units())),
+                _ => Err(format!("{label} must resolve to a string")),
+            }
+        }
     }
 }
 fn capture_tool_schemas(source: Option<&[JsValue]>) -> Result<Vec<JsValue>, String> {
