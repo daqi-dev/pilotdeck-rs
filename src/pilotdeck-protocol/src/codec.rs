@@ -294,23 +294,10 @@ pub(super) fn stringify(value: &JsValue) -> Result<Option<String>, CodecError> {
                     }
                 }
                 JsValue::Object(object) => {
-                    let mut indexed = Vec::new();
-                    let mut ordinary = Vec::new();
-                    for entry in object.entries() {
-                        if entry.1.is_undefined() {
-                            continue;
-                        }
-                        if let Some(index) = entry.0.array_index() {
-                            indexed.push((index, entry));
-                        } else {
-                            ordinary.push(entry);
-                        }
-                    }
-                    indexed.sort_unstable_by_key(|entry| entry.0);
-                    let ordered = indexed
+                    let ordered = object
+                        .own_entries()
                         .into_iter()
-                        .map(|(_, entry)| entry)
-                        .chain(ordinary)
+                        .filter(|(_, item)| !item.is_undefined())
                         .collect::<Vec<_>>();
                     output.push('{');
                     pending.push(Emit::Character('}'));
