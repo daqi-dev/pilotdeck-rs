@@ -6,7 +6,7 @@
 
 ## 内容
 
-`oracle.json` 共 **23** 个场景、155 步（Rust 精确断言条数与 id 不重复）。生成器构造
+`oracle.json` 共 **23** 个场景、157 步（Rust 精确断言条数与 id 不重复）。生成器构造
 真实 bundle，注入记录调用的假依赖（config store、registry、router、通知 server、
 SDK 回调、memory maintenance / diagnostics、log / warn），每步记下该步引起的全部调用
 （按发生顺序）与返回值。`real-store-*` 两个场景改用真实 `createPilotConfigStoreSync`
@@ -20,7 +20,7 @@ SDK 回调、memory maintenance / diagnostics、log / warn），每步记下该�
 markAllDirty → broadcast）与失败只 warn；两次变更乱序结算、先败后成；无 router / 无
 诊断 / 无 SDK / 无 server；dispose 后结算不广播；registry 同步抛错被 store 吞掉；
 reloadConfig 捕获最后一次事件、失败也退订；refreshConfigBeforeTurn；reloadExtensions
-（空 key 走全量、孤立代理项 key 与路径原样）；afterTurnCompleted（对象展开键序、
+（空 key 走全量、孤立代理项 key 与路径原样；`[""]` 与 `["",""]` 证实 `(manual)` 按拼接后字符串判空，#333）；afterTurnCompleted（对象展开键序、
 undefined 成员、`projectKey ?? projectRoot` 保留空串）。
 
 ## 生成与回放
