@@ -4,14 +4,13 @@
 // only that root is removed.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture output directory');
@@ -35,47 +34,8 @@ const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
 
 // sourceSha256 covers the relative-import closure of the store entry point.
-async function resolveSource(absolute: string): Promise<string | undefined> {
-  const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
-  for (const candidate of [absolute, `${absolute}.ts`, `${absolute}.tsx`, `${absolute}.mts`, join(absolute, 'index.ts'),
-    ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : [])]) {
-    try {
-      if ((await lstat(candidate)).isFile()) return candidate;
-    } catch {
-      // next candidate
-    }
-  }
-  return undefined;
-}
-async function sourceClosure(entry: string): Promise<string[]> {
-  const seen = new Set<string>([entry]);
-  const queue = [entry];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const text = await readFile(join(baseline, current), 'utf8');
-    for (const match of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g)) {
-      const specifier = match[2];
-      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
-      const resolved = await resolveSource(join(baseline, dirname(current), specifier));
-      assert.ok(resolved, `unresolved baseline import ${specifier} in ${current}`);
-      const path = relative(baseline, resolved).split(sep).join('/');
-      if (!seen.has(path)) {
-        seen.add(path);
-        queue.push(path);
-      }
-    }
-  }
-  return [...seen].sort();
-}
 const ENTRY = 'src/pilot/config/PilotConfigStore.ts';
-const sourceSha256: Record<string, string> = {};
-for (const path of await sourceClosure(ENTRY)) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const working = await readFile(join(baseline, path));
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256: Record<string, string> = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [ENTRY]);
 const { createPilotConfigStoreSync } = await import(pathToFileURL(join(baseline, ENTRY)).href);
 
 const BASE = `schemaVersion: 1

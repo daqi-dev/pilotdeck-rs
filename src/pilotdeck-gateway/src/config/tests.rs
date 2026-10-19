@@ -363,3 +363,48 @@ fn load_project_reports_legacy_webui_proxy_migration_like_ts() {
         assert_eq!(actual, expected, "{extra}");
     }
 }
+
+/// #327 (sibling of #310): `load_project` anchors a relative `cwd` like
+/// `path.resolve`, exactly as `load_snapshot` does, so reported paths are the
+/// same as with the absolute cwd.
+#[test]
+fn load_project_anchors_relative_cwd_like_load_snapshot() {
+    let root = std::env::temp_dir().join(format!("pdrs-load-project-cwd-{}", std::process::id()));
+    std::fs::create_dir(&root).expect("own temp root");
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    std::fs::create_dir_all(root.join("proj/.pilotdeck")).unwrap();
+    std::fs::write(root.join("proj/.pilotdeck/pilotdeck.yaml"), "agent: [\n").unwrap();
+    std::fs::write(
+        root.join("pilotdeck.yaml"),
+        "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+    )
+    .unwrap();
+    let process_cwd = std::env::current_dir().unwrap();
+    let mut relative = PathBuf::new();
+    for _ in process_cwd.components().skip(1) {
+        relative.push("..");
+    }
+    relative.push(root.strip_prefix("/").unwrap());
+    assert!(relative.is_relative());
+    let env = Env::from([("PILOT_HOME".to_owned(), root.to_string_lossy().into_owned())]);
+    let diagnostics = |cwd: &Path| match load_project(&root, cwd, &env, Some("proj")) {
+        Ok(config) => stringify_json(&JsValue::Array(config.diagnostics))
+            .unwrap()
+            .unwrap(),
+        Err(error) => stringify_json(&JsValue::Array(error.diagnostics))
+            .unwrap()
+            .unwrap(),
+    };
+    let absolute = diagnostics(&root);
+    assert!(absolute.contains(&format!(
+        "{}/proj/.pilotdeck/pilotdeck.yaml",
+        root.display()
+    )));
+    assert_eq!(diagnostics(&relative), absolute);
+}

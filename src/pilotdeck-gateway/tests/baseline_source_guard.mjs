@@ -42,3 +42,38 @@ export function bindSourceTree(baseline, ref, gitExecutable) {
   if (Object.keys(files).length!==expected.size) throw Error('missing tracked source file');
   return {ref,git:{path:gitExecutable,sha256:gitSha256},count:expected.size,sha256:createHash('sha256').update(JSON.stringify(files)).digest('hex')};
 }
+// Relative-import closure of baseline entry files (bare/node: imports are
+// external), each verified against and hashed from the commit blob. Shared by
+// fixture generators whose `sourceSha256` covers the calibrating closure.
+export function sourceClosureSha256(baseline, ref, gitExecutable, entries) {
+  const resolveSource = (absolute) => {
+    const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
+    for (const candidate of [absolute, `${absolute}.ts`, `${absolute}.tsx`, `${absolute}.mts`, path.join(absolute, 'index.ts'),
+      ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : [])]) {
+      try { if (fs.lstatSync(candidate).isFile()) return candidate; } catch { /* next candidate */ }
+    }
+    return undefined;
+  };
+  const seen = new Set(entries), queue = [...entries];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const text = fs.readFileSync(path.join(baseline, current), 'utf8');
+    for (const match of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g)) {
+      const specifier = match[2];
+      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
+      const resolved = resolveSource(path.join(baseline, path.dirname(current), specifier));
+      if (!resolved) throw Error(`unresolved baseline import ${specifier} in ${current}`);
+      const relative = path.relative(baseline, resolved).split(path.sep).join('/');
+      if (!seen.has(relative)) { seen.add(relative); queue.push(relative); }
+    }
+  }
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
+  const hashes = {};
+  for (const relative of [...seen].sort()) {
+    if (!relative.startsWith('src/')) throw Error(`import closure escaped src/: ${relative}`);
+    const committed = execFileSync(gitExecutable, ['--no-replace-objects','-C',baseline,'show',`${ref}:${relative}`], {env,maxBuffer:32*1024*1024});
+    if (!fs.readFileSync(path.join(baseline, relative)).equals(committed)) throw Error(`${relative} differs from ${ref}`);
+    hashes[relative] = createHash('sha256').update(committed).digest('hex');
+  }
+  return hashes;
+}
