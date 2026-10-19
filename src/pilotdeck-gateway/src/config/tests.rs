@@ -309,3 +309,57 @@ fn catalog_unicode_ids_and_filtered_lists_stay_local() {
         }
     }
 }
+
+/// #304: the role-limited `load_project` projection must carry
+/// `webui.runtime.httpsProxy` so the legacy proxy migration diagnostic matches
+/// TS `loadPilotConfig`. Expectations recorded from the fixed baseline
+/// (`_tmp/20261019-p2-sweep-6/probe-304.mts`, real TS run).
+#[test]
+fn load_project_reports_legacy_webui_proxy_migration_like_ts() {
+    const BASE: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n";
+    const MIGRATED: &str = "webui.runtime.httpsProxy has been migrated to the top-level proxy.url field. Please update your pilotdeck.yaml to use proxy.url instead.";
+    for (extra, expected) in [
+        (
+            "webui: {runtime: {httpsProxy: http://legacy}}\n",
+            vec![(
+                "CONFIG_PROXY_MIGRATED",
+                "info",
+                MIGRATED,
+                "webui.runtime.httpsProxy",
+            )],
+        ),
+        (
+            "proxy: http://new\nwebui: {runtime: {httpsProxy: http://legacy}}\n",
+            vec![],
+        ),
+        ("webui: {runtime: {httpsProxy: ''}}\n", vec![]),
+        ("webui: {runtime: {httpsProxy: 5}}\n", vec![]),
+        ("webui: {runtime: [a]}\n", vec![]),
+        (
+            "webui: {staffdeckCopy: {enabled: true}, runtime: {other: {x: 1}}}\n",
+            vec![],
+        ),
+    ] {
+        let metadata = Metadata {
+            home: PathBuf::from("<PILOT_HOME>"),
+            cwd: PathBuf::from("/offline"),
+            files: FixtureFiles {
+                data: format!("{BASE}{extra}").into_bytes(),
+                kind: None,
+            },
+        };
+        let config = load_project_with_files(&metadata, &Env::new(), None).unwrap();
+        let actual: Vec<_> = config
+            .diagnostics
+            .iter()
+            .map(|d| {
+                ["code", "severity", "message", "path"].map(|key| text(field(d, key)).unwrap())
+            })
+            .collect();
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(a, b, c, d)| [a, b, c, d].map(|s| s.to_string()))
+            .collect();
+        assert_eq!(actual, expected, "{extra}");
+    }
+}

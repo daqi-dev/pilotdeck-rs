@@ -69,7 +69,7 @@ fn safe(raw: JsValue) -> PortResult<Option<ProjectedMessage>> {
     Ok(evaluate(&ledger(), BudgetStop::Turn, &project(raw), 0, None)?.safe_message)
 }
 fn fixed(value: f64, expected: &str) {
-    assert_eq!(budget_terminal_policy::to_fixed_6(value).unwrap(), expected);
+    assert_eq!(pilotdeck_protocol::number::to_fixed_6(value), expected);
 }
 
 #[test]

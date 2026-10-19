@@ -90,7 +90,7 @@ fn parse_file_map(value: &JsValue, write: bool) -> Result<JsObject, HostError> {
         .ok_or_else(|| ModuleError::new(format!("Invalid sidecar seedState.{label}.")))?;
     let mut entries: Vec<_> = source.entries().iter().collect();
     if source.native_tag() != Some("Map") {
-        entries.sort_by_key(|(key, _)| array_index(key).map_or((1, 0), |index| (0, index)));
+        entries.sort_by_key(|(key, _)| key.array_index().map_or((1, 0), |index| (0, index)));
     }
     let mut result = JsObject::new();
     for (path, value) in entries {
@@ -641,11 +641,6 @@ fn plain_record(value: &JsValue) -> Option<&JsObject> {
     value
         .as_object()
         .filter(|v| matches!(v.prototype(), None | Some(JsValue::Null)) && v.native_tag().is_none())
-}
-fn array_index(key: &JsString) -> Option<u32> {
-    let text = key.to_utf8().ok()?;
-    let index = text.parse::<u32>().ok()?;
-    (index != u32::MAX && index.to_string() == text).then_some(index)
 }
 fn strings(paths: &[JsString]) -> JsValue {
     JsValue::Array(paths.iter().cloned().map(JsValue::String).collect())

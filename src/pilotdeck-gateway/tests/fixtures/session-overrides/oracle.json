@@ -8105,6 +8105,4106 @@
           }
         }
       }
+    },
+    {
+      "step": {
+        "op": "acquire",
+        "lease": "N1",
+        "key": "s7",
+        "configured": {
+          "allow": null,
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "Bash"
+            }
+          ],
+          "ask": null
+        }
+      },
+      "outcome": {
+        "rules": {
+          "allow": [],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "Bash"
+            }
+          ],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": []
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "grant",
+        "key": "s7",
+        "rule": {
+          "source": "user",
+          "behavior": "allow",
+          "toolName": "Read"
+        }
+      },
+      "outcome": true,
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "leaseRules",
+        "lease": "N1"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "Bash"
+            }
+          ],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "acquire",
+        "lease": "N2",
+        "key": "s7",
+        "configured": {
+          "allow": null,
+          "deny": null,
+          "ask": null
+        }
+      },
+      "outcome": {
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "Bash"
+            }
+          ],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "leaseRules",
+        "lease": "N2"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "Bash"
+            }
+          ],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "release",
+        "lease": "N1"
+      },
+      "outcome": {
+        "released": true
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "release",
+        "lease": "N2"
+      },
+      "outcome": {
+        "released": true
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "close",
+        "key": "s7"
+      },
+      "outcome": {},
+      "size": 0,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": []
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "acquire",
+        "lease": "N3",
+        "key": "s8",
+        "configured": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            }
+          ]
+        }
+      },
+      "outcome": {
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            }
+          ],
+          "deny": [],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "grant",
+        "key": "s8",
+        "rule": {
+          "source": "user",
+          "behavior": "allow",
+          "toolName": "Read"
+        }
+      },
+      "outcome": true,
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "grant",
+        "key": "s8",
+        "rule": {
+          "source": "user",
+          "behavior": "allow",
+          "toolName": "Read",
+          "pattern": null
+        }
+      },
+      "outcome": false,
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "grant",
+        "key": "s8",
+        "rule": {
+          "source": "user",
+          "behavior": "allow",
+          "toolName": "Read",
+          "pattern": {
+            "$": "undefined"
+          }
+        }
+      },
+      "outcome": false,
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "leaseRules",
+        "lease": "N3"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "deny": [],
+          "ask": []
+        }
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "release",
+        "lease": "N3"
+      },
+      "outcome": {
+        "released": true
+      },
+      "size": 1,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read",
+              "pattern": null
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "close",
+        "key": "s8"
+      },
+      "outcome": {},
+      "size": 0,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": []
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "size"
+      },
+      "outcome": 0,
+      "size": 0,
+      "state": {
+        "allow": {
+          "missing": [],
+          "s1": [],
+          "s2": [],
+          "s3": [],
+          "s4": [],
+          "s5": [],
+          "": [],
+          "\ud800": [],
+          "s6": [],
+          "s7": [],
+          "s8": []
+        },
+        "leases": {
+          "L1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "src/*.rs"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Edit"
+              }
+            ],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "cli",
+                "behavior": "ask",
+                "toolName": "WebFetch"
+              }
+            ]
+          },
+          "L3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "L4": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              },
+              {
+                "source": "project",
+                "behavior": "allow",
+                "toolName": "Write",
+                "pattern": "src/**"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": {
+                  "$": "undefined"
+                }
+              },
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash",
+                "force": {
+                  "$": "undefined"
+                }
+              }
+            ],
+            "ask": []
+          },
+          "L5": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "L6": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N2": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [
+              {
+                "source": "project",
+                "behavior": "deny",
+                "toolName": "Bash"
+              }
+            ],
+            "ask": []
+          },
+          "N3": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": null
+              },
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
     }
   ],
   "mode": [
@@ -10431,6 +14531,1192 @@
           "$": "undefined"
         },
         "\ud800": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "key": "ab",
+        "value": {
+          "cwd": "/ab"
+        }
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "key": "abc",
+        "value": {
+          "cwd": "/abc"
+        }
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        },
+        "abc": {
+          "cwd": "/abc"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "key": "b",
+        "value": {
+          "cwd": "/b"
+        }
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        },
+        "abc": {
+          "cwd": "/abc"
+        },
+        "b": {
+          "cwd": "/b"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "key": "\ud800x",
+        "value": {
+          "cwd": "/surrogate-x"
+        }
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        },
+        "abc": {
+          "cwd": "/abc"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "deletePrefix",
+        "prefix": "abcd"
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        },
+        "abc": {
+          "cwd": "/abc"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "abc"
+      },
+      "outcome": {
+        "cwd": "/abc"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "cwd": "/ab"
+        },
+        "abc": {
+          "cwd": "/abc"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "deletePrefix",
+        "prefix": "ab"
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "ab"
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "abc"
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "b"
+      },
+      "outcome": {
+        "cwd": "/b"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "cwd": "/surrogate-x"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "deletePrefix",
+        "prefix": "\ud800"
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "\ud800x"
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "key": "",
+        "value": {
+          "cwd": "/empty-again"
+        }
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "cwd": "/empty-again"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "cwd": "/b"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "deletePrefix",
+        "prefix": ""
+      },
+      "outcome": {},
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "$": "undefined"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": ""
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "$": "undefined"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "b"
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "$": "undefined"
+        },
+        "\ud800x": {
+          "$": "undefined"
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "key": "abc"
+      },
+      "outcome": {
+        "$": "undefined"
+      },
+      "state": {
+        "o1": {
+          "$": "undefined"
+        },
+        "o2": {
+          "$": "undefined"
+        },
+        "o3": {
+          "$": "undefined"
+        },
+        "o4": {
+          "$": "undefined"
+        },
+        "o5": {
+          "$": "undefined"
+        },
+        "o6": {
+          "$": "undefined"
+        },
+        "o7": {
+          "$": "undefined"
+        },
+        "o8": {
+          "$": "undefined"
+        },
+        "o9": {
+          "$": "undefined"
+        },
+        "missing": {
+          "$": "undefined"
+        },
+        "p1": {
+          "$": "undefined"
+        },
+        "p2": {
+          "$": "undefined"
+        },
+        "px": {
+          "$": "undefined"
+        },
+        "q1": {
+          "$": "undefined"
+        },
+        "": {
+          "$": "undefined"
+        },
+        "\ud800": {
+          "$": "undefined"
+        },
+        "ab": {
+          "$": "undefined"
+        },
+        "abc": {
+          "$": "undefined"
+        },
+        "b": {
+          "$": "undefined"
+        },
+        "\ud800x": {
           "$": "undefined"
         }
       }
@@ -29582,6 +34868,2747 @@
                 "toolName": "Read"
               }
             ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "set",
+        "store": "M",
+        "key": "nullAllow",
+        "value": {
+          "permissionRules": {
+            "allow": null,
+            "deny": null
+          }
+        }
+      },
+      "outcome": {},
+      "size": 7,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "acquire",
+        "store": "M",
+        "key": "nullAllow",
+        "session": "nullAllow",
+        "lease": "N1"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        }
+      },
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": []
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "grant",
+        "session": "nullAllow",
+        "rule": {
+          "source": "session",
+          "behavior": "allow",
+          "toolName": "Read"
+        }
+      },
+      "outcome": true,
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "close",
+        "session": "nullAllow"
+      },
+      "outcome": {},
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ]
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "release",
+        "lease": "N1"
+      },
+      "outcome": {
+        "released": true
+      },
+      "size": 7,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": []
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "acquire",
+        "store": "M",
+        "key": "nullAllow",
+        "session": "nullAllow",
+        "lease": "N2"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        }
+      },
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": []
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "leaseRules",
+        "lease": "N2"
+      },
+      "outcome": {
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        }
+      },
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": []
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      }
+    },
+    {
+      "step": {
+        "op": "get",
+        "store": "M",
+        "key": "nullAllow"
+      },
+      "outcome": {
+        "permissionRules": {
+          "allow": null,
+          "deny": null
+        }
+      },
+      "size": 8,
+      "state": {
+        "stores": {
+          "M:empty": {
+            "cwd": "/empty",
+            "permissionRules": {}
+          },
+          "M:allowOnly": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:all": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": [
+                {
+                  "source": "policy",
+                  "behavior": "ask",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "M:undefinedAllow": {
+            "permissionRules": {
+              "allow": {
+                "$": "undefined"
+              }
+            }
+          },
+          "A:a": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "B:b": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Write"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash"
+                }
+              ]
+            }
+          },
+          "B:c": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "A:s": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ],
+              "deny": [],
+              "ask": []
+            },
+            "cwd": "/two"
+          },
+          "A:d": {
+            "$": "undefined"
+          },
+          "A:e": {
+            "permissionRules": {
+              "allow": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Grep"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Read"
+                }
+              ]
+            }
+          },
+          "M:nullAllow": {
+            "permissionRules": {
+              "allow": null,
+              "deny": null
+            }
+          }
+        },
+        "allow": {
+          "empty": [],
+          "allowOnly": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "all": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "undefinedAllow": [],
+          "b": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Write"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Bash"
+            }
+          ],
+          "s": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "e": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Grep"
+            },
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "Read"
+            }
+          ],
+          "nullAllow": []
+        },
+        "leases": {
+          "E1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "E2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "A1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "A2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "B1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "B2": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              }
+            ]
+          },
+          "U1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "U2": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "B3": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Write"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Bash"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "S1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "D1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Grep"
+              },
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N1": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "Read"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "N2": {
+            "allow": [],
             "deny": [],
             "ask": []
           }
