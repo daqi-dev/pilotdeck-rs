@@ -13,7 +13,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 配置不是手写对象：每个 case 将 YAML 写入独占临时 home，调用真实 `loadPilotConfig({configPath, env, version:1})`，把 `snapshot.config.router` 传给 `createRouterRuntime`，同一份 JSON 存进 `oracle.json` 供 Rust 用 `RouterConfig::from_snapshot` 读取。临时目录用 `mkdtemp` 创建，`finally` 只删本进程创建的那一棵。
 
-## 覆盖（12 个 case）
+## 覆盖（25 个 case）
 
 - `disabled-router`：`router.enabled=false`，决策纯透传（含 subagent 形状）。
 - `scenario-resolution`：default、`isMainAgent=false`、`<ccr-subagent-model>` 标签、显式 `metadata.explicitProvider/Model`；覆盖 `missingAgentTool` 造成的 `subagentTagStripped`。
@@ -27,6 +27,19 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 - `validate-policy`：host `isModelAllowed` 拒绝、managed deny/allow 拒绝与放行。
 - `materialize`：cache plan provider/model 匹配时保留并取 `messages`，不匹配时 plan/breakpoints 清空；`maxOutputTokens` 按 `getCapabilities` clamp。
 - `custom-router`：自定义 router 选中模型，`resolvedFrom=custom`。
+- `sticky-expiry`：`advanceClock` 步推进注入时钟；正好 1h 仍命中（严格 `<`），命中刷新 TTL，再过期后重判。
+- `judge-caller-abort`：judge 超时后记录调用方 `AbortSignal.aborted`，必须是 `false`（P1-1 回归）。
+- `judge-retryable-provider`：可重试 provider 错误打满 3 次；message `无效token=sk-abc` 的真实 TS 脱敏结果为 `无效token=<redacted>`。
+- `judge-request-error`：`ModelRequestError` 不重试（1 次后回退）。
+- `judge-parse-error`：空文本 3 次，`parse_error` fallback `attempts=3` 且无 `errorCode/errorMessage`。
+- `judge-retry-success`：空文本第 1 次、第 2 次拿到 tier 后成功（1s 重试间隔）。
+- `subagent-judge-sticky`：subagent `policy=judge` 使用独立 `:sub` sticky 槽，与主 agent 互不污染。
+- `invalidate-orchestrating`：编排中 `invalidateSticky` 保留 provider/model/tier，下一轮 `continued:true`。
+- `cache-aware-switched`：目标模型 prefill 更便宜且已有缓存命中时 `cacheAwareSwitch=switched`。
+- `custom-failed`：自定义 router 抛错发 `pilotdeck_router_custom_failed` 并回退 scenario。
+- `disabled-invalidate`：`enabled=false` 时 `invalidateSticky` 返回 `{orchestrating:false}`。
+- `empty-description`：`description:""` 与 `previousTier:""` 按 JS 真值不追加到 judge prompt。
+- `judge-empty-error-fields`：错误 `code/message` 为空串时事件省略对应键。
 
 每个 step 记录结果、累计 judge 调用数与该 step 新发事件；case 级记录全部 judge prompt，Rust 回放逐字比较生成的 prompt。
 

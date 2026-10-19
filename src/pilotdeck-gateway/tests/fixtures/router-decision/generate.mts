@@ -342,6 +342,239 @@ customRouter: {extensionId: acme.router}`),
   steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
 });
 
+// 13. Sticky TTL: expires exactly at 1h with strict `<`; a sticky hit refreshes.
+add({
+  id: 'sticky-expiry',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ text: '<tier>simple</tier>' }, { text: '<tier>complex</tier>' }],
+  steps: [
+    { kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true },
+    { kind: 'advanceClock', ms: 3_600_000 },
+    { kind: 'decide', request: request([user('hello'), msg('assistant', text('hi')), user('again')]), sessionId: 's', isMainAgent: true },
+    { kind: 'advanceClock', ms: 3_600_001 },
+    { kind: 'decide', request: request([user('hello'), msg('assistant', text('hi')), user('again')]), sessionId: 's', isMainAgent: true },
+  ],
+});
+
+// 14. A judge timeout must not mark the caller's turn-level abort signal.
+add({
+  id: 'judge-caller-abort',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}
+  judgeTimeoutMs: 500`),
+  judgeScript: [{ hang: true }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true, abort: 'active' }],
+});
+
+// 15. Retryable provider error: 3 attempts, then fallback; CJK before `token`
+//     still gets redacted (`\b` is ASCII-only in JS without the `u` flag).
+add({
+  id: 'judge-retryable-provider',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ error: { kind: 'provider', code: 'server_error', message: '\u65e0\u6548token=sk-abc', retryable: true } }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
+// 16. ModelRequestError is not retried.
+add({
+  id: 'judge-request-error',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ error: { kind: 'request', code: 'invalid_request', message: 'bad token=sk-xyz' } }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
+// 17. Empty judge output three times: parse_error fallback with attempts=3 and
+//     no code/message keys.
+add({
+  id: 'judge-parse-error',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ empty: true }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
+// 17b. Retry success: empty first attempt, tier on the second.
+add({
+  id: 'judge-retry-success',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ empty: true }, { text: '<tier>complex</tier>' }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
+// 18. Subagent judge policy keeps a separate `:sub` sticky slot.
+add({
+  id: 'subagent-judge-sticky',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}
+  subagent: {policy: judge}`),
+  judgeScript: [{ text: '<tier>simple</tier>' }, { text: '<tier>complex</tier>' }],
+  steps: [
+    { kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello'), msg('assistant', text('hi')), user('again')]), sessionId: 's', isMainAgent: false },
+    { kind: 'decide', request: request([user('hello'), msg('assistant', text('hi')), user('again')]), sessionId: 's', isMainAgent: false },
+    { kind: 'decide', request: request([user('hello'), msg('assistant', text('hi')), user('again')]), sessionId: 's', isMainAgent: true },
+  ],
+});
+
+// 19. invalidateSticky while orchestrating keeps provider/model/tier.
+add({
+  id: 'invalidate-orchestrating',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: complex
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}
+autoOrchestrate:
+  enabled: true
+  triggerTiers: [complex]`),
+  judgeScript: [{ text: '<tier>complex</tier>' }],
+  steps: [
+    { kind: 'decide', request: request([user('plan a big refactor')]), sessionId: 's', isMainAgent: true },
+    { kind: 'invalidate', sessionId: 's' },
+    { kind: 'decide', request: request([user('plan'), msg('assistant', text('ok')), user('continue')]), sessionId: 's', isMainAgent: true },
+  ],
+});
+
+// 20. Cache-aware `switched`: the prefill target is cheaper than the cached
+//     current model.
+add({
+  id: 'cache-aware-switched',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}
+  cacheAwareSwitching: {enabled: true, minSavingsRatio: 0}
+stats:
+  enabled: true
+  modelPricing:
+    p1/m1: {input: 100, output: 300, cacheRead: 1}
+    p3/m3: {input: 1, output: 3, cacheRead: 1}`),
+  judgeScript: [{ text: '<tier>complex</tier>' }],
+  steps: [
+    { kind: 'observeUsage', sessionId: 's', usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 80, totalTokens: 110 } },
+    {
+      kind: 'decide',
+      request: request([user('hello')]),
+      sessionId: 's',
+      isMainAgent: true,
+      metadata: { previousProvider: 'p1', previousModel: 'm1', previousTier: 'simple' },
+    },
+  ],
+});
+
+// 21. A throwing custom router emits `pilotdeck_router_custom_failed` and falls
+//     back to the scenario.
+add({
+  id: 'custom-failed',
+  yaml: yaml(`scenarios: {default: p1/m1}
+customRouter: {extensionId: acme.router}`),
+  custom: { provider: 'p3', model: 'm3' },
+  customError: 'router exploded',
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
+// 22. Disabled router: invalidate is a no-op shape.
+add({
+  id: 'disabled-invalidate',
+  yaml: yaml(`enabled: false
+scenarios: {default: p1/m1}`),
+  steps: [
+    { kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true },
+    { kind: 'invalidate', sessionId: 's' },
+  ],
+});
+
+// 23. Empty description and empty previousTier are falsy in the judge prompt.
+add({
+  id: 'empty-description',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3, description: ""}`),
+  judgeScript: [{ text: '<tier>simple</tier>' }],
+  steps: [
+    {
+      kind: 'decide',
+      request: request([user('hello')]),
+      sessionId: 's',
+      isMainAgent: true,
+      metadata: { previousTier: '' },
+    },
+  ],
+});
+
+// 24. Truthiness of error code/message: empty strings are omitted from events.
+add({
+  id: 'judge-empty-error-fields',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: simple
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}`),
+  judgeScript: [{ error: { kind: 'provider', code: '', message: '', retryable: false } }],
+  steps: [{ kind: 'decide', request: request([user('hello')]), sessionId: 's', isMainAgent: true }],
+});
+
 const scratch = await mkdtemp(join(tmpdir(), 'pdrs-router-decision-'));
 const recorded: any[] = [];
 try {
@@ -361,6 +594,7 @@ try {
     const multimodal = item.multimodal ?? {};
     const judgeScript = item.judgeScript ?? [{ text: '<tier>simple</tier>' }];
     let judgeCall = 0;
+    let nowMs = 0;
     const judgeRequests: string[] = [];
     const events: any[] = [];
     const fake = {
@@ -393,12 +627,17 @@ try {
     const runtime = createRouterRuntime(routerConfig, {
       modelInvoker: fake as any,
       judgeInvoker: fake as any,
-      now: () => new Date(0),
+      now: () => new Date(nowMs),
       events: { emit: (event: any) => events.push(JSON.parse(JSON.stringify(event))) },
       isModelAllowed: (model: any) => !(item.denied ?? []).includes(`${model.provider}/${model.model}`),
       ...(item.custom ? {
         customRouterRegistry: {
-          lookupRouter: () => ({ decide: async () => ({ provider: item.custom.provider, model: item.custom.model }) }),
+          lookupRouter: () => ({
+            decide: async () => {
+              if (item.customError) throw new Error(item.customError);
+              return { provider: item.custom.provider, model: item.custom.model };
+            },
+          }),
         },
       } : {}),
     });
@@ -408,6 +647,11 @@ try {
     for (const step of item.steps) {
       const startEvents = eventIndex;
       let result: any;
+      let controller: AbortController | undefined;
+      if (step.kind === 'decide' && step.abort) {
+        controller = new AbortController();
+        if (step.abort === 'before') controller.abort();
+      }
       try {
         if (step.kind === 'decide') {
           lastDecision = await runtime.decide({
@@ -415,14 +659,18 @@ try {
             sessionId: step.sessionId,
             isMainAgent: step.isMainAgent,
             ...(step.metadata ? { metadata: step.metadata } : {}),
-            ...(step.abort ? { abortSignal: step.abort } : {}),
+            ...(controller ? { abortSignal: controller.signal } : {}),
           });
           result = { decision: JSON.parse(JSON.stringify(lastDecision)) };
+          if (controller) result.callerAborted = controller.signal.aborted;
         } else if (step.kind === 'invalidate') {
           result = { invalidated: JSON.parse(JSON.stringify(runtime.invalidateSticky(step.sessionId))) };
         } else if (step.kind === 'observeUsage') {
           runtime.observeUsage(step.sessionId, step.usage);
           result = { observed: true };
+        } else if (step.kind === 'advanceClock') {
+          nowMs += step.ms;
+          result = { clock: nowMs };
         } else if (step.kind === 'validate') {
           runtime.validateModelSelection({ provider: step.provider, model: step.model }, step.policy);
           result = { ok: true };
@@ -444,6 +692,7 @@ try {
       multimodal,
       denied: item.denied ?? [],
       custom: item.custom ?? null,
+      customError: item.customError ?? null,
       judgeScript,
       steps: item.steps,
       expected,
