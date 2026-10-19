@@ -2465,6 +2465,490 @@
       }
     },
     {
+      "name": "edit-dollar-substitution",
+      "backupDir": "file-history/edit-dollar-substitution",
+      "steps": [
+        {
+          "op": "file",
+          "path": "doc.txt",
+          "content": "A echo PID B\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        },
+        {
+          "op": "call",
+          "index": 1
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "input": {
+            "file_path": "doc.txt"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|A echo PID B\n2|"
+              }
+            ],
+            "data": {
+              "filePath": "doc.txt",
+              "kind": "text",
+              "startLine": 1,
+              "endLine": 2,
+              "totalLines": 2,
+              "truncated": false,
+              "autoPaged": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        },
+        {
+          "tool": "edit_file",
+          "input": {
+            "file_path": "doc.txt",
+            "old_string": "echo PID",
+            "new_string": "$$|$&|$`|$'|$1|$<n>"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Updated doc.txt (1 replacement)."
+              }
+            ],
+            "data": {
+              "filePath": "doc.txt",
+              "replacements": 1,
+              "changed": true
+            },
+            "metadata": {
+              "bytesWritten": 30,
+              "mtimeMs": "<mtime>"
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "doc.txt",
+          "base64": "QSAkfGVjaG8gUElEfEEgfCBCCnwkMXwkPG4+IEIK"
+        }
+      ],
+      "history": {
+        "records": [
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/doc.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/doc.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "expectedFileStates": {
+                "<root>/doc.txt": {
+                  "exists": true,
+                  "sha256": "d42c5be5b736b6cd524540f313539e053182714e05ff0764f3fc5a6458e0b344",
+                  "mode": 420
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        ],
+        "warnings": [],
+        "ops": [],
+        "tree": [
+          {
+            "name": "<backup>@v1",
+            "base64": "QSBlY2hvIFBJRCBCCg==",
+            "mode": 420
+          }
+        ],
+        "snapshots": [
+          {
+            "messageId": "msg-1",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "tracked": [
+              {
+                "path": "<root>/doc.txt",
+                "backupFileName": "<backup>@v1",
+                "version": 1,
+                "backupTime": "2026-01-01T00:00:00.000Z",
+                "mode": 33188
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/doc.txt",
+                "exists": true,
+                "sha256": "d42c5be5b736b6cd524540f313539e053182714e05ff0764f3fc5a6458e0b344",
+                "mode": 420
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "edit-replace-all-dollar-literal",
+      "backupDir": "file-history/edit-replace-all-dollar-literal",
+      "steps": [
+        {
+          "op": "file",
+          "path": "doc.txt",
+          "content": "x x\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        },
+        {
+          "op": "call",
+          "index": 1
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "input": {
+            "file_path": "doc.txt"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|x x\n2|"
+              }
+            ],
+            "data": {
+              "filePath": "doc.txt",
+              "kind": "text",
+              "startLine": 1,
+              "endLine": 2,
+              "totalLines": 2,
+              "truncated": false,
+              "autoPaged": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        },
+        {
+          "tool": "edit_file",
+          "input": {
+            "file_path": "doc.txt",
+            "old_string": "x",
+            "new_string": "$& $$",
+            "replace_all": true
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Updated doc.txt (2 replacement)."
+              }
+            ],
+            "data": {
+              "filePath": "doc.txt",
+              "replacements": 2,
+              "changed": true
+            },
+            "metadata": {
+              "bytesWritten": 12,
+              "mtimeMs": "<mtime>"
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "doc.txt",
+          "base64": "JCYgJCQgJCYgJCQK"
+        }
+      ],
+      "history": {
+        "records": [
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/doc.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/doc.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "expectedFileStates": {
+                "<root>/doc.txt": {
+                  "exists": true,
+                  "sha256": "3f5a7e406cae252f9fa3070452827979f817d34cc3ffd778e30fed83488ae8f2",
+                  "mode": 420
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        ],
+        "warnings": [],
+        "ops": [],
+        "tree": [
+          {
+            "name": "<backup>@v1",
+            "base64": "eCB4Cg==",
+            "mode": 420
+          }
+        ],
+        "snapshots": [
+          {
+            "messageId": "msg-1",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "tracked": [
+              {
+                "path": "<root>/doc.txt",
+                "backupFileName": "<backup>@v1",
+                "version": 1,
+                "backupTime": "2026-01-01T00:00:00.000Z",
+                "mode": 33188
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/doc.txt",
+                "exists": true,
+                "sha256": "3f5a7e406cae252f9fa3070452827979f817d34cc3ffd778e30fed83488ae8f2",
+                "mode": 420
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "edit-hardlink",
+      "backupDir": "file-history/edit-hardlink",
+      "steps": [
+        {
+          "op": "file",
+          "path": "doc.txt",
+          "content": "inside\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "hardlink",
+          "path": "alias.txt",
+          "target": "doc.txt"
+        },
+        {
+          "op": "call",
+          "index": 0
+        },
+        {
+          "op": "call",
+          "index": 1
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "input": {
+            "file_path": "alias.txt"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|inside\n2|"
+              }
+            ],
+            "data": {
+              "filePath": "alias.txt",
+              "kind": "text",
+              "startLine": 1,
+              "endLine": 2,
+              "totalLines": 2,
+              "truncated": false,
+              "autoPaged": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        },
+        {
+          "tool": "edit_file",
+          "input": {
+            "file_path": "alias.txt",
+            "old_string": "inside",
+            "new_string": "edited"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Updated alias.txt (1 replacement)."
+              }
+            ],
+            "data": {
+              "filePath": "alias.txt",
+              "replacements": 1,
+              "changed": true
+            },
+            "metadata": {
+              "bytesWritten": 7,
+              "mtimeMs": "<mtime>"
+            }
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "doc.txt",
+          "base64": "ZWRpdGVkCg=="
+        },
+        {
+          "path": "alias.txt",
+          "base64": "ZWRpdGVkCg=="
+        }
+      ],
+      "history": {
+        "records": [
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/alias.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          {
+            "kind": "update",
+            "entry": {
+              "messageId": "msg-1",
+              "trackedFileBackups": {
+                "<root>/alias.txt": {
+                  "backupFileName": "<backup>@v1",
+                  "version": 1,
+                  "mode": 33188,
+                  "backupTime": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "expectedFileStates": {
+                "<root>/alias.txt": {
+                  "exists": true,
+                  "sha256": "68f01b289aedcf28e96fce1f9444365e83b9bfc7e1bf32df20f1f15966835316",
+                  "mode": 420
+                }
+              },
+              "timestamp": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        ],
+        "warnings": [],
+        "ops": [],
+        "tree": [
+          {
+            "name": "<backup>@v1",
+            "base64": "aW5zaWRlCg==",
+            "mode": 420
+          }
+        ],
+        "snapshots": [
+          {
+            "messageId": "msg-1",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "tracked": [
+              {
+                "path": "<root>/alias.txt",
+                "backupFileName": "<backup>@v1",
+                "version": 1,
+                "backupTime": "2026-01-01T00:00:00.000Z",
+                "mode": 33188
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/alias.txt",
+                "exists": true,
+                "sha256": "68f01b289aedcf28e96fce1f9444365e83b9bfc7e1bf32df20f1f15966835316",
+                "mode": 420
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "name": "edit-multiple-refused",
       "backupDir": "file-history/edit-multiple-refused",
       "steps": [

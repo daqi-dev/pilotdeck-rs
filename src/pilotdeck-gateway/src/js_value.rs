@@ -42,6 +42,45 @@ pub(crate) fn number_string(n: f64) -> String {
     }
 }
 
+/// ECMAScript `GetSubstitution` for `String.prototype.replace` when the
+/// search value is a string: `$$`, `$&`, `` $` `` and `$'` expand; `$n` and
+/// `$<name>` stay literal because a string pattern has no capture groups.
+/// `matched`, `prefix` and `suffix` are the matched text and the text on each
+/// side of it in the source string.
+pub(crate) fn expand_replacement(
+    replacement: &str,
+    matched: &str,
+    prefix: &str,
+    suffix: &str,
+) -> String {
+    let bytes = replacement.as_bytes();
+    let mut out = String::with_capacity(replacement.len());
+    let mut index = 0usize;
+    let mut copied = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'$' || index + 1 >= bytes.len() {
+            index += 1;
+            continue;
+        }
+        let value = match bytes[index + 1] {
+            b'$' => "$",
+            b'&' => matched,
+            b'`' => prefix,
+            b'\'' => suffix,
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        out.push_str(&replacement[copied..index]);
+        out.push_str(value);
+        index += 2;
+        copied = index;
+    }
+    out.push_str(&replacement[copied..]);
+    out
+}
+
 /// `String(value)` as UTF-16 units (lone surrogates kept). Inside arrays,
 /// `null`/`undefined` elements join as empty strings.
 pub(crate) fn to_string_units(value: &JsValue) -> Result<Vec<u16>, StackOverflow> {
@@ -248,6 +287,7 @@ mod tests {
     }
 
     #[test]
+HEAD
     fn json_stringify_reports_the_shared_depth_bound() {
         let nested_value = nested(MAX_ARRAY_DEPTH);
         assert!(json_stringify(&nested_value).is_ok());
@@ -262,6 +302,21 @@ mod tests {
             object = JsValue::Object(parent);
         }
         assert_eq!(json_stringify(&object), Err(StackOverflow));
+
+    fn replacement_patterns_follow_get_substitution() {
+        assert_eq!(expand_replacement("$$", "m", "pre", "post"), "$");
+        assert_eq!(expand_replacement("$&", "m", "pre", "post"), "m");
+        assert_eq!(expand_replacement("$`", "m", "pre", "post"), "pre");
+        assert_eq!(expand_replacement("$'", "m", "pre", "post"), "post");
+        assert_eq!(
+            expand_replacement("$1 $<n> $ $x $$ $& $` $'", "m", "pre", "post"),
+            "$1 $<n> $ $x $ m pre post"
+        );
+        assert_eq!(
+            expand_replacement("没有 $ 模式", "m", "pre", "post"),
+            "没有 $ 模式"
+        );
+     5de77f1 (fix(gateway) A6.5-pr5 闸门 P1×3：根内链接守卫无条件执行（allow 只放行词法根外路径）；逐级跟随符号链接的真实路径解析，堵两跳链与根外目录链逃逸；edit_file 单处替换按 JS $ 模式展开（js_value::expand_replacement）；用户工作区硬链接按 TS 允许；line_delta 线性化；夹具 45 场景 / 86 调用)
     }
 
     #[test]

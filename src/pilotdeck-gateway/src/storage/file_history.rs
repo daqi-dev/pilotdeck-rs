@@ -780,40 +780,25 @@ fn split_lines(value: &str) -> Vec<&str> {
 }
 
 fn line_delta(before: &str, after: &str) -> (usize, usize) {
-    let before_lines = split_lines(before);
-    let after_lines = split_lines(after);
-    let mut before_counts: Vec<(&str, usize)> = Vec::new();
-    let mut after_counts: Vec<(&str, usize)> = Vec::new();
-    for line in before_lines {
-        if let Some(entry) = before_counts.iter_mut().find(|(key, _)| *key == line) {
-            entry.1 += 1;
-        } else {
-            before_counts.push((line, 1));
-        }
+    let mut before_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    let mut after_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in split_lines(before) {
+        *before_counts.entry(line).or_default() += 1;
     }
-    for line in after_lines {
-        if let Some(entry) = after_counts.iter_mut().find(|(key, _)| *key == line) {
-            entry.1 += 1;
-        } else {
-            after_counts.push((line, 1));
-        }
+    for line in split_lines(after) {
+        *after_counts.entry(line).or_default() += 1;
     }
     let mut deletions = 0;
     let mut insertions = 0;
     for (line, before_count) in &before_counts {
-        let after_count = after_counts
-            .iter()
-            .find(|(key, _)| key == line)
-            .map_or(0, |(_, count)| *count);
+        let after_count = after_counts.get(line).copied().unwrap_or(0);
         if *before_count > after_count {
             deletions += before_count - after_count;
         }
     }
     for (line, after_count) in &after_counts {
-        let before_count = before_counts
-            .iter()
-            .find(|(key, _)| key == line)
-            .map_or(0, |(_, count)| *count);
+        let before_count = before_counts.get(line).copied().unwrap_or(0);
         if *after_count > before_count {
             insertions += after_count - before_count;
         }
@@ -867,4 +852,28 @@ fn metadata_mode(metadata: &fs::Metadata) -> u32 {
 #[cfg(not(unix))]
 fn metadata_mode(_metadata: &fs::Metadata) -> u32 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line_delta;
+
+    #[test]
+    fn line_delta_counts_duplicate_lines() {
+        assert_eq!(line_delta("a\na\nb\n", "a\nb\nb\n"), (1, 1));
+        assert_eq!(line_delta("a\n", "a\n"), (0, 0));
+    }
+
+    #[test]
+    fn line_delta_is_linear_on_ten_mib() {
+        // A default-sized (10 MiB) log with a distinct line per row: the old
+        // Vec + iter().find version was O(lines * unique) and hung here.
+        let before: String = (0..655_360)
+            .map(|index| format!("line-{index:010}\n"))
+            .collect();
+        assert_eq!(before.len(), 10 * 1024 * 1024);
+        let after = format!("{before}tail\n");
+        assert_eq!(line_delta(&before, &after), (1, 0));
+        assert_eq!(line_delta(&after, &before), (0, 1));
+    }
 }
