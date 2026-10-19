@@ -138,9 +138,11 @@ function open(dir: string, options: Options = {}) {
 }
 type Ctx = ReturnType<typeof open>;
 
-const request = (text: string) => ({
-  model: 'fixture-model',
-  messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+const preparedRequest = (text: string) => ({
+  request: {
+    model: 'fixture-model',
+    messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+  },
 });
 const message = (text: string, extra: any = {}) => ({
   role: 'user',
@@ -173,7 +175,10 @@ async function runStep(ctx: Ctx, step: any): Promise<any> {
         await ctx.recorder.startTurn(SESSION, turnId);
         return ok;
       case 'modelRequest':
-        return { step: await ctx.recorder.recordModelRequest(SESSION, turnId, request(step.text ?? 'context') as any) };
+        return { step: await ctx.recorder.recordModelRequest(SESSION, turnId, preparedRequest(step.text ?? 'context') as any) };
+      case 'toolCalls':
+        await ctx.recorder.recordToolCalls(SESSION, turnId, step.calls);
+        return ok;
       case 'nextOperationId':
         return { id: ctx.recorder.nextCompactionOperationId() };
       case 'recordStarted':
@@ -442,6 +447,18 @@ try {
     { op: 'read' },
   ], ['ok', 'ok', 'ok', 'ok', 'ok', 'read:3/0@3']);
 
+  // Second defer silently overwrites the first completion (TS
+  // deferCompactionCompletion assigns `pending.completion = draft`), and the
+  // commit writes the last one.
+  await scenario('double-defer-overwrites', [
+    { op: 'startTurn' },
+    { op: 'recordStarted', draft: { operationId: 'op-d', trigger: 'auto', messageCount: 2 } },
+    { op: 'deferCompletion', draft: { operationId: 'op-d', status: 'skipped', messageCount: 1 } },
+    { op: 'deferCompletion', draft: { operationId: 'op-d', status: 'compacted', tier: 'full', compactionId: 'compaction-d', messageCount: 2 } },
+    { op: 'commitDeferred' },
+    { op: 'read' },
+  ], ['ok', 'ok', 'ok', 'ok', 'ok', 'read:3/0@3']);
+
   await scenario('control-boundaries', [
     { op: 'startTurn' },
     { op: 'writeControlBoundary', boundary: { kind: 'compact', subtype: 'microcompact_boundary', microCompactMetadata: { trigger: 'time_based', toolCallIds: ['t1'], rewrittenBytes: 12 } } },
@@ -450,6 +467,18 @@ try {
     { op: 'writeControlBoundary', boundary: compactBoundary() },
     { op: 'read' },
   ], ['ok', 'ok', 'ok', 'ok', 'ok', 'read:5/0@5']);
+
+  // Compaction records are validated independently of the open step/tool-call
+  // state: the domain switch handles them before tool-call checks. This pins
+  // that short-circuit, which a compaction-only corpus could not observe.
+  await scenario('compaction-during-open-step', [
+    { op: 'startTurn' },
+    { op: 'modelRequest', text: 'open step' },
+    { op: 'toolCalls', calls: [{ id: 't1', name: 'read_file', input: { path: 'a' } }] },
+    { op: 'recordStarted', draft: { operationId: 'op-i1', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordCompleted', draft: { operationId: 'op-i1', status: 'skipped', messageCount: 1 } },
+    { op: 'read' },
+  ], ['ok', 'step:1', 'ok', 'ok', 'ok', 'read:6/0@6']);
 
   await scenario('errors', [
     { op: 'startTurn' },
@@ -467,6 +496,23 @@ try {
     { op: 'recordFailed', draft: { operationId: 'bad-failure', error: '' } },
     { op: 'recordFailed', draft: { operationId: 'null-error', error: null } },
     { op: 'recordStarted', draft: { operationId: '', trigger: 'auto', messageCount: 1 } },
+    // Safe-integer boundary: 2^53-1 passes, 2^53 is rejected.
+    { op: 'recordStarted', draft: { operationId: 'safe-max', trigger: 'auto', messageCount: 9007199254740991 } },
+    { op: 'recordCompleted', draft: { operationId: 'safe-max', status: 'skipped', messageCount: 9007199254740991 } },
+    { op: 'recordStarted', draft: { operationId: 'unsafe-max', trigger: 'auto', messageCount: 9007199254740992 } },
+    // 0 and -0 are safe integers and pass.
+    { op: 'recordStarted', draft: { operationId: 'zero-count', trigger: 'auto', messageCount: 0 } },
+    { op: 'recordCompleted', draft: { operationId: 'zero-count', status: 'skipped', messageCount: 0 } },
+    { op: 'recordStarted', draft: { operationId: 'neg-zero-count', trigger: 'auto', messageCount: -0 } },
+    { op: 'recordCompleted', draft: { operationId: 'neg-zero-count', status: 'skipped', messageCount: -0 } },
+    // maxContextTokens is strict: only undefined is absent, null is invalid.
+    { op: 'recordStarted', draft: { operationId: 'null-max-context', trigger: 'auto', messageCount: 1, maxContextTokens: null } },
+    { op: 'recordStarted', draft: { operationId: 'true-max-context', trigger: 'auto', messageCount: 1, maxContextTokens: true } },
+    { op: 'recordStarted', draft: { operationId: 'string-max-context', trigger: 'auto', messageCount: 1, maxContextTokens: '4096' } },
+    // `{ type: 'compaction_started', ...draft }`: a caller-supplied type key
+    // overrides the literal while keeping its position, so the entry is
+    // validated as a tool_call instead.
+    { op: 'recordStarted', draft: { type: 'tool_call', operationId: 'type-override', trigger: 'auto', messageCount: 1 } },
     { op: 'commitDeferred' },
     { op: 'failDeferred', message: 'nothing deferred' },
     { op: 'read' },
@@ -474,7 +520,9 @@ try {
     'error:invalid_compaction', 'error:invalid_compaction', 'error:invalid_compaction',
     'error:invalid_compaction', 'error:invalid_compaction', 'error:invalid_compaction',
     'error:invalid_compaction', 'error:invalid_compaction', 'error:TypeError',
-    'error:invalid_compaction', 'ok', 'ok', 'read:2/0@2']);
+    'error:invalid_compaction', 'ok', 'ok', 'error:invalid_compaction',
+    'ok', 'ok', 'ok', 'ok', 'error:invalid_compaction', 'error:invalid_compaction',
+    'error:invalid_compaction', 'error:step_not_open', 'ok', 'ok', 'read:8/0@8']);
 
   await scenario('restore', [
     { op: 'startTurn' },

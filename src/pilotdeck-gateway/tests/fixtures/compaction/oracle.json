@@ -915,6 +915,69 @@
       }
     },
     {
+      "name": "double-defer-overwrites",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "op-d",
+            "trigger": "auto",
+            "messageCount": 2
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "deferCompletion",
+          "draft": {
+            "operationId": "op-d",
+            "status": "skipped",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "deferCompletion",
+          "draft": {
+            "operationId": "op-d",
+            "status": "compacted",
+            "tier": "full",
+            "compactionId": "compaction-d",
+            "messageCount": 2
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "commitDeferred",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 3,
+            "diagnostics": 0,
+            "sequence": 3
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-d\",\"trigger\":\"auto\",\"messageCount\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"op-d\",\"status\":\"compacted\",\"tier\":\"full\",\"compactionId\":\"compaction-d\",\"messageCount\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n"
+      }
+    },
+    {
       "name": "control-boundaries",
       "steps": [
         {
@@ -997,6 +1060,72 @@
       ],
       "files": {
         "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"control_boundary\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"microcompact_boundary\",\"microCompactMetadata\":{\"trigger\":\"time_based\",\"toolCallIds\":[\"t1\"],\"rewrittenBytes\":12}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"control_boundary\",\"boundary\":{\"kind\":\"resume\",\"metadata\":{\"from\":\"checkpoint\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"control_boundary\",\"boundary\":{\"kind\":\"manual\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"control_boundary\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"compaction-1\",\"trigger\":\"auto\",\"preTokens\":900,\"postTokens\":120,\"messagesSummarized\":3,\"targetTokens\":200,\"summaryGenerated\":true,\"checkpointMerged\":false,\"finalRatio\":0.6,\"extra\":{\"tier\":\"full\",\"summarySucceeded\":true}}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n"
+      }
+    },
+    {
+      "name": "compaction-during-open-step",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "text": "open step",
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "calls": [
+            {
+              "id": "t1",
+              "name": "read_file",
+              "input": {
+                "path": "a"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "op-i1",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordCompleted",
+          "draft": {
+            "operationId": "op-i1",
+            "status": "skipped",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 6,
+            "diagnostics": 0,
+            "sequence": 6
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"open step\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"t1\",\"name\":\"read_file\",\"input\":{\"path\":\"a\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"op-i1\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"op-i1\",\"status\":\"skipped\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n"
       }
     },
     {
@@ -1210,6 +1339,151 @@
           }
         },
         {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "safe-max",
+            "trigger": "auto",
+            "messageCount": 9007199254740991
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordCompleted",
+          "draft": {
+            "operationId": "safe-max",
+            "status": "skipped",
+            "messageCount": 9007199254740991
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "unsafe-max",
+            "trigger": "auto",
+            "messageCount": 9007199254740992
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction unsafe-max has invalid start metadata."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "zero-count",
+            "trigger": "auto",
+            "messageCount": 0
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordCompleted",
+          "draft": {
+            "operationId": "zero-count",
+            "status": "skipped",
+            "messageCount": 0
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "neg-zero-count",
+            "trigger": "auto",
+            "messageCount": 0
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordCompleted",
+          "draft": {
+            "operationId": "neg-zero-count",
+            "status": "skipped",
+            "messageCount": 0
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "null-max-context",
+            "trigger": "auto",
+            "messageCount": 1,
+            "maxContextTokens": null
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction null-max-context has invalid maxContextTokens."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "true-max-context",
+            "trigger": "auto",
+            "messageCount": 1,
+            "maxContextTokens": true
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction true-max-context has invalid maxContextTokens."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "string-max-context",
+            "trigger": "auto",
+            "messageCount": 1,
+            "maxContextTokens": "4096"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction string-max-context has invalid maxContextTokens."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "type": "tool_call",
+            "operationId": "type-override",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_not_open",
+              "message": "tool_call requires open step undefined in turn turn-1."
+            }
+          }
+        },
+        {
           "op": "commitDeferred",
           "outcome": {
             "ok": true
@@ -1225,14 +1499,14 @@
         {
           "op": "read",
           "outcome": {
-            "entries": 2,
+            "entries": 8,
             "diagnostics": 0,
-            "sequence": 2
+            "sequence": 8
           }
         }
       ],
       "files": {
-        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"dup\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n"
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"dup\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"safe-max\",\"trigger\":\"auto\",\"messageCount\":9007199254740991,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"safe-max\",\"status\":\"skipped\",\"messageCount\":9007199254740991,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"zero-count\",\"trigger\":\"auto\",\"messageCount\":0,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"zero-count\",\"status\":\"skipped\",\"messageCount\":0,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"neg-zero-count\",\"trigger\":\"auto\",\"messageCount\":0,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"neg-zero-count\",\"status\":\"skipped\",\"messageCount\":0,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n"
       }
     },
     {

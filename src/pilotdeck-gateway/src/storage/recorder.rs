@@ -310,13 +310,13 @@ impl Recorder {
     }
     /// TS `nextCompactionOperationId`: the recorder's UUID source, not the
     /// writer's. It consumes one id even when nothing is recorded afterwards.
+    /// When no source is injected, `AgentSessionEventRecorderOptions.uuid`
+    /// defaults to `node:crypto.randomUUID`, which is independent of the
+    /// writer's entry-id source.
     pub fn next_compaction_operation_id(&self) -> RecorderResult<JsString> {
         let id = match &self.operation_ids {
             Some(operation_ids) => operation_ids()?,
-            None => match &self.sources {
-                Some((_, uuid)) => uuid()?,
-                None => uuid().map_err(|error| RecorderError::Store(error.into()))?,
-            },
+            None => uuid().map_err(|error| RecorderError::Store(error.into()))?,
         };
         Ok(JsString::from(id))
     }
@@ -349,8 +349,17 @@ impl Recorder {
         draft: &JsValue,
     ) -> RecorderResult<()> {
         let mut inner = self.lock();
+        self.record_compaction_completed_locked(&mut inner, session_id, turn_id, draft)
+    }
+    fn record_compaction_completed_locked(
+        &self,
+        inner: &mut Inner,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
         self.append(session_id, turn_id, spread("compaction_completed", draft))?;
-        remove_pending(&mut inner, session_id, turn_id, &operation_id(draft));
+        remove_pending(inner, session_id, turn_id, &operation_id(draft));
         Ok(())
     }
     /// TS `recordCompactionFailed` (AgentSessionEventRecorder:346-355).
@@ -361,8 +370,17 @@ impl Recorder {
         draft: &JsValue,
     ) -> RecorderResult<()> {
         let mut inner = self.lock();
+        self.record_compaction_failed_locked(&mut inner, session_id, turn_id, draft)
+    }
+    fn record_compaction_failed_locked(
+        &self,
+        inner: &mut Inner,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
         self.append(session_id, turn_id, spread("compaction_failed", draft))?;
-        remove_pending(&mut inner, session_id, turn_id, &operation_id(draft));
+        remove_pending(inner, session_id, turn_id, &operation_id(draft));
         Ok(())
     }
     /// TS `deferCompactionCompletion` (AgentSessionEventRecorder:358-367):
@@ -400,19 +418,19 @@ impl Recorder {
         session_id: &JsString,
         turn_id: &JsString,
     ) -> RecorderResult<()> {
-        let completion = {
-            let inner = self.lock();
-            inner
-                .compactions
-                .get(&compaction_key(session_id, turn_id))
-                .and_then(|pending| {
-                    pending
-                        .iter()
-                        .find_map(|candidate| candidate.completion.clone())
-                })
-        };
+        // Select and commit under one lock: a concurrent commit/fail on the
+        // same turn must not observe the bracket after it was closed.
+        let mut inner = self.lock();
+        let completion = inner
+            .compactions
+            .get(&compaction_key(session_id, turn_id))
+            .and_then(|pending| {
+                pending
+                    .iter()
+                    .find_map(|candidate| candidate.completion.clone())
+            });
         if let Some(completion) = completion {
-            self.record_compaction_completed(session_id, turn_id, &completion)?;
+            self.record_compaction_completed_locked(&mut inner, session_id, turn_id, &completion)?;
         }
         Ok(())
     }
@@ -424,25 +442,28 @@ impl Recorder {
         turn_id: &JsString,
         error: &str,
     ) -> RecorderResult<()> {
-        let operation_id = {
-            let inner = self.lock();
-            inner
-                .compactions
-                .get(&compaction_key(session_id, turn_id))
-                .and_then(|pending| {
-                    pending
-                        .iter()
-                        .find(|candidate| candidate.completion.is_some())
-                        .map(|candidate| candidate.operation_id.clone())
-                })
-        };
+        let mut inner = self.lock();
+        let operation_id = inner
+            .compactions
+            .get(&compaction_key(session_id, turn_id))
+            .and_then(|pending| {
+                pending
+                    .iter()
+                    .find(|candidate| candidate.completion.is_some())
+                    .map(|candidate| candidate.operation_id.clone())
+            });
         let Some(operation_id) = operation_id else {
             return Ok(());
         };
         let mut draft = JsObject::new();
         draft.insert("operationId".into(), operation_id);
         draft.insert("error".into(), JsValue::String(error.into()));
-        self.record_compaction_failed(session_id, turn_id, &JsValue::Object(draft))
+        self.record_compaction_failed_locked(
+            &mut inner,
+            session_id,
+            turn_id,
+            &JsValue::Object(draft),
+        )
     }
     /// TS `JsonlTranscriptWriter.recordControlBoundary`
     /// (JsonlTranscriptWriter.ts:166-175): one raw control boundary.

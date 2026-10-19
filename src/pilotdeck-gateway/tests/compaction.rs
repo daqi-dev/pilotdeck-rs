@@ -5,14 +5,17 @@
 //! TurnRunner line ranges cited there define the call sequence only.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/scratch.rs"]
+mod scratch;
 use pilotdeck_gateway::host::modules::turn::{self, Handler, Ports};
 use pilotdeck_gateway::host::{HostError, ModuleError};
 use pilotdeck_gateway::storage::recorder::{Recorder, RecorderError};
 use pilotdeck_gateway::storage::{JsonlTranscriptStore, TranscriptKey, read_transcript};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use scratch::remove_owned;
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -87,40 +90,6 @@ impl Drop for Scratch {
         let _ = remove_owned(&self.0, &self.0, true);
     }
 }
-fn outside(root: &Path, path: &Path) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        format!(
-            "remove refused: {} is outside the run directory {}",
-            path.display(),
-            root.display()
-        ),
-    )
-}
-fn owned_path<'a>(root: &Path, path: &'a Path) -> io::Result<&'a Path> {
-    let relative = path.strip_prefix(root).map_err(|_| outside(root, path))?;
-    let mut depth = 0usize;
-    for component in relative.components() {
-        match component {
-            Component::ParentDir => {
-                depth = depth.checked_sub(1).ok_or_else(|| outside(root, path))?;
-            }
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) => return Err(outside(root, path)),
-        }
-    }
-    Ok(path)
-}
-fn remove_owned(root: &Path, path: &Path, recursive: bool) -> io::Result<()> {
-    owned_path(root, path)?;
-    if recursive {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    }
-}
-
 fn entry_id(index: usize) -> String {
     format!("{index:08x}-0000-4000-8000-{index:012x}")
 }
@@ -215,6 +184,33 @@ async fn run_step(ctx: &mut Ctx, step: &JsValue) -> JsValue {
             .recorder
             .next_compaction_operation_id()
             .map(|id| object([("id", JsValue::String(id))])),
+        "modelRequest" => ctx
+            .recorder
+            .record_model_request(
+                &session,
+                &turn,
+                object([
+                    ("model", text("fixture-model")),
+                    (
+                        "messages",
+                        JsValue::Array(vec![object([
+                            ("role", text("user")),
+                            (
+                                "content",
+                                JsValue::Array(vec![object([
+                                    ("type", text("text")),
+                                    ("text", text("open step")),
+                                ])]),
+                            ),
+                        ])]),
+                    ),
+                ]),
+            )
+            .map(|step| object([("step", JsValue::Number(step as f64))])),
+        "toolCalls" => ctx
+            .recorder
+            .record_tool_calls(&session, &turn, array(field(step, "calls")))
+            .map(|_| object([("ok", JsValue::Bool(true))])),
         "recordStarted" => ctx
             .recorder
             .record_compaction_started(&session, &turn, field(step, "draft"))
@@ -352,7 +348,7 @@ async fn real_ts_recorder_scenarios_match_outcomes_and_bytes() {
     let JsValue::Array(scenarios) = field(&oracle, "scenarios") else {
         panic!("scenarios")
     };
-    assert_eq!(scenarios.len(), 9, "oracle scenario count");
+    assert_eq!(scenarios.len(), 11, "oracle scenario count");
     let scratch = Scratch::new("replay");
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
@@ -668,4 +664,106 @@ async fn real_ts_runner_aborts_after_successful_persist_response() {
         stringify_json(field(expected, "compactionEntries")).unwrap(),
         "compaction entries"
     );
+}
+
+/// #314: with no `operation_ids` injection the recorder must use its own
+/// `randomUUID` default, not the writer's entry-id source. A shared source
+/// would make the next entry skip a number and make transcript bytes depend on
+/// whether a compaction id was requested.
+#[test]
+fn default_operation_id_is_independent_of_entry_ids() {
+    let scratch = Scratch::new("default-operation-id");
+    let key = TranscriptKey {
+        project_root: PROJECT_ROOT.into(),
+        pilot_home: scratch.0.join("home"),
+        session_id: SESSION.into(),
+        transcript_path: scratch.0.join("s1.jsonl"),
+    };
+    let recorder = Recorder::with_sources(
+        Arc::new(JsonlTranscriptStore::new()),
+        key.clone(),
+        clock(),
+        Arc::new(|| Ok("entry-0001".into())),
+    );
+    let id = recorder.next_compaction_operation_id().unwrap();
+    let id = id.to_utf8().unwrap();
+    assert_ne!(id, "entry-0001", "operation id must not consume entry ids");
+    let v4 =
+        regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+            .unwrap();
+    assert!(v4.is_match(&id), "default operation id is a v4 UUID: {id}");
+
+    recorder
+        .start_turn(&SESSION.into(), &"turn-1".into())
+        .unwrap();
+    let read = read_transcript(&key.transcript_path).unwrap();
+    assert_eq!(read.entries.len(), 1);
+    assert_eq!(s(field(&read.entries[0], "entryId")), "entry-0001");
+}
+
+/// #314 concurrency: commit and fail must serialize the "find deferred bracket
+/// and write its terminal" pair. Without one lock, a loser could observe the
+/// bracket after it was closed and turn a successful persistence into an
+/// `invalid_compaction` error/abort.
+#[test]
+fn concurrent_commit_and_fail_close_exactly_one_bracket() {
+    let scratch = Scratch::new("concurrent-deferred");
+    let ctx = Ctx::new(&scratch.0);
+    let session = JsString::from(SESSION);
+    let turn = JsString::from("turn-1");
+    ctx.recorder.start_turn(&session, &turn).unwrap();
+    ctx.recorder
+        .record_compaction_started(
+            &session,
+            &turn,
+            &object([
+                ("operationId", text("op-c")),
+                ("trigger", text("auto")),
+                ("messageCount", JsValue::Number(1.0)),
+            ]),
+        )
+        .unwrap();
+    ctx.recorder
+        .defer_compaction_completion(
+            &session,
+            &turn,
+            &object([
+                ("operationId", text("op-c")),
+                ("status", text("compacted")),
+                ("messageCount", JsValue::Number(1.0)),
+            ]),
+        )
+        .unwrap();
+
+    let barrier = Arc::new(std::sync::Barrier::new(8));
+    let mut handles = Vec::new();
+    for index in 0..8 {
+        let recorder = ctx.recorder.clone();
+        let barrier = barrier.clone();
+        let session = session.clone();
+        let turn = turn.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            if index % 2 == 0 {
+                recorder.commit_deferred_compaction(&session, &turn)
+            } else {
+                recorder.fail_deferred_compaction(&session, &turn, "boom")
+            }
+        }));
+    }
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+    let read = read_transcript(&ctx.path).unwrap();
+    let terminals = read
+        .entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                s(field(entry, "type")).as_str(),
+                "compaction_completed" | "compaction_failed"
+            )
+        })
+        .count();
+    assert_eq!(terminals, 1, "exactly one terminal record");
 }
