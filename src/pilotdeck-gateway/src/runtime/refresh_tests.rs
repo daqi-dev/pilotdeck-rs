@@ -553,3 +553,42 @@ async fn next_registry_reload_waits_for_previous_settlement_callbacks() {
         ])
     );
 }
+
+/// GLM P2-1: dropping the handle without `dispose` keeps handling changes
+/// (the TS closure holds the bundle); `dispose` releases the bundle.
+#[tokio::test(flavor = "current_thread")]
+async fn dropped_bundle_keeps_handling_until_disposed() {
+    let h = harness();
+    let Harness {
+        log,
+        registry: _registry,
+        bundle,
+        _scratch: scratch,
+        store,
+        ..
+    } = h;
+    let weak = Arc::downgrade(&bundle.inner);
+    drop(bundle);
+    scratch.write(&other_model());
+    store.reload("watch").await.unwrap();
+    assert_eq!(
+        lines(&log, 5).await,
+        strings(&[
+            &format!("{REFRESH}agent.model.id, agent.model.model"),
+            "sdk:agent.model.id,agent.model.model",
+            "stage:2",
+            "markAllDirty:config_changed",
+            "broadcast:config_changed:agent.model.id,agent.model.model",
+        ])
+    );
+    // Still reachable only through the store's listener: dispose it.
+    let bundle = RefreshBundle {
+        inner: weak.upgrade().expect("subscription keeps the bundle"),
+    };
+    bundle.dispose();
+    drop(bundle);
+    assert!(weak.upgrade().is_none(), "dispose released the bundle");
+    scratch.write(BASE);
+    store.reload("watch").await.unwrap();
+    assert!(lines(&log, 0).await.is_empty());
+}

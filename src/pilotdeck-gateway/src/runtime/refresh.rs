@@ -45,7 +45,7 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard, Weak},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::{runtime::Handle, sync::watch};
 
@@ -239,18 +239,22 @@ impl RefreshBundle {
     }
 
     /// `attach`: subscribe once.
+    ///
+    /// Like the baseline closure `(event) => this.onConfigChange(event)`,
+    /// the subscription holds the bundle strongly: dropping every
+    /// `RefreshBundle` handle without [`dispose`](Self::dispose) keeps
+    /// handling config changes (TS keeps working once the last reference is
+    /// dropped too) rather than silently going dead behind a stale listener.
+    /// `dispose` is the only detach and releases that reference.
     pub fn attach(&self) {
         let mut unsubscribe = lock(&self.inner.unsubscribe);
         if unsubscribe.is_some() {
             return;
         }
-        // The store must not keep the bundle alive.
-        let weak: Weak<Inner> = Arc::downgrade(&self.inner);
+        let inner = Arc::clone(&self.inner);
         *unsubscribe = Some(self.inner.options.config_store.subscribe(Arc::new(
             move |paths: &[JsString], classes: &[ChangeClass]| {
-                if let Some(inner) = weak.upgrade() {
-                    on_config_change(&inner, paths, classes);
-                }
+                on_config_change(&inner, paths, classes);
             },
         )));
     }

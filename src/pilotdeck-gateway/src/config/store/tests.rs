@@ -102,12 +102,12 @@ async fn concurrent_reloads_share_one_load_and_one_event() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn reload_called_while_running_joins_the_running_flight() {
+async fn reload_from_another_task_while_running_reloads_after_it() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
     // The first listener call blocks publication (the flight is Running)
-    // until released; later calls (a regression's extra reload) return.
+    // until released.
     let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let release_rx = Mutex::new(Some(release_rx));
@@ -121,17 +121,60 @@ async fn reload_called_while_running_joins_the_running_flight() {
     tokio::task::spawn_blocking(move || entered_rx.recv().expect("listener entered"))
         .await
         .unwrap();
-    let joined = tokio::spawn(store.reload("manual"));
+    // The file changes after the running reload read it: TS can only see
+    // this call after `reloading` was cleared, so it re-reads.
+    root.write(&other_model());
+    let later = tokio::spawn(store.reload("manual"));
     settle().await;
     assert!(
-        !joined.is_finished(),
-        "joined call waits for the running flight"
+        !later.is_finished(),
+        "the later call waits for the running flight"
     );
     release_tx.send(()).unwrap();
     let first = first.await.unwrap().unwrap();
-    let joined = joined.await.unwrap().unwrap();
-    assert!(Arc::ptr_eq(&first, &joined));
-    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    let later = later.await.unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&first, &later));
+    assert_eq!((version(&first), version(&later)), (2.0, 3.0));
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
+}
+
+/// DeepSeek P2-1: a reload claimed after publication but before the flight
+/// is cleared must not reuse the published result. The settle gate holds the
+/// first flight exactly in that window while another thread reloads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reload_in_the_done_window_reads_the_file_again() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let gate = Mutex::new(Some((entered_tx, release_rx)));
+    *lock(&store.inner.settle_gate) = Some(Arc::new(move || {
+        if let Some((entered, release)) = lock(&gate).take() {
+            let _ = entered.send(());
+            let _ = release.recv_timeout(Duration::from_secs(30));
+        }
+    }));
+    let first = tokio::spawn(store.reload("manual"));
+    tokio::task::spawn_blocking(move || entered_rx.recv().expect("flight is Done"))
+        .await
+        .unwrap();
+    root.write(&other_model());
+    let later = store.reload("rpc");
+    release_tx.send(()).unwrap();
+    let later = later.await.unwrap();
+    let first = first.await.unwrap().unwrap();
+    assert_eq!((version(&first), version(&later)), (2.0, 3.0));
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
+    let model = later
+        .get("config")
+        .and_then(|c| c.get("agent"))
+        .and_then(|a| a.get("model"));
+    let id = model
+        .and_then(|m| m.get("id"))
+        .and_then(JsValue::as_string)
+        .unwrap();
+    assert!(id.equals_str("parity/other"), "fresh content: {id:?}");
 }
 
 #[tokio::test]

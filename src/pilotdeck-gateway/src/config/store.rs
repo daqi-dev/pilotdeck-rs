@@ -1,10 +1,17 @@
 //! Live configuration store, ported from the fixed TypeScript baseline's
 //! `src/pilot/config/PilotConfigStore.ts` (`DefaultPilotConfigStore`).
 //!
-//! * `reload` calls made while a reload is in flight share it: they all
-//!   resolve to the same snapshot (or the same error) and only one event is
-//!   published. A listener that calls `reload` during publication also joins
-//!   the in-flight reload, as in the baseline.
+//! * `reload` calls made before an in-flight reload has started loading share
+//!   it: they all resolve to the same snapshot (or the same error) and only
+//!   one event is published. A listener that calls `reload` during
+//!   publication also joins the in-flight reload, as in the baseline. A call
+//!   from anywhere else once loading has started (another task or thread,
+//!   including the window after publication before the flight is cleared)
+//!   gets a fresh reload that starts after the current one: in the baseline
+//!   loading, publication and clearing `reloading` all happen within one
+//!   macrotask's microtasks, so an I/O-, timer- or RPC-originated call can
+//!   only ever see `reloading` unset and re-reads the files (probe:
+//!   `_tmp/20261019-a63-pr5/probes/store_window.mts`).
 //! * A successful reload takes the version reserved by the previous success
 //!   (`nextVersion`), diffs/classifies with [`super::changes`], clears the
 //!   retained reload diagnostics and publishes to every listener. A failed
@@ -156,6 +163,9 @@ struct Inner {
     state: Mutex<State>,
     listeners: Mutex<Listeners>,
     reloading: Mutex<Option<Arc<Flight>>>,
+    /// Test hook: runs after a flight is Done, before the slot is cleared.
+    #[cfg(test)]
+    settle_gate: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -186,6 +196,8 @@ impl ConfigStore {
                 }),
                 listeners: Mutex::new(Listeners::default()),
                 reloading: Mutex::new(None),
+                #[cfg(test)]
+                settle_gate: Mutex::new(None),
             }),
         })
     }
@@ -212,9 +224,21 @@ impl ConfigStore {
     /// one reload exactly like the baseline's synchronous promise check. The
     /// load itself runs on the first poll of any sharing future.
     pub fn reload(&self, _reason: &str) -> impl Future<Output = ReloadResult> + Send + 'static {
-        let flight = lock(&self.inner.reloading)
-            .get_or_insert_with(|| Arc::new(Flight::default()))
-            .clone();
+        let mut slot = lock(&self.inner.reloading);
+        let flight = match slot.as_ref() {
+            Some(current) if current.joinable() => current.clone(),
+            // Loading already started elsewhere: its result may predate
+            // this call, so reload again once it is done.
+            current => {
+                let next = Arc::new(Flight {
+                    after: current.cloned(),
+                    ..Flight::default()
+                });
+                *slot = Some(next.clone());
+                next
+            }
+        };
+        drop(slot);
         let inner = self.inner.clone();
         async move { flight.run_or_wait(&inner).await }
     }
@@ -324,7 +348,8 @@ impl Subscription {
 enum FlightState {
     #[default]
     Pending,
-    Running,
+    /// Loading on this thread (listeners run synchronously on it).
+    Running(std::thread::ThreadId),
     Done(ReloadResult),
 }
 
@@ -332,10 +357,39 @@ enum FlightState {
 struct Flight {
     state: Mutex<FlightState>,
     done: Notify,
+    /// The flight this one must not start before (it was already loading
+    /// when this one was claimed).
+    after: Option<Arc<Flight>>,
 }
 
 impl Flight {
+    /// Not started yet, or a reentrant call from a listener during this
+    /// flight's publication (the only caller on the loading thread).
+    fn joinable(&self) -> bool {
+        match &*lock(&self.state) {
+            FlightState::Pending => true,
+            FlightState::Running(thread) => *thread == std::thread::current().id(),
+            FlightState::Done(_) => false,
+        }
+    }
+
+    async fn wait_done(&self) {
+        loop {
+            let notified = self.done.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if matches!(&*lock(&self.state), FlightState::Done(_)) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     async fn run_or_wait(self: &Arc<Self>, inner: &Arc<Inner>) -> ReloadResult {
+        if let Some(previous) = &self.after {
+            // A running flight always settles (see `Settle`).
+            previous.wait_done().await;
+        }
         loop {
             let notified = self.done.notified();
             tokio::pin!(notified);
@@ -344,9 +398,9 @@ impl Flight {
                 let mut state = lock(&self.state);
                 match &*state {
                     FlightState::Done(result) => return result.clone(),
-                    FlightState::Running => {}
+                    FlightState::Running(_) => {}
                     FlightState::Pending => {
-                        *state = FlightState::Running;
+                        *state = FlightState::Running(std::thread::current().id());
                         drop(state);
                         return self.execute(inner);
                     }
@@ -372,6 +426,10 @@ impl Flight {
                     Err(Arc::new(error))
                 });
                 *lock(&self.flight.state) = FlightState::Done(result);
+                #[cfg(test)]
+                if let Some(gate) = lock(&self.inner.settle_gate).clone() {
+                    gate();
+                }
                 let mut slot = lock(&self.inner.reloading);
                 if slot.as_ref().is_some_and(|f| Arc::ptr_eq(f, self.flight)) {
                     *slot = None;
