@@ -14,6 +14,7 @@ use super::{
 };
 use crate::host::modules::context::{ContextInput, ContextRuntime, Operation};
 use crate::host::{Cancellation, HostError, HostFuture, ModuleError};
+use crate::js_value::{MAX_ARRAY_DEPTH, StackOverflow};
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
@@ -149,13 +150,7 @@ impl DefaultContextRuntime {
             messages,
             dropped_count,
             warnings,
-        } = project(
-            &input.messages,
-            input
-                .max_messages
-                .as_ref()
-                .map(|(max, raw)| (*max, raw.as_str())),
-        );
+        } = project(&input.messages, input.max_messages.as_ref())?;
         let mut diagnostics: Vec<Diagnostic> = warnings
             .into_iter()
             .map(|warning| Diagnostic {
@@ -235,7 +230,10 @@ impl DefaultContextRuntime {
             .as_ref()
             .map_or_else(|| input.tools.clone(), |snapshot| snapshot.tools.clone());
 
-        let fingerprints: Vec<[u8; 32]> = messages.iter().map(fingerprint).collect();
+        let fingerprints: Vec<[u8; 32]> = messages
+            .iter()
+            .map(fingerprint)
+            .collect::<Result<Vec<_>, _>>()?;
         let previous = {
             let state = self.inner.state.lock().unwrap();
             state.get(&input.session_id).cloned()
@@ -457,7 +455,7 @@ impl DefaultContextRuntime {
             (
                 "metadata",
                 object(vec![
-                    ("droppedCount", JsValue::Number(dropped_count as f64)),
+                    ("droppedCount", JsValue::Number(dropped_count)),
                     ("toolCount", JsValue::Number(tool_count as f64)),
                 ]),
             ),
@@ -500,7 +498,7 @@ struct PrepareInput {
     custom_system_prompt: Option<String>,
     use_custom_system_prompt: bool,
     append_system_prompt: Option<String>,
-    max_messages: Option<(usize, String)>,
+    max_messages: Option<MaxMessages>,
     preview_only: bool,
 }
 impl PrepareInput {
@@ -565,11 +563,10 @@ impl PrepareInput {
                 let number = crate::js_value::to_number(value).map_err(|_| {
                     ModuleError::new("Context prepare input maxMessages is invalid.")
                 })?;
-                if number.is_finite() && number >= 0.0 {
-                    Some((number.floor() as usize, display(value)))
-                } else {
-                    None
-                }
+                Some(MaxMessages {
+                    value: number,
+                    raw: display(value),
+                })
             }
         };
         let surface = match value("runtimeContextSurface") {
@@ -605,6 +602,14 @@ impl PrepareInput {
     }
 }
 
+/// A present `maxMessages` value, kept as the JS number so projection follows
+/// the baseline's raw comparisons (`NaN` never truncates, negative limits drop
+/// every message and can report a dropped count above the input length).
+struct MaxMessages {
+    value: f64,
+    raw: String,
+}
+
 struct Diagnostic {
     code: String,
     severity: &'static str,
@@ -616,7 +621,7 @@ struct Warning {
 }
 struct Projection {
     messages: Vec<JsValue>,
-    dropped_count: usize,
+    dropped_count: f64,
     warnings: Vec<Warning>,
 }
 #[derive(Clone)]
@@ -632,41 +637,67 @@ struct TimeState {
     date_updates: Vec<DateUpdate>,
 }
 
-fn project(messages: &[JsValue], max_messages: Option<(usize, &str)>) -> Projection {
+fn project(
+    messages: &[JsValue],
+    max_messages: Option<&MaxMessages>,
+) -> Result<Projection, HostError> {
     let mut warnings = Vec::new();
     let mut projected = messages.to_vec();
-    let mut dropped_count = 0;
-    if let Some((max, raw)) = max_messages
-        && projected.len() > max
+    let mut dropped_count = 0.0;
+    if let Some(max) = max_messages
+        && projected.len() as f64 > max.value
         && !has_compaction_checkpoint(&projected)
     {
-        let (kept, dropped) = tool_pair_safe_truncate(projected, max);
+        let (kept, dropped) = tool_pair_safe_truncate(projected, max)?;
         projected = kept;
         dropped_count = dropped;
-        if dropped > 0 {
+        if dropped > 0.0 {
             warnings.push(Warning {
                 code: "context_truncated",
-                message: format!("Truncated {dropped} message(s) to respect maxMessages={raw}."),
+                message: format!(
+                    "Truncated {} message(s) to respect maxMessages={}.",
+                    crate::js_value::number_string(dropped),
+                    max.raw
+                ),
             });
         }
     }
     projected = repair_tool_result_pairing(projected, &mut warnings);
-    Projection {
+    Ok(Projection {
         messages: projected,
         dropped_count,
         warnings,
-    }
+    })
 }
 
-fn tool_pair_safe_truncate(messages: Vec<JsValue>, max: usize) -> (Vec<JsValue>, usize) {
-    if messages.len() <= max {
-        return (messages, 0);
+fn tool_pair_safe_truncate(
+    messages: Vec<JsValue>,
+    max: &MaxMessages,
+) -> Result<(Vec<JsValue>, f64), HostError> {
+    let length = messages.len();
+    if length as f64 <= max.value || max.value.is_nan() {
+        return Ok((messages, 0.0));
     }
-    let mut cut = messages.len() - max;
-    while cut < messages.len() && is_tool_result_only(&messages[cut]) {
-        cut += 1;
+    // `messages.length - maxMessages` in JS. A fractional cut only reaches the
+    // `messages[cutIndex]` read when it is below the array length (positive
+    // limit); that read is `undefined` and `.content` throws, as in TS.
+    let cut = length as f64 - max.value;
+    if cut < length as f64 {
+        if cut.fract() != 0.0 {
+            return Err(ModuleError::new(
+                "Cannot read properties of undefined (reading 'content')",
+            )
+            .into());
+        }
+        let mut cut = cut as usize;
+        while cut < length && is_tool_result_only(&messages[cut]) {
+            cut += 1;
+        }
+        return Ok((messages[cut..].to_vec(), cut as f64));
     }
-    (messages[cut..].to_vec(), cut)
+    // `slice(cutIndex)` with a cut at or past the end is empty. JS keeps the
+    // unclamped cut as `droppedCount` (including `Infinity` for -Infinity).
+    Ok((Vec::new(), cut))
 }
 
 fn repair_tool_result_pairing(messages: Vec<JsValue>, warnings: &mut Vec<Warning>) -> Vec<JsValue> {
@@ -1033,7 +1064,7 @@ fn message_content(message: &JsValue) -> &[JsValue] {
         .unwrap_or(&EMPTY)
 }
 
-fn fingerprint(message: &JsValue) -> [u8; 32] {
+fn fingerprint(message: &JsValue) -> Result<[u8; 32], HostError> {
     let mut stable = JsObject::new();
     stable.insert(
         "role".into(),
@@ -1051,49 +1082,97 @@ fn fingerprint(message: &JsValue) -> [u8; 32] {
             .cloned()
             .unwrap_or(JsValue::Undefined),
     );
+    let serialized = stable_serialize(&JsValue::Object(stable))
+        .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
     let mut hasher = Sha256::new();
-    hasher.update(stable_serialize(&JsValue::Object(stable)).as_bytes());
-    hasher.finalize().into()
+    hasher.update(serialized.as_bytes());
+    Ok(hasher.finalize().into())
+}
+
+/// One open container while `stable_serialize` walks with an explicit stack.
+enum StableFrame<'a> {
+    Array(&'a [JsValue], usize),
+    Object(Vec<(&'a JsString, &'a JsValue)>, usize),
 }
 
 /// `context/cache/CachePlan.ts:stableSerialize`, including JS's `undefined`
 /// interpolation and UTF-16 key ordering.
-fn stable_serialize(value: &JsValue) -> String {
-    match value {
-        JsValue::Array(items) => {
-            let parts: Vec<String> = items
-                .iter()
-                .map(|item| {
-                    if item.is_undefined() {
-                        String::new()
-                    } else {
-                        stable_serialize(item)
+///
+/// The baseline recurses and V8 throws `RangeError: Maximum call stack size
+/// exceeded` past a caller-dependent depth. Wire arrays/objects may nest
+/// arbitrarily deep (the protocol parser, clone and Drop are iterative), so
+/// this walk uses an explicit stack and reports [`StackOverflow`] past the
+/// same conservative container bound as [`crate::js_value`]. Output is
+/// appended into one buffer, avoiding the per-level strings that made the
+/// recursive form O(depth²). V8 definitely succeeds at 2000 nested containers
+/// on this path (measured 2026-10-19, Node v22.22.0: first RangeError at 2540
+/// nested arrays, 2500 repeated successes), so the bound stays inside the
+/// deterministic-success region.
+fn stable_serialize(value: &JsValue) -> Result<String, StackOverflow> {
+    let mut out = String::new();
+    let mut frames: Vec<StableFrame<'_>> = Vec::new();
+    let mut next = Some(value);
+    loop {
+        if let Some(value) = next.take() {
+            match value {
+                JsValue::Array(items) => {
+                    if frames.len() >= MAX_ARRAY_DEPTH {
+                        return Err(StackOverflow);
                     }
-                })
-                .collect();
-            format!("[{}]", parts.join(","))
+                    out.push('[');
+                    frames.push(StableFrame::Array(items, 0));
+                }
+                JsValue::Object(object) => {
+                    if frames.len() >= MAX_ARRAY_DEPTH {
+                        return Err(StackOverflow);
+                    }
+                    let mut entries: Vec<(&JsString, &JsValue)> = object
+                        .entries()
+                        .iter()
+                        .map(|(key, value)| (key, value))
+                        .collect();
+                    entries.sort_by(|a, b| a.0.units().cmp(b.0.units()));
+                    out.push('{');
+                    frames.push(StableFrame::Object(entries, 0));
+                }
+                JsValue::Undefined => out.push_str("undefined"),
+                value => out.push_str(&stringify_scalar(value)),
+            }
         }
-        JsValue::Object(object) => {
-            let mut entries: Vec<(&JsString, &JsValue)> = object
-                .entries()
-                .iter()
-                .map(|(key, value)| (key, value))
-                .collect();
-            entries.sort_by(|a, b| a.0.units().cmp(b.0.units()));
-            let parts: Vec<String> = entries
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}:{}",
-                        stringify_scalar(&JsValue::String(key.clone())),
-                        stable_serialize(value)
-                    )
-                })
-                .collect();
-            format!("{{{}}}", parts.join(","))
+        let last = frames.len();
+        if last == 0 {
+            return Ok(out);
         }
-        JsValue::Undefined => "undefined".into(),
-        value => stringify_scalar(value),
+        match &mut frames[last - 1] {
+            StableFrame::Array(items, index) => {
+                if let Some(item) = items.get(*index) {
+                    if *index > 0 {
+                        out.push(',');
+                    }
+                    *index += 1;
+                    if !item.is_undefined() {
+                        next = Some(item);
+                    }
+                } else {
+                    out.push(']');
+                    frames.pop();
+                }
+            }
+            StableFrame::Object(entries, index) => {
+                if let Some((key, value)) = entries.get(*index) {
+                    if *index > 0 {
+                        out.push(',');
+                    }
+                    *index += 1;
+                    out.push_str(&stringify_scalar(&JsValue::String((*key).clone())));
+                    out.push(':');
+                    next = Some(value);
+                } else {
+                    out.push('}');
+                    frames.pop();
+                }
+            }
+        }
     }
 }
 fn stringify_scalar(value: &JsValue) -> String {
@@ -1132,4 +1211,68 @@ fn system_now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |duration| duration.as_millis() as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nested_arrays(depth: usize) -> JsValue {
+        let mut value = JsValue::String("x".into());
+        for _ in 0..depth {
+            value = JsValue::Array(vec![value]);
+        }
+        value
+    }
+
+    fn message_with_content(content: JsValue) -> JsValue {
+        let mut message = JsObject::new();
+        message.insert("role".into(), JsValue::String("user".into()));
+        message.insert("content".into(), content);
+        JsValue::Object(message)
+    }
+
+    #[test]
+    fn stable_serialize_succeeds_within_the_container_bound() {
+        let value = nested_arrays(MAX_ARRAY_DEPTH);
+        let expected = format!(
+            "{}\"x\"{}",
+            "[".repeat(MAX_ARRAY_DEPTH),
+            "]".repeat(MAX_ARRAY_DEPTH)
+        );
+        assert_eq!(stable_serialize(&value), Ok(expected));
+
+        // Negative control: one container past the bound must fail instead of
+        // silently producing a prefix.
+        let past = JsValue::Array(vec![nested_arrays(MAX_ARRAY_DEPTH)]);
+        assert_eq!(stable_serialize(&past), Err(StackOverflow));
+    }
+
+    #[test]
+    fn fingerprint_allows_the_bound_but_not_one_past_it() {
+        // The fingerprint wrapper is a container too, so content may nest
+        // MAX_ARRAY_DEPTH - 1 levels; one more is past the conservative bound.
+        let allowed = message_with_content(nested_arrays(MAX_ARRAY_DEPTH - 1));
+        assert!(fingerprint(&allowed).is_ok());
+
+        let past = message_with_content(nested_arrays(MAX_ARRAY_DEPTH));
+        let error = fingerprint(&past).unwrap_err();
+        assert_eq!(error.message, StackOverflow::MESSAGE);
+        assert_eq!(
+            error.module_error.expect("module error").message,
+            StackOverflow::MESSAGE.into()
+        );
+    }
+
+    #[test]
+    fn fingerprint_rejects_far_past_the_bound_and_the_process_survives() {
+        let deep = message_with_content(nested_arrays(100_000));
+        let error = fingerprint(&deep).unwrap_err();
+        assert_eq!(error.message, StackOverflow::MESSAGE);
+        assert_eq!(error.kind, crate::host::HostErrorKind::Callback);
+
+        // The same process still serializes ordinary messages after the error.
+        let ordinary = message_with_content(JsValue::Array(vec![JsValue::String("ok".into())]));
+        assert!(fingerprint(&ordinary).is_ok());
+    }
 }

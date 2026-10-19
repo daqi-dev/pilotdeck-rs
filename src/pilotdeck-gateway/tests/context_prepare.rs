@@ -19,8 +19,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 40;
-const STEPS: usize = 58;
+const CASES: usize = 41;
+const STEPS: usize = 63;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -46,6 +46,20 @@ fn number(value: &JsValue) -> f64 {
     value.as_number().expect("number")
 }
 fn decode_fixture(value: &JsValue, root: &str) -> JsValue {
+    // JSON cannot carry NaN/Infinity/-0; the generator records those JS
+    // numbers as {"$number": "..."} and the replay rebuilds them here.
+    if let JsValue::Object(object) = value
+        && object.len() == 1
+        && let Some(JsValue::String(label)) = object.get("$number")
+    {
+        match label.to_utf8().as_deref() {
+            Ok("NaN") => return JsValue::Number(f64::NAN),
+            Ok("Infinity") => return JsValue::Number(f64::INFINITY),
+            Ok("-Infinity") => return JsValue::Number(f64::NEG_INFINITY),
+            Ok("-0") => return JsValue::Number(-0.0),
+            _ => {}
+        }
+    }
     match value {
         JsValue::String(value) => {
             let text = value.to_utf8().expect("utf8 fixture string");

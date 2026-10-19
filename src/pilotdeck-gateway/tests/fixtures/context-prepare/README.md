@@ -40,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 40 个用例 / 58 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 41 个用例 / 63 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -79,6 +79,15 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   oracle 记录真实 `error.message`；
 - 边界输入：`customSystemPrompt: null`、`maxMessages: null`、`stepId` 0/7/null、
   `runtimeContextSurface: null` / 未知值、空 messages/tools。
+- `maxMessages` 的 JS number 边界（Node 22.22.0 实测）：`-1` 走截断路径丢弃全部
+  7 条并告警 `Truncated 8 message(s) to respect maxMessages=-1.`（`droppedCount`
+  可以大于消息数）；`-0` 等价于 0；`2.5` 在 `messages[4.5]` 读到 undefined，整体
+  抛 `TypeError: Cannot read properties of undefined (reading 'content')`；
+  `NaN` / `Infinity` 不截断。JSON 不能表示这些数，生成器在 oracle 输入里用
+  `{"$number": "NaN" | "Infinity" | "-Infinity" | "-0"}` 标记，Rust 回放重建。
+  消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：超过 2000 层容器
+  按 V8 同文 `RangeError: Maximum call stack size exceeded` 拒绝（同一卡片的
+  确定性成功区取保守上界；Node 实测该路径 2500 层嵌套仍成功、2540 层首次抛错）。
 
 负控至少八处：`previewOnly` 后的真实调用必须仍产生同一 date-update（若预览提交了
 状态就会消失）；带 checkpoint 的 `maxMessages` 不截断（若忽略 checkpoint 会丢消息）；
