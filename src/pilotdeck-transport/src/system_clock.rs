@@ -232,6 +232,124 @@ fn resolve_zone_local(wall: i64, zone: tz::TimeZoneRef<'_>) -> Result<i64, JsStr
     }
 }
 
+/// One local wall-clock reading in an admitted IANA zone or fixed offset.
+/// The same checked TZif profile that backs local date parsing is used, so the
+/// gateway never re-parses timezone files or guesses an offset. `weekday` is
+/// derived by the caller; month/day are 1-based.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZonedDateTimeParts {
+    pub year: i64,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub offset_seconds: i32,
+}
+
+/// Local fields for one UTC instant. `timezone` is an IANA name (matched
+/// case-insensitively against the system zoneinfo tree) or an ICU UTC-offset
+/// identifier such as `+05:30` / `-0800`. Invalid names are the only error;
+/// a valid name whose system TZif is unreadable is reported as invalid rather
+/// than silently formatted as UTC.
+pub fn zoned_datetime_parts(epoch_ms: i64, timezone: &str) -> Result<ZonedDateTimeParts, JsString> {
+    let offset_seconds = match parse_offset_timezone(timezone) {
+        Some(offset) => offset,
+        None => {
+            let bytes = timezone_tzif(timezone)
+                .ok_or_else(|| JsString::from("Invalid time zone specified"))?;
+            let zone = tz::TimeZone::from_tz_data(&bytes)
+                .map_err(|_| JsString::from("Invalid time zone specified"))?;
+            zone.find_local_time_type(epoch_ms.div_euclid(1000))
+                .map_err(|_| JsString::from("Invalid time zone specified"))?
+                .ut_offset()
+        }
+    };
+    let local_seconds = epoch_ms
+        .div_euclid(1000)
+        .checked_add(i64::from(offset_seconds))
+        .ok_or_else(|| JsString::from("Invalid time value"))?;
+    let days = local_seconds.div_euclid(86_400);
+    let time = local_seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    Ok(ZonedDateTimeParts {
+        year,
+        month: u32::try_from(month).map_err(|_| JsString::from("Invalid time value"))?,
+        day: u32::try_from(day).map_err(|_| JsString::from("Invalid time value"))?,
+        hour: u32::try_from(time / 3_600).map_err(|_| JsString::from("Invalid time value"))?,
+        minute: u32::try_from(time / 60 % 60).map_err(|_| JsString::from("Invalid time value"))?,
+        second: u32::try_from(time % 60).map_err(|_| JsString::from("Invalid time value"))?,
+        offset_seconds,
+    })
+}
+
+fn parse_offset_timezone(value: &str) -> Option<i32> {
+    let bytes = value.as_bytes();
+    let sign = match bytes.first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let body = &value[1..];
+    let (hours, minutes) = if let Some((hours, minutes)) = body.split_once(':') {
+        if hours.len() != 2 || minutes.len() != 2 {
+            return None;
+        }
+        (hours, minutes)
+    } else if body.len() == 2 {
+        (body, "0")
+    } else if body.len() == 4 {
+        (&body[..2], &body[2..])
+    } else {
+        return None;
+    };
+    let hours: i32 = hours.parse().ok()?;
+    let minutes: i32 = minutes.parse().ok()?;
+    if hours >= 24 || minutes >= 60 {
+        return None;
+    }
+    Some(sign * (hours * 3_600 + minutes * 60))
+}
+
+/// Resolve an IANA-like name under the admitted system zoneinfo root. Every
+/// component is matched exactly first and then case-insensitively (ICU names
+/// are case-insensitive), and the final real path must remain under the root.
+fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
+    if name.is_empty() || name.starts_with('/') || name.contains('\0') {
+        return None;
+    }
+    let root = std::path::Path::new("/usr/share/zoneinfo");
+    let mut path = root.to_path_buf();
+    for component in name.split('/') {
+        if component.is_empty() || component == "." || component == ".." {
+            return None;
+        }
+        let exact = path.join(component);
+        if exact.exists() {
+            path = exact;
+            continue;
+        }
+        let entries = std::fs::read_dir(&path).ok()?;
+        let mut found = None;
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            if let Some(candidate) = file_name.to_str()
+                && candidate.eq_ignore_ascii_case(component)
+            {
+                found = Some(entry.path());
+                break;
+            }
+        }
+        path = found?;
+    }
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let canonical = std::fs::canonicalize(&path).ok()?;
+    if !canonical.starts_with(&canonical_root) {
+        return None;
+    }
+    std::fs::read(canonical).ok()
+}
+
 fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {
     let year = i64::from(year) - i64::from(month <= 2);
     let era = year.div_euclid(400);
