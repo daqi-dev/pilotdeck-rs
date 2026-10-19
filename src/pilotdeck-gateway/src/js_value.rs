@@ -97,6 +97,32 @@ pub(crate) fn display(value: &JsValue) -> Result<String, StackOverflow> {
     Ok(String::from_utf16_lossy(&to_string_units(value)?))
 }
 
+/// `JSON.stringify` with the same conservative container-depth bound as
+/// [`to_string_units`]. The serializer itself walks iteratively; this guard
+/// makes a too-deep input report V8's `RangeError` instead of silently
+/// producing a string. V8's own `JSON.stringify` limit is caller-stack
+/// dependent (Node 22 probe: 6500 nesting converts, 7000 throws at top level),
+/// so the shared 2000 bound is deliberately conservative rather than an exact
+/// threshold.
+pub(crate) fn json_stringify(value: &JsValue) -> Result<Option<String>, StackOverflow> {
+    let mut pending = vec![(value, 0usize)];
+    while let Some((value, depth)) = pending.pop() {
+        if depth > MAX_ARRAY_DEPTH {
+            return Err(StackOverflow);
+        }
+        match value {
+            JsValue::Array(items) => {
+                pending.extend(items.iter().map(|item| (item, depth + 1)));
+            }
+            JsValue::Object(object) => {
+                pending.extend(object.entries().iter().map(|(_, item)| (item, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    Ok(stringify_json(value).ok().flatten())
+}
+
 /// `Number(value)`.
 pub(crate) fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
     Ok(match value {
@@ -219,6 +245,23 @@ mod tests {
         let lone = pilotdeck_protocol::JsString::from_utf16(vec![0xd800]);
         let lone = JsValue::Array(vec![JsValue::String(lone)]);
         assert_eq!(to_string_units(&lone).unwrap(), vec![0xd800]);
+    }
+
+    #[test]
+    fn json_stringify_reports_the_shared_depth_bound() {
+        let nested_value = nested(MAX_ARRAY_DEPTH);
+        assert!(json_stringify(&nested_value).is_ok());
+        assert_eq!(
+            json_stringify(&nested(MAX_ARRAY_DEPTH + 1)),
+            Err(StackOverflow)
+        );
+        let mut object = JsValue::Object(Default::default());
+        for _ in 0..=MAX_ARRAY_DEPTH {
+            let mut parent = pilotdeck_protocol::JsObject::new();
+            parent.insert("x".into(), object);
+            object = JsValue::Object(parent);
+        }
+        assert_eq!(json_stringify(&object), Err(StackOverflow));
     }
 
     #[test]
