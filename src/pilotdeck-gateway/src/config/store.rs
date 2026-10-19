@@ -30,10 +30,16 @@
 //!   yield one reload although their real spacing was slightly over 250 ms
 //!   (with 20 ms polling, spacings in roughly 250–270 ms depending on tick
 //!   phase); (3) net-zero bursts — changes that leave content *and* metadata
-//!   identical between two samples (A→B→A within one interval with the same
-//!   mtime, or a create+delete inside a watched directory) trigger no reload,
-//!   where `fs.watch` would produce an identity reload (version+1, empty
-//!   `changedPaths`).
+//!   (including the inode change time, which every write and `utimes` bump)
+//!   identical between two samples trigger no reload, where `fs.watch` would
+//!   produce an identity reload (version+1, empty `changedPaths`). With
+//!   change-time sampling this needs a filesystem whose ctime granularity is
+//!   coarser than the burst.
+//!
+//! Each sample reads at most [`CONTENT_SAMPLE_LIMIT`] bytes of a watched
+//! config file (the file itself, or the missing config file's name inside a
+//! watched parent directory); larger files and other directory entries are
+//! sampled by metadata only.
 use super::{
     Env, Error,
     changes::{ChangeClass, classify_config_changes, diff_config_snapshots},
@@ -477,9 +483,16 @@ impl Drop for WatchHandle {
     }
 }
 
+/// Content bytes hashed per sample of one watched config file; beyond this a
+/// file is sampled by metadata (length, mtime, ctime, inode) only.
+pub const CONTENT_SAMPLE_LIMIT: u64 = 1024 * 1024;
+
 struct WatchedPath {
     path: PathBuf,
     directory: bool,
+    /// For a directory watched in place of a missing config file, that
+    /// file's name: its content is sampled once it appears.
+    target: Option<std::ffi::OsString>,
     fingerprint: u64,
 }
 
@@ -487,10 +500,11 @@ impl WatchedPath {
     /// `existsSync(path) ? path : dirname(path)`; `fs.watch` throws (and the
     /// path is skipped) when that target does not exist.
     fn new(path: PathBuf) -> Option<Self> {
-        let path = if path.exists() {
-            path
+        let (path, target) = if path.exists() {
+            (path, None)
         } else {
-            path.parent()?.to_path_buf()
+            let target = path.file_name().map(ToOwned::to_owned);
+            (path.parent()?.to_path_buf(), target)
         };
         if !path.exists() {
             return None;
@@ -498,38 +512,51 @@ impl WatchedPath {
         // An existing directory (e.g. an empty config path resolving to cwd)
         // is fingerprinted by its entries, like `fs.watch` on a directory.
         let directory = path.is_dir();
-        let fingerprint = fingerprint(&path, directory);
+        let fingerprint = fingerprint(&path, directory, target.as_deref());
         Some(Self {
             path,
             directory,
+            target,
             fingerprint,
         })
     }
 
     fn changed(&mut self) -> bool {
-        let next = fingerprint(&self.path, self.directory);
+        let next = fingerprint(&self.path, self.directory, self.target.as_deref());
         std::mem::replace(&mut self.fingerprint, next) != next
     }
 }
 
 fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
+    use std::{io::Read, os::unix::fs::MetadataExt};
     match std::fs::metadata(path) {
         Ok(meta) => {
             true.hash(hasher);
             meta.len().hash(hasher);
             meta.is_dir().hash(hasher);
             meta.modified().ok().hash(hasher);
-            if read_content && meta.is_file() {
-                std::fs::read(path).ok().hash(hasher);
+            // Every write (and `utimes`) bumps ctime, so a same-length rewrite
+            // that restores mtime is still seen; a replacing rename changes
+            // the inode.
+            (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
+            if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
+                let mut content = Vec::new();
+                std::fs::File::open(path)
+                    .and_then(|file| file.take(CONTENT_SAMPLE_LIMIT).read_to_end(&mut content))
+                    .ok()
+                    .map(|_| content)
+                    .hash(hasher);
             }
         }
         Err(_) => false.hash(hasher),
     }
 }
 
-fn fingerprint(path: &Path, directory: bool) -> u64 {
+fn fingerprint(path: &Path, directory: bool, target: Option<&std::ffi::OsStr>) -> u64 {
     let mut hasher = DefaultHasher::new();
     if directory {
+        // The directory's own metadata changes on every entry create/delete.
+        hash_entry(path, &mut hasher, false);
         let mut names = std::fs::read_dir(path)
             .map(|entries| {
                 entries
@@ -540,7 +567,8 @@ fn fingerprint(path: &Path, directory: bool) -> u64 {
         names.sort();
         for name in names {
             name.hash(&mut hasher);
-            hash_entry(&path.join(&name), &mut hasher, false);
+            let read_content = target == Some(name.as_os_str());
+            hash_entry(&path.join(&name), &mut hasher, read_content);
         }
     } else {
         hash_entry(path, &mut hasher, true);

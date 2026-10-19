@@ -63,9 +63,11 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   轮询下约 250–270 ms，随 tick 相位变化）也会合并，订阅者看不到中间快照
   （`change_spacing_around_the_debounce_window`：260 ms 间隔得「一次含第二次内容 +
   一次 identity」，300 ms 间隔与 TS 一致）；③ 净零突发：两次采样之间内容**和**
-  元数据都恢复原状（同一周期内 A→B→A 且 mtime 相同，或被监视目录内建后即删）
-  不触发 reload，而 `fs.watch` 会给一次 identity reload
-  （`net_zero_change_between_samples_is_not_seen`）。相对的全局配置路径
+  元数据（含每次写入与 `utimes` 都会刷新的 ctime、inode）都恢复原状才不触发
+  reload，而 `fs.watch` 会给一次 identity reload；#327 起同周期 A→B→A 并回拨 mtime
+  已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩 ctime 粒度粗于
+  突发的文件系统。每次采样只读被监视配置文件（含经父目录监视、后来出现的那个
+  配置文件名）至多 1 MiB 内容，超出或其它目录项只看元数据。相对的全局配置路径
   （`PILOTDECK_CONFIG_PATH`）按 `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
 
 ```sh

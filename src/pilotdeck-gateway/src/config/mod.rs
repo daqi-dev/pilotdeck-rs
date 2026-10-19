@@ -187,7 +187,7 @@ pub fn load_project(
 ) -> Result<Config, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: cwd.to_path_buf(),
+        cwd: absolute_cwd(cwd),
         files: crate::metadata::NativeFiles,
     };
     load_project_with_files(&metadata, env, project)

@@ -324,6 +324,10 @@ impl ProjectRuntimeRegistry {
             reload_gate: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
+    /// Whether `dispose` has been called (reload/resolve now fail).
+    pub fn is_disposed(&self) -> bool {
+        self.state.lock().unwrap().disposed
+    }
     fn assert_active(state: &RegistryState) -> RuntimeResult {
         if state.disposed {
             Err(RuntimeError::new("Project runtime registry is disposed."))

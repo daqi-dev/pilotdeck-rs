@@ -427,10 +427,11 @@ async fn change_spacing_around_the_debounce_window() {
     }
 }
 
-/// Documents the net-zero limitation: content and metadata restored between
-/// two samples produce no reload (fs.watch would give an identity reload).
+/// #327: content and mtime restored between two samples still bump the
+/// inode change time, so the burst yields one identity reload like
+/// `fs.watch` (it used to be invisible to the length/mtime/content sample).
 #[tokio::test(start_paused = true)]
-async fn net_zero_change_between_samples_is_not_seen() {
+async fn restored_mtime_rewrite_between_samples_is_seen() {
     let root = Root::new();
     root.write(BASE);
     let path = root.0.join("pilotdeck.yaml");
@@ -448,8 +449,68 @@ async fn net_zero_change_between_samples_is_not_seen() {
         .set_modified(modified)
         .unwrap();
     advance(600).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        store.snapshot().get("version").and_then(JsValue::as_number),
+        Some(2.0)
+    );
     watch.stop().await;
+}
+
+/// #327: a config file that appears inside a parent-watched directory has
+/// its content sampled, so a same-length rewrite is seen even when the
+/// entry's length and mtime are unchanged (a fingerprint of the entry list
+/// and metadata alone could not tell `deterministic` from `other`).
+#[test]
+fn parent_watched_config_file_content_is_sampled() {
+    let root = Root::new();
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("parent watched");
+    assert!(watched.directory);
+    assert_eq!(
+        watched.target.as_deref(),
+        Some(std::ffi::OsStr::new("pilotdeck.yaml"))
+    );
+    std::fs::write(&path, "a: 111\n").unwrap();
+    assert!(watched.changed(), "creation is seen");
+    assert!(!watched.changed(), "an unchanged sample is quiet");
+    // The target's content is part of the directory sample; the negative
+    // control (no target) is the old entry-metadata-only fingerprint.
+    let target = Some(std::ffi::OsStr::new("pilotdeck.yaml"));
+    assert_ne!(
+        fingerprint(&root.0, true, target),
+        fingerprint(&root.0, true, None)
+    );
+    let other = Some(std::ffi::OsStr::new("other.yaml"));
+    assert_eq!(
+        fingerprint(&root.0, true, other),
+        fingerprint(&root.0, true, None)
+    );
+}
+
+/// #327: files over the sample limit are not read on every poll; they are
+/// still watched through their metadata.
+#[test]
+fn oversized_config_file_is_sampled_by_metadata_only() {
+    let root = Root::new();
+    let path = root.0.join("pilotdeck.yaml");
+    let big = vec![b'#'; CONTENT_SAMPLE_LIMIT as usize + 1];
+    std::fs::write(&path, &big).unwrap();
+    let mut with_content = DefaultHasher::new();
+    hash_entry(&path, &mut with_content, true);
+    let mut metadata_only = DefaultHasher::new();
+    hash_entry(&path, &mut metadata_only, false);
+    assert_eq!(with_content.finish(), metadata_only.finish());
+    let mut watched = WatchedPath::new(path.clone()).expect("file watched");
+    std::fs::write(&path, &big).unwrap();
+    assert!(watched.changed(), "a rewrite still bumps ctime");
+    // Negative control: at the limit the content is part of the sample.
+    std::fs::write(&path, &big[..CONTENT_SAMPLE_LIMIT as usize]).unwrap();
+    let mut with_content = DefaultHasher::new();
+    hash_entry(&path, &mut with_content, true);
+    let mut metadata_only = DefaultHasher::new();
+    hash_entry(&path, &mut metadata_only, false);
+    assert_ne!(with_content.finish(), metadata_only.finish());
 }
 
 #[test]
