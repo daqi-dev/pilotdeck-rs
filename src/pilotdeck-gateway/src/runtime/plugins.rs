@@ -582,6 +582,13 @@ async fn drain_one_plugin(
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
 ) -> Result<(), PluginRuntimeError> {
     loop {
+        // We must register the Notified future *before* releasing the lock so
+        // that any notify_waiters() call in release_lease_plugins that fires
+        // between the lock release and the first .await is not missed.
+        //
+        // Pattern: clone Arc<Notify> inside the lock, then call .notified()
+        // while the guard is still held (so the future is registered), keep
+        // `waiters` alive across .await so the borrow is valid.
         let (referenced, waiters) = {
             let st = state_mutex.lock().await;
             (
@@ -592,6 +599,8 @@ async fn drain_one_plugin(
         if !referenced {
             break;
         }
+        // notified() borrows `waiters` (an Arc<Notify>).  The future is
+        // registered here; `waiters` stays live until after .await completes.
         waiters.notified().await;
     }
     if let Some(dispose) = &plugin.dispose {
@@ -606,10 +615,14 @@ async fn wait_watch<T: Clone + Send + 'static>(mut rx: watch::Receiver<Option<T>
         if let Some(value) = rx.borrow().clone() {
             return value;
         }
+        // Err means the Sender was dropped (task panicked without sending).
+        // Treat that as a permanent failure — re-check the value once (it may
+        // have been set just before the drop), then panic with a clear message.
         if rx.changed().await.is_err() {
             if let Some(value) = rx.borrow().clone() {
                 return value;
             }
+            panic!("wait_watch: watch sender dropped without delivering a value (spawned task panicked)");
         }
     }
 }
