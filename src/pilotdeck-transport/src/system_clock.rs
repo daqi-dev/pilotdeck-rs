@@ -237,6 +237,7 @@ fn resolve_zone_local(wall: i64, zone: tz::TimeZoneRef<'_>) -> Result<i64, JsStr
 /// gateway never re-parses timezone files or guesses an offset. `weekday` is
 /// derived by the caller; month/day are 1-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // constructed in main crate; flagged dead in test-only #[path] include
 pub struct ZonedDateTimeParts {
     pub year: i64,
     pub month: u32,
@@ -252,6 +253,7 @@ pub struct ZonedDateTimeParts {
 /// identifier such as `+05:30` / `-0800`. Invalid names are the only error;
 /// a valid name whose system TZif is unreadable is reported as invalid rather
 /// than silently formatted as UTC.
+#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 pub fn zoned_datetime_parts(epoch_ms: i64, timezone: &str) -> Result<ZonedDateTimeParts, JsString> {
     let offset_seconds = match parse_offset_timezone(timezone) {
         Some(offset) => offset,
@@ -283,6 +285,7 @@ pub fn zoned_datetime_parts(epoch_ms: i64, timezone: &str) -> Result<ZonedDateTi
     })
 }
 
+#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 fn parse_offset_timezone(value: &str) -> Option<i32> {
     let bytes = value.as_bytes();
     let sign = match bytes.first()? {
@@ -314,6 +317,7 @@ fn parse_offset_timezone(value: &str) -> Option<i32> {
 /// Resolve an IANA-like name under the admitted system zoneinfo root. Every
 /// component is matched exactly first and then case-insensitively (ICU names
 /// are case-insensitive), and the final real path must remain under the root.
+#[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
     if name.is_empty() || name.starts_with('/') || name.contains('\0') {
         return None;
