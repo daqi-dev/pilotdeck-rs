@@ -368,6 +368,7 @@ async fn prepare_for_model_matches_real_ts() {
             runtime_context_surface: surface,
             instruction_discovery: discovery,
             prompt_contributions,
+            tool_result_budget: None,
             now: Some(now),
             platform: Some(platform.clone()),
             node_version: Some(node_version.clone()),
