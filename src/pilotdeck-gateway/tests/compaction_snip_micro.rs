@@ -162,7 +162,7 @@ fn real_ts_snip_and_micro_scenarios_match_byte_for_byte() {
     let oracle = baseline::oracle(ORACLE);
     assert_eq!(s(field(&oracle, "locale")), "en-US");
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 36, "scenario count");
+    assert_eq!(scenarios.len(), 60, "scenario count");
     let mut seen = std::collections::HashSet::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
@@ -178,6 +178,14 @@ fn real_ts_snip_and_micro_scenarios_match_byte_for_byte() {
         let actual_json = stringify_json(&actual)
             .unwrap()
             .expect("serializable actual");
+        if name == "surrogate-emoji-triple" {
+            // The lone low surrogate must stay a code unit and be escaped by
+            // Rust's serializer, not replaced with U+FFFD or emitted raw.
+            assert!(
+                actual_json.contains("\\udf89"),
+                "scenario {name} must escape its lone low surrogate as \\udf89"
+            );
+        }
         let expected_json = stringify_json(expected)
             .unwrap()
             .expect("serializable expected");
