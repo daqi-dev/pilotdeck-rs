@@ -102,14 +102,14 @@ impl Handler {
             Ok(response)
         })
     }
+    /// TS `sidecarDefaultModuleDispatcher.dispose()` only clears turn-local
+    /// model streams/preparations; it never disposes the session-owned
+    /// `LifecycleRuntime` (that belongs to `AgentRuntimeScope`, only when it
+    /// owns the lifecycle). This handler is reconstructed each turn, so
+    /// disposing the runtime here would drop pending async hooks and callback
+    /// registrations between turns.
     pub fn dispose(&self) -> HostFuture<()> {
-        let handler = self.clone();
-        Box::pin(async move {
-            if let Some(ports) = handler.ports {
-                ports.runtime.dispose().await;
-            }
-            Ok(())
-        })
+        Box::pin(async { Ok(()) })
     }
 }
 

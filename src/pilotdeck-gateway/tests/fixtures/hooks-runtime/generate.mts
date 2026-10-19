@@ -309,6 +309,46 @@ await commandCase({
   name: 'shell-expansion',
   command: `/bin/bash '${S.expand}' 'x y'`,
 });
+// Pipe reads must run concurrently with the wait; these exceed the 64 KiB
+// macOS pipe buffer and would otherwise deadlock until the timeout.
+await commandCase({
+  name: 'stdout-over-pipe-buffer',
+  command: `head -c 70000 /dev/zero | tr '\\0' a; printf '\\n{"decision":"block"}\\n'`,
+});
+await commandCase({
+  name: 'stderr-over-pipe-buffer',
+  command: `head -c 70000 /dev/zero | tr '\\0' a 1>&2; exit 2`,
+});
+// The leader exits immediately but a same-group grandchild keeps stdout open;
+// timeout/abort must still reach the whole group (TS clears these at 1004/501
+// ms). The TERM-ignoring case needs the 3 s SIGKILL grace (TS: 4004 ms).
+await commandCase({
+  name: 'grandchild-holds-stdout-timeout',
+  command: 'sleep 20 & echo hi',
+  timeoutMs: 1000,
+});
+await commandCase({
+  name: 'grandchild-holds-stdout-abort',
+  command: 'sleep 20 & echo hi',
+  timeoutMs: 600000,
+  abortAtMs: 500,
+});
+await commandCase({
+  name: 'grandchild-ignores-term',
+  command: `bash -c 'trap "" TERM; sleep 20' & echo hi; sleep 20`,
+  timeoutMs: 1000,
+});
+// PILOTDECK_SHELL_PATH truthiness/PATH semantics (runtime/commandShell.ts).
+await commandCase({
+  name: 'shell-path-empty-falls-back',
+  command: `printf 'empty-ok\\n'`,
+  env: { ...env(), PILOTDECK_SHELL_PATH: '' },
+});
+await commandCase({
+  name: 'shell-path-bare-name',
+  command: `printf 'bare-ok\\n'`,
+  env: { ...env(), PILOTDECK_SHELL_PATH: 'bash' },
+});
 
 // ---------------------------------------------------------------- HTTP hooks
 const requests: any[] = [];
@@ -423,6 +463,16 @@ await httpCase({ name: 'server-error', target: '<url>/server-error' });
 await httpCase({ name: 'invalid-url', target: 'not a url' });
 await httpCase({ name: 'non-string-header', target: '<url>/ok', headers: { A: 1 } as any });
 await httpCase({ name: 'invalid-header-value', target: '<url>/ok', headers: { A: 'bad\nvalue' } });
+// Node headers are ByteStrings: U+00E9 is sent as the latin1 byte E9 while
+// U+4E2D (> 0xFF) is rejected before the abort check runs.
+await httpCase({ name: 'header-latin1', target: '<url>/echo', headers: { 'X-A': 'José' } });
+await httpCase({ name: 'header-cjk-bytestring', target: '<url>/ok', headers: { 'X-A': '中' } });
+await httpCase({
+  name: 'pre-aborted-invalid-header',
+  target: '<url>/ok',
+  headers: { A: 'bad\nvalue' },
+  abortAtMs: 0,
+});
 await httpCase({ name: 'pre-aborted', target: '<url>/ok', abortAtMs: 0 });
 await httpCase({ name: 'abort-during', target: '<url>/slow', abortAtMs: 500 });
 await httpCase({ name: 'refused', target: '<refused>/x' });
@@ -717,6 +767,7 @@ const lifecycleSettings = {
         { type: 'command', command: `/bin/bash '${S.stdin}'` },
         { type: 'command', command: `/bin/bash '${S.exit2}'` },
         { type: 'prompt', prompt: 'p $ARGUMENTS' },
+        { type: 'command', command: `/bin/bash '${S.async}'` },
       ],
     },
   ],
@@ -737,6 +788,23 @@ const lifecycleBaseInput = { ...baseInput, cwd: '<dir>' };
   });
   lifecycle.dispatch = json(result);
   lifecycle.dispatchMessages = json(result.messages);
+  // A session-level LifecycleRuntime is reused across turns (the dispatcher's
+  // dispose never touches it): the second dispatch still runs hooks and its
+  // pending async registry keeps the first turn's registration alive.
+  const second = await runtime.dispatch({
+    event: 'Stop',
+    baseInput: actualize(lifecycleBaseInput),
+    payload: { extra: 'v' },
+    matchQuery: 'Stop',
+    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    cwd: '<dir>',
+  });
+  lifecycle.acrossTurns = {
+    firstPending: json(result.pendingAsyncHooks),
+    first: json(result),
+    second: json(second),
+    secondPending: json(second.pendingAsyncHooks),
+  };
   // A second dispatch after dispose rejects with the runtime message.
   await runtime.dispose();
   try {

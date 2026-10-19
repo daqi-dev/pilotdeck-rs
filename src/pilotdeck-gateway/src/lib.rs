@@ -13,6 +13,7 @@ pub mod model_cost;
 mod native_archive;
 mod node_io;
 mod pairing;
+mod process_group;
 mod project_files;
 pub mod runtime;
 mod session_model;

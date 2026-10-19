@@ -505,32 +505,48 @@ fn env_object(env: Option<&JsObject>) -> JsObject {
 }
 
 fn find_on_path(name: &str, env: &JsObject) -> Option<String> {
+    // Node's `findOnPath` looks up the `Path` key case-insensitively.
     let path = env
-        .get("PATH")
-        .and_then(JsValue::as_string)
+        .entries()
+        .iter()
+        .find(|(key, _)| {
+            key.to_utf8()
+                .is_ok_and(|key| key.eq_ignore_ascii_case("path"))
+        })
+        .and_then(|(_, value)| JsValue::as_string(value))
         .map(|value| String::from_utf16_lossy(value.units()))?;
     for entry in path.split(':').filter(|entry| !entry.is_empty()) {
         let candidate = Path::new(entry).join(name);
-        if candidate.is_file() {
+        // TS uses `existsSync`, not `isFile`; a directory-shaped entry still
+        // counts as present and is rejected later by spawn.
+        if candidate.exists() {
             return Some(candidate.to_string_lossy().into_owned());
         }
     }
     None
 }
 
-/// `resolveDefaultCommandShell` on POSIX: configured path, `/bin/bash`, `bash`
-/// on PATH, then `/bin/sh`.
+/// `resolveDefaultCommandShell` on POSIX: configured path/name, `/bin/bash`,
+/// `bash` on PATH, then `/bin/sh`. An empty `PILOTDECK_SHELL_PATH` is unset
+/// (JS truthiness), and a bare configured name is resolved through PATH.
 fn resolve_shell(env: &JsObject) -> Result<String, JsString> {
     if let Some(configured) = env.get("PILOTDECK_SHELL_PATH").and_then(JsValue::as_string) {
         let path = String::from_utf16_lossy(configured.units());
-        if Path::new(&path).is_file() {
+        if !path.is_empty() {
+            let available = if path.contains('/') || path.contains('\\') {
+                Path::new(&path).exists()
+            } else {
+                find_on_path(&path, env).is_some()
+            };
+            if !available {
+                return Err(JsString::from(format!(
+                    "Configured PilotDeck shell was not found: {path}"
+                )));
+            }
             return Ok(path);
         }
-        return Err(JsString::from(format!(
-            "Configured PilotDeck shell was not found: {path}"
-        )));
     }
-    if Path::new("/bin/bash").is_file() {
+    if Path::new("/bin/bash").exists() {
         return Ok("/bin/bash".into());
     }
     if let Some(bash) = find_on_path("bash", env) {
@@ -546,15 +562,6 @@ fn spawn_error(shell: &str, error: &std::io::Error) -> JsString {
         _ => return JsString::from(error.to_string()),
     };
     JsString::from(format!("spawn {shell} {code}"))
-}
-
-fn kill_group(group: Option<rustix::process::Pid>, signal: rustix::process::Signal) {
-    #[cfg(unix)]
-    if let Some(group) = group {
-        let _ = rustix::process::kill_process_group(group, signal);
-    }
-    #[cfg(not(unix))]
-    let _ = (group, signal);
 }
 
 /// Kills the owned process group if the future is dropped before `reap`.
@@ -577,7 +584,18 @@ impl GroupGuard {
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         if !self.reaped {
-            kill_group(self.group, rustix::process::Signal::KILL);
+            crate::process_group::kill(self.group, rustix::process::Signal::KILL);
+        }
+    }
+}
+
+/// Wait for the leader without reaping it, so its PGID stays reserved until the
+/// caller has sent the final group signal (same invariant as `host/connection`).
+async fn observe_leader_exit(group: rustix::process::Pid) {
+    loop {
+        match crate::process_group::leader_exited_unreaped(group) {
+            Ok(true) | Err(_) => return,
+            Ok(false) => tokio::time::sleep(Duration::from_millis(5)).await,
         }
     }
 }
@@ -622,19 +640,39 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     let group = None;
     let mut guard = GroupGuard::new(group);
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let out = read_pipe(stdout);
-    let err = read_pipe(stderr);
-    if let Some(mut stdin) = child.stdin.take() {
+    // Both pipes are drained concurrently with the wait. A hook that writes
+    // more than the OS pipe buffer (64 KiB on macOS) must not deadlock before
+    // `wait` returns, and a grandchild that inherits either pipe keeps EOF
+    // pending: that is why the timers below outlive the leader.
+    let mut out_task = tokio::spawn(read_pipe(child.stdout.take()));
+    let mut err_task = tokio::spawn(read_pipe(child.stderr.take()));
+    let mut out_done = false;
+    let mut err_done = false;
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    // C6: the writer may block forever when the child does not read stdin but
+    // a same-group grandchild keeps the read end open. It is aborted with the
+    // rest of the process state instead of outliving the hook.
+    let stdin_task = child.stdin.take().map(|mut stdin| {
         let payload = request.stdin.units().to_vec();
         tokio::spawn(async move {
             // EPIPE after an early exit is normal; process exit owns the outcome.
             let bytes: Vec<u8> = String::from_utf16_lossy(&payload).into_bytes();
             let _ = stdin.write_all(&bytes).await;
             let _ = stdin.shutdown().await;
+        })
+    });
+
+    let (leader_tx, mut leader_rx) = tokio::sync::oneshot::channel();
+    if let Some(group) = group {
+        tokio::spawn(async move {
+            observe_leader_exit(group).await;
+            let _ = leader_tx.send(());
         });
+    } else {
+        let _ = leader_tx.send(());
     }
+    let mut leader_exited = group.is_none();
 
     let started = tokio::time::Instant::now();
     let mut timeout_sleep: Pin<Box<Sleep>> =
@@ -642,26 +680,38 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     let signal = request.signal;
     let initially_aborted = signal.as_ref().is_some_and(Cancellation::is_aborted);
     let mut timed_out = false;
-    let mut killed = false;
+    let mut timed_or_cancelled = false;
     let mut kill_sleep: Option<Pin<Box<Sleep>>> = None;
     let mut force_sleep: Option<Pin<Box<Sleep>>> = None;
-    let status = loop {
+    let mut forced = false;
+    loop {
+        if leader_exited && out_done && err_done {
+            break;
+        }
         tokio::select! {
-            result = child.wait() => {
-                break result;
+            _ = &mut leader_rx, if !leader_exited => {
+                leader_exited = true;
             }
-            _ = &mut timeout_sleep, if !timed_out && !killed => {
+            result = &mut out_task, if !out_done => {
+                stdout_bytes = result.unwrap_or_default();
+                out_done = true;
+            }
+            result = &mut err_task, if !err_done => {
+                stderr_bytes = result.unwrap_or_default();
+                err_done = true;
+            }
+            _ = &mut timeout_sleep, if !timed_or_cancelled => {
                 timed_out = true;
-                killed = true;
-                kill_group(group, rustix::process::Signal::TERM);
+                timed_or_cancelled = true;
+                crate::process_group::kill(group, rustix::process::Signal::TERM);
                 kill_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
             }
             _ = async {
                 if let Some(signal) = &signal { signal.cancelled().await } else { std::future::pending().await }
-            }, if !timed_out && !killed && !initially_aborted => {
-                killed = true;
-                kill_group(group, rustix::process::Signal::TERM);
+            }, if !timed_or_cancelled && !initially_aborted => {
+                timed_or_cancelled = true;
+                crate::process_group::kill(group, rustix::process::Signal::TERM);
                 kill_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
             }
@@ -669,41 +719,79 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
                 if let Some(sleep) = kill_sleep.as_mut() { sleep.as_mut().await } else { std::future::pending().await }
             }, if kill_sleep.is_some() => {
                 kill_sleep = None;
-                kill_group(group, rustix::process::Signal::KILL);
+                crate::process_group::kill(group, rustix::process::Signal::KILL);
             }
             _ = async {
                 if let Some(sleep) = force_sleep.as_mut() { sleep.as_mut().await } else { std::future::pending().await }
             }, if force_sleep.is_some() => {
-                // A child that survives SIGKILL is outside normal reach; keep
-                // TS's force-resolve result but still make a bounded reaping
-                // attempt so the leader cannot leak as a permanent zombie.
-                let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-                guard.reap();
-                let stdout = tokio::time::timeout(Duration::from_secs(1), out)
-                    .await
-                    .unwrap_or_default();
-                let mut stderr_bytes = tokio::time::timeout(Duration::from_secs(1), err)
-                    .await
-                    .unwrap_or_default();
-                stderr_bytes.extend_from_slice(FORCE_RESOLVE_NOTE.as_bytes());
-                return Ok(ShellResult {
-                    exit_code: None,
-                    stdout,
-                    stderr: stderr_bytes,
-                    timed_out: true,
-                });
+                // A descendant that survives SIGKILL is outside normal reach;
+                // keep TS's force-resolve result but still make bounded
+                // attempts to reap and collect.
+                forced = true;
+                timed_out = true;
+                break;
             }
         }
-    };
-    let exit_code = match status {
-        Ok(status) => status.code(),
-        Err(_) => None,
-    };
-    guard.reap();
+    }
+
+    // C6 first: aborting only schedules cancellation, so join the writer
+    // before tearing the pipes down.
+    if let Some(task) = stdin_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // A naturally exited leader can still leave same-group descendants behind
+    // (for example `sleep 20 >/dev/null &`); once both pipes are at EOF the
+    // hook result is complete, so clean the group instead of orphaning it.
+    crate::process_group::kill(group, rustix::process::Signal::KILL);
+    let mut exit_code = None;
+    if !forced {
+        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(status)) => {
+                exit_code = status.code();
+                guard.reap();
+            }
+            _ => {
+                forced = true;
+                timed_out = true;
+            }
+        }
+    } else {
+        // Even a force-resolved leader must be reaped before dropping the
+        // group id, otherwise GroupGuard::drop could signal a reused PGID.
+        if tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .is_ok_and(|result| result.is_ok())
+        {
+            guard.reap();
+        }
+    }
+
+    if !out_done {
+        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(1), &mut out_task).await {
+            stdout_bytes = bytes;
+        }
+        out_task.abort();
+        let _ = out_task.await;
+    }
+    if !err_done {
+        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(1), &mut err_task).await {
+            stderr_bytes = bytes;
+        }
+        err_task.abort();
+        let _ = err_task.await;
+    }
+    crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+
+    let mut stderr = stderr_bytes;
+    if forced {
+        stderr.extend_from_slice(FORCE_RESOLVE_NOTE.as_bytes());
+    }
     Ok(ShellResult {
-        exit_code,
-        stdout: out.await,
-        stderr: err.await,
+        exit_code: if forced { None } else { exit_code },
+        stdout: stdout_bytes,
+        stderr,
         timed_out,
     })
 }
@@ -840,7 +928,12 @@ pub struct HttpHookExecutor {
         hyper_util::client::legacy::connect::HttpConnector,
         http_body_util::Full<bytes::Bytes>,
     >,
+    /// Undici's default `headersTimeout`/`bodyTimeout` is 300 s. Tests inject
+    /// a shorter value; production keeps the TS default.
+    timeout: Duration,
 }
+/// TS `fetch` (undici) default header/body timeout.
+pub const HTTP_TIMEOUT: Duration = Duration::from_secs(300);
 impl Default for HttpHookExecutor {
     fn default() -> Self {
         Self::new()
@@ -848,10 +941,16 @@ impl Default for HttpHookExecutor {
 }
 impl HttpHookExecutor {
     pub fn new() -> Self {
+        Self::with_timeout(HTTP_TIMEOUT)
+    }
+    pub fn with_timeout(timeout: Duration) -> Self {
         let client =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
                 .build_http();
-        Self { client }
+        Self { client, timeout }
+    }
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
     pub async fn execute(&self, options: HttpHookOptions) -> ExecutionResult {
         match self.execute_inner(options).await {
@@ -876,6 +975,26 @@ impl HttpHookExecutor {
                 url.scheme()
             )));
         }
+        // Node's `Headers`/`Request` construction validates names and values as
+        // ByteStrings before `fetch` checks `signal.aborted`; a pre-aborted
+        // request with a bad header therefore reports the header error.
+        let mut built = Vec::with_capacity(headers.len());
+        for (name, value) in headers {
+            let header_name =
+                hyper::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                    JsString::from(format!(
+                        "Headers.append: \"{name}\" is an invalid header name."
+                    ))
+                })?;
+            let bytes = header_value_bytes(&value)?;
+            let header_value = hyper::header::HeaderValue::from_bytes(&bytes).map_err(|_| {
+                JsString::from(format!(
+                    "Headers.append: \"{}\" is an invalid header value.",
+                    String::from_utf16_lossy(value.units())
+                ))
+            })?;
+            built.push((header_name, header_value));
+        }
         if options
             .signal
             .as_ref()
@@ -884,17 +1003,7 @@ impl HttpHookExecutor {
             return Err("This operation was aborted".into());
         }
         let mut request = hyper::Request::builder().method("POST").uri(url.as_str());
-        for (name, value) in headers {
-            let name = hyper::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-                JsString::from(format!(
-                    "Headers.append: \"{name}\" is an invalid header name."
-                ))
-            })?;
-            let value = hyper::header::HeaderValue::from_str(&value).map_err(|_| {
-                JsString::from(format!(
-                    "Headers.append: \"{value}\" is an invalid header value."
-                ))
-            })?;
+        for (name, value) in built {
             request = request.header(name, value);
         }
         let request = request
@@ -904,11 +1013,17 @@ impl HttpHookExecutor {
             let send = self.client.request(request);
             if let Some(signal) = &options.signal {
                 tokio::select! {
-                    response = send => response.map_err(|_| JsString::from("fetch failed"))?,
+                    response = tokio::time::timeout(self.timeout, send) => match response {
+                        Ok(response) => response.map_err(|_| JsString::from("fetch failed"))?,
+                        Err(_) => return Err("fetch failed".into()),
+                    },
                     _ = signal.cancelled() => return Err("This operation was aborted".into()),
                 }
             } else {
-                send.await.map_err(|_| JsString::from("fetch failed"))?
+                tokio::time::timeout(self.timeout, send)
+                    .await
+                    .map_err(|_| JsString::from("fetch failed"))?
+                    .map_err(|_| JsString::from("fetch failed"))?
             }
         };
         let status = response.status();
@@ -918,11 +1033,17 @@ impl HttpHookExecutor {
             let collect = response.into_body().collect();
             if let Some(signal) = &options.signal {
                 tokio::select! {
-                    body = collect => body.map_err(|_| JsString::from("fetch failed"))?,
+                    body = tokio::time::timeout(self.timeout, collect) => match body {
+                        Ok(body) => body.map_err(|_| JsString::from("fetch failed"))?,
+                        Err(_) => return Err("fetch failed".into()),
+                    },
                     _ = signal.cancelled() => return Err("This operation was aborted".into()),
                 }
             } else {
-                collect.await.map_err(|_| JsString::from("fetch failed"))?
+                tokio::time::timeout(self.timeout, collect)
+                    .await
+                    .map_err(|_| JsString::from("fetch failed"))?
+                    .map_err(|_| JsString::from("fetch failed"))?
             }
         };
         let stdout = String::from_utf8_lossy(&body.to_bytes()).into_owned();
@@ -944,11 +1065,26 @@ impl HttpHookExecutor {
     }
 }
 
+/// Node's `Headers` converts values to ByteStrings: every UTF-16 code unit
+/// must be <= 0xFF, and the wire bytes are those code units (latin1), not UTF-8.
+fn header_value_bytes(value: &JsString) -> Result<Vec<u8>, JsString> {
+    let mut bytes = Vec::with_capacity(value.units().len());
+    for (index, unit) in value.units().iter().enumerate() {
+        if *unit > 0xFF {
+            return Err(JsString::from(format!(
+                "Cannot convert argument to a ByteString because the character at index {index} has a value of {unit} which is greater than 255."
+            )));
+        }
+        bytes.push(*unit as u8);
+    }
+    Ok(bytes)
+}
+
 fn resolve_headers(
     headers: Option<&JsObject>,
     allowed_env_vars: Option<&[JsString]>,
     env: Option<&JsObject>,
-) -> Result<Vec<(String, String)>, JsString> {
+) -> Result<Vec<(String, JsString)>, JsString> {
     let owned_env;
     let env = match env {
         Some(env) => env,
@@ -958,7 +1094,10 @@ fn resolve_headers(
         }
     };
     let allowed = allowed_env_vars.unwrap_or_default();
-    let mut output = vec![("content-type".to_owned(), "application/json".to_owned())];
+    let mut output = vec![(
+        "content-type".to_owned(),
+        JsString::from("application/json"),
+    )];
     for (key, value) in headers.into_iter().flat_map(JsObject::entries) {
         let Some(value) = value.as_string() else {
             return Err(JsString::from("value.replace is not a function"));
@@ -968,9 +1107,9 @@ fn resolve_headers(
             .to_utf8()
             .map_err(|_| JsString::from("Headers.append: invalid header name."))?;
         if let Some(entry) = output.iter_mut().find(|(name, _)| name == &key) {
-            entry.1 = resolved;
+            entry.1 = JsString::from_utf16(resolved);
         } else {
-            output.push((key, resolved));
+            output.push((key, JsString::from_utf16(resolved)));
         }
     }
     Ok(output)
@@ -980,13 +1119,13 @@ fn substitute_env(
     value: &JsString,
     allowed: &[JsString],
     env: &JsObject,
-) -> Result<String, JsString> {
+) -> Result<Vec<u16>, JsString> {
     let units = value.units();
-    let mut output = String::new();
+    let mut output = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
         if units[index] != u16::from(b'$') {
-            push_unit(&mut output, units[index]);
+            output.push(units[index]);
             index += 1;
             continue;
         }
@@ -1000,7 +1139,7 @@ fn substitute_env(
             }
             if index == name_start || units.get(index) != Some(&u16::from(b'}')) {
                 // Not `${name}`; the regex may still match `$name` after it.
-                push_unit(&mut output, units[start]);
+                output.push(units[start]);
                 index = start + 1;
                 continue;
             }
@@ -1013,7 +1152,7 @@ fn substitute_env(
                 index += 1;
             }
             if index == name_start {
-                push_unit(&mut output, units[start]);
+                output.push(units[start]);
                 continue;
             }
             &units[name_start..index]
@@ -1023,11 +1162,11 @@ fn substitute_env(
             && !value.is_undefined()
             && !matches!(value, JsValue::Null)
         {
-            output.push_str(&String::from_utf16_lossy(
+            output.extend_from_slice(
                 js_string(value)
                     .map_err(|error| JsString::from(error_message(error)))?
                     .units(),
-            ));
+            );
         }
     }
     Ok(output)
@@ -1035,9 +1174,6 @@ fn substitute_env(
 
 fn is_word(unit: u16) -> bool {
     matches!(unit, 48..=57 | 65..=90 | 97..=122 | 95)
-}
-fn push_unit(output: &mut String, unit: u16) {
-    output.push_str(&String::from_utf16_lossy(&[unit]));
 }
 
 // ------------------------------------------------------------------ callback executor
