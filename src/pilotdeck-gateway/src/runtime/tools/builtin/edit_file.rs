@@ -101,6 +101,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     let new = input_string(input, "new_string");
     let resolved = match resolve_write_path(&path, context, false, true) {
         Ok(resolved) => resolved,
+        Err(error) if error.code == "tool_execution_failed" => return Err(error),
         Err(error) => return Ok(Some(vec![issue("file_path", error.message.clone())])),
     };
     if is_notebook(&resolved.absolute) {

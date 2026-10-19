@@ -312,12 +312,16 @@ pub(super) fn failed(
     operation: &str,
     path: &JsString,
 ) -> crate::runtime::tools::ToolError {
-    let kind = match error.kind() {
-        std::io::ErrorKind::NotFound => "ENOENT: no such file or directory",
-        std::io::ErrorKind::PermissionDenied => "EACCES: permission denied",
-        std::io::ErrorKind::AlreadyExists => "EEXIST: file already exists",
-        std::io::ErrorKind::InvalidInput => "EINVAL: invalid argument",
-        _ => return crate::runtime::tools::ToolError::failed(error.to_string()),
+    let kind = match error.raw_os_error() {
+        Some(libc::ENOTDIR) => "ENOTDIR: not a directory",
+        Some(libc::ELOOP) => "ELOOP: too many symbolic links encountered",
+        _ => match error.kind() {
+            std::io::ErrorKind::NotFound => "ENOENT: no such file or directory",
+            std::io::ErrorKind::PermissionDenied => "EACCES: permission denied",
+            std::io::ErrorKind::AlreadyExists => "EEXIST: file already exists",
+            std::io::ErrorKind::InvalidInput => "EINVAL: invalid argument",
+            _ => return crate::runtime::tools::ToolError::failed(error.to_string()),
+        },
     };
     let message = format!("{kind}, {operation} '{}'", text(path));
     crate::runtime::tools::ToolError::failed(message)
@@ -800,27 +804,27 @@ fn denied_error(relative: &JsString) -> crate::runtime::tools::ToolError {
 /// Extra containment guard for mutations. TS `pathSafety` is lexical unless
 /// `mustExist`; the task requires writes to stay inside an allowed root, so a
 /// symlinked target or symlinked parent that resolves outside is rejected.
-/// The decision is made on the fully resolved real path, including dangling
-/// link chains: a link is followed even when its target does not exist, so a
-/// two-hop link or a link through an outside directory cannot escape. Existing
-/// hard links are ordinary user files (decision card 2026-10-19 B: TS allows
-/// editing them); containment relies on the resolved path, never on `nlink`.
+/// The decision is made on the fully resolved real path: every existing
+/// component is canonicalized (which folds case and Unicode normalization to
+/// the disk spelling), and only the still-missing tail is walked by hand so a
+/// dangling link chain or a link through an outside directory cannot escape.
+/// The resolved path may land in any allowed root, so a link inside one root
+/// that points at another allowed root is writable. Existing hard links are
+/// ordinary user files (decision card 2026-10-19 B: TS allows editing them);
+/// containment relies on the resolved path, never on `nlink`.
 fn guard_write_containment(
     input: &JsString,
     absolute: &JsString,
-    root: &JsString,
+    roots: &[JsString],
 ) -> Result<(), crate::runtime::tools::ToolError> {
-    let real_root = canonical(root).unwrap_or_else(|| root.clone());
-    let resolved = resolve_path_following_symlinks(&os_path(absolute)).ok_or_else(|| {
-        tool_error(
-            "path_not_allowed",
-            format!(
-                "Path {} resolves outside the PilotDeck workspace.",
-                text(input)
-            ),
-        )
-    })?;
-    if !within_root(&js_path(&resolved), &real_root) {
+    let resolved = resolve_path_following_symlinks(&os_path(absolute))
+        .map_err(|error| write_io_error(error, absolute))?;
+    let real_roots: Vec<JsString> = roots
+        .iter()
+        .map(|root| canonical(root).unwrap_or_else(|| normalize(root)))
+        .collect();
+    let resolved = js_path(&resolved);
+    if !real_roots.iter().any(|root| within_root(&resolved, root)) {
         return Err(tool_error(
             "path_not_allowed",
             format!(
@@ -832,21 +836,43 @@ fn guard_write_containment(
     Ok(())
 }
 
-/// Follow every symlink in `path`, resolving the existing prefix through the
-/// filesystem and appending the still-missing tail. Relative link targets are
-/// resolved from the link's parent; `..` pops the resolved stack. Returns
-/// `None` on a link cycle or a read error.
-fn resolve_path_following_symlinks(path: &Path) -> Option<PathBuf> {
-    const MAX_SYMLINK_HOPS: usize = 40;
-    let mut resolved = PathBuf::from("/");
-    let mut pending: std::collections::VecDeque<PathBuf> = path
-        .components()
+/// A real filesystem error is an execution failure with Node's measured text;
+/// only a path that really lands outside every root is `path_not_allowed`.
+fn write_io_error(error: io::Error, absolute: &JsString) -> crate::runtime::tools::ToolError {
+    match crate::node_io::diagnostic(&error, "stat", Some(&text(absolute))) {
+        Some((_, message)) => tool_error("tool_execution_failed", message),
+        None => failed(error, "stat", absolute),
+    }
+}
+
+fn symlink_loop_error() -> io::Error {
+    io::Error::from_raw_os_error(libc::ELOOP)
+}
+
+fn path_components(path: &Path) -> Vec<PathBuf> {
+    path.components()
         .filter_map(|component| match component {
             std::path::Component::Normal(name) => Some(PathBuf::from(name)),
             std::path::Component::ParentDir => Some(PathBuf::from("..")),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// Resolve `path` to the real path the kernel would touch. Each existing
+/// component is canonicalized as we reach it, so `caseroot` / NFC / NFD
+/// spellings fold to the disk spelling one component at a time; a missing
+/// component has no inode to ask the kernel about, so it is appended lexically
+/// and the walk stops. Symlinks are followed by hand (including dangling
+/// targets), so the hop count, absolute-target reset and `..` popping are ours
+/// and every escape is visible before the write. `NotFound` means "still
+/// missing"; every other error (ENOTDIR, EACCES, ELOOP, ...) is returned
+/// unchanged so the Node diagnostic can render it.
+fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
+    const MAX_SYMLINK_HOPS: usize = 40;
+    let mut resolved = PathBuf::from("/");
+    let mut pending: std::collections::VecDeque<PathBuf> =
+        path_components(path).into_iter().collect();
     let mut hops = 0usize;
     while let Some(component) = pending.pop_front() {
         let name = component.as_os_str();
@@ -862,30 +888,38 @@ fn resolve_path_following_symlinks(path: &Path) -> Option<PathBuf> {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 hops += 1;
                 if hops > MAX_SYMLINK_HOPS {
-                    return None;
+                    return Err(symlink_loop_error());
                 }
-                let link = fs::read_link(&candidate).ok()?;
-                if link.is_absolute() {
+                let link = fs::read_link(&candidate)?;
+                let absolute = link.is_absolute();
+                let target = path_components(&link);
+                if absolute {
                     resolved = PathBuf::from("/");
                 }
-                let mut target: std::collections::VecDeque<PathBuf> = link
-                    .components()
-                    .filter_map(|component| match component {
-                        std::path::Component::Normal(name) => Some(PathBuf::from(name)),
-                        std::path::Component::ParentDir => Some(PathBuf::from("..")),
-                        _ => None,
-                    })
-                    .collect();
-                while let Some(part) = target.pop_back() {
+                for part in target.into_iter().rev() {
                     pending.push_front(part);
                 }
             }
-            Ok(_) => resolved.push(name),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => resolved.push(name),
-            Err(_) => return None,
+            Ok(_) => {
+                // Fold this component's disk spelling (case / Unicode
+                // normalization) before descending into it.
+                resolved = fs::canonicalize(&candidate).unwrap_or(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                resolved.push(name);
+                for rest in pending.drain(..) {
+                    if rest.as_os_str() == ".." {
+                        resolved.pop();
+                    } else {
+                        resolved.push(rest);
+                    }
+                }
+                return Ok(resolved);
+            }
+            Err(error) => return Err(error),
         }
     }
-    Some(resolved)
+    Ok(resolved)
 }
 
 /// Write variant of `resolvePilotDeckWorkspacePath`. `must_exist` mirrors the
@@ -966,8 +1000,11 @@ pub(super) fn resolve_write_path(
                 format!("File {input_text} does not exist."),
             )
         })?;
-        let real_root = canonical(&root).unwrap_or_else(|| root.clone());
-        if !within_root(&real, &real_root) {
+        let real_roots: Vec<JsString> = roots
+            .iter()
+            .map(|root| canonical(root).unwrap_or_else(|| normalize(root)))
+            .collect();
+        if !real_roots.iter().any(|root| within_root(&real, root)) {
             return Err(tool_error(
                 "path_not_allowed",
                 format!("Path {input_text} resolves outside the PilotDeck workspace."),
@@ -978,7 +1015,7 @@ pub(super) fn resolve_write_path(
     // (handled by the early return above); it must never disable the link guard
     // for a path inside a root. TS `pathSafety.ts` likewise consults
     // `allowOutsideWorkspace` only inside its `!root` branch.
-    guard_write_containment(input, &absolute, &root)?;
+    guard_write_containment(input, &absolute, &roots)?;
     Ok(ResolvedPath {
         absolute,
         relative: relative_path,
@@ -1000,4 +1037,40 @@ pub(super) fn file_history(
     context: &crate::runtime::tools::ToolRunContext,
 ) -> Option<&crate::storage::file_history::FileHistoryStore> {
     context.host.file_history.as_ref()?.downcast_ref()
+}
+
+#[cfg(test)]
+mod containment_tests {
+    use super::resolve_path_following_symlinks;
+    use std::fs;
+
+    #[test]
+    fn dangling_chain_below_guard_limit_resolves_to_the_final_name() {
+        let base =
+            std::env::temp_dir().join(format!("pdrs-resolver-chain-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&base).unwrap();
+        let base = fs::canonicalize(&base).unwrap();
+        for hops in [31usize, 32, 33, 40] {
+            let dir = base.join(format!("chain{hops}"));
+            fs::create_dir(&dir).unwrap();
+            for index in 0..hops {
+                let target = if index + 1 == hops {
+                    "final.txt".to_string()
+                } else {
+                    format!("h{}", index + 1)
+                };
+                std::os::unix::fs::symlink(&target, dir.join(format!("h{index}"))).unwrap();
+            }
+            let resolved =
+                resolve_path_following_symlinks(&dir.join("h0")).unwrap_or_else(|error| {
+                    panic!(
+                        "{hops} hops: raw={:?} kind={:?} {error}",
+                        error.raw_os_error(),
+                        error.kind()
+                    )
+                });
+            assert_eq!(resolved, dir.join("final.txt"), "{hops} hops");
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
 }

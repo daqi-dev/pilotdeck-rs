@@ -11,7 +11,9 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::system_clock::format_epoch_iso;
 use sha2::{Digest, Sha256};
 use std::{
-    fmt, fs, io,
+    fmt, fs,
+    fs::OpenOptions,
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -601,6 +603,62 @@ struct BackupResult {
     oversize: bool,
 }
 
+/// The backup directory is process-private state, so a pre-planted hard link
+/// or symlink at the destination must not be written through (decision card
+/// 2026-10-19 B; same guard as the A6.6-pr6 spill copy). Open with O_NOFOLLOW
+/// and fstat the handle: a symlink is ELOOP, and a second directory entry
+/// (nlink > 1) is a hard link. Only then truncate, so a refused target is not
+/// damaged before the check. O_NONBLOCK keeps a pre-planted FIFO from blocking
+/// the open.
+fn write_private_backup(source: &Path, backup_path: &Path, mode: u32) -> FileHistoryResult<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut destination = match options.open(backup_path) {
+        Ok(file) => file,
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(private_backup_error(backup_path));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = destination.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(private_backup_error(backup_path));
+        }
+    }
+    #[cfg(not(unix))]
+    if !metadata.is_file() {
+        return Err(private_backup_error(backup_path));
+    }
+    destination.set_len(0)?;
+    let mut source = fs::File::open(source)?;
+    io::copy(&mut source, &mut destination)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        destination.set_permissions(fs::Permissions::from_mode(mode & 0o777))?;
+    }
+    Ok(())
+}
+
+fn private_backup_error(path: &Path) -> FileHistoryError {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "file-history: refusing to write backup through non-private path {}",
+            path.display()
+        ),
+    )
+    .into()
+}
+
 fn create_backup(
     backup_dir: &Path,
     file_path: &str,
@@ -624,15 +682,11 @@ fn create_backup(
     let backup_file_name = get_backup_file_name(file_path, version);
     fs::create_dir_all(backup_dir)?;
     let backup_path = backup_dir.join(&backup_file_name);
-    fs::copy(file_path, &backup_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            &backup_path,
-            fs::Permissions::from_mode(metadata_mode(&metadata) & 0o777),
-        )?;
-    }
+    write_private_backup(
+        Path::new(file_path),
+        &backup_path,
+        metadata_mode(&metadata) & 0o777,
+    )?;
     Ok(BackupResult {
         backup: FileHistoryBackup {
             backup_file_name: Some(backup_file_name),
