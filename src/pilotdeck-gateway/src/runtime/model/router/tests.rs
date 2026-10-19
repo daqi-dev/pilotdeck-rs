@@ -1,0 +1,585 @@
+//! Unit coverage for router pieces that the real-TS fixture does not pin
+//! (parser edges, retry admission, TTL/LRU, materialization).
+use super::classify::{classify_and_route, extract_last_user_message, parse_tier};
+use super::*;
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+};
+
+fn text(value: &str) -> JsValue {
+    JsValue::String(JsString::from(value))
+}
+fn object(entries: Vec<(&str, JsValue)>) -> JsValue {
+    let mut object = JsObject::new();
+    for (key, value) in entries {
+        object.insert(key.into(), value);
+    }
+    JsValue::Object(object)
+}
+fn user_message(value: &str) -> JsValue {
+    object(vec![
+        ("role", text("user")),
+        (
+            "content",
+            JsValue::Array(vec![object(vec![
+                ("type", text("text")),
+                ("text", text(value)),
+            ])]),
+        ),
+    ])
+}
+
+fn saver() -> TokenSaverConfig {
+    TokenSaverConfig {
+        enabled: true,
+        judge: RouterModelRef::new("p".into(), "j".into()),
+        default_tier: "simple".into(),
+        tiers: vec![
+            (
+                "simple".into(),
+                TierConfig {
+                    model: RouterModelRef::new("p".into(), "s".into()),
+                    description: Some("Simple".into()),
+                },
+            ),
+            (
+                "complex".into(),
+                TierConfig {
+                    model: RouterModelRef::new("p".into(), "c".into()),
+                    description: Some("Complex".into()),
+                },
+            ),
+        ],
+        rules: Vec::new(),
+        subagent_policy: SubagentPolicy::Judge,
+        judge_timeout_ms: 5_000.0,
+        cache_aware: CacheAwareSwitching {
+            enabled: true,
+            min_savings_ratio: 0.0,
+        },
+    }
+}
+
+#[derive(Clone)]
+enum Step {
+    Text(String),
+    Empty,
+    Hang,
+    Provider(bool),
+}
+
+struct Invoker {
+    steps: Mutex<VecDeque<Step>>,
+    calls: AtomicUsize,
+    capabilities: Mutex<HashMap<String, f64>>,
+    multimodal: Mutex<HashMap<String, Vec<JsString>>>,
+}
+impl Invoker {
+    fn new(steps: Vec<Step>) -> Self {
+        Self {
+            steps: Mutex::new(steps.into()),
+            calls: AtomicUsize::new(0),
+            capabilities: Mutex::new(HashMap::from([
+                ("p/s".to_string(), 100.0),
+                ("p/c".to_string(), 300.0),
+                ("p/j".to_string(), 4096.0),
+            ])),
+            multimodal: Mutex::new(HashMap::new()),
+        }
+    }
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+impl RouterModelInvocation for Invoker {
+    fn get_capabilities(
+        &self,
+        provider: &JsString,
+        model: &JsString,
+    ) -> Result<JsValue, crate::host::ModuleError> {
+        let key = format!(
+            "{}/{}",
+            provider.to_utf8().unwrap_or_default(),
+            model.to_utf8().unwrap_or_default()
+        );
+        let caps = self.capabilities.lock().expect("capabilities");
+        let Some(max) = caps.get(&key) else {
+            return Err(crate::host::ModuleError::new("unknown model"));
+        };
+        Ok(object(vec![("maxOutputTokens", JsValue::Number(*max))]))
+    }
+    fn get_multimodal(
+        &self,
+        provider: &JsString,
+        model: &JsString,
+    ) -> Result<JsValue, crate::host::ModuleError> {
+        let key = format!(
+            "{}/{}",
+            provider.to_utf8().unwrap_or_default(),
+            model.to_utf8().unwrap_or_default()
+        );
+        let modalities = self.multimodal.lock().expect("multimodal");
+        let input = modalities
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| vec!["text".into()]);
+        Ok(object(vec![(
+            "input",
+            JsValue::Array(input.into_iter().map(JsValue::String).collect()),
+        )]))
+    }
+    fn supports_complete(&self) -> bool {
+        true
+    }
+    fn complete(&self, _request: JsValue, _abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let step = self
+            .steps
+            .lock()
+            .expect("steps")
+            .pop_front()
+            .unwrap_or(Step::Text("<tier>simple</tier>".into()));
+        match step {
+            Step::Text(value) => Box::pin(async move {
+                Ok(object(vec![(
+                    "content",
+                    JsValue::Array(vec![object(vec![
+                        ("type", text("text")),
+                        ("text", JsValue::String(value.into())),
+                    ])]),
+                )]))
+            }),
+            Step::Empty => {
+                Box::pin(async move { Ok(object(vec![("content", JsValue::Array(Vec::new()))])) })
+            }
+            Step::Hang => Box::pin(async {
+                std::future::pending::<Result<JsValue, RouterInvokeError>>().await
+            }),
+            Step::Provider(retryable) => Box::pin(async move {
+                Err(RouterInvokeError::provider(
+                    "auth_error",
+                    "Authorization: Bearer sk-secret",
+                    retryable,
+                ))
+            }),
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn classify_non_retryable_provider_error_falls_back_immediately() {
+    let invoker = Invoker::new(vec![
+        Step::Provider(false),
+        Step::Text("<tier>complex</tier>".into()),
+    ]);
+    let decision = classify_and_route(
+        &saver(),
+        &[user_message("hi")],
+        &invoker,
+        None,
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect("no abort")
+    .expect("decision");
+    assert_eq!(decision.resolved_from, "fallback");
+    assert_eq!(
+        invoker.calls(),
+        1,
+        "non-retryable provider errors are not retried"
+    );
+}
+
+#[test]
+fn strip_subagent_tag_preserves_leading_whitespace() {
+    let messages = vec![user_message(
+        "  <pilotdeck-subagent-model>p/m</pilotdeck-subagent-model>  tail  ",
+    )];
+    let stripped = scenario::strip_subagent_tag_from_messages(&messages);
+    let blocks = stripped[0]
+        .get("content")
+        .and_then(|value| match value {
+            JsValue::Array(items) => Some(items),
+            _ => None,
+        })
+        .expect("content");
+    let text = blocks[0]
+        .get("text")
+        .and_then(JsValue::as_string)
+        .map(|value| value.to_utf8().unwrap());
+    // `.replace(...).trimEnd()` leaves the tag's surrounding leading spaces.
+    assert_eq!(text.as_deref(), Some("    tail"));
+}
+
+#[test]
+fn parse_tier_matches_ts_word_boundaries() {
+    let config = saver();
+    let parse = |value: &str| parse_tier(&JsString::from(value), &config.tiers);
+    assert!(parse("<tier>complex</tier>").is_some_and(|tier| tier.equals_str("complex")));
+    assert!(parse("```ts\n<tier>SIMPLE</tier>\n```").is_some_and(|tier| tier.equals_str("simple")));
+    assert!(parse("I choose simple.").is_some_and(|tier| tier.equals_str("simple")));
+    assert!(parse("复杂 simple 复杂").is_some_and(|tier| tier.equals_str("simple")));
+    // JS `\b` without the `u` flag: ASCII word characters only.
+    assert!(parse("xsimple").is_none());
+    assert!(parse("simpleton").is_none());
+    assert!(parse("nothing to see").is_none());
+}
+
+#[test]
+fn extract_last_user_message_skips_date_updates_and_joins_blocks() {
+    let messages = vec![
+        object(vec![
+            ("role", text("user")),
+            (
+                "content",
+                JsValue::Array(vec![
+                    object(vec![("type", text("text")), ("text", text("  a  "))]),
+                    object(vec![("type", text("text")), ("text", text("b"))]),
+                ]),
+            ),
+        ]),
+        object(vec![
+            ("role", text("user")),
+            (
+                "content",
+                JsValue::Array(vec![object(vec![
+                    ("type", text("text")),
+                    ("text", text("2026-01-01")),
+                ])]),
+            ),
+            (
+                "metadata",
+                object(vec![
+                    ("synthetic", JsValue::Bool(true)),
+                    ("purpose", text("date_update")),
+                ]),
+            ),
+        ]),
+    ];
+    assert_eq!(
+        extract_last_user_message(&messages).map(|value| value.to_utf8().unwrap()),
+        Some("a  \nb".into())
+    );
+    assert!(extract_last_user_message(&[]).is_none());
+}
+
+#[test]
+fn short_continuation_uses_js_length_and_ascii_surface() {
+    assert!(is_short_continuation(&"  go  ".into()));
+    assert!(is_short_continuation(&"继续".into()));
+    assert!(!is_short_continuation(&"go now please".into()));
+    assert!(!is_short_continuation(&"a".repeat(31).into()));
+}
+
+#[test]
+fn retry_policy_defaults_match_baseline() {
+    let config = RouterConfig::default();
+    let first = retry_decide(&config, "transient", 0.0, None, 0.0);
+    assert!(first.retry);
+    assert_eq!(first.max_attempts, 2.0);
+    assert_eq!(first.delay_ms, 500.0);
+    let jittered = retry_decide(&config, "transient", 0.0, None, 1.0);
+    assert_eq!(jittered.delay_ms, 875.0);
+    let capped = retry_decide(&config, "transient", 0.0, Some(99_999.0), 0.0);
+    assert_eq!(capped.delay_ms, 8_000.0);
+    let exhausted = retry_decide(&config, "transient", 2.0, None, 0.0);
+    assert!(!exhausted.retry);
+    let zero = retry_decide(&config, "zero_usage", 1.0, None, 0.0);
+    assert!(zero.retry);
+    assert_eq!(zero.delay_ms, 500.0);
+}
+
+#[test]
+fn cache_policy_switches_when_prefill_is_cheaper() {
+    let mut pricing = crate::model_cost::PricingMap::new();
+    pricing.insert(
+        "old/m",
+        crate::model_cost::ModelPricing {
+            input: Some(100.0),
+            output: None,
+            cache_read: Some(100.0),
+        },
+    );
+    pricing.insert(
+        "new/m",
+        crate::model_cost::ModelPricing {
+            input: Some(0.1),
+            output: None,
+            cache_read: None,
+        },
+    );
+    let config = RouterConfig {
+        token_saver: Some(saver()),
+        stats: StatsConfig {
+            model_pricing: Some(pricing),
+            ..StatsConfig::default()
+        },
+        ..RouterConfig::default()
+    };
+    let current = RouterModelRef::new("old".into(), "m".into());
+    let next = RouterModelRef::new("new".into(), "m".into());
+    let usage = object(vec![
+        ("inputTokens", JsValue::Number(100.0)),
+        ("cacheReadTokens", JsValue::Number(100.0)),
+    ]);
+    let result = policy::cache_policy_select(
+        &config,
+        Some(&current),
+        &next,
+        &[user_message("hello")],
+        Some(&usage),
+    );
+    assert_eq!(result.selection.provider.to_utf8().unwrap(), "new");
+    let mutation = result.mutation.expect("switched mutation");
+    assert_eq!(
+        mutation
+            .get("action")
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap()),
+        Some("switched".into())
+    );
+}
+
+#[test]
+fn session_store_expires_and_moves_lru_entries() {
+    let clock = Arc::new(AtomicU64::new(0));
+    let now = clock.clone();
+    let store =
+        session::SessionRouterStore::new(Arc::new(move || now.load(Ordering::SeqCst) as f64));
+    store.set(SessionRoutingState {
+        session_id: "s".into(),
+        token_saver_tier: Some("simple".into()),
+        ..Default::default()
+    });
+    assert!(store.get(&"s".into(), false).is_some());
+    clock.store(3_600_001, Ordering::SeqCst);
+    assert!(
+        store.get(&"s".into(), false).is_none(),
+        "TTL is 1h, strict less-than"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn classify_retries_parse_failure_then_succeeds() {
+    let invoker = Invoker::new(vec![
+        Step::Text("no tier".into()),
+        Step::Text("<tier>complex</tier>".into()),
+    ]);
+    let decision = classify_and_route(
+        &saver(),
+        &[user_message("hi")],
+        &invoker,
+        None,
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect("no abort")
+    .expect("decision");
+    assert_eq!(decision.tier.to_utf8().unwrap(), "complex");
+    assert_eq!(invoker.calls(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn classify_empty_after_retries_falls_back() {
+    let invoker = Invoker::new(vec![Step::Empty, Step::Empty, Step::Empty]);
+    let decision = classify_and_route(
+        &saver(),
+        &[user_message("hi")],
+        &invoker,
+        None,
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect("no abort")
+    .expect("decision");
+    assert_eq!(decision.resolved_from, "fallback");
+    assert_eq!(decision.failure_reason, Some("parse_error"));
+    assert_eq!(invoker.calls(), 3);
+    assert_eq!(decision.failure.expect("failure").attempts, 3.0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn classify_timeout_is_not_retried() {
+    let mut config = saver();
+    config.judge_timeout_ms = 500.0;
+    let invoker = Invoker::new(vec![Step::Hang]);
+    let decision = classify_and_route(
+        &config,
+        &[user_message("hi")],
+        &invoker,
+        None,
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect("no abort")
+    .expect("decision");
+    assert_eq!(decision.resolved_from, "fallback");
+    assert_eq!(decision.failure_reason, Some("timeout"));
+    assert_eq!(invoker.calls(), 1);
+    let failure = decision.failure.expect("failure");
+    assert_eq!(
+        failure.code.as_ref().map(|code| code.to_utf8().unwrap()),
+        Some("judge_timeout".into())
+    );
+}
+
+#[test]
+fn materialize_routes_cache_plan_and_clamps_output() {
+    let invoker = Invoker::new(Vec::new());
+    let decision = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("mutations", object(vec![])),
+    ]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+        ("maxOutputTokens", JsValue::Number(1000.0)),
+        (
+            "cachePlan",
+            object(vec![
+                ("provider", text("p")),
+                ("model", text("s")),
+                ("messages", JsValue::Array(vec![JsValue::Number(0.0)])),
+            ]),
+        ),
+        (
+            "cacheBreakpoints",
+            JsValue::Array(vec![JsValue::Number(0.0)]),
+        ),
+    ]);
+    let result = policy::materialize_request(&invoker, &decision, &request);
+    assert_eq!(
+        result.get("maxOutputTokens").and_then(JsValue::as_number),
+        Some(100.0)
+    );
+    assert_eq!(
+        result.get("cacheBreakpoints").cloned(),
+        Some(JsValue::Array(vec![JsValue::Number(0.0)]))
+    );
+    let foreign_plan = object(vec![
+        ("provider", text("q")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![JsValue::Number(0.0)])),
+    ]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+        ("cachePlan", foreign_plan),
+    ]);
+    let result = policy::materialize_request(&invoker, &decision, &request);
+    assert!(result.get("cachePlan").is_none_or(JsValue::is_undefined));
+    assert!(
+        result
+            .get("cacheBreakpoints")
+            .is_none_or(JsValue::is_undefined)
+    );
+}
+
+#[test]
+fn config_reads_snapshot_router_only() {
+    let router = object(vec![
+        ("enabled", JsValue::Bool(true)),
+        (
+            "scenarios",
+            object(vec![(
+                "default",
+                object(vec![("provider", text("p")), ("model", text("m"))]),
+            )]),
+        ),
+        (
+            "tokenSaver",
+            object(vec![
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "judge",
+                    object(vec![("provider", text("p")), ("model", text("j"))]),
+                ),
+                ("defaultTier", text("simple")),
+                (
+                    "tiers",
+                    object(vec![(
+                        "simple",
+                        object(vec![(
+                            "model",
+                            object(vec![("provider", text("p")), ("model", text("s"))]),
+                        )]),
+                    )]),
+                ),
+            ]),
+        ),
+    ]);
+    let snapshot = object(vec![("config", object(vec![("router", router)]))]);
+    let config = RouterConfig::from_snapshot(&snapshot);
+    assert_eq!(
+        config
+            .scenarios_default
+            .as_ref()
+            .map(|model| model.id.to_utf8().unwrap()),
+        Some("p/m".into())
+    );
+    assert_eq!(
+        config
+            .token_saver
+            .expect("token saver")
+            .default_tier
+            .to_utf8()
+            .unwrap(),
+        "simple"
+    );
+}
+
+#[tokio::test]
+async fn invalidate_sticky_preserves_orchestration_tier() {
+    let config = RouterConfig {
+        scenarios_default: Some(RouterModelRef::new("p".into(), "s".into())),
+        token_saver: Some(saver()),
+        auto_orchestrate: Some(AutoOrchestrateConfig {
+            enabled: true,
+            trigger_tiers: vec!["simple".into()],
+            subagent_max_tokens: None,
+        }),
+        ..RouterConfig::default()
+    };
+    let invoker = Arc::new(Invoker::new(vec![Step::Text("<tier>simple</tier>".into())]));
+    let runtime = RouterRuntime::new(config, invoker).expect("runtime");
+    let input = RouterDecisionInput {
+        request: object(vec![
+            ("provider", text("p")),
+            ("model", text("s")),
+            ("messages", JsValue::Array(vec![user_message("hi")])),
+        ]),
+        session_id: "s".into(),
+        is_main_agent: true,
+        abort: None,
+        metadata: None,
+    };
+    let decision = runtime.decide(&input).await.expect("decision");
+    assert_eq!(
+        decision.get("orchestrating").and_then(JsValue::as_bool),
+        Some(true)
+    );
+    let invalidated = runtime.invalidate_sticky(&"s".into());
+    assert_eq!(
+        invalidated
+            .get("previousTier")
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap()),
+        Some("simple".into())
+    );
+    assert_eq!(
+        invalidated.get("orchestrating").and_then(JsValue::as_bool),
+        Some(true)
+    );
+}

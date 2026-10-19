@@ -14,7 +14,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 输出父目录默认系统临时目录。每次 `mkdtemp` 建独占子目录，stdout 最后一行包含 `output`、`transport` 和精确条数；生成器不覆盖仓库候选、不删除固定路径。仅在无法监听时，可显式追加 `--capture-transport` 生成非 HTTP 候选；日志明确标 `injected (HTTP not verified)`。
 
-精确人口：53 组 / 361 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16、schema prototype、provider/model 原型链查找。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
+精确人口：55 组 / 363 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16（含错误文案保留孤立 surrogate 的 reading/thinking 两例）、schema prototype、provider/model 原型链查找。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
 
 Rust 回放通过 protocol 的 JsValue 保留对象次序及孤立 surrogate；比较视图对孤立 surrogate 使用 `$utf16` 测试载体，不把它替换成 U+FFFD。每次回放始终检查 commit/hash 格式；设置 `PDRS_BASELINE` 时逐个检查固定 blob 与实际源码。临时文件与 HTTP 服务均每次运行独占，无固定路径清理。
 

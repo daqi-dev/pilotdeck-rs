@@ -14,6 +14,9 @@ use crate::host::{HostError, HostFuture, ModuleError};
 #[path = "count_http_tests.rs"]
 mod tests;
 
+/// `buffer.constants.MAX_STRING_LENGTH` on Node 22.22 (V8 12.x).
+pub const MAX_STRING_LENGTH: usize = 0x1fffffe8;
+
 #[derive(Clone, Debug)]
 pub struct CountHttpRequest {
     pub url: String,
@@ -166,12 +169,25 @@ where
             ))
             .into());
         }
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|_| ModuleError::new("fetch failed"))?
-            .to_bytes();
+        // Node 22 cannot materialize a string longer than
+        // `buffer.constants.MAX_STRING_LENGTH` (0x1fffffe8). Bound the read so
+        // a broken/malicious endpoint cannot stream unbounded bytes inside the
+        // 1500ms window; the message matches V8's RangeError.
+        let mut body = Box::pin(response.into_body());
+        let mut buffer = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|_| ModuleError::new("fetch failed"))?;
+            if let Some(data) = frame.data_ref() {
+                if buffer.len().saturating_add(data.len()) > MAX_STRING_LENGTH {
+                    return Err(ModuleError::new(
+                        "Cannot create a string longer than 0x1fffffe8 characters",
+                    )
+                    .into());
+                }
+                buffer.extend_from_slice(data);
+            }
+        }
+        let bytes = Bytes::from(buffer);
         let value = super::cpu::run(move || super::count_json::parse_response(&bytes)).await?;
         return Ok(value);
     }
