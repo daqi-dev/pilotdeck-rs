@@ -4,6 +4,7 @@
 //! 其余 SessionDomainValidation 生命周期留给后续 PR。
 //! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
 //! the host or gateway methods either.
+pub mod file_history;
 mod ledger;
 mod projection;
 pub mod recorder;
