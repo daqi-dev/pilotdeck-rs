@@ -16,7 +16,7 @@
 //! lost to UTF-8 conversion.
 
 use crate::config::permission::{PermissionMode, PermissionRule, PermissionRuleSet};
-use crate::host::HostError;
+use crate::host::{HostError, HostErrorKind};
 use crate::js_value;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin};
@@ -215,10 +215,10 @@ pub async fn decide(
 
     let ask_rule = find_matching_rule(context.rules.ask.iter(), &tool_name, input, context);
     if let Some(ask_rule) = ask_rule {
-        return Ok(finalize_ask(
+        return finalize_ask(
             ask_from_rule(&tool_name, input, tool_call_id, ask_rule),
             context,
-        ));
+        );
     }
 
     if let Some(rule) = session_allow_rule {
@@ -296,7 +296,7 @@ pub async fn decide(
                     message,
                 ));
             }
-            return Ok(finalize_ask(tool_decision, context));
+            return finalize_ask(tool_decision, context);
         }
         return Ok(tool_decision);
     }
@@ -315,11 +315,11 @@ pub async fn decide(
     }
 
     let mode_decision = decide_by_mode(tool, input, tool_call_id, context, &process_cwd)?;
-    Ok(if type_is(&mode_decision, "ask") {
+    if type_is(&mode_decision, "ask") {
         finalize_ask(mode_decision, context)
     } else {
-        mode_decision
-    })
+        Ok(mode_decision)
+    }
 }
 
 async fn allow_session_rule(
@@ -429,30 +429,42 @@ where
         .find(|rule| match_permission_rule(rule, tool_name, input, Some(context)))
 }
 
-fn finalize_ask(decision: JsValue, context: &PermissionContext) -> JsValue {
+fn finalize_ask(decision: JsValue, context: &PermissionContext) -> Result<JsValue, HostError> {
     if context.policy_can_prompt == Some(false) {
-        return deny(
+        return Ok(deny(
             reason_runtime(literal(
                 "Permission prompt denied because Gateway policy disables prompts for this session.",
             )),
             literal(
                 "Permission prompt denied because Gateway policy disables prompts for this session.",
             ),
-        );
+        ));
     }
 
-    let reason = js_get(&decision, "reason");
-    let reason_type = reason
-        .as_ref()
-        .and_then(|reason| js_get(reason, "type"))
-        .and_then(|kind| kind.as_string().cloned());
-    let rule = reason.as_ref().and_then(|reason| js_get(reason, "rule"));
+    // The baseline dereferences `decision.reason.type` unconditionally, so a
+    // tool result that returns `ask` without a reason throws a TypeError. Keep
+    // that fail-closed boundary instead of treating the malformed ask as an
+    // ordinary prompt (which would let it reach the user and possibly allow).
+    let reason = match js_get(&decision, "reason") {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
+            return Err(malformed_ask("reason"));
+        }
+        Some(reason) => reason,
+    };
+    let reason_type = js_get(&reason, "type").and_then(|kind| kind.as_string().cloned());
     if reason_type
         .as_ref()
         .is_some_and(|kind| kind.equals_str("rule"))
     {
-        let rule = rule.as_ref();
-        let source = rule.and_then(|rule| js_get(rule, "source"));
+        // `decision.reason.rule.source` throws for a null/undefined rule, and
+        // the force branch below throws for a non-string `rule.toolName`.
+        let rule = match js_get(&reason, "rule") {
+            None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
+                return Err(malformed_ask("reason.rule"));
+            }
+            Some(rule) => rule,
+        };
+        let source = js_get(&rule, "source");
         // A policy ask rule is evaluated before any remembered session allow
         // and stays an ask even under bypassPermissions.
         if source
@@ -461,53 +473,61 @@ fn finalize_ask(decision: JsValue, context: &PermissionContext) -> JsValue {
             .is_some_and(|source| source.equals_str("policy"))
         {
             if !context.can_prompt {
-                return deny(
+                return Ok(deny(
                     reason_runtime(literal(
                         "Permission prompt denied because prompts are disabled for this session.",
                     )),
                     literal(
                         "Permission prompt denied because prompts are disabled for this session.",
                     ),
-                );
+                ));
             }
-            return decision;
+            return Ok(decision);
         }
 
-        let force = rule
-            .and_then(|rule| js_get(rule, "force"))
-            .and_then(|force| force.as_bool());
-        let rule_tool_name = rule.and_then(|rule| js_get(rule, "toolName"));
+        let force = js_get(&rule, "force").and_then(|force| force.as_bool());
         if force == Some(true)
             && source
                 .as_ref()
                 .and_then(JsValue::as_string)
                 .is_some_and(|source| source.equals_str("session"))
-            && rule_tool_name
-                .as_ref()
-                .and_then(JsValue::as_string)
-                .is_some_and(|name| starts_with(name.units(), &mcp_prefix()))
         {
-            return decision;
+            let Some(name) = js_get(&rule, "toolName").and_then(|name| name.as_string().cloned())
+            else {
+                return Err(malformed_ask("reason.rule.toolName"));
+            };
+            if starts_with(name.units(), &mcp_prefix()) {
+                return Ok(decision);
+            }
         }
     }
 
     if is_mode(&context.mode, "bypassPermissions") {
-        return allow(reason_mode(
+        return Ok(allow(reason_mode(
             &context.mode,
             literal("bypassPermissions mode skips permission prompts."),
-        ));
+        )));
     }
 
     if !context.can_prompt {
-        return deny(
+        return Ok(deny(
             reason_runtime(literal(
                 "Permission prompt denied because prompts are disabled for this session.",
             )),
             literal("Permission prompt denied because prompts are disabled for this session."),
-        );
+        ));
     }
 
-    decision
+    Ok(decision)
+}
+
+fn malformed_ask(path: &str) -> HostError {
+    HostError::new(
+        HostErrorKind::Protocol,
+        format!(
+            "permission decision is malformed: ask is missing {path} (the TypeScript baseline throws)"
+        ),
+    )
 }
 
 fn normalize_tool_permission(
@@ -1216,7 +1236,14 @@ fn normalize_path(value: &[u16]) -> Vec<u16> {
     out
 }
 
+/// `node:path.join(base, value)` on POSIX. `join` skips empty segments, so an
+/// empty base contributes nothing: `join("", "x")` is `"x"`, not `"/x"`. The
+/// caller resolves the result against the process cwd (as the baseline does),
+/// which is what makes `cwd: ""` mean "the process cwd" rather than root.
 fn join_normalized(base: &[u16], value: &[u16]) -> Vec<u16> {
+    if base.is_empty() {
+        return normalize_path(value);
+    }
     let mut combined = Vec::with_capacity(base.len() + 1 + value.len());
     combined.extend_from_slice(base);
     combined.push(SLASH);
@@ -1408,6 +1435,29 @@ mod tests {
         assert_eq!(spread.get("own"), Some(&JsValue::Bool(true)));
         assert!(spread.get("inherited").is_none());
         assert!(spread.prototype().is_none());
+    }
+
+    #[test]
+    fn empty_cwd_is_skipped_like_node_path_join() {
+        // Node: join("", "x") === "x", then resolve against process.cwd.
+        assert_eq!(
+            join_normalized(&[], literal("x").units()),
+            literal("x").units()
+        );
+        assert_eq!(join_normalized(&[], &[]), vec![DOT]);
+        let process_cwd = literal("/work");
+        for (cwd, expected) in [
+            ("", "/work/secret.env"),
+            (".", "/work/secret.env"),
+            ("rel/path", "/work/rel/path/secret.env"),
+        ] {
+            assert_eq!(
+                resolve_input(&process_cwd, &literal(cwd), &literal("secret.env"))
+                    .to_utf8()
+                    .unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]

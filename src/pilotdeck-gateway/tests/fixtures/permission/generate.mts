@@ -98,6 +98,10 @@ const { matchPermissionRule } = await load('src/permission/policy/matchPermissio
 const { PermissionRuntime } = await load('src/permission/decision/PermissionRuntime.ts');
 const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
+// The cwd:"" scenarios resolve relative inputs against the real process cwd.
+// Their recorded booleans are machine-independent as long as that cwd is not
+// the filesystem root; assert it instead of silently recording "/" behavior.
+assert.notEqual(resolve('.'), '/', 'cwd:"" scenarios require a non-root process cwd');
 
 const CWD = '/ws/project';
 const EXTRA = '/ws/extra';
@@ -218,11 +222,29 @@ match('multiple-wildcards', rule('user', 'allow', 'read_file', 'src/*/a*'), 'rea
 match('regex-metacharacters-literal', rule('user', 'allow', 'bash', 'a+b?'), 'bash', { command: 'a+b?' }, context());
 match('regex-metacharacters-do-not-match', rule('user', 'allow', 'bash', 'a+b?'), 'bash', { command: 'aab' }, context());
 match('write-pattern-outside-workspace-matches', rule('user', 'allow', 'write_file', `${EXTRA}/*`), 'write_file', { file_path: `${EXTRA}/a.rs` }, context({ additionalWorkingDirectories: [EXTRA] }));
+match('edit-file-path-pattern', rule('user', 'allow', 'edit_file', `${CWD}/src/*`), 'edit_file', { file_path: 'src/a.rs' }, context());
+match('write-no-pattern-camel-filePath-inside', rule('user', 'allow', 'write_file'), 'write_file', { filePath: 'src/a.rs' }, context());
+match('write-no-pattern-camel-filePath-outside', rule('user', 'allow', 'write_file'), 'write_file', { filePath: '../a.rs' }, context());
+// cwd "" is an empty path segment: TS `path.join("", "secret.env")` is
+// "secret.env", then `path.resolve` makes it `<process cwd>/secret.env`.
+match('file-cwd-empty-relative', rule('user', 'allow', 'read_file', '/*/secret.env'), 'read_file', { file_path: 'secret.env' }, context({ cwd: '' }));
+match('file-cwd-empty-not-root', rule('user', 'allow', 'read_file', '/secret.env'), 'read_file', { file_path: 'secret.env' }, context({ cwd: '' }));
+match('file-cwd-dot-relative', rule('user', 'allow', 'read_file', '/*/secret.env'), 'read_file', { file_path: 'secret.env' }, context({ cwd: '.' }));
+match('file-cwd-relative-relative', rule('user', 'allow', 'read_file', '/*/secret.env'), 'read_file', { file_path: 'secret.env' }, context({ cwd: 'rel/path' }));
+match('write-no-pattern-cwd-empty-inside', rule('user', 'allow', 'write_file'), 'write_file', { file_path: 'src/a.rs' }, context({ cwd: '' }));
+match('write-no-pattern-cwd-empty-outside', rule('user', 'allow', 'write_file'), 'write_file', { file_path: '../a.rs' }, context({ cwd: '' }));
 
 assert.equal(matches.find((m) => m.name === 'wildcard-case-mismatch')!.expected, false);
 assert.equal(matches.find((m) => m.name === 'bash-newline-boundary')!.expected, false);
 assert.equal(matches.find((m) => m.name === 'write-no-pattern-outside')!.expected, false);
 assert.equal(matches.find((m) => m.name === 'file-pattern-case-sensitive')!.expected, false);
+for (const name of ['file-cwd-empty-relative', 'file-cwd-dot-relative', 'file-cwd-relative-relative']) {
+  assert.equal(matches.find((m) => m.name === name)!.expected, true, name);
+}
+// Negative control: treating cwd "" as "/" would turn this into a match.
+assert.equal(matches.find((m) => m.name === 'file-cwd-empty-not-root')!.expected, false);
+assert.equal(matches.find((m) => m.name === 'write-no-pattern-cwd-empty-inside')!.expected, true);
+assert.equal(matches.find((m) => m.name === 'write-no-pattern-cwd-empty-outside')!.expected, false);
 
 // ---- PermissionRuntime.decide ------------------------------------------
 const decisions: any[] = [];
@@ -326,6 +348,20 @@ const pending = [
   decide('deny-beats-tool-allow', context({ rules: rules([], [rule('user', 'deny', 'write_file')]) }), { name: 'write_file', readOnly: false, checks: [{ type: 'allow', reason: { type: 'tool', message: 'ok' } }] }, { file_path: 'src/a.rs' }),
   decide('deny-before-ask', context({ rules: rules([], [rule('user', 'deny', 'bash')], [rule('user', 'ask', 'bash')]) }), { name: 'bash', readOnly: false }, { command: 'x' }),
   decide('deny-rule-before-bypass', context({ mode: 'bypassPermissions', rules: rules([], [rule('project', 'deny', 'bash')]) }), { name: 'bash', readOnly: false }, { command: 'x' }),
+  // cwd "" / relative cwd: empty segments are skipped, then the path is
+  // resolved against the real process cwd. These pin the deny, plan-directory
+  // and acceptEdits paths that all share resolveInput.
+  decide('deny-rule-cwd-empty', context({ cwd: '', rules: rules([], [rule('user', 'deny', 'read_file', '/*/secret.env')]) }), { name: 'read_file', readOnly: true }, { file_path: 'secret.env' }),
+  decide('deny-root-pattern-cwd-empty-no-match', context({ cwd: '', rules: rules([], [rule('user', 'deny', 'read_file', '/secret.env')]) }), { name: 'read_file', readOnly: true }, { file_path: 'secret.env' }),
+  decide('plan-directory-cwd-empty-relative', context({ cwd: '', mode: 'plan', planDirectoryPath: '.' }), { name: 'write_file', readOnly: false, kind: 'filesystem' }, { file_path: 'x.md' }),
+  decide('accept-edits-cwd-empty', context({ cwd: '', acceptEdits: true }), { name: 'write_file', readOnly: false }, { file_path: 'x' }),
+  decide('first-matching-allow-rule-wins', context({ rules: rules([rule('user', 'allow', 'read_file', '/*/secret.env'), rule('user', 'allow', 'read_file', '*')]) }), { name: 'read_file', readOnly: true }, { file_path: 'secret.env' }),
+  decide('invalid-mode-acceptedits', context({ mode: 'acceptEdits', canPrompt: true }), { name: 'write_file', readOnly: false }, { file_path: 'src/a.rs' }),
+  decide('invalid-mode-dontask', context({ mode: 'dontAsk', canPrompt: true }), { name: 'write_file', readOnly: false }, { file_path: 'src/a.rs' }),
+  decide('invalid-mode-empty', context({ mode: '', canPrompt: true }), { name: 'write_file', readOnly: false }, { file_path: 'src/a.rs' }),
+  decide('invalid-mode-plan-case', context({ mode: 'Plan', canPrompt: true }), { name: 'write_file', readOnly: false }, { file_path: 'src/a.rs' }),
+  decide('session-mcp-force-ask-survives-no-prompt', context({ canPrompt: false, rules: rules([], [], [rule('session', 'ask', 'mcp__server', undefined, true)]) }), { name: 'mcp__server', readOnly: false }, {}),
+  decide('accept-edits-additional-root-write-denied', context({ acceptEdits: true, canPrompt: true, additionalWorkingDirectories: [EXTRA] }), { name: 'write_file', readOnly: false, kind: 'filesystem' }, { file_path: `${EXTRA}/.git/x` }),
 ];
 await Promise.all(pending);
 decisions.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
@@ -338,6 +374,15 @@ assert.equal(decisions.find((s) => s.name === 'bypass-overrides-tool-ask')!.expe
 assert.equal(decisions.find((s) => s.name === 'accept-edits-inside-workspace')!.expected.decision.reason.message, 'SDK acceptEdits allows workspace file tool write_file.');
 assert.equal(decisions.find((s) => s.name === 'summary-long-surrogate')!.expected.decision.request.inputSummary.length, 503);
 assert.equal(decisions.find((s) => s.name === 'summary-undefined-input')!.expected.decision.request.inputSummary, 'undefined');
+assert.equal(decisions.find((s) => s.name === 'deny-rule-cwd-empty')!.expected.decision.type, 'deny');
+assert.equal(decisions.find((s) => s.name === 'deny-root-pattern-cwd-empty-no-match')!.expected.decision.type, 'allow');
+assert.equal(decisions.find((s) => s.name === 'accept-edits-cwd-empty')!.expected.decision.reason.message, 'SDK acceptEdits allows workspace file tool write_file.');
+assert.equal(decisions.find((s) => s.name === 'plan-directory-cwd-empty-relative')!.expected.decision.reason.message, 'Plan mode allows writing markdown plans under the plan directory.');
+assert.equal(decisions.find((s) => s.name === 'first-matching-allow-rule-wins')!.expected.decision.reason.rule.pattern, '/*/secret.env');
+assert.equal(decisions.find((s) => s.name === 'invalid-mode-acceptedits')!.expected.decision.type, 'ask');
+assert.equal(decisions.find((s) => s.name === 'invalid-mode-plan-case')!.expected.decision.reason.mode, 'Plan');
+assert.equal(decisions.find((s) => s.name === 'session-mcp-force-ask-survives-no-prompt')!.expected.decision.type, 'ask');
+assert.equal(decisions.find((s) => s.name === 'accept-edits-additional-root-write-denied')!.expected.decision.type, 'ask');
 
 const oracle = {
   sourceCommit,

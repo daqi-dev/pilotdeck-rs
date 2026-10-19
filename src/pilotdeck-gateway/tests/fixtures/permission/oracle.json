@@ -654,8 +654,8 @@
   },
   "locale": "en-US",
   "counts": {
-    "matches": 38,
-    "decisions": 56,
+    "matches": 47,
+    "decisions": 67,
     "modes": 9,
     "defaults": 4
   },
@@ -1799,6 +1799,236 @@
         "bypassAvailable": true
       },
       "expected": true
+    },
+    {
+      "name": "edit-file-path-pattern",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "edit_file",
+        "pattern": "/ws/project/src/*"
+      },
+      "toolName": "edit_file",
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "write-no-pattern-camel-filePath-inside",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "write_file"
+      },
+      "toolName": "write_file",
+      "input": {
+        "filePath": "src/a.rs"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "write-no-pattern-camel-filePath-outside",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "write_file"
+      },
+      "toolName": "write_file",
+      "input": {
+        "filePath": "../a.rs"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": false
+    },
+    {
+      "name": "file-cwd-empty-relative",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "read_file",
+        "pattern": "/*/secret.env"
+      },
+      "toolName": "read_file",
+      "input": {
+        "file_path": "secret.env"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "file-cwd-empty-not-root",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "read_file",
+        "pattern": "/secret.env"
+      },
+      "toolName": "read_file",
+      "input": {
+        "file_path": "secret.env"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": false
+    },
+    {
+      "name": "file-cwd-dot-relative",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "read_file",
+        "pattern": "/*/secret.env"
+      },
+      "toolName": "read_file",
+      "input": {
+        "file_path": "secret.env"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": ".",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "file-cwd-relative-relative",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "read_file",
+        "pattern": "/*/secret.env"
+      },
+      "toolName": "read_file",
+      "input": {
+        "file_path": "secret.env"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "rel/path",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "write-no-pattern-cwd-empty-inside",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "write_file"
+      },
+      "toolName": "write_file",
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": true
+    },
+    {
+      "name": "write-no-pattern-cwd-empty-outside",
+      "rule": {
+        "source": "user",
+        "behavior": "allow",
+        "toolName": "write_file"
+      },
+      "toolName": "write_file",
+      "input": {
+        "file_path": "../a.rs"
+      },
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "expected": false
     }
   ],
   "decisions": [
@@ -1841,6 +2071,69 @@
       }
     },
     {
+      "name": "accept-edits-additional-root-write-denied",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [
+          "/ws/extra"
+        ],
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": true
+      },
+      "tool": {
+        "name": "write_file",
+        "kind": "filesystem",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "/ws/extra/.git/x"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "mode",
+            "mode": "default",
+            "message": "Mode default requires permission for write_file."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "write_file",
+            "inputSummary": "{\"file_path\":\"/ws/extra/.git/x\"}",
+            "reason": {
+              "type": "mode",
+              "mode": "default",
+              "message": "Mode default requires permission for write_file."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
       "name": "accept-edits-bypass-outside-workspace",
       "context": {
         "mode": "bypassPermissions",
@@ -1870,6 +2163,42 @@
           "reason": {
             "type": "mode",
             "mode": "bypassPermissions",
+            "message": "SDK acceptEdits allows workspace file tool write_file."
+          }
+        },
+        "calls": 0
+      }
+    },
+    {
+      "name": "accept-edits-cwd-empty",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": true
+      },
+      "tool": {
+        "name": "write_file",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "x"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "allow",
+          "reason": {
+            "type": "mode",
+            "mode": "default",
             "message": "SDK acceptEdits allows workspace file tool write_file."
           }
         },
@@ -2688,6 +3017,48 @@
       }
     },
     {
+      "name": "deny-root-pattern-cwd-empty-no-match",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [
+            {
+              "source": "user",
+              "behavior": "deny",
+              "toolName": "read_file",
+              "pattern": "/secret.env"
+            }
+          ],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "read_file",
+        "readOnly": true,
+        "checks": []
+      },
+      "input": {
+        "file_path": "secret.env"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "allow",
+          "reason": {
+            "type": "mode",
+            "mode": "default",
+            "message": "Mode default allows read-only tool read_file."
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
       "name": "deny-rule-before-bypass",
       "context": {
         "mode": "bypassPermissions",
@@ -2730,6 +3101,55 @@
             "message": "Deny rule blocks bash."
           },
           "message": "Deny rule blocks bash."
+        },
+        "calls": 0
+      }
+    },
+    {
+      "name": "deny-rule-cwd-empty",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [
+            {
+              "source": "user",
+              "behavior": "deny",
+              "toolName": "read_file",
+              "pattern": "/*/secret.env"
+            }
+          ],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "read_file",
+        "readOnly": true,
+        "checks": []
+      },
+      "input": {
+        "file_path": "secret.env"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "deny",
+          "reason": {
+            "type": "rule",
+            "behavior": "deny",
+            "rule": {
+              "source": "user",
+              "behavior": "deny",
+              "toolName": "read_file",
+              "pattern": "/*/secret.env"
+            },
+            "message": "Deny rule blocks read_file."
+          },
+          "message": "Deny rule blocks read_file."
         },
         "calls": 0
       }
@@ -2823,6 +3243,296 @@
       }
     },
     {
+      "name": "first-matching-allow-rule-wins",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "read_file",
+              "pattern": "/*/secret.env"
+            },
+            {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "read_file",
+              "pattern": "*"
+            }
+          ],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "read_file",
+        "readOnly": true,
+        "checks": []
+      },
+      "input": {
+        "file_path": "secret.env"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "allow",
+          "reason": {
+            "type": "rule",
+            "behavior": "allow",
+            "rule": {
+              "source": "user",
+              "behavior": "allow",
+              "toolName": "read_file",
+              "pattern": "/*/secret.env"
+            },
+            "message": "Allow rule permits read_file."
+          }
+        },
+        "calls": 0
+      }
+    },
+    {
+      "name": "invalid-mode-acceptedits",
+      "context": {
+        "mode": "acceptEdits",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": true,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "write_file",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "mode",
+            "mode": "acceptEdits",
+            "message": "Mode acceptEdits requires permission for write_file."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "write_file",
+            "inputSummary": "{\"file_path\":\"src/a.rs\"}",
+            "reason": {
+              "type": "mode",
+              "mode": "acceptEdits",
+              "message": "Mode acceptEdits requires permission for write_file."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
+      "name": "invalid-mode-dontask",
+      "context": {
+        "mode": "dontAsk",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": true,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "write_file",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "mode",
+            "mode": "dontAsk",
+            "message": "Mode dontAsk requires permission for write_file."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "write_file",
+            "inputSummary": "{\"file_path\":\"src/a.rs\"}",
+            "reason": {
+              "type": "mode",
+              "mode": "dontAsk",
+              "message": "Mode dontAsk requires permission for write_file."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
+      "name": "invalid-mode-empty",
+      "context": {
+        "mode": "",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": true,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "write_file",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "mode",
+            "mode": "",
+            "message": "Mode  requires permission for write_file."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "write_file",
+            "inputSummary": "{\"file_path\":\"src/a.rs\"}",
+            "reason": {
+              "type": "mode",
+              "mode": "",
+              "message": "Mode  requires permission for write_file."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
+      "name": "invalid-mode-plan-case",
+      "context": {
+        "mode": "Plan",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": true,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "write_file",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "src/a.rs"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "mode",
+            "mode": "Plan",
+            "message": "Mode Plan requires permission for write_file."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "write_file",
+            "inputSummary": "{\"file_path\":\"src/a.rs\"}",
+            "reason": {
+              "type": "mode",
+              "mode": "Plan",
+              "message": "Mode Plan requires permission for write_file."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 1
+      }
+    },
+    {
       "name": "non-session-force-ask-bypassed",
       "context": {
         "mode": "bypassPermissions",
@@ -2894,6 +3604,43 @@
             "message": "[PLAN_MODE_VIOLATION] bash command \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d…\" is BLOCKED — write/modify commands are not allowed in plan mode.\n\nIn plan mode, bash is restricted to READ-ONLY commands only (ls, cat, git status, git log, git diff, pwd, find, head, wc, etc.).\n\nRewrite your command as a read-only operation, or use read_file/grep/glob instead."
           },
           "message": "[PLAN_MODE_VIOLATION] bash command \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d…\" is BLOCKED — write/modify commands are not allowed in plan mode.\n\nIn plan mode, bash is restricted to READ-ONLY commands only (ls, cat, git status, git log, git diff, pwd, find, head, wc, etc.).\n\nRewrite your command as a read-only operation, or use read_file/grep/glob instead."
+        },
+        "calls": 1
+      }
+    },
+    {
+      "name": "plan-directory-cwd-empty-relative",
+      "context": {
+        "mode": "plan",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": []
+        },
+        "cwd": "",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
+        "bypassAvailable": true,
+        "planDirectoryPath": "."
+      },
+      "tool": {
+        "name": "write_file",
+        "kind": "filesystem",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {
+        "file_path": "x.md"
+      },
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "allow",
+          "reason": {
+            "type": "mode",
+            "mode": "plan",
+            "message": "Plan mode allows writing markdown plans under the plan directory."
+          }
         },
         "calls": 1
       }
@@ -3866,6 +4613,82 @@
         "cwd": "/ws/project",
         "additionalWorkingDirectories": [],
         "canPrompt": true,
+        "bypassAvailable": true
+      },
+      "tool": {
+        "name": "mcp__server",
+        "readOnly": false,
+        "checks": []
+      },
+      "input": {},
+      "toolCallId": "call-1",
+      "expected": {
+        "decision": {
+          "type": "ask",
+          "reason": {
+            "type": "rule",
+            "behavior": "ask",
+            "rule": {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "mcp__server",
+              "force": true
+            },
+            "message": "Ask rule requires confirmation for mcp__server."
+          },
+          "request": {
+            "toolCallId": "call-1",
+            "toolName": "mcp__server",
+            "inputSummary": "{}",
+            "reason": {
+              "type": "rule",
+              "behavior": "ask",
+              "rule": {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__server",
+                "force": true
+              },
+              "message": "Ask rule requires confirmation for mcp__server."
+            },
+            "options": [
+              {
+                "id": "allow_once",
+                "label": "Allow once"
+              },
+              {
+                "id": "deny",
+                "label": "Deny"
+              },
+              {
+                "id": "cancel",
+                "label": "Cancel"
+              }
+            ]
+          }
+        },
+        "calls": 0
+      }
+    },
+    {
+      "name": "session-mcp-force-ask-survives-no-prompt",
+      "context": {
+        "mode": "default",
+        "rules": {
+          "allow": [],
+          "deny": [],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "mcp__server",
+              "force": true
+            }
+          ]
+        },
+        "cwd": "/ws/project",
+        "additionalWorkingDirectories": [],
+        "canPrompt": false,
         "bypassAvailable": true
       },
       "tool": {
