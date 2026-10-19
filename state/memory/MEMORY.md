@@ -7,6 +7,8 @@
 
 - [本机模型评审入口](20261015-model-runners.md) — 2026-10-15 已核验的 Z.AI GLM 与 DeepSeek 通道（DeepSeek 首选 scripts/review-deepseek.py 直连 API，dsh 兜底）；区分 provider 错误与工具不可用，不改全局默认。
 
+- [Grok Bot 通道](20261019-grokbot-channel.md) — 本机可直连调用（`.env.local` 的 `CURSOR_ACCESS_TOKEN` + `scripts/grokbot-call.py`）；官方无 CLI、gbot 0.12.4 不可用；未定为评审谱系，外发先过闸门。
+
 - [基线源码锚点](20261016-source-anchors.md) — 入口枚举先定位真实源码表达式，锚点失配不靠猜名或放松匹配解决。
 
 - [评审输入边界](20261016-review-bounds.md) — 三角色按精确增量；同一环境核心三次300秒空结果已挂起，不第四改写，事件先后须原始时间证据。
@@ -29,6 +31,10 @@
 - [auto-merge-armed](20261018-auto-merge-armed.md) — 入队失败也可能已开 auto-merge；再推修复前先 --disable-auto，合入后核最后一个提交在 main 里
 - [clone-author-email](20261018-clone-author-email.md) — 仓外 clone 不共享主仓的 noreply 邮箱，提交前先设 user.email；空邮箱进 main 后无法改写
 - [dsh-channel](20261018-dsh-channel.md) — DeepSeek 首选 dsh：实现 workspace-write、评审 read-only；人定 10-18 起 DeepSeek 担实现与第一家评审大头，codex 守第二家评审与难单
-- [quote-review-findings](20261018-quote-review-findings.md) — 修复任务书里的评审结论只能从原文机械摘取，不凭记忆转述
-- [glm-concurrency](20261018-glm-concurrency.md) — ZAI key 全局并发≈10、超限立即 429 并被退避拖成超时；四角色闸门同时最多 2 个，GLM 评审另留余量
-- [gate-oracle-exclusion](20261018-gate-oracle-exclusion.md) — 闸门 --paths 排除 oracle.json 会招来「oracle 未入库」误报；PR 里预先写明并贴 ls-tree
+- [runtime-mod-conflicts](20261019-runtime-mod-conflicts.md) — 新增 runtime 子模块的 PR 在 mod.rs 相邻行必冲突；串行合入，闸门前先 rebase 并 merge-tree 核无冲突，入队后核 mergeable
+- [no-unbounded-recursion](20261019-no-unbounded-recursion.md) — 对 wire JsValue 的遍历一律显式栈或复用 js_value 带上限实现；新写递归必被闸门拦（10-19 两次）
+- [glm-scarcity-deepseek-shift](20261019-glm-scarcity-deepseek-shift.md) — GLM/codex 额度告急时用 DeepSeek 替补，可并行多跑取优；作者谱系约束不变
+- [GLM 配额耗尽与 DeepSeek 轮换](20261019-glm-scarcity-deepseek-shift.md) — GLM 月配额耗尽后由 DeepSeek 补位
+- [Grok Bot 通道](20261019-grokbot-channel.md) — Cursor 个人 key 调用，已加入评审谱系
+- [无界递归设计决定](20261019-no-unbounded-recursion.md) — 不在项目内实现无界递归评审
+- [运行时模块冲突记录](20261019-runtime-mod-conflicts.md) — runtime/mod.rs 合并冲突处理记录

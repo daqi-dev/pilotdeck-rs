@@ -8,6 +8,8 @@ type: feedback
 
 **2026-10-18 人定模型分工（经守护会话转达，正本见 `state/decisions-20261017.md`「卡 · 模型分工」）**：评审默认 GLM + DeepSeek，只有难单（并发、协议、冻结装置、安全边界）才请 Claude 审；实现由 codex / GLM / DeepSeek 轮换，难单优先 codex 或 Claude；谁写谁不审，必须两家非作者。GLM、DeepSeek 先各试一张小单，看质量再定是否常态化。
 
+**2026-10-19 Grok Bot 可调用（新通道，未入评审分工）**：官方 App 无 CLI，`gbot` 0.12.4 因缺 `gateway-descriptor.json` 不可用；改走 Cursor 个人 key 直连 `api.cursor.com/v0/grokbot/*`，封装在 `scripts/grokbot-call.py`（key 在 `.env.local` 的 `CURSOR_ACCESS_TOKEN`，由 `npx -p @cursor/bdk bdk login` 铸出）。细节、Bot 名单与边界见 `state/memory/20261019-grokbot-channel.md`；是否作为第四家评审谱系待人定，外发先过闸门。
+
 **2026-10-17 GLM 走 Claude Code（首选）**：`claude -p` 设 `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`、`ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY`（`.env.local`）、`--model glm-5.3` 即跑 GLM，init 报 `model=glm-5.3`、工具白名单照常在执行层生效（实测原件 `_tmp/20261017-review-roles-glm/`）。`scripts/run-review-roles.py` 默认就走它（`--runner zai`）。比 opencode 好在只读可证明；opencode 只剩人工对话用途。GLM 开几个角度都只算**一个谱系**，双谱系评审仍需另一家非作者。
 
 **2026-10-17 更新（用户指示，优先于下文 dsh 用法）**：DeepSeek 谱系**首选** `python3 -I scripts/review-deepseek.py --prompt <任务书> --input <diff/源码>... --out <out.md>`（默认 `deepseek-flash`，可选 `--model deepseek-v4-pro`）。它直连 API、密钥先取环境变量 `DEEPSEEK_API_KEY`，没有再读 `.env.local`（先当前检出根，再主仓根，所以在 `_build/wt-*` 里跑也找得到；已在 .gitignore），模型无工具、天然只读；需要的上下文必须用 `--input` 显式附上（它读不到仓库；合计上限 2 MiB，超了分批）。长评审建议显式传 `--max-tokens`（不传用 API 默认输出上限，截断时按失败退出、费用已花）。`--out` 已存在默认拒绝（保护上一轮原件），只有 exit 0 才算有完整回复，失败不写 out。冒烟原件 `_tmp/20261017-deepseek-smoke/`（exit 0、SMOKE-OK）。脚本报 HTTP/余额错误时才回退 dsh。不要读取、打印或复制 `.env.local`。
