@@ -100,19 +100,19 @@ fn execute<F: Files>(
         return Err(path_argument(project));
     };
     let project_units = project_string.units();
-    // `projectRegistry.ts:41-59` resolves the key and compares the resulting JS
-    // strings by code unit. A lone surrogate therefore names its own path and
-    // must not be replacement-decoded before the lookup: on a filesystem that
-    // can store U+FFFD, `"\ud800"` and `"\ufffd"` are different projects and
-    // `from_utf16_lossy` would alias one onto the other. Disk-derived project
-    // keys are always valid UTF-8, so an unpaired surrogate can never name home
-    // or a registered project; reject with the original units, exactly as TS
-    // does before any filesystem access.
-    let Some(project_path) = project_string.to_utf8().ok() else {
-        return Err(unknown_project_key(project_units));
-    };
-    let requested = resolve(&metadata.cwd, &project_path);
-    let project = if requested == metadata.home {
+    // `projectRegistry.ts:41-59` resolves the key *before* comparing the
+    // resulting JS strings by code unit. A lone surrogate therefore must not be
+    // replacement-decoded before the lookup, but it also must not reject the
+    // whole key early: `..` folds lexically and can drop a surrogate-bearing
+    // segment (`/fixture/project-\ud800/../project` is `/fixture/project`).
+    // Normalize raw UTF-16 first; only a surrogate that survives is genuinely
+    // unrepresentable. Disk-derived keys are valid UTF-8, so such a key can
+    // never name home or a registered project; reject with the original units.
+    let requested = crate::metadata::resolved_identity(&metadata.cwd, project_string);
+    let project = if requested
+        .as_deref()
+        .is_some_and(|path| resolve(&metadata.cwd, path) == metadata.home)
+    {
         metadata.home.to_string_lossy().into_owned()
     } else {
         let projects = metadata.list_projects();
@@ -120,7 +120,11 @@ fn execute<F: Files>(
             JsValue::Array(items) => items
                 .iter()
                 .filter_map(|p| text_field(p, "projectKey"))
-                .find(|p| resolve(&metadata.cwd, p) == requested),
+                .find(|p| {
+                    requested.as_deref().is_some_and(|path| {
+                        resolve(&metadata.cwd, p) == resolve(&metadata.cwd, path)
+                    })
+                }),
             _ => None,
         };
         found.ok_or_else(|| unknown_project_key(project_units))?

@@ -304,6 +304,55 @@ pub(crate) fn resolve(cwd: &Path, value: &str) -> PathBuf {
     output
 }
 
+const UTF16_SLASH: u16 = b'/' as u16;
+const UTF16_DOT: u16 = b'.' as u16;
+
+/// Node `path.resolve(base, value)` over raw UTF-16 code units: relative
+/// values join `base`, `.` and `..` fold lexically, and repeated separators
+/// collapse. This must run before any UTF-8 conversion because `..` can pop a
+/// segment that happens to contain a lone surrogate; `path.resolve` never
+/// inspects segment content, so `/fixture/project-\ud800/../project` names
+/// `/fixture/project` even though the raw key is not representable. Shared by
+/// the project-key identity seams (metadata/session-model) and the existing
+/// workspace-snapshot/task-budget lexical resolvers.
+pub(crate) fn resolve_units(base: &str, value: &JsString) -> JsString {
+    let mut source = Vec::new();
+    if value.units().first() != Some(&UTF16_SLASH) {
+        source.extend(base.encode_utf16());
+        source.push(UTF16_SLASH);
+    }
+    source.extend_from_slice(value.units());
+    let mut segments: Vec<&[u16]> = Vec::new();
+    for segment in source.split(|unit| *unit == UTF16_SLASH) {
+        if segment.is_empty() || (segment.len() == 1 && segment[0] == UTF16_DOT) {
+            continue;
+        }
+        if segment.len() == 2 && segment[0] == UTF16_DOT && segment[1] == UTF16_DOT {
+            segments.pop();
+        } else {
+            segments.push(segment);
+        }
+    }
+    let mut output = Vec::with_capacity(source.len().max(1));
+    output.push(UTF16_SLASH);
+    for (index, segment) in segments.iter().enumerate() {
+        if index > 0 {
+            output.push(UTF16_SLASH);
+        }
+        output.extend_from_slice(segment);
+    }
+    JsString::from_utf16(output)
+}
+
+/// Resolve a project key the way `projectRegistry.ts:42` does, but expose it
+/// as UTF-8 only after normalization. A lone surrogate that survives the
+/// lexical pass is genuinely unrepresentable and cannot equal any disk-derived
+/// (valid UTF-8) project key; one folded away by `.`/`..` never prevents the
+/// lookup.
+pub(crate) fn resolved_identity(cwd: &Path, value: &JsString) -> Option<String> {
+    resolve_units(&cwd.to_string_lossy(), value).to_utf8().ok()
+}
+
 pub(crate) fn project_id(root: &Path) -> String {
     let mut result = String::new();
     let normalized = root.to_string_lossy().replace('\\', "/");
@@ -461,12 +510,14 @@ impl<F: Files> Metadata<F> {
     pub fn describe_project(&self, root: &JsString) -> JsValue {
         // Node's fs layer replacement-encodes a lone surrogate, but the
         // registry identity comparison in `listProjects.ts:120-160` keeps the
-        // original JS string. Use the lossy text for filesystem paths and the
-        // fallback project id, while marker comparisons only accept a
-        // representable identity; otherwise `"\ud800"` would alias onto a
-        // project whose path contains literal U+FFFD.
+        // original JS string. Resolve raw UTF-16 units first: `..` can drop a
+        // surrogate-bearing segment before identity is compared, so only a
+        // surrogate that survives normalization is unrepresentable. Use the
+        // lossy text for filesystem paths and the fallback project id;
+        // otherwise `"\ud800"` would alias onto a project whose path contains
+        // literal U+FFFD.
         let path = String::from_utf16_lossy(root.units());
-        let identity = root.to_utf8().ok();
+        let identity = resolved_identity(&self.cwd, root);
         let storage = self.describe_storage(&path, identity.as_deref());
         self.summary(&path, identity.as_deref(), storage.as_deref(), root.clone())
     }

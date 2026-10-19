@@ -119,10 +119,13 @@ fn complete_default_provider_matches_node_wire_fixtures() {
 /// The U+FFFD project and the lone-surrogate spelling are distinct registry
 /// identities. `project-key-lone-surrogate` is the alias negative control: a
 /// lossy decode would make it resolve onto the registered U+FFFD project.
+/// The folded cases exercise `path.resolve` before that comparison: `..` can
+/// drop a surrogate-bearing segment, while a surviving surrogate still fails
+/// with its raw units.
 #[test]
 fn project_key_identity_matches_the_node_registry() {
     let fixture: serde_json::Value = serde_json::from_str(PROJECT_KEY_FIXTURE).unwrap();
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 3);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 6);
     verify_responses(&fixture);
 }
 #[test]

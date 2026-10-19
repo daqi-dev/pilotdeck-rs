@@ -136,6 +136,63 @@ fn describe_project_keeps_lone_surrogate_distinct_from_literal_fffd() {
     assert!(summary.get("createdAt").is_none());
 }
 
+/// `listProjects.ts:131/154` compares `resolve(marker)` with
+/// `resolve(projectKey)`, so the same lexical fold applies to metadata: a `..`
+/// after a surrogate-bearing segment drops it before identity is checked.
+/// Node measurement: `path.resolve('/fixture/project-\ud800/../project')` and
+/// `path.resolve('/fixture','project-\ud800/../project')` both return
+/// `/fixture/project`. The second half is the negative control: normalization
+/// happens, but a surrogate that survives it can never match a disk marker.
+#[test]
+fn describe_project_folds_lone_surrogate_segments_before_identity() {
+    let metadata = ordered_projects(&[("registered", "/fixture/project")]);
+    for key in [
+        "/fixture/project-\\ud800/../project",
+        "project-\\ud800/../project",
+    ] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":"{key}"}}}}"#
+        );
+        let bytes = response(&raw, &metadata);
+        let response = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        let summary = response.get("result").unwrap();
+        assert_eq!(
+            summary.get("createdAt").and_then(JsValue::as_number),
+            Some(1.0),
+            "{key} must match the registered project after folding"
+        );
+        // The wire keeps the caller's original units, not the resolved path.
+        let expected = parse_json(&format!("\"{key}\"")).unwrap();
+        let units = summary
+            .get("projectKey")
+            .and_then(JsValue::as_string)
+            .unwrap()
+            .units();
+        assert_eq!(
+            units,
+            expected.as_string().unwrap().units(),
+            "{key} must keep its raw wire units"
+        );
+    }
+    for key in [
+        "/fixture/project-\\ud800/../project-\\ud800",
+        "project-\\ud800/../project-\\ud800",
+    ] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":"{key}"}}}}"#
+        );
+        let bytes = response(&raw, &metadata);
+        let response = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert!(
+            response
+                .get("result")
+                .and_then(|summary| summary.get("createdAt"))
+                .is_none(),
+            "{key} survives normalization and must not alias the registered project"
+        );
+    }
+}
+
 #[test]
 fn missing_params_and_unknown_project_match_ts_error_and_success_bytes() {
     let metadata = Metadata {

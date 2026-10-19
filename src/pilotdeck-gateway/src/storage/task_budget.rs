@@ -2,7 +2,10 @@
 //! A store belongs to one runtime registry. Like TS, it caches its first load,
 //! mutates memory before writing, and has no cross-process writer lock. Runtime
 //! session configuration and validation belong to A6.3-pr8.
-use crate::{js_value, metadata::object};
+use crate::{
+    js_value,
+    metadata::{object, resolve_units},
+};
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
 use std::{
     fmt, fs,
@@ -525,33 +528,12 @@ fn valid_record(record: &JsValue) -> bool {
 // Node path.resolve is lexical, not realpath. Work in UTF-16 so lone surrogates
 // and NULs in legacy identities survive; these keys never become filesystem paths.
 fn resolve_project_root(root: &JsString) -> Result<JsString> {
-    let cwd;
-    let mut input = Vec::new();
-    if root.units().first() != Some(&47) {
-        cwd = std::env::current_dir()?;
-        input.extend(cwd.to_string_lossy().encode_utf16());
-        input.push(47);
-    }
-    input.extend_from_slice(root.units());
-    let mut parts = Vec::new();
-    for part in input.split(|c| *c == 47) {
-        if part.is_empty() || part == [46] {
-            continue;
-        }
-        if part == [46, 46] {
-            parts.pop();
-        } else {
-            parts.push(part);
-        }
-    }
-    let mut units = vec![47];
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            units.push(47);
-        }
-        units.extend_from_slice(part);
-    }
-    Ok(JsString::from_utf16(units))
+    let base = if root.units().first() == Some(&47) {
+        String::new()
+    } else {
+        std::env::current_dir()?.to_string_lossy().into_owned()
+    };
+    Ok(resolve_units(&base, root))
 }
 fn ledger_key(root: &JsString, scope: TaskBudgetScope, session: &JsString) -> Result<JsString> {
     let mut units = resolve_project_root(root)?.units().to_vec();
