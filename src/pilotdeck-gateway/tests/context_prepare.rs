@@ -13,12 +13,13 @@ use pilotdeck_gateway::runtime::context::{
 };
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 use std::{
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 29;
-const STEPS: usize = 47;
+const CASES: usize = 37;
+const STEPS: usize = 55;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -153,6 +154,45 @@ fn materialize(oracle: &JsValue, root: &Path) {
             .unwrap();
         std::fs::write(path, bytes).unwrap();
     }
+    for link in array(field(oracle, "symlinks")) {
+        let path = root.join(text(field(link, "path")));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        symlink(text(field(link, "target")), path).unwrap();
+    }
+}
+
+fn text_provider(spec: &JsValue) -> TextProvider {
+    let Some(dynamic) = spec.get("dynamic").and_then(JsValue::as_object) else {
+        return TextProvider::Static(text(field(spec, "text")));
+    };
+    let kind = dynamic
+        .get("kind")
+        .and_then(JsValue::as_string)
+        .map(|value| String::from_utf16_lossy(value.units()))
+        .expect("dynamic kind");
+    let value = dynamic.get("value").cloned().unwrap_or(JsValue::Undefined);
+    let message = dynamic
+        .get("message")
+        .and_then(JsValue::as_string)
+        .map(|value| String::from_utf16_lossy(value.units()))
+        .unwrap_or_default();
+    TextProvider::Dynamic(Arc::new(move |_: &ContributionContext| {
+        let kind = kind.clone();
+        let value = value.clone();
+        let message = message.clone();
+        Box::pin(async move {
+            match kind.as_str() {
+                "throw" => Err(message),
+                "non-string" => Ok(value),
+                _ => Ok(JsValue::String(
+                    value
+                        .as_string()
+                        .cloned()
+                        .expect("dynamic string provider value"),
+                )),
+            }
+        })
+    }))
 }
 
 #[tokio::test]
@@ -235,7 +275,7 @@ async fn prepare_for_model_matches_real_ts() {
                             .register_section(SectionContribution {
                                 name: text(field(section, "name")),
                                 order: number(field(section, "order")),
-                                text: TextProvider::Static(text(field(section, "text"))),
+                                text: text_provider(section),
                                 complete: field(section, "complete").as_bool().unwrap_or(false),
                             })
                             .unwrap();
@@ -249,7 +289,7 @@ async fn prepare_for_model_matches_real_ts() {
                             .register_runtime_context(RuntimeContextContribution {
                                 name: text(field(context, "name")),
                                 order: number(field(context, "order")),
-                                text: TextProvider::Static(text(field(context, "text"))),
+                                text: text_provider(context),
                             })
                             .unwrap();
                     }
