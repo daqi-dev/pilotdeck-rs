@@ -192,7 +192,7 @@ async fn command_executor_matches_real_ts_subprocesses() {
     let root = scratch_root(&scratch);
     write_scripts(&oracle, &root);
     let cases = array(field(&oracle, "command"));
-    assert_eq!(cases.len(), 23);
+    assert_eq!(cases.len(), 27);
     for case in cases {
         let name = text(field(case, "name"));
         let command = substitute_text(&text(field(case, "command")), &[("<dir>", &root)]);
@@ -243,6 +243,19 @@ async fn command_executor_matches_real_ts_subprocesses() {
             text(field(case, "expected")),
             "command case {name}"
         );
+        if let Some(marker) = case.get("markerFile") {
+            // The result resolves at close; TS then lets the TERM handler finish
+            // inside its 3 s SIGKILL grace. A descendant that cleans up in the
+            // handler must have written the marker by the recorded deadline.
+            let marker = substitute_text(&text(marker), &[("<dir>", &root)]);
+            let wait_ms = number(field(case, "markerWaitMs")) as u64;
+            sleep(Duration::from_millis(wait_ms)).await;
+            assert!(
+                std::path::Path::new(&marker).exists(),
+                "command case {name}: TERM-handler cleanup marker {marker} is missing (SIGKILL arrived before the grace expired)"
+            );
+            let _ = std::fs::remove_file(&marker);
+        }
         if let Some(mut background) = background {
             let delay = number(field(case, "detachedAliveAfterMs")) as u64;
             sleep(Duration::from_millis(delay)).await;
@@ -303,15 +316,82 @@ async fn timed_out_command_leaves_no_process() {
         .parse()
         .unwrap();
     let pid = rustix::process::Pid::from_raw(pid).expect("pid");
+    // TS resolves the result at close but keeps its 3 s KILL timer; the leader
+    // intentionally stays an unreaped zombie (reserving the PGID) until the
+    // deferred group KILL, so wait past the grace before requiring ESRCH.
     let mut dead = false;
-    for _ in 0..50 {
+    for _ in 0..200 {
         if rustix::process::test_kill_process(pid).is_err() {
             dead = true;
             break;
         }
-        sleep(Duration::from_millis(20)).await;
+        sleep(Duration::from_millis(50)).await;
     }
     assert!(dead, "timed out shell leader {pid:?} is still alive");
+}
+
+/// gate3 P1: a timeout whose result resolves at pipe EOF must still honour
+/// TS's TERM -> 3 s -> KILL timeline. The leader's stdio closes early (its
+/// background descendant is redirected), so the result is immediate; the
+/// descendant ignores TERM and must survive the grace, then die from the
+/// deferred group SIGKILL that the background reaper sends.
+#[tokio::test]
+async fn timeout_result_returns_before_the_group_kill_grace() {
+    let scratch = Scratch::new("hooks-runtime-grace-reap");
+    let root = scratch_root(&scratch);
+    let pid_file = std::path::Path::new(&root).join("bg.pid");
+    // The leader only sleeps, so its pipes close as soon as TERM kills it; the
+    // redirected descendant ignores TERM and keeps the group alive.
+    let command = format!(
+        "bash -c 'trap \"\" TERM; while :; do sleep 0.2; done' >/dev/null 2>&1 & echo $! > '{}'; sleep 30",
+        pid_file.display()
+    );
+    let started = Instant::now();
+    let result = timeout(
+        Duration::from_secs(10),
+        CommandHookExecutor::default().execute(CommandHookOptions {
+            command: command.into(),
+            hook_input: JsObject::new(),
+            cwd: root.clone().into(),
+            env: None,
+            signal: None,
+            timeout_ms: Some(500.0),
+        }),
+    )
+    .await
+    .expect("timeout case must resolve");
+    let elapsed = started.elapsed();
+    assert_eq!(result.outcome, HookOutcome::Timeout);
+    assert!(
+        elapsed < Duration::from_millis(2000),
+        "result must resolve at close (about the timeout), not after the grace: {elapsed:?}"
+    );
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("leader wrote the background pid")
+        .trim()
+        .parse()
+        .unwrap();
+    let mut survivor = BackgroundProcess::new(pid);
+    // Inside the grace the descendant is still alive: the old code KILLed the
+    // group at pipe EOF, which the next assertion alone would not catch.
+    sleep(Duration::from_millis(1000)).await;
+    assert!(
+        survivor.alive(),
+        "descendant {pid} was killed before the 3 s grace expired"
+    );
+    let mut dead = false;
+    for _ in 0..100 {
+        if !survivor.alive() {
+            dead = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        dead,
+        "deferred group SIGKILL never reached descendant {pid}"
+    );
+    survivor.disarm();
 }
 
 /// C6: a same-group grandchild can keep stdin open while the command never
@@ -340,17 +420,23 @@ async fn command_cleanup_aborts_stdin_writer() {
     .await
     .expect("cleanup must not hang while a grandchild holds the pipes");
     assert_eq!(result.outcome, HookOutcome::Timeout);
-    // Let abort/join of the writer and pipe readers settle before counting.
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
-    }
-    assert!(
-        tokio::runtime::Handle::current()
+    // The timeout path intentionally leaves one deferred-reaper task until the
+    // 3 s grace expires; wait for it to finish, then require that no stdin
+    // writer (or anything else) leaked. A leaked writer keeps the count above
+    // the baseline for the whole poll window.
+    let mut settled = false;
+    for _ in 0..200 {
+        if tokio::runtime::Handle::current()
             .metrics()
             .num_alive_tasks()
-            <= before,
-        "stdin writer task leaked past command cleanup"
-    );
+            <= before
+        {
+            settled = true;
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(settled, "stdin writer task leaked past command cleanup");
 }
 
 // ---------------------------------------------------------------- HTTP mock

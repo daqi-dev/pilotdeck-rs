@@ -682,6 +682,9 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     let mut timed_out = false;
     let mut timed_or_cancelled = false;
     let mut kill_sleep: Option<Pin<Box<Sleep>>> = None;
+    // TERM + `KILL_GRACE`: the instant the final group KILL is due. `None`
+    // after the KILL has been sent (or when no termination was requested).
+    let mut kill_deadline: Option<tokio::time::Instant> = None;
     let mut force_sleep: Option<Pin<Box<Sleep>>> = None;
     let mut forced = false;
     loop {
@@ -704,7 +707,9 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
                 timed_out = true;
                 timed_or_cancelled = true;
                 crate::process_group::kill(group, rustix::process::Signal::TERM);
-                kill_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + KILL_GRACE)));
+                let deadline = tokio::time::Instant::now() + KILL_GRACE;
+                kill_deadline = Some(deadline);
+                kill_sleep = Some(Box::pin(sleep_until(deadline)));
                 force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
             }
             _ = async {
@@ -712,13 +717,16 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
             }, if !timed_or_cancelled && !initially_aborted => {
                 timed_or_cancelled = true;
                 crate::process_group::kill(group, rustix::process::Signal::TERM);
-                kill_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + KILL_GRACE)));
+                let deadline = tokio::time::Instant::now() + KILL_GRACE;
+                kill_deadline = Some(deadline);
+                kill_sleep = Some(Box::pin(sleep_until(deadline)));
                 force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
             }
             _ = async {
                 if let Some(sleep) = kill_sleep.as_mut() { sleep.as_mut().await } else { std::future::pending().await }
             }, if kill_sleep.is_some() => {
                 kill_sleep = None;
+                kill_deadline = None;
                 crate::process_group::kill(group, rustix::process::Signal::KILL);
             }
             _ = async {
@@ -741,18 +749,48 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
         let _ = task.await;
     }
 
-    // Timeout/abort owns the whole group: send the final KILL here because the
-    // loop can break on pipe EOF before the 3 s kill timer fires. A normal
-    // completion must not signal the group: TS `commandRunner` only kills on
-    // timeout/abort, so a background process a hook deliberately starts
-    // (`cmd >/dev/null 2>&1 &`) survives it. On that path only the leader is
-    // reaped, and the group is not awaited either.
-    let terminated = timed_or_cancelled;
-    if terminated {
-        crate::process_group::kill(group, rustix::process::Signal::KILL);
-    }
+    // A normal completion must not signal the group: TS `commandRunner` only
+    // kills on timeout/abort, so a background process a hook deliberately
+    // starts (`cmd >/dev/null 2>&1 &`) survives it.
+    //
+    // On timeout/abort TS sends TERM immediately, resolves the result at
+    // `close`, then lets its 3 s KILL timer run on. The loop here can break on
+    // pipe EOF before that timer fires (a leader whose stdio is redirected
+    // closes long before the grace expires). Returning at that point must not
+    // SIGKILL early, and the leader must stay an unreaped zombie so the PGID
+    // cannot be reused; hand both to a background reaper that waits out the
+    // remaining grace, KILLs the group, then reaps.
     let mut exit_code = None;
-    if !forced {
+    let deferred_kill = timed_or_cancelled
+        && !forced
+        && kill_deadline.is_some_and(|deadline| tokio::time::Instant::now() < deadline);
+    if timed_or_cancelled && !forced {
+        if deferred_kill {
+            // The status is available without reaping (`WNOWAIT`), so the
+            // result keeps TS's exit code while the zombie reserves the PGID.
+            exit_code = crate::process_group::leader_exit_code_unreaped(group);
+        } else {
+            // The grace already expired (or no deadline was recorded): finish
+            // the KILL inline and reap below, as the loop used to do.
+            crate::process_group::kill(group, rustix::process::Signal::KILL);
+        }
+    }
+    if deferred_kill {
+        let deadline = kill_deadline.expect("deferred kill has a deadline");
+        let mut child = child;
+        let mut guard = guard;
+        tokio::spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            crate::process_group::kill(group, rustix::process::Signal::KILL);
+            if tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .is_ok_and(|result| result.is_ok())
+            {
+                guard.reap();
+            }
+            crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+        });
+    } else if !forced {
         match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
             Ok(Ok(status)) => {
                 exit_code = status.code();
@@ -791,7 +829,9 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
         err_task.abort();
         let _ = err_task.await;
     }
-    if terminated || forced {
+    // The deferred path keeps the result immediate; its background task owns
+    // the group drain so the 3 s grace is not added to the returned duration.
+    if !deferred_kill && (timed_or_cancelled || forced) {
         crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
     }
 
