@@ -6,8 +6,8 @@
 //! text notice, and that branch is implemented here verbatim.
 use super::{
     ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join,
-    js_value_string, lower, normalize, number, object, os_path, resolve_workspace_path, schema,
-    stat, string, text, tool_error, truthy,
+    js_value_string, lower, normalize, number, object, os_path, record_write_snapshot,
+    resolve_workspace_path, schema, stat, string, text, tool_error, truthy,
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
@@ -15,7 +15,6 @@ use crate::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use sha2::{Digest, Sha256};
 use std::io::Read;
 
 const MAX_PDF_PAGES_PER_REQUEST: u64 = 20;
@@ -738,8 +737,10 @@ fn notebook(
         &resolved.absolute,
         &raw,
         context_stat.mtime_ms,
-        number(field(input, "offset")),
-        number(field(input, "limit")),
+        Some((
+            number(field(input, "offset")),
+            number(field(input, "limit")),
+        )),
     );
     let mut data = object([
         ("filePath", string(resolved.relative.clone())),
@@ -836,8 +837,7 @@ fn text_file(
         &resolved.absolute,
         ranged.full_content.as_deref().unwrap_or(&ranged.content),
         ranged.mtime_ms,
-        number(field(input, "offset")),
-        snapshot_limit,
+        Some((number(field(input, "offset")), snapshot_limit)),
     );
     Ok(ToolOutput {
         content: vec![JsValue::Object(object([
@@ -884,35 +884,6 @@ fn read_state_value(mtime_ms: f64, kind: ReadKind, input: &JsValue) -> JsValue {
         state.insert("pages".into(), JsValue::String(pages.clone()));
     }
     JsValue::Object(state)
-}
-
-fn record_write_snapshot(
-    context: &ToolRunContext,
-    absolute: &JsString,
-    content: &str,
-    mtime_ms: f64,
-    offset: Option<f64>,
-    limit: Option<f64>,
-) {
-    let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
-    let mut entry = object([
-        ("absolutePath", string(absolute.clone())),
-        ("mtimeMs", JsValue::Number(mtime_ms)),
-        ("contentHash", string(hash)),
-    ]);
-    if let Some(offset) = offset {
-        entry.insert("offset".into(), JsValue::Number(offset));
-    }
-    if let Some(limit) = limit {
-        entry.insert("limit".into(), JsValue::Number(limit));
-    }
-    context
-        .host
-        .files
-        .write_snapshots
-        .lock()
-        .unwrap()
-        .insert(absolute.clone(), JsValue::Object(entry));
 }
 
 struct Ranged {

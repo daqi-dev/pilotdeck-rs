@@ -210,7 +210,20 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
                 .collect::<Vec<_>>()
                 .join(&normalized_new)
         } else {
-            content.replacen(actual.as_str(), &normalized_new, 1)
+            let position = content
+                .find(actual.as_str())
+                .expect("actual string was found above");
+            let prefix = &content[..position];
+            let suffix = &content[position + actual.len()..];
+            format!(
+                "{prefix}{}{suffix}",
+                crate::js_value::expand_replacement(
+                    &normalized_new,
+                    actual.as_str(),
+                    prefix,
+                    suffix
+                )
+            )
         }
     };
 

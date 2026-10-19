@@ -3,7 +3,7 @@
 //   PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 //     node --import /abs/.../tsx/dist/loader.mjs \
 //     src/pilotdeck-gateway/tests/fixtures/write-tools/generate.mts /abs/output-parent
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile, lstat, chmod, utimes, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, link, writeFile, lstat, chmod, utimes, readdir, stat } from 'node:fs/promises';
 import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -85,6 +85,9 @@ async function apply(step: Step): Promise<void> {
     try { await symlink(String(step.target).split('<outside>').join(outside), target); } catch (error: any) {
       if (error?.code !== 'EEXIST') throw error;
     }
+  } else if (step.op === 'hardlink') {
+    await mkdir(dirname(target), { recursive: true });
+    await link(resolve(currentRoot, step.target), target);
   } else if (step.op === 'chmod') {
     await chmod(target, step.mode);
   } else if (step.op === 'remove') {
@@ -397,6 +400,31 @@ async function diffStats(run: any, messageId: string) {
   await call(run, 'read_file', { file_path: 'doc.txt' });
   await call(run, 'edit_file', { file_path: 'doc.txt', old_string: 'x', new_string: 'y', replace_all: true });
   run.scenario.readBack = ['doc.txt'];
+  scenarios.push(run.scenario);
+}
+{
+  const run = begin('edit-dollar-substitution');
+  await setup(run, { op: 'file', path: 'doc.txt', content: 'A echo PID B\n', mtime: 1_700_000_000_000 });
+  await call(run, 'read_file', { file_path: 'doc.txt' });
+  await call(run, 'edit_file', { file_path: 'doc.txt', old_string: 'echo PID', new_string: "$$|$&|$`|$'|$1|$<n>" });
+  run.scenario.readBack = ['doc.txt'];
+  scenarios.push(run.scenario);
+}
+{
+  const run = begin('edit-replace-all-dollar-literal');
+  await setup(run, { op: 'file', path: 'doc.txt', content: 'x x\n', mtime: 1_700_000_000_000 });
+  await call(run, 'read_file', { file_path: 'doc.txt' });
+  await call(run, 'edit_file', { file_path: 'doc.txt', old_string: 'x', new_string: '$& $$', replace_all: true });
+  run.scenario.readBack = ['doc.txt'];
+  scenarios.push(run.scenario);
+}
+{
+  const run = begin('edit-hardlink');
+  await setup(run, { op: 'file', path: 'doc.txt', content: 'inside\n', mtime: 1_700_000_000_000 });
+  await setup(run, { op: 'hardlink', path: 'alias.txt', target: 'doc.txt' });
+  await call(run, 'read_file', { file_path: 'alias.txt' });
+  await call(run, 'edit_file', { file_path: 'alias.txt', old_string: 'inside', new_string: 'edited' });
+  run.scenario.readBack = ['doc.txt', 'alias.txt'];
   scenarios.push(run.scenario);
 }
 {

@@ -15,8 +15,8 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 调用输入里的 `<root>` / `<outside>` 在生成器内先替换成真实临时路径（与 Rust 回放同一替换），结果再归一化。每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次逐字节一致才更新正本
-（本文件提交时 `sha256(oracle.json) = 0339d78a8a78723dffb386d5739e10e78ffdbb6b56e976e78cd5151b98315175`，
-两次运行均为此值）。场景 42 个、调用 80 次。
+（本文件提交时 `sha256(oracle.json) = fc0b52b22138097519e844d6f3ca09ced8d79fa95892c04d9eee4acd4fed7d9e`，
+两次运行均为此值）。场景 45 个、调用 86 次。
 
 ## 归一化与为什么
 
@@ -39,11 +39,12 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 - **语法诊断**：`formatSyntaxDiagnostics` 的 JSON/TypeScript/Python/YAML/HTML/CSV/
   Markdown 检查器不在本 PR 范围；实现恒返回 `undefined`，因此夹具只写这些检查器
   不报错的输入。这是与 TS 的已知偏离，留 A6.5-pr5 后续或按需开单。
-- **硬链接**：TS `NodeFsPort` 不拦硬链接；本实现按任务书「写盘限定在允许根内」，
-  对已存在且 `nlink > 1` 的目标拒绝（`Writing to <rel> is not allowed by default.`）。
-  这是有意的更严安全口径，见 `tests/write_tools.rs::hardlink_and_symlink_writes_stay_inside_root`。
-- **符号链接**：解析层用 `realpath`/最深已存在祖先做根外拒绝；损坏链接按链接目标
-  词法归一后判断。TOCTOU 不在本层保证。
+- **硬链接**：按决策卡 2026-10-19 B 与 TS 一致，用户工作区里的硬链接文件可正常编辑
+  （`edit-hardlink` 场景）；越界防护只看解析后的真实路径。进程自建的私有目录不在本
+  夹具范围。
+- **符号链接**：解析层逐级 canonical 已存在部分并跟随悬空链接目标，按真实路径拒绝根外
+  写入；两跳链接、经根外目录链接都有负例，`allow` 决定只放行词法上在根外的路径，
+  不跳过该守卫。TOCTOU 不在本层保证。
 - **`backupStorage`**：宿主 blob 存储未移植；本 PR 与夹具只使用文件系统布局。
 - **notebook `cells` 非数组/顶层非对象**：返回 `notebook.cells is not an array.` /
   `Notebook is not valid JSON.`，与 TS 对原始值赋属性的 TypeError 文案不同；夹具不覆盖。

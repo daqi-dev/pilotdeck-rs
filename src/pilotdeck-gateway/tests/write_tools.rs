@@ -7,9 +7,18 @@ mod scratch;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_gateway::{
-    host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext},
+    host::{
+        HostFuture,
+        modules::{
+            capability::{
+                RuntimeContext, ToolCall, ToolDefinition, ToolExecution, ToolInvocationContext,
+            },
+            permission::PermissionDecision,
+            tool_context::{ExecutionContext, HostToolCheckpoint, ToolRuntimeContext},
+        },
+    },
     runtime::tools::{
-        ExecutableTool, ToolOutput, ToolRunContext,
+        ExecutableTool, SchedulerMode, ToolOutput, ToolRunContext, ToolRuntime,
         builtin::{
             edit_file::EditFileTool, edit_notebook::EditNotebookTool, read_file::ReadFileTool,
             write_file::WriteFileTool,
@@ -574,6 +583,13 @@ fn apply_step(step: &JsValue, root: &Path, outside: &Path) -> Result<(), String>
             }
             std::os::unix::fs::symlink(target, &absolute).map_err(|e| e.to_string())?;
         }
+        "hardlink" => {
+            let target = root.join(text(field(step, "target")));
+            if let Some(parent) = absolute.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::hard_link(target, &absolute).map_err(|e| e.to_string())?;
+        }
         "chmod" => {
             let mode = number(field(step, "mode")).ok_or("chmod mode")? as u32;
             fs::set_permissions(&absolute, fs::Permissions::from_mode(mode))
@@ -790,7 +806,7 @@ fn capture_files(scenario: &JsValue, replay: &Replay, root: &Path, outside: &Pat
 fn write_tools_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 42, "scenario count");
+    assert_eq!(scenarios.len(), 45, "scenario count");
     let mut calls = 0;
     for scenario in scenarios {
         let name = text(field(scenario, "name"));
@@ -848,7 +864,7 @@ fn write_tools_match_real_ts() {
             "{name}: file history"
         );
     }
-    assert_eq!(calls, 80, "call count");
+    assert_eq!(calls, 86, "call count");
 }
 
 #[test]
@@ -881,49 +897,343 @@ fn write_tools_register_in_catalog() {
     assert_eq!(names, vec!["edit_file", "edit_notebook", "write_file"]);
 }
 
+struct AllowAll;
+impl PermissionDecision for AllowAll {
+    fn decide(
+        &self,
+        _: Arc<dyn ToolDefinition>,
+        _: JsValue,
+        _: RuntimeContext,
+        _: JsString,
+    ) -> HostFuture<JsValue> {
+        Box::pin(async { Ok(JsValue::Object(object([("type", JsValue::from("allow"))]))) })
+    }
+}
+
+/// Drive the write tools through `ToolRuntime` exactly as production does: the
+/// scheduler asks the permission port, injects `currentPermissionDecision`,
+/// then validates and executes. A direct `execute` call would miss S1.
+fn scheduled_execute(replay: &Replay, calls: Vec<(&str, JsValue)>) -> Vec<JsValue> {
+    let registry = pilotdeck_gateway::runtime::tools::registry::ToolRegistry::default();
+    pilotdeck_gateway::runtime::tools::builtin::register_write_tools(&registry)
+        .expect("register write tools");
+    let runtime = ToolRuntime::new(registry, Arc::new(AllowAll), SchedulerMode::Sequential);
+    let calls = calls
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, input))| ToolCall {
+            id: JsString::from(format!("call-{index}").as_str()),
+            name: JsString::from(name),
+            input,
+        })
+        .collect();
+    let results = futures_block(runtime.execute_all(
+        calls,
+        ToolInvocationContext {
+            runtime: replay.context.host.clone(),
+            execution: Arc::new(ExecutionContext {
+                fields: JsObject::new(),
+                abort_signal: None,
+            }),
+        },
+    ))
+    .expect("scheduler batch");
+    results.into_iter().map(JsValue::Object).collect()
+}
+
+fn scheduled_error_code(result: &JsValue) -> Option<String> {
+    result
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(JsValue::as_string)
+        .map(js_text)
+}
+
+fn scheduled_error_message(result: &JsValue) -> Option<String> {
+    result
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(JsValue::as_string)
+        .map(js_text)
+}
+
+fn assert_outside_workspace_rejection(result: &JsValue, label: &str) {
+    // Scheduler validation turns the resolver's path_not_allowed into a
+    // schema issue, so the wire code is invalid_tool_input; the containment
+    // message is what distinguishes this from the unread-file error.
+    assert_eq!(
+        scheduled_error_code(result).as_deref(),
+        Some("invalid_tool_input"),
+        "{label}: {result:?}"
+    );
+    assert!(
+        scheduled_error_message(result)
+            .is_some_and(|message| message.contains("resolves outside the PilotDeck workspace")),
+        "{label}: {result:?}"
+    );
+}
+
 #[test]
-fn hardlink_and_symlink_writes_stay_inside_root() {
-    let root = scratch::Scratch::new("write-tools-security");
-    let outside = scratch::Scratch::new("write-tools-security-outside");
+fn scheduled_allow_decision_still_contains_symlink_escape() {
+    let root = scratch::Scratch::new("write-tools-scheduled-security");
+    let outside = scratch::Scratch::new("write-tools-scheduled-security-outside");
     let case = root.path().join("case");
     fs::create_dir(&case).unwrap();
-    let mut replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
-    fs::write(case.join("target.txt"), "inside\n").unwrap();
-    fs::set_permissions(case.join("target.txt"), fs::Permissions::from_mode(0o644)).unwrap();
-    fs::write(outside.path().join("secret.txt"), "secret\n").unwrap();
-    std::os::unix::fs::symlink(outside.path().join("secret.txt"), case.join("link.txt")).unwrap();
-    fs::hard_link(case.join("target.txt"), case.join("hard.txt")).unwrap();
+    // Two-hop dangling link: hop1 -> hop2 -> <outside>/two-hop.txt.
+    std::os::unix::fs::symlink(outside.path().join("two-hop.txt"), case.join("hop2")).unwrap();
+    std::os::unix::fs::symlink("hop2", case.join("hop1")).unwrap();
+    // Dangling link through a directory symlink that points outside the root.
+    std::os::unix::fs::symlink(outside.path(), case.join("outdir")).unwrap();
+    std::os::unix::fs::symlink("outdir/via-dir.txt", case.join("via-dir")).unwrap();
+
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    let results = scheduled_execute(
+        &replay,
+        vec![
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("hop1")),
+                    ("content", JsValue::from("escaped\n")),
+                ])),
+            ),
+            (
+                "edit_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("hop1")),
+                    ("old_string", JsValue::from("")),
+                    ("new_string", JsValue::from("escaped-edit\n")),
+                ])),
+            ),
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("via-dir")),
+                    ("content", JsValue::from("escaped-dir\n")),
+                ])),
+            ),
+        ],
+    );
+    for (index, result) in results.iter().enumerate() {
+        assert_outside_workspace_rejection(
+            result,
+            &format!("call {index} must be rejected through the scheduler allow path"),
+        );
+    }
+    assert!(!outside.path().join("two-hop.txt").exists());
+    assert!(!outside.path().join("via-dir.txt").exists());
+}
+
+#[test]
+fn scheduled_allow_decision_still_permits_outside_paths() {
+    let root = scratch::Scratch::new("write-tools-scheduled-outside");
+    let outside = scratch::Scratch::new("write-tools-scheduled-outside-target");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    let target = outside.path().join("allowed.txt");
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                (
+                    "file_path",
+                    JsValue::from(target.to_string_lossy().as_ref()),
+                ),
+                ("content", JsValue::from("allowed\n")),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "allowed\n");
+}
+
+#[test]
+fn symlink_negative_reads_before_swap_and_needs_the_guard() {
+    let root = scratch::Scratch::new("write-tools-symlink-swap");
+    let outside = scratch::Scratch::new("write-tools-symlink-swap-outside");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    let target = case.join("swap.txt");
+    let secret = outside.path().join("secret.txt");
+    fs::write(&target, "secret\n").unwrap();
+    fs::write(&secret, "secret\n").unwrap();
+    let modified = fs::metadata(&target).unwrap().modified().unwrap();
+    fs::File::open(&secret)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
     futures_block(ReadFileTool::new().execute(
-        JsValue::Object(object([("file_path", JsValue::from("hard.txt"))])),
+        JsValue::Object(object([("file_path", JsValue::from("swap.txt"))])),
         replay.context.clone(),
     ))
-    .expect("seed read snapshot for hard link");
-    let execute = |input: JsValue, replay: &mut Replay| {
-        futures_block(WriteFileTool::new().execute(input, replay.context.clone()))
-    };
-    let symlink = execute(
-        JsValue::Object(object([
-            ("file_path", JsValue::from("link.txt")),
-            ("content", JsValue::from("hijacked\n")),
-        ])),
-        &mut replay,
+    .expect("read the file before it becomes a symlink");
+    fs::remove_file(&target).unwrap();
+    std::os::unix::fs::symlink(&secret, &target).unwrap();
+
+    // The read snapshot is fresh (same hash and mtime), so only the containment
+    // guard can stop this write. Removing the guard makes this assert fail
+    // because the outside file is overwritten.
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("swap.txt")),
+                ("content", JsValue::from("hijacked\n")),
+            ])),
+        )],
     );
-    assert!(symlink.is_err(), "symlink escape must be rejected");
+    assert_outside_workspace_rejection(
+        &results[0],
+        "symlink escape must be rejected after a real read",
+    );
+    assert_eq!(fs::read_to_string(&secret).unwrap(), "secret\n");
+}
+
+#[test]
+fn hardlink_edits_match_ts_allowance() {
+    let root = scratch::Scratch::new("write-tools-hardlink");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    fs::write(case.join("doc.txt"), "inside\n").unwrap();
+    fs::hard_link(case.join("doc.txt"), case.join("alias.txt")).unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("alias.txt"))])),
+        replay.context.clone(),
+    ))
+    .expect("read hard-linked alias");
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "edit_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("alias.txt")),
+                ("old_string", JsValue::from("inside")),
+                ("new_string", JsValue::from("edited")),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
     assert_eq!(
-        fs::read_to_string(outside.path().join("secret.txt")).unwrap(),
-        "secret\n"
+        fs::read_to_string(case.join("doc.txt")).unwrap(),
+        "edited\n"
     );
-    let hardlink = execute(
-        JsValue::Object(object([
-            ("file_path", JsValue::from("hard.txt")),
-            ("content", JsValue::from("hard\n")),
-        ])),
-        &mut replay,
-    );
-    assert!(hardlink.is_err(), "hard-linked target must be rejected");
     assert_eq!(
-        fs::read_to_string(case.join("target.txt")).unwrap(),
-        "inside\n"
+        fs::read_to_string(case.join("alias.txt")).unwrap(),
+        "edited\n"
+    );
+}
+
+#[test]
+fn hardlinked_notebook_is_editable() {
+    let root = scratch::Scratch::new("write-tools-hardlink-notebook");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    let notebook = r#"{"nbformat":4,"nbformat_minor":4,"metadata":{},"cells":[{"cell_type":"code","source":"print(1)","metadata":{},"outputs":[],"execution_count":null}]}"#;
+    fs::write(case.join("book.ipynb"), notebook).unwrap();
+    fs::hard_link(case.join("book.ipynb"), case.join("alias.ipynb")).unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("alias.ipynb"))])),
+        replay.context.clone(),
+    ))
+    .expect("read hard-linked notebook");
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "edit_notebook",
+            JsValue::Object(object([
+                ("notebook_path", JsValue::from("alias.ipynb")),
+                ("cell_id", JsValue::from("cell-0")),
+                ("new_source", JsValue::from("print(2)")),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    let updated = fs::read_to_string(case.join("book.ipynb")).unwrap();
+    assert!(updated.contains("print(2)"), "{updated}");
+    assert_eq!(
+        fs::read_to_string(case.join("alias.ipynb")).unwrap(),
+        updated
+    );
+}
+
+#[test]
+fn edit_file_expands_dollar_replacement_patterns() {
+    let root = scratch::Scratch::new("write-tools-dollar");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    fs::write(case.join("doc.txt"), "A echo PID B\n").unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("doc.txt"))])),
+        replay.context.clone(),
+    ))
+    .expect("read replacement target");
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "edit_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("doc.txt")),
+                ("old_string", JsValue::from("echo PID")),
+                ("new_string", JsValue::from("$$|$&|$`|$'|$1|$<n>")),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    assert_eq!(
+        fs::read_to_string(case.join("doc.txt")).unwrap(),
+        "A $|echo PID|A | B\n|$1|$<n> B\n"
+    );
+
+    fs::write(case.join("literal.txt"), "x x\n").unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("literal.txt"))])),
+        replay.context.clone(),
+    ))
+    .expect("read replace_all target");
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "edit_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("literal.txt")),
+                ("old_string", JsValue::from("x")),
+                ("new_string", JsValue::from("$& $$")),
+                ("replace_all", JsValue::Bool(true)),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    assert_eq!(
+        fs::read_to_string(case.join("literal.txt")).unwrap(),
+        "$& $$ $& $$\n"
     );
 }
 

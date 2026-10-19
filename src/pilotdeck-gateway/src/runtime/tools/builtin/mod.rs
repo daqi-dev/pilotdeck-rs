@@ -799,102 +799,93 @@ fn denied_error(relative: &JsString) -> crate::runtime::tools::ToolError {
 
 /// Extra containment guard for mutations. TS `pathSafety` is lexical unless
 /// `mustExist`; the task requires writes to stay inside an allowed root, so a
-/// symlinked target or symlinked parent that resolves outside is rejected, as
-/// is an existing multiply-linked file (a hard link aliases bytes owned by
-/// another path). This is deliberately stricter than the TS NodeFsPort.
+/// symlinked target or symlinked parent that resolves outside is rejected.
+/// The decision is made on the fully resolved real path, including dangling
+/// link chains: a link is followed even when its target does not exist, so a
+/// two-hop link or a link through an outside directory cannot escape. Existing
+/// hard links are ordinary user files (decision card 2026-10-19 B: TS allows
+/// editing them); containment relies on the resolved path, never on `nlink`.
 fn guard_write_containment(
     input: &JsString,
     absolute: &JsString,
     root: &JsString,
-    relative: &JsString,
 ) -> Result<(), crate::runtime::tools::ToolError> {
-    let target = os_path(absolute);
-    match fs::symlink_metadata(&target) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            let link =
-                fs::read_link(&target).map_err(|error| failed(error, "readlink", absolute))?;
-            let target = if link.is_absolute() {
-                link
-            } else {
-                target.parent().unwrap_or(Path::new("/")).join(link)
-            };
-            let target = normalize(&JsString::from(target.to_string_lossy().as_ref()));
-            let real = canonical(&target).unwrap_or_else(|| {
-                nearest_existing_ancestor(&target).unwrap_or_else(|| target.clone())
-            });
-            let real_root = canonical(root).unwrap_or_else(|| root.clone());
-            if !within_root(&real, &real_root) {
-                return Err(tool_error(
-                    "path_not_allowed",
-                    format!(
-                        "Path {} resolves outside the PilotDeck workspace.",
-                        text(input)
-                    ),
-                ));
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if fs::metadata(os_path(&target))
-                    .is_ok_and(|metadata| metadata.is_file() && metadata.nlink() > 1)
-                {
-                    return Err(denied_error(relative));
-                }
-            }
-        }
-        Ok(metadata) => {
-            let real = canonical(absolute).unwrap_or_else(|| absolute.clone());
-            let real_root = canonical(root).unwrap_or_else(|| root.clone());
-            if !within_root(&real, &real_root) {
-                return Err(tool_error(
-                    "path_not_allowed",
-                    format!(
-                        "Path {} resolves outside the PilotDeck workspace.",
-                        text(input)
-                    ),
-                ));
-            }
-            if metadata.is_file() {
-                let followed =
-                    fs::metadata(&target).map_err(|error| failed(error, "stat", absolute))?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    if followed.nlink() > 1 {
-                        return Err(denied_error(relative));
-                    }
-                }
-                #[cfg(not(unix))]
-                let _ = followed;
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let probe = nearest_existing_ancestor(absolute).unwrap_or_else(|| normalize(root));
-            let real = canonical(&probe).unwrap_or(probe);
-            let real_root = canonical(root).unwrap_or_else(|| root.clone());
-            if !within_root(&real, &real_root) {
-                return Err(tool_error(
-                    "path_not_allowed",
-                    format!(
-                        "Path {} resolves outside the PilotDeck workspace.",
-                        text(input)
-                    ),
-                ));
-            }
-        }
-        Err(error) => return Err(failed(error, "stat", absolute)),
+    let real_root = canonical(root).unwrap_or_else(|| root.clone());
+    let resolved = resolve_path_following_symlinks(&os_path(absolute)).ok_or_else(|| {
+        tool_error(
+            "path_not_allowed",
+            format!(
+                "Path {} resolves outside the PilotDeck workspace.",
+                text(input)
+            ),
+        )
+    })?;
+    if !within_root(&js_path(&resolved), &real_root) {
+        return Err(tool_error(
+            "path_not_allowed",
+            format!(
+                "Path {} resolves outside the PilotDeck workspace.",
+                text(input)
+            ),
+        ));
     }
     Ok(())
 }
 
-fn nearest_existing_ancestor(path: &JsString) -> Option<JsString> {
-    let mut current = os_path(path);
-    while current.pop() {
-        if fs::symlink_metadata(&current).is_ok() {
-            return Some(js_path(&current));
+/// Follow every symlink in `path`, resolving the existing prefix through the
+/// filesystem and appending the still-missing tail. Relative link targets are
+/// resolved from the link's parent; `..` pops the resolved stack. Returns
+/// `None` on a link cycle or a read error.
+fn resolve_path_following_symlinks(path: &Path) -> Option<PathBuf> {
+    const MAX_SYMLINK_HOPS: usize = 40;
+    let mut resolved = PathBuf::from("/");
+    let mut pending: std::collections::VecDeque<PathBuf> = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(name) => Some(PathBuf::from(name)),
+            std::path::Component::ParentDir => Some(PathBuf::from("..")),
+            _ => None,
+        })
+        .collect();
+    let mut hops = 0usize;
+    while let Some(component) = pending.pop_front() {
+        let name = component.as_os_str();
+        if name == "." {
+            continue;
+        }
+        if name == ".." {
+            resolved.pop();
+            continue;
+        }
+        let candidate = resolved.join(name);
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                hops += 1;
+                if hops > MAX_SYMLINK_HOPS {
+                    return None;
+                }
+                let link = fs::read_link(&candidate).ok()?;
+                if link.is_absolute() {
+                    resolved = PathBuf::from("/");
+                }
+                let mut target: std::collections::VecDeque<PathBuf> = link
+                    .components()
+                    .filter_map(|component| match component {
+                        std::path::Component::Normal(name) => Some(PathBuf::from(name)),
+                        std::path::Component::ParentDir => Some(PathBuf::from("..")),
+                        _ => None,
+                    })
+                    .collect();
+                while let Some(part) = target.pop_back() {
+                    pending.push_front(part);
+                }
+            }
+            Ok(_) => resolved.push(name),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => resolved.push(name),
+            Err(_) => return None,
         }
     }
-    None
+    Some(resolved)
 }
 
 /// Write variant of `resolvePilotDeckWorkspacePath`. `must_exist` mirrors the
@@ -983,9 +974,11 @@ pub(super) fn resolve_write_path(
             ));
         }
     }
-    if !allow_outside {
-        guard_write_containment(input, &absolute, &root, &relative_path)?;
-    }
+    // `allow_outside` only admits a path that is lexically outside every root
+    // (handled by the early return above); it must never disable the link guard
+    // for a path inside a root. TS `pathSafety.ts` likewise consults
+    // `allowOutsideWorkspace` only inside its `!root` branch.
+    guard_write_containment(input, &absolute, &root)?;
     Ok(ResolvedPath {
         absolute,
         relative: relative_path,
