@@ -556,7 +556,7 @@ async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
 async fn real_ts_router_decisions_and_policies_replay() {
     let oracle = oracle();
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 25, "expected exactly 25 router cases");
+    assert_eq!(cases.len(), 27, "expected exactly 27 router cases");
     for case in cases {
         if let Err(error) = run_case(case, true).await {
             panic!("{error}");

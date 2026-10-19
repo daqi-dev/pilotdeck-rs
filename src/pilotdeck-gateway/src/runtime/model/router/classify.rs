@@ -372,26 +372,31 @@ fn skip_js_space(units: &[u16], mut index: usize) -> usize {
 }
 
 fn is_word_boundary(units: &[u16], at: usize) -> bool {
-    let before = at > 0 && is_ascii_word(units[at - 1]);
-    let after = at < units.len() && is_ascii_word(units[at]);
+    let before = at > 0 && is_js_word_unit(units[at - 1]);
+    let after = at < units.len() && is_js_word_unit(units[at]);
     before != after
 }
 
-fn is_ascii_word(unit: u16) -> bool {
-    matches!(unit, 48..=57 | 65..=90 | 97..=122 | 95)
+pub(super) fn matches_ascii_ci(units: &[u16], at: usize, needle: &[u8]) -> bool {
+    at + needle.len() <= units.len()
+        && needle.iter().enumerate().all(|(offset, byte)| {
+            canonicalize(units[at + offset]) == canonicalize(u16::from(*byte))
+        })
 }
 
-fn matches_ascii_ci(units: &[u16], at: usize, needle: &[u8]) -> bool {
+/// ES non-unicode `i` equality for an arbitrary UTF-16 literal (config tier
+/// names may contain non-ASCII units or lone surrogates).
+pub(super) fn matches_units_ci(units: &[u16], at: usize, needle: &[u16]) -> bool {
     at + needle.len() <= units.len()
         && needle
             .iter()
             .enumerate()
-            .all(|(offset, byte)| canonicalize(units[at + offset]) == canonicalize(*byte as u16))
+            .all(|(offset, unit)| canonicalize(units[at + offset]) == canonicalize(*unit))
 }
 
 /// ES `Canonicalize` without the `u` flag: one code unit, at most one code
 /// unit of uppercase, and non-ASCII characters never fold onto ASCII.
-fn canonicalize(unit: u16) -> u16 {
+pub(super) fn canonicalize(unit: u16) -> u16 {
     let Some(character) = char::from_u32(u32::from(unit)) else {
         return unit; // lone surrogate
     };
@@ -566,10 +571,43 @@ pub fn generate_judge_prompt(
     JsString::from_utf16(units)
 }
 
-fn tier_tag() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"(?i)<tier>\s*([a-z0-9_-]+)\s*</tier>").expect("tier tag"))
+/// `/<tier>\s*([a-z0-9_-]+)\s*<\/tier>/i` over UTF-16 code units.
+///
+/// The TS regex has no `u` flag, so `i` is ES `Canonicalize` per code unit
+/// rather than Unicode simple folding: U+017F/U+212A never match ASCII letters.
+/// `\s` is the JS whitespace set from [`super::is_js_whitespace`].
+fn find_tier_tag(units: &[u16]) -> Option<(usize, usize)> {
+    for start in 0..units.len() {
+        if units[start] != u16::from(b'<') || !matches_ascii_ci(units, start, b"<tier>") {
+            continue;
+        }
+        let mut index = start + "<tier>".len();
+        while index < units.len() && super::is_js_whitespace(units[index]) {
+            index += 1;
+        }
+        let group_start = index;
+        while index < units.len() && is_tier_tag_unit(units[index]) {
+            index += 1;
+        }
+        if index == group_start {
+            continue;
+        }
+        let group_end = index;
+        while index < units.len() && super::is_js_whitespace(units[index]) {
+            index += 1;
+        }
+        if matches_ascii_ci(units, index, b"</tier>") {
+            return Some((group_start, group_end));
+        }
+    }
+    None
 }
+
+/// `[a-z0-9_-]` under the non-unicode `i` flag.
+fn is_tier_tag_unit(unit: u16) -> bool {
+    matches!(canonicalize(unit), 48..=57 | 65..=90 | 95 | 45)
+}
+
 fn fence() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"```[a-z]*\n?").expect("fence"))
@@ -587,11 +625,10 @@ pub fn parse_tier(
     let cleaned = fence().replace_all(&text, "").into_owned();
     let cleaned = closing_fence().replace_all(&cleaned, "").into_owned();
     let cleaned = cleaned.trim();
+    let cleaned_units: Vec<u16> = cleaned.encode_utf16().collect();
 
-    if let Some(captures) = tier_tag().captures(cleaned)
-        && let Some(candidate) = captures.get(1)
-    {
-        let candidate = candidate.as_str().to_lowercase();
+    if let Some((start, end)) = find_tier_tag(&cleaned_units) {
+        let candidate = String::from_utf16_lossy(&cleaned_units[start..end]).to_ascii_lowercase();
         if let Some((name, _)) = known_tiers
             .iter()
             .find(|(name, _)| name.to_utf8().unwrap_or_default().to_lowercase() == candidate)
@@ -600,41 +637,36 @@ pub fn parse_tier(
         }
     }
     for (name, _) in known_tiers {
-        if contains_word(cleaned, &name.to_utf8().unwrap_or_default()) {
+        if contains_word(&cleaned_units, name.units()) {
             return Some(name.clone());
         }
     }
     None
 }
 
-/// JS `\b` is ASCII-word based (no `u` flag here), unlike Rust's Unicode `\b`.
-fn contains_word(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
+/// JS `\b` is ASCII-word based (no `u` flag here), unlike Rust's Unicode `\b`;
+/// the literal itself uses ES non-unicode `i` matching, so the haystack must not
+/// be lowercased with Rust's full Unicode casing (U+212A would fold to `k`).
+fn contains_word(haystack: &[u16], needle: &[u16]) -> bool {
+    if needle.is_empty() || needle.len() > haystack.len() {
         return false;
     }
-    let lower_haystack = haystack.to_lowercase();
-    let lower_needle = needle.to_lowercase();
-    let mut from = 0;
-    while let Some(offset) = lower_haystack[from..].find(&lower_needle) {
-        let start = from + offset;
-        let end = start + lower_needle.len();
-        let before_ok = lower_haystack[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !is_js_word(ch));
-        let after_ok = lower_haystack[end..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !is_js_word(ch));
+    for start in 0..=haystack.len() - needle.len() {
+        if !matches_units_ci(haystack, start, needle) {
+            continue;
+        }
+        let end = start + needle.len();
+        let before_ok = start == 0 || !is_js_word_unit(haystack[start - 1]);
+        let after_ok = end == haystack.len() || !is_js_word_unit(haystack[end]);
         if before_ok && after_ok {
             return true;
         }
-        from = end;
     }
     false
 }
-fn is_js_word(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
+
+fn is_js_word_unit(unit: u16) -> bool {
+    matches!(unit, 48..=57 | 65..=90 | 97..=122 | 95)
 }
 
 pub fn is_short_continuation(message: &JsString) -> bool {
@@ -642,12 +674,48 @@ pub fn is_short_continuation(message: &JsString) -> bool {
     if trimmed.len_utf16() > 30 {
         return false;
     }
-    continuation().is_match(&String::from_utf16_lossy(trimmed.units()))
+    is_continuation(trimmed.units())
 }
-fn continuation() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)^(go|ok|yes|y|sure|do it|proceed|continue|next|done|start|run|好|好的|继续|开始|可以|行|嗯|对|是的|没问题|来吧|冲|走|执行|开搞|干|上)$")
-            .expect("continuation")
-    })
+
+/// `/^(go|ok|...|上)$/i` over UTF-16 code units (ES non-unicode casing).
+fn is_continuation(units: &[u16]) -> bool {
+    const CONTINUATIONS: &[&str] = &[
+        "go",
+        "ok",
+        "yes",
+        "y",
+        "sure",
+        "do it",
+        "proceed",
+        "continue",
+        "next",
+        "done",
+        "start",
+        "run",
+        "好",
+        "好的",
+        "继续",
+        "开始",
+        "可以",
+        "行",
+        "嗯",
+        "对",
+        "是的",
+        "没问题",
+        "来吧",
+        "冲",
+        "走",
+        "执行",
+        "开搞",
+        "干",
+        "上",
+    ];
+    CONTINUATIONS
+        .iter()
+        .any(|pattern| matches_units_ci_str(units, pattern))
+}
+
+fn matches_units_ci_str(units: &[u16], pattern: &str) -> bool {
+    let pattern: Vec<u16> = pattern.encode_utf16().collect();
+    units.len() == pattern.len() && matches_units_ci(units, 0, &pattern)
 }

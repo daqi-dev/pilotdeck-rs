@@ -157,6 +157,47 @@ add({
   ],
 });
 
+// 2b. ES non-unicode `i` never folds non-ASCII onto ASCII. U+017F LONG S must
+//     not pass for `s` in the agent-tool name or the subagent tag.
+add({
+  id: 'unicode-case-fold',
+  yaml: yaml(`scenarios: {default: p1/m1}`),
+  steps: [
+    { kind: 'decide', request: request([user('hello')], { tools: [{ name: 'ta\u017Fk', description: 'a', inputSchema: {} }] }), sessionId: 'long-s-tool', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')], { tools: [{ name: 'task', description: 'a', inputSchema: {} }] }), sessionId: 'ascii-tool', isMainAgent: true },
+    { kind: 'decide', request: request([user('<ccr-\u017Fubagent-model>p2/m2</ccr-\u017Fubagent-model>')], { tools: [{ name: 'task', description: 'a', inputSchema: {} }] }), sessionId: 'long-s-tag', isMainAgent: true },
+    { kind: 'decide', request: request([user('<ccr-subagent-model>p2/m2</ccr-subagent-model>  tail')], { tools: [{ name: 'task', description: 'a', inputSchema: {} }] }), sessionId: 'ascii-tag', isMainAgent: true },
+    { kind: 'materialize', request: request([user('  <ccr-\u017Fubagent-model>p2/m2</ccr-\u017Fubagent-model>  tail  ')]) },
+    { kind: 'materialize', request: request([user('  <ccr-subagent-model>p2/m2</ccr-subagent-model>  tail  ')]) },
+  ],
+});
+
+// 2c. U+212A KELVIN SIGN must not match `[a-z]`; the ASCII tier still parses.
+//     `k` is a real tier so pre-fix Rust (Unicode `(?i)` + toLowerCase) would
+//     resolve the judge output to `k` while TS falls back to the default tier.
+add({
+  id: 'unicode-tier-tag',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: complex
+  tiers:
+    simple: {model: p1/m1}
+    complex: {model: p3/m3}
+    k: {model: p1/m2}`),
+  judgeScript: [
+    { text: '<tier>\u212A</tier>' },
+    { text: '<tier>\u212A</tier>' },
+    { text: '<tier>\u212A</tier>' },
+    { text: '<tier>SIMPLE</tier>' },
+  ],
+  steps: [
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'kelvin', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'ascii', isMainAgent: true },
+  ],
+});
+
 // 3. Sticky: the second main turn with history reuses the first judge result.
 add({
   id: 'sticky',

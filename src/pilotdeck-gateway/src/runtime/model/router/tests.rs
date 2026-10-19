@@ -238,6 +238,84 @@ fn parse_tier_matches_ts_word_boundaries() {
 }
 
 #[test]
+fn tier_tag_and_fallback_follow_js_non_unicode_case_folding() {
+    let config = saver();
+    let mut tiers = config.tiers.clone();
+    tiers.push((
+        "k".into(),
+        TierConfig {
+            model: RouterModelRef::new("p".into(), "k".into()),
+            description: None,
+        },
+    ));
+    let parse = |value: &str| parse_tier(&JsString::from(value), &tiers);
+    // U+212A KELVIN SIGN is not ASCII `K` under the non-unicode `i` flag, so
+    // neither `<tier>` nor the `\b` fallback may fold it (both regressed with
+    // Rust's Unicode `(?i)`/`to_lowercase`).
+    assert!(parse("<tier>\u{212A}</tier>").is_none());
+    assert!(parse("choose \u{212A} now").is_none());
+    // ASCII folding and the ASCII word-boundary fallback still work.
+    assert!(parse("<tier>K</tier>").is_some_and(|tier| tier.equals_str("k")));
+    assert!(parse("choose k now").is_some_and(|tier| tier.equals_str("k")));
+    // U+017F LONG S must not match `[a-z]` through Unicode simple folding.
+    assert!(parse("<tier>\u{017F}imple</tier>").is_none());
+    assert!(parse("<tier>SIMPLE</tier>").is_some_and(|tier| tier.equals_str("simple")));
+}
+
+#[test]
+fn subagent_detection_follows_js_non_unicode_case_folding() {
+    let tools = |name: &str| JsValue::Array(vec![object(vec![("name", text(name))])]);
+    let detect =
+        |message: &str, tool: &str| detect_subagent(&[user_message(message)], &tools(tool), true);
+
+    // U+017F LONG S is not ASCII `s`; Rust `(?i)` used to accept `taſk` as the
+    // agent tool and clear missingAgentTool.
+    let long_s = detect("hello", "ta\u{017F}k");
+    assert!(long_s.missing_agent_tool);
+    assert!(long_s.is_subagent);
+    for tool in ["task", "TASK", "agent", "launch_agent", "spawn-agent"] {
+        let found = detect("hello", tool);
+        assert!(!found.missing_agent_tool, "{tool} is an agent tool");
+    }
+    assert!(detect("hello", "launch\u{017F}agent").missing_agent_tool);
+
+    // The long-s tag is ordinary text: no hint, no taggedInUserMessage.
+    let long_s_tag = detect(
+        "<ccr-\u{017F}ubagent-model>p2/m2</ccr-\u{017F}ubagent-model>",
+        "task",
+    );
+    assert!(!long_s_tag.tagged_in_user_message);
+    assert_eq!(long_s_tag.model_hint, None);
+    assert!(!long_s_tag.is_subagent);
+
+    let ascii_tag = detect("<ccr-subagent-model>p2/m2</ccr-subagent-model>", "task");
+    assert!(ascii_tag.tagged_in_user_message);
+    assert_eq!(ascii_tag.model_hint, Some(JsString::from("p2/m2")));
+    let upper_tag = detect("<CCR-SUBAGENT-MODEL>p2/m2</CCR-SUBAGENT-MODEL>", "task");
+    assert_eq!(upper_tag.model_hint, Some(JsString::from("p2/m2")));
+
+    // `.replace(...).trimEnd()` leaves an unmatched long-s tag in place (it
+    // still trims the right edge).
+    let stripped = scenario::strip_subagent_tag_from_messages(&[user_message(
+        "  <pilotdeck-\u{017F}ubagent-model>p2/m2</pilotdeck-\u{017F}ubagent-model>  tail  ",
+    )]);
+    let text = stripped[0]
+        .get("content")
+        .and_then(|value| match value {
+            JsValue::Array(items) => items.first(),
+            _ => None,
+        })
+        .and_then(|block| block.get("text"))
+        .and_then(JsValue::as_string)
+        .and_then(|value| value.to_utf8().ok())
+        .expect("text");
+    assert_eq!(
+        text,
+        "  <pilotdeck-\u{017F}ubagent-model>p2/m2</pilotdeck-\u{017F}ubagent-model>  tail"
+    );
+}
+
+#[test]
 fn extract_last_user_message_skips_date_updates_and_joins_blocks() {
     let messages = vec![
         object(vec![
@@ -279,6 +357,9 @@ fn extract_last_user_message_skips_date_updates_and_joins_blocks() {
 fn short_continuation_uses_js_length_and_ascii_surface() {
     assert!(is_short_continuation(&"  go  ".into()));
     assert!(is_short_continuation(&"继续".into()));
+    assert!(is_short_continuation(&"START".into()));
+    // U+017F LONG S must not fold onto ASCII `s` (Rust `(?i)` used to match).
+    assert!(!is_short_continuation(&"\u{017F}tart".into()));
     assert!(!is_short_continuation(&"go now please".into()));
     assert!(!is_short_continuation(&"a".repeat(31).into()));
 }
