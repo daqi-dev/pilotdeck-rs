@@ -503,19 +503,16 @@ impl DefaultContextRuntime {
                 let mut rewritten = Vec::with_capacity(supplemental.len());
                 let mut failure = None;
                 for item in &supplemental {
-                    let tool_call_id = item.get("toolCallId").and_then(JsValue::as_string);
+                    let tool_call_id = item.get("toolCallId").cloned();
                     let message = item.get("message").cloned().unwrap_or(UNDEFINED.clone());
                     match budget
-                        .apply_to_supplemental_message(&message, tool_call_id, turn_id)
+                        .apply_to_supplemental_message(&message, tool_call_id.as_ref(), turn_id)
                         .await
                     {
                         Ok(replaced) => {
                             let mut wrapper = JsObject::new();
                             if let Some(tool_call_id) = tool_call_id {
-                                wrapper.insert(
-                                    "toolCallId".into(),
-                                    JsValue::String(tool_call_id.clone()),
-                                );
+                                wrapper.insert("toolCallId".into(), tool_call_id);
                             }
                             wrapper.insert("message".into(), replaced);
                             rewritten.push(JsValue::Object(wrapper));

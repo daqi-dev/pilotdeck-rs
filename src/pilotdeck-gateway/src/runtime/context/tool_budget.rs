@@ -17,7 +17,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     fs, io,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -160,7 +160,7 @@ impl ToolResultBudget {
     pub async fn apply_to_supplemental_message(
         &self,
         message: &JsValue,
-        tool_call_id: Option<&JsString>,
+        tool_call_id: Option<&JsValue>,
         turn_id: Option<&JsValue>,
     ) -> Result<JsValue, ToolBudgetError> {
         require_message(message)?;
@@ -193,7 +193,7 @@ impl ToolResultBudget {
             let (block, changed) = self.maybe_replace_text_tool_result(block, turn_id).await?;
             return Ok((block, Vec::new(), changed));
         }
-        let tool_call_id = block.get("toolCallId").and_then(JsValue::as_string);
+        let tool_call_id = block.get("toolCallId");
         let mut rewritten = Vec::with_capacity(content.len());
         let mut references = Vec::new();
         for (index, entry) in content.iter().enumerate() {
@@ -226,7 +226,7 @@ impl ToolResultBudget {
         block: &JsValue,
         turn_id: Option<&JsValue>,
     ) -> Result<(JsValue, bool), ToolBudgetError> {
-        let tool_call_id = required_string(block, "toolCallId")?;
+        let tool_call_id = tool_call_id_string(block.get("toolCallId"))?;
         let replacement_key = scoped_tool_result_key(&tool_call_id, turn_id)?;
         if let Some(record) = self
             .state
@@ -345,7 +345,7 @@ impl ToolResultBudget {
         &self,
         block: &JsValue,
         index: usize,
-        tool_call_id: Option<&JsString>,
+        tool_call_id: Option<&JsValue>,
         turn_id: Option<&JsValue>,
     ) -> Result<(JsValue, bool), ToolBudgetError> {
         let Some(media_type) = block_type(block) else {
@@ -374,11 +374,9 @@ impl ToolResultBudget {
         };
 
         let extension = extension_for_media(media_type, &mime_type);
+        let tool_call_id = tool_call_id_string(tool_call_id)?;
+        let scoped_key = scoped_tool_result_key(&tool_call_id, turn_id)?;
         let hash = hash_string(&data);
-        let tool_call_id = tool_call_id.ok_or_else(|| {
-            ToolBudgetError::new("Cannot read properties of undefined (reading 'trim')")
-        })?;
-        let scoped_key = scoped_tool_result_key(tool_call_id, turn_id)?;
         let id = format!(
             "{}-{}-{}-{}",
             String::from_utf16_lossy(scoped_key.units()),
@@ -503,16 +501,33 @@ fn media_mime_type(block: &JsValue) -> Result<JsString, ToolBudgetError> {
     }
 }
 
-fn required_string(value: &JsValue, field: &str) -> Result<JsString, ToolBudgetError> {
-    value
-        .get(field)
-        .and_then(JsValue::as_string)
-        .cloned()
-        .ok_or_else(|| {
-            ToolBudgetError::new(format!(
-                "Cannot read properties of undefined (reading '{field}')"
-            ))
-        })
+/// V8's `String.prototype.trim` TypeError, named after `safePathPart`'s
+/// parameter (`value`). `null`/`undefined` keep V8's property-read wording.
+fn trim_type_error(value: &JsValue) -> ToolBudgetError {
+    match value {
+        JsValue::Null => ToolBudgetError::new("Cannot read properties of null (reading 'trim')"),
+        JsValue::Undefined => {
+            ToolBudgetError::new("Cannot read properties of undefined (reading 'trim')")
+        }
+        _ => ToolBudgetError::new("value.trim is not a function"),
+    }
+}
+
+fn safe_path_part_value(value: &JsValue) -> Result<String, ToolBudgetError> {
+    match value {
+        JsValue::String(value) => Ok(safe_path_part(&String::from_utf16_lossy(value.units()))),
+        _ => Err(trim_type_error(value)),
+    }
+}
+
+/// `safePathPart(toolCallId)` is the first read in `scopedToolResultKey`; a
+/// missing id is `undefined`, so it fails on `.trim` before `turnId`.
+fn tool_call_id_string(value: Option<&JsValue>) -> Result<JsString, ToolBudgetError> {
+    match value {
+        Some(JsValue::String(value)) => Ok(value.clone()),
+        Some(value) => Err(trim_type_error(value)),
+        None => Err(trim_type_error(&JsValue::Undefined)),
+    }
 }
 
 fn replace_content(message: &JsValue, content: Vec<JsValue>) -> JsValue {
@@ -575,17 +590,9 @@ fn scoped_tool_result_key(
     };
     let safe_turn_id = match turn_id {
         None | Some(JsValue::Undefined) => None,
-        Some(JsValue::Null) => {
-            return Err(ToolBudgetError::new(
-                "Cannot read properties of null (reading 'trim')",
-            ));
-        }
-        Some(JsValue::String(value)) => {
-            let value = safe_path_part(&String::from_utf16_lossy(value.units()));
+        Some(value) => {
+            let value = safe_path_part_value(value)?;
             (!value.is_empty()).then_some(value)
-        }
-        Some(_) => {
-            return Err(ToolBudgetError::new("turnId.trim is not a function"));
         }
     };
     Ok(match safe_turn_id {
@@ -932,17 +939,43 @@ fn copy_file_if_absent(
     ensure_directory(root, &dirname(destination))?;
     let pair = format!("{}' -> '{}", path_text(source), path_text(destination));
     let source_path = os_path(source);
-    // `create_new` protects the destination; the source needs the same lstat
-    // check because a pre-planted spill-path symlink would otherwise be read
-    // through and copied outside the spill tree.
-    match fs::symlink_metadata(&source_path) {
-        Ok(metadata) if !metadata.is_file() => {
+    // `create_new` protects the destination; the source needs the same check
+    // because a pre-planted spill-path symlink or hard link would otherwise be
+    // read through and copied outside the spill tree. Open with O_NOFOLLOW and
+    // fstat the open handle so there is no lstat->read window and no second
+    // directory entry to the inode (nlink > 1 is a hard link). O_NONBLOCK keeps
+    // a pre-planted FIFO from blocking the open before the type check.
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = match options.open(&source_path) {
+        Ok(file) => file,
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
             return Err(permission_denied("copyfile", source));
         }
-        Ok(_) => {}
         Err(error) => return Err(io_error(error, "copyfile", Some(&pair))),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(permission_denied("copyfile", source));
+        }
     }
-    let bytes = fs::read(&source_path).map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
+    #[cfg(not(unix))]
+    if !metadata.is_file() {
+        return Err(permission_denied("copyfile", source));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
     let destination_path = os_path(destination);
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -997,6 +1030,26 @@ mod tests {
             scoped_tool_result_key(&JsString::from("call/1"), Some(&JsValue::Null))
                 .unwrap_err()
                 .message,
+            "Cannot read properties of null (reading 'trim')"
+        );
+        assert_eq!(
+            scoped_tool_result_key(&JsString::from("call/1"), Some(&JsValue::Number(1.0)))
+                .unwrap_err()
+                .message,
+            "value.trim is not a function"
+        );
+        assert_eq!(
+            tool_call_id_string(None).unwrap_err().message,
+            "Cannot read properties of undefined (reading 'trim')"
+        );
+        assert_eq!(
+            tool_call_id_string(Some(&JsValue::Number(1.0)))
+                .unwrap_err()
+                .message,
+            "value.trim is not a function"
+        );
+        assert_eq!(
+            safe_path_part_value(&JsValue::Null).unwrap_err().message,
             "Cannot read properties of null (reading 'trim')"
         );
         assert_eq!(safe_path_part("///"), "");
