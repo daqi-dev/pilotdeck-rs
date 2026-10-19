@@ -16,6 +16,7 @@ use crate::{
 };
 use std::{
     collections::HashMap,
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -565,10 +566,27 @@ fn hook_event_enum_matches_shared_protocol_list() {
 
 #[test]
 fn home_dir_falls_back_to_process_home() {
-    let process_home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-    assert_eq!(home_dir(None), process_home);
+    // Gate1 B6 wiring: without a host seam `home_dir` resolves the process
+    // HOME snapshot through `home_dir_from` (which handles the unset case).
+    assert_eq!(home_dir(None), home_dir_from(std::env::var_os("HOME")));
+}
+
+#[test]
+fn home_dir_without_home_uses_the_platform_home() {
+    // With HOME treated as unset, `std::env::home_dir()` reads the passwd entry;
+    // on this machine that is a real absolute directory, not the historical `/`.
+    // The exact value cannot be built directly in the test, so assert the two
+    // properties that separate the passwd fallback from that hard-coded default.
+    let home = home_dir_from(None);
+    assert_ne!(home, PathBuf::from("/"));
+    assert!(home.is_absolute());
+}
+
+#[test]
+fn home_dir_keeps_empty_home_value() {
+    // libuv returns an empty HOME as-is (it only consults passwd when HOME is
+    // unset); it must not become `/`.
+    assert_eq!(home_dir_from(Some(OsString::new())), PathBuf::from(""));
 }
 
 #[test]
