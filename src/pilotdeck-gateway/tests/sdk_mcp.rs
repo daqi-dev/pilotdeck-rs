@@ -19,7 +19,8 @@ use pilotdeck_gateway::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Condvar, Mutex, MutexGuard},
+    time::Duration,
 };
 
 const ORACLE: &str = include_str!("fixtures/sdk-mcp/oracle.json");
@@ -209,7 +210,9 @@ impl SdkMcpEnvironment for FixtureEnvironment {
         }
     }
     fn home(&self) -> JsString {
-        "/pdrs-fixture/home".into()
+        // Matches generate.mts: the replacement's `$`` prefix pattern makes
+        // `${userHome}` alone expand to the empty string.
+        "$`".into()
     }
 }
 
@@ -303,11 +306,245 @@ async fn run_step(config: &SdkMcpConfig, step: &JsValue) -> JsValue {
     JsValue::Object(object)
 }
 
+fn test_config(
+    environment: Arc<dyn SdkMcpEnvironment>,
+) -> (SdkMcpConfig, Arc<Mutex<Vec<JsValue>>>) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let project = Arc::new(FakeProject {
+        root: "/pdrs-fixture/project".into(),
+        plugins: Vec::new(),
+        calls: Arc::clone(&calls),
+        refresh_error: None,
+    });
+    let resolver = Arc::new(FakeResolver {
+        project,
+        calls: Arc::clone(&calls),
+        error: None,
+    });
+    let close_calls = Arc::clone(&calls);
+    let close_session: SdkMcpCloseSession = Arc::new(move |session_key, reason| {
+        lock(&close_calls).push(close_call(&session_key, reason));
+        Box::pin(async { Ok(()) })
+    });
+    let config = SdkMcpConfig::new(SdkMcpConfigOptions {
+        resolver,
+        close_session,
+        session_plugins: Arc::new(SessionPluginsSource {
+            entries: Arc::new(Mutex::new(Vec::new())),
+        }),
+        permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
+        environment,
+    });
+    (config, calls)
+}
+
+fn stdio_config(command: &str) -> JsValue {
+    let mut config = JsObject::new();
+    config.insert("type".into(), JsValue::String("stdio".into()));
+    config.insert("command".into(), JsValue::String(command.into()));
+    JsValue::Object(config)
+}
+
+fn set_input(session_key: &str, servers: &[(&str, JsValue)]) -> JsValue {
+    let mut map = JsObject::new();
+    for (name, value) in servers {
+        map.insert((*name).into(), value.clone());
+    }
+    let mut input = JsObject::new();
+    input.insert("sessionKey".into(), JsValue::String(session_key.into()));
+    input.insert("servers".into(), JsValue::Object(map));
+    JsValue::Object(input)
+}
+
+fn toggle_input(session_key: &str, server_name: &str, enabled: bool) -> JsValue {
+    let mut input = JsObject::new();
+    input.insert("sessionKey".into(), JsValue::String(session_key.into()));
+    input.insert("serverName".into(), JsValue::String(server_name.into()));
+    input.insert("enabled".into(), JsValue::Bool(enabled));
+    JsValue::Object(input)
+}
+
+fn deep_stdio(depth: usize) -> JsValue {
+    let mut nested = JsValue::Number(7.0);
+    for _ in 0..depth {
+        nested = JsValue::Array(vec![nested]);
+    }
+    let mut env = JsObject::new();
+    env.insert("NESTED".into(), nested);
+    let mut config = JsObject::new();
+    config.insert("type".into(), JsValue::String("stdio".into()));
+    config.insert("command".into(), JsValue::String("node".into()));
+    config.insert("env".into(), JsValue::Object(env));
+    JsValue::Object(config)
+}
+
+fn count_calls(calls: &Arc<Mutex<Vec<JsValue>>>, name: &str) -> usize {
+    lock(calls)
+        .iter()
+        .filter(|call| match call {
+            JsValue::Array(items) => items
+                .first()
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str(name)),
+            _ => false,
+        })
+        .count()
+}
+
+fn enabled_for(config: &SdkMcpConfig, name: &str) -> Option<JsValue> {
+    let state = config.snapshot_state();
+    let sessions = match state.get("servers") {
+        Some(JsValue::Array(items)) => items,
+        _ => return None,
+    };
+    for session in sessions {
+        let pair = match session {
+            JsValue::Array(items) => items,
+            _ => continue,
+        };
+        if pair.len() != 2 {
+            continue;
+        }
+        let entries = match &pair[1] {
+            JsValue::Array(items) => items,
+            _ => continue,
+        };
+        for entry in entries {
+            let pair = match entry {
+                JsValue::Array(items) => items,
+                _ => continue,
+            };
+            if pair.len() != 2 {
+                continue;
+            }
+            let key = match &pair[0] {
+                JsValue::String(key) => key,
+                _ => continue,
+            };
+            if key.equals_str(name) {
+                return pair[1].get("enabled").cloned();
+            }
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct Gate {
+    entered: (Mutex<bool>, Condvar),
+    release: (Mutex<bool>, Condvar),
+}
+
+struct GatedEnvironment {
+    gate: Arc<Gate>,
+}
+impl SdkMcpEnvironment for GatedEnvironment {
+    fn env(&self, name: &JsString) -> Option<JsString> {
+        if !name.equals_str("GATE") {
+            return None;
+        }
+        {
+            let mut entered = lock(&self.gate.entered.0);
+            *entered = true;
+            self.gate.entered.1.notify_all();
+        }
+        let mut released = lock(&self.gate.release.0);
+        while !*released {
+            released = self.gate.release.1.wait(released).unwrap();
+        }
+        Some("node".into())
+    }
+    fn home(&self) -> JsString {
+        "/pdrs-fixture/home".into()
+    }
+}
+
+#[tokio::test]
+async fn deep_configs_are_rejected_without_state_or_close() {
+    let (config, calls) = test_config(Arc::new(FixtureEnvironment));
+    config
+        .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
+        .await
+        .unwrap();
+    let before = text(&config.snapshot_state());
+    lock(&calls).clear();
+    // `structuredClone(config)` and `JSON.stringify(value)` both reject this
+    // depth; the new-name path must not skip the serialization check. Neither
+    // attempt may mutate state or call closeSession.
+    for servers in [
+        vec![("fresh", deep_stdio(2001))],
+        vec![("a", deep_stdio(2001))],
+    ] {
+        let error = config
+            .set_mcp_servers(&set_input("s", &servers))
+            .await
+            .unwrap_err();
+        assert_eq!(error.name(), "RangeError");
+        assert_eq!(error.code(), None);
+        assert_eq!(
+            String::from_utf16_lossy(error.message().units()),
+            "Maximum call stack size exceeded"
+        );
+        assert_eq!(text(&config.snapshot_state()), before);
+        assert_eq!(count_calls(&calls, "closeSession"), 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn set_and_toggle_do_not_lose_updates() {
+    let gate = Arc::new(Gate::default());
+    let (config, _calls) = test_config(Arc::new(GatedEnvironment {
+        gate: Arc::clone(&gate),
+    }));
+    let config = Arc::new(config);
+    config
+        .set_mcp_servers(&set_input("s", &[("a", stdio_config("node"))]))
+        .await
+        .unwrap();
+
+    let set_config = Arc::clone(&config);
+    let set_task = tokio::spawn(async move {
+        set_config
+            .set_mcp_servers(&set_input("s", &[("a", stdio_config("${env:GATE}"))]))
+            .await
+    });
+    {
+        let mut entered = lock(&gate.entered.0);
+        while !*entered {
+            entered = gate.entered.1.wait(entered).unwrap();
+        }
+    }
+    let toggle_config = Arc::clone(&config);
+    let mut toggle_task = tokio::spawn(async move {
+        toggle_config
+            .toggle_mcp_server(&toggle_input("s", "a", false))
+            .await
+    });
+    let completed_early = tokio::time::timeout(Duration::from_millis(1000), &mut toggle_task)
+        .await
+        .is_ok();
+    // Release the setter before asserting so a failure cannot leave the
+    // runtime blocked on the gate.
+    *lock(&gate.release.0) = true;
+    gate.release.1.notify_all();
+    set_task.await.unwrap().unwrap();
+    assert!(
+        !completed_early,
+        "toggle completed inside set's read-modify-write window"
+    );
+    toggle_task.await.unwrap().unwrap();
+    assert_eq!(enabled_for(&config, "a"), Some(JsValue::Bool(false)));
+}
+
 #[tokio::test]
 async fn replays_every_ts_sdk_mcp_step() {
     let oracle = baseline::oracle(ORACLE);
+    let scenarios = array(field(&oracle, "scenarios"), "scenarios");
+    // Exact corpus size: an empty or truncated oracle must never pass.
+    assert_eq!(scenarios.len(), 16, "oracle scenario count");
+    let mut step_total = 0;
 
-    for scenario in array(field(&oracle, "scenarios"), "scenarios") {
+    for scenario in scenarios {
         let id = string(field(scenario, "id"), "scenario.id")
             .to_utf8()
             .unwrap();
@@ -388,7 +625,9 @@ async fn replays_every_ts_sdk_mcp_step() {
             environment: Arc::new(FixtureEnvironment),
         });
 
-        for (index, step) in array(field(scenario, "steps"), "steps").iter().enumerate() {
+        let steps = array(field(scenario, "steps"), "steps");
+        step_total += steps.len();
+        for (index, step) in steps.iter().enumerate() {
             let command = field(step, "step");
             let op = string(field(command, "op"), "step.op").to_utf8().unwrap();
             let result = if op == "setSessionPlugins" {
@@ -424,6 +663,7 @@ async fn replays_every_ts_sdk_mcp_step() {
             );
         }
     }
+    assert_eq!(step_total, 132, "oracle step count");
 }
 
 #[test]

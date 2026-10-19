@@ -198,6 +198,13 @@ async function run(registry: any, step: Step) {
   }
 }
 
+// Pin the expansion source: `${userHome}` reads process.env.HOME and `~` goes
+// through os.homedir(), which on POSIX prefers $HOME. The `$`` home makes the
+// GetSubstitution prefix pattern observable: `${userHome}` alone expands to
+// the empty string, while `${userHome}/x` stays non-empty.
+process.env.HOME = '$`';
+delete process.env.USERPROFILE;
+
 const scenarios: Scenario[] = [];
 const add = (id: string, options: Omit<Scenario, 'id' | 'steps'>, steps: Step[]) => {
   scenarios.push({ id, ...options, steps });
@@ -281,6 +288,11 @@ add('permission', {
   { op: 'override', input: { sessionKey: 's', serverName: 'x', mode: { a: 1 } } },
   { op: 'override', input: { sessionKey: 's', serverName: 'x', mode: ['a', 'b'] } },
   { op: 'override', input: { sessionKey: 'other', serverName: 'no-live-entry', mode: 'auto' } },
+  { op: 'override', input: { sessionKey: 5, serverName: 'x', mode: 'auto' } },
+  { op: 'override', input: { sessionKey: true, serverName: 'x', mode: 'auto' } },
+  { op: 'override', input: { sessionKey: ['s'], serverName: 'x', mode: 'auto' } },
+  { op: 'override', input: { sessionKey: 's', serverName: 5, mode: 'auto' } },
+  { op: 'override', input: { sessionKey: 's', serverName: true, mode: 'auto' } },
 ]);
 
 add('permission-session-order', {
@@ -297,7 +309,7 @@ add('status-order', {
   { op: 'set', input: { sessionKey: 's', servers: { b: http, c: stdio() } } },
   { op: 'toggle', input: { sessionKey: 's', serverName: 'b', enabled: false } },
   { op: 'status', input: { sessionKey: 's' } },
-  { op: 'setSessionPlugins', input: { sessionKey: 's', plugins: [{ name: 'session', mcpServers: { a: { command: 'z' }, b: { command: 'y' } } }] } },
+  { op: 'setSessionPlugins', input: { sessionKey: 's', plugins: [{ name: 'session', mcpServers: { a: { command: 'z' }, b: { command: 'y' }, 10: { command: 'ten' }, 2: { command: 'two' } } }] } },
   { op: 'status', input: { sessionKey: 's' } },
   { op: 'status', input: {} },
   { op: 'status', input: { sessionKey: '' } },
@@ -385,6 +397,50 @@ add('toggle-enabled', {}, [
   { op: 'status', input: { sessionKey: 's' } },
 ]);
 
+// Each set replaces the session table, so grow the map cumulatively; every
+// step must still add exactly the newly introduced name.
+add('prototype-env', {}, [
+  { op: 'set', input: { sessionKey: 's', servers: { toString: { type: 'stdio', command: '${env:toString}' } } } },
+  { op: 'set', input: { sessionKey: 's', servers: {
+    toString: { type: 'stdio', command: '${env:toString}' },
+    constructor: { type: 'stdio', command: '${env:constructor}' },
+  } } },
+  { op: 'set', input: { sessionKey: 's', servers: {
+    toString: { type: 'stdio', command: '${env:toString}' },
+    constructor: { type: 'stdio', command: '${env:constructor}' },
+    proto: { type: 'stdio', command: '${env:__proto__}' },
+  } } },
+  { op: 'set', input: { sessionKey: 's', servers: {
+    toString: { type: 'stdio', command: '${env:toString}' },
+    constructor: { type: 'stdio', command: '${env:constructor}' },
+    proto: { type: 'stdio', command: '${env:__proto__}' },
+    hasOwnProperty: { type: 'stdio', command: '${env:hasOwnProperty}' },
+  } } },
+  { op: 'set', input: { sessionKey: 's', servers: {
+    toString: { type: 'stdio', command: '${env:toString}' },
+    constructor: { type: 'stdio', command: '${env:constructor}' },
+    proto: { type: 'stdio', command: '${env:__proto__}' },
+    hasOwnProperty: { type: 'stdio', command: '${env:hasOwnProperty}' },
+    valueOf: { type: 'stdio', command: '${env:valueOf}' },
+  } } },
+  { op: 'status', input: { sessionKey: 's' } },
+]);
+
+add('home-expansion', {}, [
+  { op: 'set', input: { sessionKey: 's', servers: { tilde: { type: 'stdio', command: '~/bin/node' } } } },
+  { op: 'set', input: { sessionKey: 's', servers: { tildeOnly: { type: 'stdio', command: '~' } } } },
+  { op: 'set', input: { sessionKey: 's', servers: { userHome: { type: 'stdio', command: '${userHome}/bin/node' } } } },
+  { op: 'set', input: { sessionKey: 's', servers: { userHomeOnly: { type: 'stdio', command: '${userHome}' } } } },
+  { op: 'set', input: { sessionKey: 's', servers: { url: { type: 'streamable_http', url: '${userHome}/mcp' } } } },
+  { op: 'status', input: { sessionKey: 's' } },
+]);
+
+add('project-key', {}, [
+  { op: 'set', input: { projectKey: 'proj', sessionKey: 's', servers: { a: stdio() } } },
+  { op: 'status', input: { projectKey: 'proj', sessionKey: 's' } },
+  { op: 'set', input: { projectKey: '', sessionKey: 's', servers: { a: stdio() } } },
+]);
+
 const oracleScenarios: any[] = [];
 let stepCount = 0;
 for (const scenario of scenarios) {
@@ -449,7 +505,7 @@ assert.equal(scenario('permission')!.steps[23].result.error.message,
 assert.equal(scenario('permission')!.steps[24].state.rules.some(([key]: any) => key === 'other'), false);
 assert.equal(scenario('permission')!.steps[24].state.overrides.some(([key]: any) => key === 'other'), true);
 assert.deepEqual(scenario('status-order')!.steps[2].result.ok.servers, [{ name: 'b', status: 'disabled' }, { name: 'c', status: 'configured' }]);
-assert.deepEqual(scenario('status-order')!.steps[4].result.ok.servers, [{ name: 'a', status: 'configured' }, { name: 'b', status: 'disabled' }, { name: 'c', status: 'configured' }]);
+assert.deepEqual(scenario('status-order')!.steps[4].result.ok.servers, [{ name: '2', status: 'configured' }, { name: '10', status: 'configured' }, { name: 'a', status: 'configured' }, { name: 'b', status: 'disabled' }, { name: 'c', status: 'configured' }]);
 assert.equal(scenario('status-order')!.steps[5].result.ok.servers.length, 0);
 assert.equal(scenario('errors')!.steps[0].result.error.message, 'refresh boom');
 assert.equal(scenario('resolve-error')!.steps[0].result.error.message, 'resolve boom');
@@ -478,7 +534,28 @@ assert.equal(scenario('explicit-undefined')!.steps[5].state.servers[0][1][0][1].
 assert.equal(scenario('explicit-undefined')!.steps[6].state.servers[0][1][0][1].enabled.$, 'undefined');
 assert.deepEqual(scenario('explicit-undefined')!.steps[7].result.ok, { added: ['a'], removed: [], errors: [] });
 assert.equal(scenario('explicit-undefined')!.steps[8].result.ok.servers[0].status, 'configured');
-assert.equal(stepCount, oracleScenarios.reduce((sum, entry) => sum + entry.steps.length, 0));
+assert.equal(scenario('prototype-env')!.steps[0].result.ok.added[0], 'toString');
+assert.equal(scenario('prototype-env')!.steps[1].result.ok.added[0], 'constructor');
+assert.equal(scenario('prototype-env')!.steps[2].result.ok.added[0], 'proto');
+assert.equal(scenario('prototype-env')!.steps[5].result.ok.servers.length, 5);
+assert.equal(scenario('home-expansion')!.steps[0].result.ok.added[0], 'tilde');
+assert.equal(scenario('home-expansion')!.steps[1].result.ok.added[0], 'tildeOnly');
+assert.equal(scenario('home-expansion')!.steps[2].result.ok.added[0], 'userHome');
+assert.equal(scenario('home-expansion')!.steps[3].result.ok.errors[0].name, 'userHomeOnly');
+assert.equal(scenario('home-expansion')!.steps[3].result.ok.errors[0].error,
+  'no recognized transport (need command or url)');
+assert.equal(scenario('project-key')!.steps[0].calls[0][0], 'resolve');
+assert.equal(scenario('project-key')!.steps[0].calls[0][1], 'proj');
+assert.equal(scenario('project-key')!.steps[2].calls.filter((call: any) => call[0] === 'resolve').at(-1)[1], '');
+assert.equal(scenario('permission')!.steps[25].result.error.message,
+  'input.sessionKey?.trim is not a function');
+assert.equal(scenario('permission')!.steps[27].result.error.message,
+  'input.sessionKey?.trim is not a function');
+assert.equal(scenario('permission')!.steps[28].result.error.message,
+  'input.serverName?.trim is not a function');
+// Exact corpus size: a zero-scenario or zero-step oracle must never pass.
+assert.equal(oracleScenarios.length, 16);
+assert.equal(stepCount, 132);
 
 const oracle = { sourceCommit, sourceSha256, scenarios: oracleScenarios };
 await writeFile(join(output, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n');

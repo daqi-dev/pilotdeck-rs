@@ -118,7 +118,10 @@ pub struct SystemEnvironment;
 impl SdkMcpEnvironment for SystemEnvironment {
     fn env(&self, name: &JsString) -> Option<JsString> {
         let name = name.to_utf8().ok()?;
-        std::env::var_os(name).map(|value| JsString::from(value.to_string_lossy().into_owned()))
+        match std::env::var_os(&name) {
+            Some(value) => Some(JsString::from(value.to_string_lossy().into_owned())),
+            None => object_prototype_env(&JsString::from(name)),
+        }
     }
     fn home(&self) -> JsString {
         std::env::var_os("HOME")
@@ -126,6 +129,22 @@ impl SdkMcpEnvironment for SystemEnvironment {
             .map(|value| JsString::from(value.to_string_lossy().into_owned()))
             .unwrap_or_default()
     }
+}
+
+/// `process.env[name]` inherits `Object.prototype`, so names such as
+/// `toString` or `__proto__` read a non-empty builtin instead of `undefined`.
+/// The member table is the one shared with configuration prototype lookup.
+fn object_prototype_env(name: &JsString) -> Option<JsString> {
+    if !crate::config::builtin_property(name) {
+        return None;
+    }
+    let name = name.to_utf8().ok()?;
+    Some(match name.as_str() {
+        "__proto__" => JsString::from("[object Object]"),
+        // Node 22's `process.env.constructor` is the anonymous Object function.
+        "constructor" => JsString::from("function () { [native code] }"),
+        _ => JsString::from(format!("function {name}() {{ [native code] }}")),
+    })
 }
 
 /// A resolved project generation seen by the SDK MCP state machine.
@@ -270,57 +289,88 @@ impl SdkMcpConfig {
             collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut reserved);
         }
 
-        let current = self.servers_for(&session_key);
-        let mut next: Vec<(JsString, ServerEntry)> = Vec::new();
-        let mut errors: Vec<(JsString, &'static str)> = Vec::new();
-        for (name, config) in own_entries(input.get("servers")) {
-            if reserved.iter().any(|existing| existing == &name) {
-                errors.push((name, RESERVED_NAME));
-                continue;
-            }
-            match check_config(&name, &config, self.options.environment.as_ref())? {
-                ConfigCheck::Valid => {
-                    let enabled = current
-                        .iter()
-                        .find(|(existing, _)| existing == &name)
-                        .map(|(_, entry)| entry.enabled.clone())
-                        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
-                        .unwrap_or(JsValue::Bool(true));
-                    next.push((
-                        name,
-                        ServerEntry {
-                            config: config.clone(),
-                            enabled,
-                        },
-                    ));
+        let project_root = runtime.project_root();
+        // The whole read-modify-write runs under one guard: TS has no await
+        // between reading `current` and writing `next`, so a concurrent
+        // toggle/set must not interleave with this snapshot on the Rust side.
+        // The block ends the guard before `closeSession` is awaited.
+        let added: Vec<JsString>;
+        let removed: Vec<JsString>;
+        {
+            let mut servers = lock(&self.servers);
+            let session_index = servers
+                .iter()
+                .position(|(key, _)| same_key(key, &session_key));
+            let current: Vec<(JsString, ServerEntry)> = session_index
+                .map(|index| servers[index].1.clone())
+                .unwrap_or_default();
+            let mut next: Vec<(JsString, ServerEntry)> = Vec::new();
+            let mut errors: Vec<(JsString, &'static str)> = Vec::new();
+            for (name, config) in own_entries(input.get("servers")) {
+                if reserved.iter().any(|existing| existing == &name) {
+                    errors.push((name, RESERVED_NAME));
+                    continue;
                 }
-                ConfigCheck::Diagnostic(message) => errors.push((name, message)),
-            }
-        }
-        if !errors.is_empty() {
-            return Ok(set_result(&[], &[], &errors));
-        }
-
-        let mut added: Vec<JsString> = Vec::new();
-        for (name, value) in &next {
-            let changed = match current.iter().find(|(existing, _)| existing == name) {
-                None => true,
-                Some((_, previous)) => {
-                    json_text(&server_value(previous))? != json_text(&server_value(value))?
+                match check_config(&name, &config, self.options.environment.as_ref())? {
+                    ConfigCheck::Valid => {
+                        // TS calls `structuredClone(config)` for every accepted
+                        // entry; both it and the later `JSON.stringify(value)`
+                        // go through the shared wire-depth bound, including
+                        // new names.
+                        json_text(&config)?;
+                        let enabled = current
+                            .iter()
+                            .find(|(existing, _)| existing == &name)
+                            .map(|(_, entry)| entry.enabled.clone())
+                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                            .unwrap_or(JsValue::Bool(true));
+                        next.push((
+                            name,
+                            ServerEntry {
+                                config: config.clone(),
+                                enabled,
+                            },
+                        ));
+                    }
+                    ConfigCheck::Diagnostic(message) => errors.push((name, message)),
                 }
-            };
-            if changed {
-                added.push(name.clone());
             }
-        }
-        let removed: Vec<JsString> = current
-            .iter()
-            .filter(|(name, _)| !next.iter().any(|(candidate, _)| candidate == name))
-            .map(|(name, _)| name.clone())
-            .collect();
+            if !errors.is_empty() {
+                return Ok(set_result(&[], &[], &errors));
+            }
 
-        self.replace_servers(&session_key, next);
-        self.set_project(&session_key, runtime.project_root());
+            let mut added_names: Vec<JsString> = Vec::new();
+            for (name, value) in &next {
+                // TS serializes every next entry, so a new name cannot skip
+                // the check that an existing name already performs.
+                let value_text = json_text(&server_value(value))?;
+                let changed = match current.iter().find(|(existing, _)| existing == name) {
+                    None => true,
+                    Some((_, previous)) => value_text != json_text(&server_value(previous))?,
+                };
+                if changed {
+                    added_names.push(name.clone());
+                }
+            }
+            added = added_names;
+            removed = current
+                .iter()
+                .filter(|(name, _)| !next.iter().any(|(candidate, _)| candidate == name))
+                .map(|(name, _)| name.clone())
+                .collect();
+
+            match (session_index, next.is_empty()) {
+                (Some(index), true) => {
+                    servers.remove(index);
+                }
+                (Some(index), false) => {
+                    servers[index].1 = next;
+                }
+                (None, true) => {}
+                (None, false) => servers.push((session_key.clone(), next)),
+            }
+            self.set_project(&session_key, project_root);
+        }
         (self.options.close_session)(session_key, "sdk_mcp_servers_changed").await?;
         Ok(set_result(&added, &removed, &[]))
     }
@@ -567,22 +617,6 @@ impl SdkMcpConfig {
             .find(|(key, _)| same_key(key, session_key))
             .map(|(_, entries)| entries.clone())
             .unwrap_or_default()
-    }
-
-    fn replace_servers(&self, session_key: &JsValue, next: Vec<(JsString, ServerEntry)>) {
-        let mut servers = lock(&self.servers);
-        if next.is_empty() {
-            servers.retain(|(key, _)| !same_key(key, session_key));
-            return;
-        }
-        if let Some((_, entries)) = servers
-            .iter_mut()
-            .find(|(key, _)| same_key(key, session_key))
-        {
-            *entries = next;
-        } else {
-            servers.push((session_key.clone(), next));
-        }
     }
 
     fn set_project(&self, session_key: &JsValue, project_root: JsString) {
@@ -878,7 +912,22 @@ fn own_entries(value: Option<&JsValue>) -> Vec<(JsString, JsValue)> {
 fn collect_plugin_mcp_names(value: Option<&serde_json::Value>, names: &mut Vec<JsString>) {
     match value {
         Some(serde_json::Value::Object(object)) => {
-            names.extend(object.keys().map(|key| JsString::from(key.as_str())));
+            // `Object.keys` enumerates array-index keys first in ascending
+            // numeric order, then ordinary keys in insertion order. The
+            // serde map only carries the latter as sorted keys; at least put
+            // the computable index keys in JS order.
+            let mut indexed = Vec::new();
+            let mut ordinary = Vec::new();
+            for key in object.keys() {
+                let name = JsString::from(key.as_str());
+                match name.array_index() {
+                    Some(index) => indexed.push((index, name)),
+                    None => ordinary.push(name),
+                }
+            }
+            indexed.sort_by_key(|(index, _)| *index);
+            names.extend(indexed.into_iter().map(|(_, name)| name));
+            names.extend(ordinary);
         }
         Some(serde_json::Value::Array(items)) => {
             names.extend((0..items.len()).map(|index| JsString::from(index.to_string())));
@@ -948,8 +997,8 @@ fn check_config(
 /// `expandMcpString` for the two branches that decide validation.
 fn expand_mcp_string(value: &JsString, environment: &dyn SdkMcpEnvironment) -> JsString {
     let mut units = replace_env(value.units(), environment);
-    units = replace_literal(&units, "${userHome}", environment.home().units());
     let home = environment.home();
+    units = replace_user_home(&units, home.units());
     if starts_with(&units, "~/") || starts_with(&units, "~\\") {
         let mut expanded = home.units().to_vec();
         expanded.extend_from_slice(&units[1..]);
@@ -979,7 +1028,13 @@ fn replace_env(units: &[u16], environment: &dyn SdkMcpEnvironment) -> Vec<u16> {
             {
                 Some(offset) if offset > 0 => {
                     let name = JsString::from_utf16(units[body..body + offset].to_vec());
-                    if let Some(value) = environment.env(&name) {
+                    // An injected environment stands in for `process.env`; the
+                    // prototype fallback applies whether the port reports the
+                    // name as unset or does not model the chain itself.
+                    if let Some(value) = environment
+                        .env(&name)
+                        .or_else(|| object_prototype_env(&name))
+                    {
                         output.extend_from_slice(value.units());
                     }
                     index = body + offset + 1;
@@ -994,23 +1049,74 @@ fn replace_env(units: &[u16], environment: &dyn SdkMcpEnvironment) -> Vec<u16> {
     output
 }
 
-fn replace_literal(input: &[u16], needle: &str, replacement: &[u16]) -> Vec<u16> {
-    let needle: Vec<u16> = needle.encode_utf16().collect();
-    if needle.is_empty() {
-        return input.to_vec();
-    }
+/// `String.prototype.replace(/\$\{userHome\}/g, home)` with GetSubstitution
+/// semantics: `$$`, `$&`, `` $` `` and `$'` are expanded, while `$1` and
+/// `$<name>` stay literal because the pattern has no capture groups.
+fn replace_user_home(input: &[u16], replacement: &[u16]) -> Vec<u16> {
+    const NEEDLE: &str = "${userHome}";
+    let needle: Vec<u16> = NEEDLE.encode_utf16().collect();
     let mut output = Vec::with_capacity(input.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(offset) = find_units(&input[search..], &needle) {
+        let start = search + offset;
+        let end = start + needle.len();
+        output.extend_from_slice(&input[copied..start]);
+        expand_replacement(&mut output, replacement, input, start, end);
+        copied = end;
+        search = end;
+    }
+    output.extend_from_slice(&input[copied..]);
+    output
+}
+
+fn find_units(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn expand_replacement(
+    output: &mut Vec<u16>,
+    replacement: &[u16],
+    input: &[u16],
+    start: usize,
+    end: usize,
+) {
+    let dollar = u16::from(b'$');
     let mut index = 0;
-    while index < input.len() {
-        if input[index..].starts_with(&needle) {
-            output.extend_from_slice(replacement);
-            index += needle.len();
-        } else {
-            output.push(input[index]);
+    while index < replacement.len() {
+        if replacement[index] != dollar || index + 1 == replacement.len() {
+            output.push(replacement[index]);
             index += 1;
+            continue;
+        }
+        match replacement[index + 1] {
+            unit if unit == u16::from(b'$') => {
+                output.push(dollar);
+                index += 2;
+            }
+            unit if unit == u16::from(b'&') => {
+                output.extend_from_slice(&input[start..end]);
+                index += 2;
+            }
+            unit if unit == u16::from(b'`') => {
+                output.extend_from_slice(&input[..start]);
+                index += 2;
+            }
+            unit if unit == u16::from(b'\'') => {
+                output.extend_from_slice(&input[end..]);
+                index += 2;
+            }
+            _ => {
+                output.push(dollar);
+                index += 1;
+            }
         }
     }
-    output
 }
 
 fn generated_rule(server_name: &JsString) -> SessionValue {
@@ -1125,6 +1231,9 @@ mod tests {
             ("${env:A}", "one"),
             ("${env:NESTED}", "/home/u/x"),
             ("${env:UNSET}", ""),
+            ("${env:toString}", "function toString() { [native code] }"),
+            ("${env:constructor}", "function () { [native code] }"),
+            ("${env:__proto__}", "[object Object]"),
             ("~/x", "/home/u/x"),
             ("~", "/home/u"),
             ("~\\x", "/home/u\\x"),
@@ -1136,6 +1245,56 @@ mod tests {
                 "{input}"
             );
         }
+    }
+
+    #[test]
+    fn expands_user_home_through_get_substitution() {
+        struct Home(&'static str);
+        impl SdkMcpEnvironment for Home {
+            fn env(&self, _: &JsString) -> Option<JsString> {
+                None
+            }
+            fn home(&self) -> JsString {
+                JsString::from(self.0)
+            }
+        }
+        // `String.prototype.replace(/\$\{userHome\}/g, home)` interprets `$`
+        // patterns in the replacement with no capture groups.
+        for (home, input, expected) in [
+            ("$`", "${userHome}", ""),
+            ("$$", "${userHome}", "$"),
+            ("$&x", "${userHome}", "${userHome}x"),
+            ("$'", "${userHome}", ""),
+            ("a$&b", "${userHome}", "a${userHome}b"),
+            ("$1", "${userHome}", "$1"),
+            ("$", "${userHome}", "$"),
+            ("$`", "x${userHome}y", "xxy"),
+            ("$'", "x${userHome}y${userHome}z", "xy${userHome}zyzz"),
+            ("${userHome}", "${userHome}", "${userHome}"),
+        ] {
+            assert_eq!(
+                String::from_utf16_lossy(
+                    expand_mcp_string(&JsString::from(input), &Home(home)).units()
+                ),
+                expected,
+                "home {home:?} input {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_mcp_names_put_array_indices_first() {
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"b":{},"10":{},"2":{},"a":{}}"#).unwrap();
+        let mut names = Vec::new();
+        collect_plugin_mcp_names(Some(&value), &mut names);
+        assert_eq!(
+            names
+                .iter()
+                .map(|name| name.to_utf8().unwrap())
+                .collect::<Vec<_>>(),
+            ["2", "10", "a", "b"]
+        );
     }
 
     #[test]
