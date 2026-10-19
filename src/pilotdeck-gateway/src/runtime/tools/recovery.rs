@@ -1,7 +1,9 @@
 //! Model-visible tool error guidance (TS errorRecovery.ts and ToolRuntime.ts).
 //! Text operations preserve JavaScript UTF-16, including truncated surrogates.
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use crate::host::{HostError, ModuleError};
+use crate::js_value::{StackOverflow, number_string, to_string_units};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use regex::bytes::Regex;
 use std::sync::LazyLock;
 
@@ -71,13 +73,15 @@ pub fn build_tool_error_recovery(
     result
 }
 
-/// Preserve raw shell output after the bounded recovery guidance.
+/// Preserve raw shell output after the bounded recovery guidance. `Err` is
+/// V8's RangeError from `${value}` on a too-deep array (shared bounded
+/// String(), `crate::js_value`); TS throws it out of createToolErrorResult.
 pub fn format_tool_error_content(
     recovery_message: &JsString,
     details: Option<&JsObject>,
-) -> JsString {
+) -> Result<JsString, HostError> {
     let Some(details) = details else {
-        return recovery_message.clone();
+        return Ok(recovery_message.clone());
     };
     let command = string(Some(details), "command").filter(|value| !value.is_empty());
     let scalar = ["exitCode", "timedOut", "durationMs"].map(|key| {
@@ -96,7 +100,12 @@ pub fn format_tool_error_content(
             .zip(scalar)
         {
             if let Some(value) = value {
-                lines.push(interpolate("- {}: {}", &[&name.into(), &js_string(value)]));
+                let value =
+                    to_string_units(value).map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+                lines.push(interpolate(
+                    "- {}: {}",
+                    &[&name.into(), &JsString::from_utf16(value)],
+                ));
             }
         }
     }
@@ -109,11 +118,11 @@ pub fn format_tool_error_content(
             lines.extend(["".into(), heading.into(), trim_end(value)]);
         }
     }
-    if lines.is_empty() {
+    Ok(if lines.is_empty() {
         recovery_message.clone()
     } else {
         interpolate("{}\n\n{}", &[recovery_message, &join(&lines, "\n")])
-    }
+    })
 }
 
 fn summarize(
@@ -481,7 +490,7 @@ fn salient_evidence(raw: &JsString, details: Option<&JsObject>, issues: &[Issue]
             .take(2),
     );
     if let Some(status) = number(details, "status") {
-        let status = js_string(&JsValue::Number(status));
+        let status: JsString = number_string(status).into();
         let status_text = string(details, "statusText").filter(|value| !value.is_empty());
         evidence.push(if let Some(text) = status_text {
             interpolate("HTTP status: {} {}", &[&status, text])
@@ -492,7 +501,7 @@ fn salient_evidence(raw: &JsString, details: Option<&JsObject>, issues: &[Issue]
     if let Some(retry) = number(details, "retryAfterMs") {
         evidence.push(interpolate(
             "Retry-After: {}ms",
-            &[&js_string(&JsValue::Number(retry))],
+            &[&number_string(retry).into()],
         ));
     }
     for (key, template) in [
@@ -678,39 +687,6 @@ fn interpolate(template: &str, values: &[&JsString]) -> JsString {
         output.extend(part.encode_utf16());
     }
     JsString::from_utf16(output)
-}
-
-fn js_string(value: &JsValue) -> JsString {
-    match value {
-        JsValue::String(value) => value.clone(),
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Bool(value) => value.to_string().into(),
-        JsValue::Number(value) if value.is_nan() => "NaN".into(),
-        JsValue::Number(value) if *value == f64::INFINITY => "Infinity".into(),
-        JsValue::Number(value) if *value == f64::NEG_INFINITY => "-Infinity".into(),
-        JsValue::Number(_) => stringify_json(value)
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-            .into(),
-        JsValue::Array(values) => join(
-            &values
-                .iter()
-                .map(|value| {
-                    if matches!(value, JsValue::Undefined | JsValue::Null) {
-                        JsString::default()
-                    } else {
-                        js_string(value)
-                    }
-                })
-                .collect::<Vec<_>>(),
-            ",",
-        ),
-        JsValue::Object(value) => {
-            format!("[object {}]", value.native_tag().unwrap_or("Object")).into()
-        }
-    }
 }
 
 fn pattern(index: usize, value: &JsString) -> bool {

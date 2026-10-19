@@ -79,7 +79,7 @@ fn context(fields: JsObject, now: JsValue) -> ToolRunContext {
 fn recovery_and_raw_results_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let rows = array(field(&oracle, "recovery"));
-    assert_eq!(rows.len(), 71);
+    assert_eq!(rows.len(), 75);
     for row in rows {
         let input = field(row, "input");
         let id = text(field(input, "id"));
@@ -109,7 +109,8 @@ fn recovery_and_raw_results_match_real_ts() {
             &format!("{id}: result"),
         );
         let formatted =
-            format_tool_error_content(actual.get("message").unwrap().as_string().unwrap(), details);
+            format_tool_error_content(actual.get("message").unwrap().as_string().unwrap(), details)
+                .unwrap();
         let expected_content = array(field(field(row, "result"), "content"));
         equal(
             &JsValue::String(formatted),
@@ -123,7 +124,7 @@ fn recovery_and_raw_results_match_real_ts() {
 fn name_repair_matches_all_builtin_spellings_and_ambiguities() {
     let oracle = baseline::oracle(ORACLE);
     let rows = array(field(&oracle, "names"));
-    assert_eq!(rows.len(), 126);
+    assert_eq!(rows.len(), 130);
     for row in rows {
         let input = field(row, "input");
         let mut targets = array(field(input, "tools")).to_vec();

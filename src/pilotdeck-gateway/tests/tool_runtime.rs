@@ -194,7 +194,7 @@ impl ExecutableTool for FakeTool {
                         match text(field(&input, "fail")).as_str() {
                             "Error" => Err(ToolError::failed("ordinary failure")),
                             "nonError" => Err(ToolError::non_error()),
-                            code => { let mut e = ToolError::new(code, "fake failure"); e.details = Some(obj([("stderr", "ENOENT detail".into())])); Err(e) }
+                            code => { let mut e = ToolError::new(code, "fake failure"); e.details = Some(input.get("failDetails").and_then(JsValue::as_object).cloned().unwrap_or_else(|| obj([("stderr", "ENOENT detail".into())]))); Err(e) }
                         }
                     } else { Ok(()) }
                 }
@@ -414,6 +414,19 @@ fn calls(values: &JsValue) -> Vec<ToolCall> {
         .collect()
 }
 
+/// `context` plus the fields of the raw-JSON `contextJson`, as the generator
+/// spreads them.
+fn scenario_context(spec: &JsValue) -> Option<JsObject> {
+    let mut context = field(spec, "context").as_object().cloned();
+    if let Some(json) = spec.get("contextJson") {
+        let patch = parse_json(&text(json)).unwrap();
+        let context = context.get_or_insert_with(JsObject::new);
+        for (key, value) in patch.as_object().unwrap().entries() {
+            context.insert(key.clone(), value.clone());
+        }
+    }
+    context
+}
 struct Replay {
     result: Result<Vec<JsObject>, HostError>,
     events: Vec<JsValue>,
@@ -485,7 +498,7 @@ async fn replay(oracle: &JsValue, spec: &JsValue, signal: Signal) -> Replay {
         .execute_all(
             calls(field(spec, "calls")),
             ToolInvocationContext {
-                runtime: context_with(&probe, &cancel, field(spec, "context").as_object()),
+                runtime: context_with(&probe, &cancel, scenario_context(spec).as_ref()),
                 execution: Arc::new(ExecutionContext {
                     fields: execution,
                     abort_signal: None,
@@ -510,7 +523,7 @@ async fn replay(oracle: &JsValue, spec: &JsValue, signal: Signal) -> Replay {
 async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 64);
+    assert_eq!(scenarios.len(), 78);
     // Scenarios flagged rustSerializesNonReadOnly pin a deliberate deviation
     // and are asserted explicitly in non_readonly_safe_tools_run_sequentially.
     for (spec, signal) in scenarios
@@ -547,6 +560,9 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
                 field(spec, "results"),
                 &label,
             ),
+            Err(e) if field(spec, "error").is_undefined() => {
+                panic!("{label}: TS resolved, Rust rejected with {:?}", e.message)
+            }
             Err(e) => assert_eq!(e.message, text(field(spec, "error")), "{label}"),
         }
         let mut expected = array(field(spec, "events")).to_vec();
@@ -668,6 +684,155 @@ async fn non_readonly_safe_tools_run_sequentially() {
             "agent never started",
         );
         assert_eq!(run.live, 0);
+    }
+}
+
+/// Rust's String() bound is js_value::MAX_ARRAY_DEPTH (2000 nested arrays),
+/// fixed below V8's stack-dependent limit (measured from 2516; README). The
+/// recorded scenarios pin 2000 and 3000; this pins the exact Rust boundary on
+/// each converting path: 2000 nested arrays convert, 2001 raise the RangeError
+/// message instead of overflowing the Rust stack.
+#[tokio::test(start_paused = true)]
+async fn string_conversion_depth_bound_is_shared_js_value_limit() {
+    fn nested(arrays: usize, leaf: &str) -> String {
+        format!("{}{leaf}{}", "[".repeat(arrays), "]".repeat(arrays))
+    }
+    for (arrays, converts) in [(2000, true), (2001, false)] {
+        // enum/type/required members are converted one by one, so the member
+        // itself carries the nesting; a nested `type` is walked as a whole.
+        let inner = arrays;
+        let cases = [
+            (format!(r#"{{"enum":[{}]}}"#, nested(inner, "1")), "2", None),
+            (
+                format!(r#"{{"type":["string",{}]}}"#, nested(inner, r#""x""#)),
+                "2",
+                None,
+            ),
+            // The type walk allows one level more than String() (scheduler.rs).
+            (
+                format!(r#"{{"type":{}}}"#, nested(arrays + 1, r#""number""#)),
+                "\"s\"",
+                None,
+            ),
+            (
+                format!(
+                    r#"{{"type":"object","required":[{}]}}"#,
+                    nested(inner, r#""k""#)
+                ),
+                "{}",
+                None,
+            ),
+            (
+                r#"{"type":"object","required":["content"]}"#.to_string(),
+                "{}",
+                Some(format!(
+                    r#"{{"outputTruncated":true,"maxOutputTokens":{}}}"#,
+                    nested(arrays, "1")
+                )),
+            ),
+            (
+                r#"{"type":"object"}"#.to_string(),
+                &*format!(
+                    r#"{{"fail":"command_failed","failDetails":{{"exitCode":{}}}}}"#,
+                    nested(arrays, "1")
+                ),
+                None,
+            ),
+        ];
+        for (schema, input, context_json) in cases {
+            let probe = Probe::new();
+            let registry = ToolRegistry::default();
+            let def = JsValue::Object(obj([
+                ("name", "write_file".into()),
+                ("safe", JsValue::Bool(false)),
+                ("schemaJson", schema.as_str().into()),
+            ]));
+            register(&registry, &def, &probe);
+            let runtime =
+                ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent);
+            let mut spec = obj([]);
+            if let Some(json) = &context_json {
+                spec.insert("contextJson".into(), json.as_str().into());
+            }
+            let context = scenario_context(&JsValue::Object(spec));
+            let call = ToolCall {
+                id: "a".into(),
+                name: "write_file".into(),
+                input: parse_json(input).unwrap(),
+            };
+            let result = runtime
+                .execute_batch(
+                    vec![call],
+                    ToolRunContext::new(context_with(
+                        &probe,
+                        &Signal::Tool(ToolCancellation::default()),
+                        context.as_ref(),
+                    )),
+                )
+                .await;
+            let label = format!("{arrays} arrays: {schema} / {input} / {context_json:?}");
+            if converts {
+                assert!(
+                    result.is_ok(),
+                    "{label}: {:?}",
+                    result.err().map(|e| e.message)
+                );
+            } else {
+                assert_eq!(
+                    result.err().map(|e| e.message).as_deref(),
+                    Some("Maximum call stack size exceeded"),
+                    "{label}"
+                );
+            }
+        }
+        // Preview: the RangeError is caught by execute and becomes a result.
+        let probe = Probe::new();
+        let registry = ToolRegistry::default();
+        register(
+            &registry,
+            &parse_json(r#"{"name":"read_file","safe":false}"#).unwrap(),
+            &probe,
+        );
+        let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Concurrent);
+        let input = format!(
+            r#"{{"content":[{{"type":"file","path":{}}}]}}"#,
+            nested(arrays, r#""p""#)
+        );
+        let call = ToolCall {
+            id: "a".into(),
+            name: "read_file".into(),
+            input: parse_json(&input).unwrap(),
+        };
+        let context = obj([("maxResultBytes", JsValue::Number(1.0))]);
+        let results = runtime
+            .execute_batch(
+                vec![call],
+                ToolRunContext::new(context_with(
+                    &probe,
+                    &Signal::Tool(ToolCancellation::default()),
+                    Some(&context),
+                )),
+            )
+            .await
+            .unwrap();
+        let result = &results[0];
+        if converts {
+            assert!(
+                result
+                    .get("type")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .equals_str("success")
+            );
+        } else {
+            let error = result.get("error").unwrap();
+            assert_eq!(text(field(error, "code")), "tool_execution_failed");
+            assert_eq!(
+                text(field(error, "message")),
+                "Maximum call stack size exceeded"
+            );
+        }
     }
 }
 

@@ -789,5 +789,37 @@
       "exitCode": -0.0,
       "durationMs": 1e-07
     }
+  },
+  {
+    "id": "non-ascii-case-fold-long-s",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "Permi\u017fsion denied",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "non-ascii-case-fold-kelvin",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "tas\u212a_create in progress",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "non-ascii-case-fold-dotted-capital-i",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "\u0130 timed out",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "non-ascii-case-fold-dotted-capital-i-word",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "PERM\u0130SS\u0130ON denied",
+    "cwd": "/workspace",
+    "permissionMode": "default"
   }
 ]

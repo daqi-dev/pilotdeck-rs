@@ -36,7 +36,7 @@ const { createToolErrorResult } = await load(sources[3]);
 const { withOperationDeadlineBudget } = await load(sources[5]);
 const instant = '2026-09-11T00:00:00.000Z';
 const recoveryInputs = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'recovery-inputs.json'), 'utf8'));
-assert.equal(recoveryInputs.length, 71);
+assert.equal(recoveryInputs.length, 75);
 const recovery = recoveryInputs.map((input: any) => ({ input, output: buildToolErrorRecovery(input),
   result: createToolErrorResult({ toolCallId: input.id, toolName: input.toolName, code: input.code,
     message: input.message, details: input.details, startedAt: instant,
@@ -94,6 +94,11 @@ nameInputs.push(
   { id:'normalized-ambiguity',raw:'ReadFile',tools:[{name:'read_file'},{name:'read-file'}] },
   { id:'additional-unavailable',raw:'SearchWeb',tools:[],additional:[{name:'web_search',aliases:['search']}] },
   { id:'surrogate-normalization',raw:'tool_\ud800read_file',tools:[{name:'read_file'}] },
+  // Round 5: non-ASCII spellings near the fuzzy threshold.
+  { id:'fuzzy-non-ascii-dropped',raw:'réadfiles',tools:[{name:'read_file'}] },
+  { id:'fuzzy-non-ascii-inner',raw:'réad_file',tools:[{name:'read_file'}] },
+  { id:'fuzzy-non-ascii-tail',raw:'readfilé',tools:[{name:'read_file'}] },
+  { id:'fuzzy-non-ascii-transposed',raw:'ŕead_flie',tools:[{name:'read_file'}] },
 );
 const names = nameInputs.map(input => ({ input, output: repairToolName(input.raw, input.tools, input.configured, input.additional ?? []) ?? null }));
 

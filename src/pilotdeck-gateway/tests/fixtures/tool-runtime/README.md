@@ -30,3 +30,9 @@ Rust 的拒绝时刻与 TS 一致；出错那一轮仍把每个兄弟 poll 一�
 - 端口契约不允许脱离所有权的任务；若等兄弟跑完再报错，一个不响应取消的兄弟会让 batch 一直挂到外层 deadline，而 TS 已经返回。
 
 回放对该场景断言：Rust 返回时刻等于 TS `settledAt`；Rust 事件等于 TS 在 `settledAt` 及之前的事件；TS 之后只多出兄弟的 `end`；没有残留的工具 future。`concurrent_error_rejects_immediately_and_drops_started_siblings` 另用两个永不结束的兄弟钉住同一行为。
+
+## 深层嵌套数组的 String()
+
+`String(value)`（模板字符串、`in` 的键、`Array#join`）统一用共享实现 `crate::js_value::to_string_units`：迭代实现，超过 `MAX_ARRAY_DEPTH`（2000 层数组）报 V8 的 `RangeError: Maximum call stack size exceeded`，不会让 Rust 栈溢出。V8 的上限随调用栈变化（js_value.rs 记录从 2516 起抛错；本次探针在 2515 层也偶尔抛），所以 2001 到约 2516 层之间 Rust 抛错而 TS 能转换，这是已知偏离，方向是更严。
+
+场景 `deep-array-*-under`（2000 层，两边都能转换）与 `-over`（3000 层，两边都抛错）逐条路径对拍：enum 成员、type 描述、required 键、maxOutputTokens、错误 details 的 exitCode（这五条 TS 都是整批拒绝），以及预览里 file 的 path（TS 在 execute 的 try 内抛错，结果是 `tool_execution_failed` 错误结果）。`matchesType` 的递归在 V8 里比 String() 走得更深（3000 层可以，20000 层抛错），所以 `deep-array-type-match-*` 用 2000 与 20000 两档；Rust 的 type 遍历上限比 String() 多一层，保证外层 `type` 数组加一个正好在上限上的成员仍能走到描述拼接。精确的 Rust 边界（2000 能转换、2001 抛错；type 遍历是 2001 与 2002）由 `string_conversion_depth_bound_is_shared_js_value_limit` 钉住。

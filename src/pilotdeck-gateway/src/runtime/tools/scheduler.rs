@@ -12,6 +12,7 @@ use crate::host::{
         tool_context::ExecutionContext,
     },
 };
+use crate::js_value;
 use std::{future::poll_fn, task::Poll};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -216,7 +217,7 @@ impl ToolRuntime {
                     .unwrap_or(&JsValue::Undefined),
             )?;
             if !issues.is_empty() {
-                return fail(&name, validation_error(&name, issues, &context));
+                return fail(&name, validation_error(&name, issues, &context)?);
             }
             let prompt = name.equals_str("enter_plan_mode")
                 || tool.requires_user_interaction(&call.input).ok() == Some(JsValue::Bool(true));
@@ -248,7 +249,9 @@ impl ToolRuntime {
                 .await
             {
                 Err(error) => return fail(&name, error),
-                Ok(Some(issues)) => return fail(&name, validation_error(&name, issues, &context)),
+                Ok(Some(issues)) => {
+                    return fail(&name, validation_error(&name, issues, &context)?);
+                }
                 Ok(None) => {}
             }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
@@ -333,7 +336,13 @@ impl ToolRuntime {
                         .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
                         .or_else(|| context.fields.get("maxResultBytes"))
                         .and_then(JsValue::as_number);
-                    if let Some(limit) = preview_metadata(&output.content, max_bytes) {
+                    // A throw here is caught by TS's execute try block and
+                    // becomes an ordinary execution-failure result.
+                    let limit = match preview_metadata(&output.content, max_bytes) {
+                        Ok(limit) => limit,
+                        Err(error) => return fail(&name, ToolError::failed(error.message)),
+                    };
+                    if let Some(limit) = limit {
                         metadata
                             .get_or_insert_with(JsObject::new)
                             .insert("previewLimit".into(), JsValue::Object(limit));
@@ -477,20 +486,27 @@ fn js_entries(object: &JsObject) -> Vec<&(JsString, JsValue)> {
     entries.sort_by_key(|(key, _)| registry::array_index(key).map_or((1, 0), |n| (0, n)));
     entries
 }
-/// String(value) for a JSON value, as template literals and `in` errors print it.
-fn js_string(value: &JsValue) -> JsString {
-    match value {
-        JsValue::String(s) => s.clone(),
-        v => js_display(v).into(),
-    }
+/// `String(value)` via the shared bounded conversion (`crate::js_value`):
+/// nesting past `MAX_ARRAY_DEPTH` is V8's RangeError, raised as a host error
+/// the way the TS call rejects, never a Rust stack overflow.
+fn js_string(value: &JsValue) -> Result<JsString, HostError> {
+    js_value::to_string_units(value)
+        .map(JsString::from_utf16)
+        .map_err(range_error)
+}
+fn js_display(value: &JsValue) -> Result<String, HostError> {
+    js_value::display(value).map_err(range_error)
+}
+fn range_error(_: js_value::StackOverflow) -> HostError {
+    ModuleError::new(js_value::StackOverflow::MESSAGE).into()
 }
 fn type_error(message: String) -> HostError {
     ModuleError::new(message).into()
 }
 fn not_iterable(value: &JsValue) -> HostError {
     let kind = match value {
-        JsValue::Number(_) => format!("number {}", js_display(value)),
-        JsValue::Bool(_) => format!("boolean {}", js_display(value)),
+        JsValue::Number(n) => format!("number {}", js_value::number_string(*n)),
+        JsValue::Bool(b) => format!("boolean {b}"),
         _ => "object".into(),
     };
     type_error(format!(
@@ -509,10 +525,37 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             ("message", string(message)),
         ]));
     }
-    fn matches(value: Operand, kind: &JsValue) -> bool {
-        if let JsValue::Array(kinds) = kind {
-            return kinds.iter().any(|k| matches(value, k));
+    /// matchesType: `type.some(...)` recursing into nested type arrays,
+    /// depth-first like TS, iterative. Bounded one level above the shared
+    /// String() limit: V8 survives this recursion deeper than String()
+    /// (measured 3000 OK, 20000 RangeError), so the outer `type` array plus a
+    /// member at the String() limit must still reach the description join.
+    fn matches(value: Operand, kind: &JsValue) -> Result<bool, HostError> {
+        let mut frames: Vec<std::slice::Iter<'_, JsValue>> = Vec::new();
+        let mut next = Some(kind);
+        loop {
+            match next.take() {
+                Some(JsValue::Array(kinds)) => {
+                    if frames.len() > js_value::MAX_ARRAY_DEPTH {
+                        return Err(range_error(js_value::StackOverflow));
+                    }
+                    frames.push(kinds.iter());
+                }
+                Some(kind) if matches_one(value, kind) => return Ok(true),
+                _ => {}
+            }
+            let Some(kinds) = frames.last_mut() else {
+                return Ok(false);
+            };
+            match kinds.next() {
+                Some(kind) => next = Some(kind),
+                None => {
+                    frames.pop();
+                }
+            }
         }
+    }
+    fn matches_one(value: Operand, kind: &JsValue) -> bool {
         let number;
         let value = match value {
             Operand::Value(v) => v,
@@ -556,7 +599,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
                 Properties::Primitive(v) => Err(type_error(format!(
                     "Cannot use 'in' operator to search for '{}' in {}",
                     text(key),
-                    text(&js_string(v))
+                    text(&js_string(v)?)
                 ))),
             }
         }
@@ -587,7 +630,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
     fn required(schema: &JsValue) -> Result<Vec<JsString>, HostError> {
         match schema_field(schema, "required") {
             None | Some(JsValue::Null | JsValue::Undefined) => Ok(vec![]),
-            Some(JsValue::Array(keys)) => Ok(keys.iter().map(js_string).collect()),
+            Some(JsValue::Array(keys)) => keys.iter().map(js_string).collect(),
             Some(JsValue::String(s)) => {
                 // String iteration yields code points; lone surrogates stand alone.
                 let units = s.units();
@@ -652,7 +695,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
                             enumeration
                                 .iter()
                                 .map(js_display)
-                                .collect::<Vec<_>>()
+                                .collect::<Result<Vec<_>, _>>()?
                                 .join(", ")
                         ),
                     );
@@ -666,19 +709,19 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
         }
         let kind = schema_field(schema, "type");
         if let Some(kind) = kind
-            && !matches(value, kind)
+            && !matches(value, kind)?
         {
             let description = match kind {
                 // Array#join prints null and undefined members as "".
                 JsValue::Array(kinds) => kinds
                     .iter()
                     .map(|k| match k {
-                        JsValue::Null | JsValue::Undefined => String::new(),
+                        JsValue::Null | JsValue::Undefined => Ok(String::new()),
                         k => js_display(k),
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Result<Vec<_>, _>>()?
                     .join(" or "),
-                kind => js_display(kind),
+                kind => js_display(kind)?,
             };
             issue(
                 out,
@@ -753,7 +796,11 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
     walk(Operand::Value(value), schema, "$", &mut issues)?;
     Ok(issues)
 }
-fn validation_error(name: &JsString, issues: Vec<JsObject>, context: &ToolRunContext) -> ToolError {
+fn validation_error(
+    name: &JsString,
+    issues: Vec<JsObject>,
+    context: &ToolRunContext,
+) -> Result<ToolError, HostError> {
     let tool = text(name);
     let mut parts = vec![];
     for issue in &issues {
@@ -771,11 +818,11 @@ fn validation_error(name: &JsString, issues: Vec<JsObject>, context: &ToolRunCon
         });
     }
     if parts.is_empty() {
-        return ToolError::new(
+        return Ok(ToolError::new(
             "invalid_tool_input",
             format!("Tool {tool} input is invalid."),
         )
-        .with_details(issues);
+        .with_details(issues));
     }
     let mut message = format!(
         "{tool} failed due to the following {}:\n{}",
@@ -791,7 +838,9 @@ fn validation_error(name: &JsString, issues: Vec<JsObject>, context: &ToolRunCon
                 .fields
                 .get("maxOutputTokens")
                 .filter(|v| truthy(v))
-                .map(|v| format!(" (current max_output_tokens: {})", js_display(v)))
+                .map(js_display)
+                .transpose()?
+                .map(|v| format!(" (current max_output_tokens: {v})"))
                 .unwrap_or_default();
             message += &format!(
                 "\n\nThis was caused by your output being truncated (output token limit reached{tokens}). Keep each tool call's arguments well within the output token budget."
@@ -808,98 +857,80 @@ fn validation_error(name: &JsString, issues: Vec<JsObject>, context: &ToolRunCon
     {
         message += "\n\nHint: For large files, recover by creating a smaller but valid draft workspace file first. Use write_file with a complete content field that fits comfortably within the output budget. After the draft exists, read it with read_file and extend or patch it using small focused write_file/edit_file calls. Do not use shell heredocs or paths outside the workspace.";
     }
-    ToolError::new("invalid_tool_input", message).with_details(issues)
+    Ok(ToolError::new("invalid_tool_input", message).with_details(issues))
 }
-fn js_display(v: &JsValue) -> String {
-    match v {
-        JsValue::String(s) => text(s),
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Object(_) => "[object Object]".into(),
-        JsValue::Array(a) => a
-            .iter()
-            .map(|v| {
-                if matches!(v, JsValue::Null | JsValue::Undefined) {
-                    String::new()
-                } else {
-                    js_display(v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        _ => pilotdeck_protocol::stringify_json(v)
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
-    }
-}
-fn content_text(v: &JsValue) -> String {
+fn content_text(v: &JsValue) -> Result<String, HostError> {
     let field = |key| {
         v.get(key)
-            .map(js_display)
-            .unwrap_or_else(|| "undefined".into())
+            .map_or_else(|| Ok("undefined".into()), js_display)
     };
-    match v
-        .get("type")
-        .and_then(JsValue::as_string)
-        .map(text)
-        .as_deref()
-    {
-        Some("text") => field("text"),
-        Some("json") => {
-            pilotdeck_protocol::stringify_json(v.get("value").unwrap_or(&JsValue::Undefined))
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-        }
-        Some("file") => format!(
-            "[File: {}{}{}]",
-            field("path"),
-            v.get("mimeType")
-                .filter(|v| truthy(v))
-                .map(|v| format!(", {}", js_display(v)))
-                .unwrap_or_default(),
-            v.get("description")
-                .filter(|v| truthy(v))
-                .map(|v| format!(", {}", js_display(v)))
-                .unwrap_or_default()
-        ),
-        _ => String::new(),
-    }
+    let optional = |key| {
+        v.get(key)
+            .filter(|v| truthy(v))
+            .map(|v| js_display(v).map(|v| format!(", {v}")))
+            .transpose()
+            .map(Option::unwrap_or_default)
+    };
+    Ok(
+        match v
+            .get("type")
+            .and_then(JsValue::as_string)
+            .map(text)
+            .as_deref()
+        {
+            Some("text") => field("text")?,
+            Some("json") => {
+                pilotdeck_protocol::stringify_json(v.get("value").unwrap_or(&JsValue::Undefined))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            }
+            Some("file") => format!(
+                "[File: {}{}{}]",
+                field("path")?,
+                optional("mimeType")?,
+                optional("description")?
+            ),
+            _ => String::new(),
+        },
+    )
 }
-fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Option<JsObject> {
-    let max = max.filter(|n| *n >= 0.0)?;
+/// applyResultSizeLimit's metadata. `Err` is the RangeError a too-deep
+/// String() raises there; TS throws it inside the execute try block.
+fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsObject>, HostError> {
+    let Some(max) = max.filter(|n| *n >= 0.0) else {
+        return Ok(None);
+    };
     let binary = |v: &JsValue| {
         v.get("type")
             .and_then(JsValue::as_string)
             .is_some_and(|s| s.equals_str("image") || s.equals_str("pdf"))
     };
-    let original: usize = content
-        .iter()
-        .map(|v| {
-            if binary(v) {
-                v.get("data")
-                    .and_then(JsValue::as_string)
-                    .map_or(0, |s| s.units().len())
-            } else {
-                content_text(v).len()
-            }
-        })
-        .sum();
+    let mut original = 0;
+    for v in content {
+        original += if binary(v) {
+            v.get("data")
+                .and_then(JsValue::as_string)
+                .map_or(0, |s| s.units().len())
+        } else {
+            content_text(v)?.len()
+        };
+    }
     if content.iter().any(binary) {
-        return Some(object([(
+        return Ok(Some(object([(
             "originalBytes",
             JsValue::Number(original as f64),
-        )]));
+        )])));
     }
     if original as f64 <= max {
-        return None;
+        return Ok(None);
     }
     let suffix = "\n[Tool output truncated: head and tail shown.]";
     let budget = (max - suffix.len() as f64).max(0.0) as usize;
     let value = content
         .iter()
         .map(content_text)
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, _>>()?
         .join("\n");
     let prefix = |budget: usize| {
         let mut end = budget.min(value.len());
@@ -921,9 +952,9 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Option<JsObject> {
         }
         prefix(budget.div_ceil(2)).len() + separator.len() + value.len() - start
     } + suffix.len();
-    Some(object([
+    Ok(Some(object([
         ("truncated", JsValue::Bool(true)),
         ("originalBytes", JsValue::Number(original as f64)),
         ("returnedBytes", JsValue::Number(returned as f64)),
-    ]))
+    ])))
 }

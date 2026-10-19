@@ -4379,6 +4379,222 @@
         "startedAt": "2026-09-11T00:00:00.000Z",
         "completedAt": "2026-09-11T00:00:00.000Z"
       }
+    },
+    {
+      "input": {
+        "id": "non-ascii-case-fold-long-s",
+        "code": "tool_execution_failed",
+        "toolName": "bash",
+        "message": "Permiſsion denied",
+        "cwd": "/workspace",
+        "permissionMode": "default"
+      },
+      "output": {
+        "message": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: Permiſsion denied\nEvidence:\n- Permiſsion denied\nOriginal error:\nPermiſsion denied\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default.",
+        "advice": {
+          "summary": "Permiſsion denied",
+          "failureClass": "environment_issue",
+          "nextActions": [
+            "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          ],
+          "salientEvidence": [
+            "Permiſsion denied"
+          ],
+          "originalError": "Permiſsion denied"
+        }
+      },
+      "result": {
+        "type": "error",
+        "toolCallId": "non-ascii-case-fold-long-s",
+        "toolName": "bash",
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "Permiſsion denied"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: Permiſsion denied\nEvidence:\n- Permiſsion denied\nOriginal error:\nPermiſsion denied\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          }
+        ],
+        "metadata": {
+          "recovery": {
+            "summary": "Permiſsion denied",
+            "failureClass": "environment_issue",
+            "nextActions": [
+              "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+            ],
+            "salientEvidence": [
+              "Permiſsion denied"
+            ],
+            "originalError": "Permiſsion denied"
+          }
+        },
+        "startedAt": "2026-09-11T00:00:00.000Z",
+        "completedAt": "2026-09-11T00:00:00.000Z"
+      }
+    },
+    {
+      "input": {
+        "id": "non-ascii-case-fold-kelvin",
+        "code": "tool_execution_failed",
+        "toolName": "bash",
+        "message": "tasK_create in progress",
+        "cwd": "/workspace",
+        "permissionMode": "default"
+      },
+      "output": {
+        "message": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: tasK_create in progress\nEvidence:\n- tasK_create in progress\nOriginal error:\ntasK_create in progress\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default.",
+        "advice": {
+          "summary": "tasK_create in progress",
+          "failureClass": "environment_issue",
+          "nextActions": [
+            "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          ],
+          "salientEvidence": [
+            "tasK_create in progress"
+          ],
+          "originalError": "tasK_create in progress"
+        }
+      },
+      "result": {
+        "type": "error",
+        "toolCallId": "non-ascii-case-fold-kelvin",
+        "toolName": "bash",
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "tasK_create in progress"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: tasK_create in progress\nEvidence:\n- tasK_create in progress\nOriginal error:\ntasK_create in progress\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          }
+        ],
+        "metadata": {
+          "recovery": {
+            "summary": "tasK_create in progress",
+            "failureClass": "environment_issue",
+            "nextActions": [
+              "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+            ],
+            "salientEvidence": [
+              "tasK_create in progress"
+            ],
+            "originalError": "tasK_create in progress"
+          }
+        },
+        "startedAt": "2026-09-11T00:00:00.000Z",
+        "completedAt": "2026-09-11T00:00:00.000Z"
+      }
+    },
+    {
+      "input": {
+        "id": "non-ascii-case-fold-dotted-capital-i",
+        "code": "tool_execution_failed",
+        "toolName": "bash",
+        "message": "İ timed out",
+        "cwd": "/workspace",
+        "permissionMode": "default"
+      },
+      "output": {
+        "message": "TOOL_ERROR[tool_execution_failed][bash][retry_later]\nSummary: İ timed out\nEvidence:\n- İ timed out\nOriginal error:\nİ timed out\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default.",
+        "advice": {
+          "summary": "İ timed out",
+          "failureClass": "retry_later",
+          "nextActions": [
+            "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          ],
+          "salientEvidence": [
+            "İ timed out"
+          ],
+          "originalError": "İ timed out"
+        }
+      },
+      "result": {
+        "type": "error",
+        "toolCallId": "non-ascii-case-fold-dotted-capital-i",
+        "toolName": "bash",
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "İ timed out"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "TOOL_ERROR[tool_execution_failed][bash][retry_later]\nSummary: İ timed out\nEvidence:\n- İ timed out\nOriginal error:\nİ timed out\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          }
+        ],
+        "metadata": {
+          "recovery": {
+            "summary": "İ timed out",
+            "failureClass": "retry_later",
+            "nextActions": [
+              "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+            ],
+            "salientEvidence": [
+              "İ timed out"
+            ],
+            "originalError": "İ timed out"
+          }
+        },
+        "startedAt": "2026-09-11T00:00:00.000Z",
+        "completedAt": "2026-09-11T00:00:00.000Z"
+      }
+    },
+    {
+      "input": {
+        "id": "non-ascii-case-fold-dotted-capital-i-word",
+        "code": "tool_execution_failed",
+        "toolName": "bash",
+        "message": "PERMİSSİON denied",
+        "cwd": "/workspace",
+        "permissionMode": "default"
+      },
+      "output": {
+        "message": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: PERMİSSİON denied\nEvidence:\n- PERMİSSİON denied\nOriginal error:\nPERMİSSİON denied\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default.",
+        "advice": {
+          "summary": "PERMİSSİON denied",
+          "failureClass": "environment_issue",
+          "nextActions": [
+            "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          ],
+          "salientEvidence": [
+            "PERMİSSİON denied"
+          ],
+          "originalError": "PERMİSSİON denied"
+        }
+      },
+      "result": {
+        "type": "error",
+        "toolCallId": "non-ascii-case-fold-dotted-capital-i-word",
+        "toolName": "bash",
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "PERMİSSİON denied"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "TOOL_ERROR[tool_execution_failed][bash][environment_issue]\nSummary: PERMİSSİON denied\nEvidence:\n- PERMİSSİON denied\nOriginal error:\nPERMİSSİON denied\nNext actions:\n1. Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+          }
+        ],
+        "metadata": {
+          "recovery": {
+            "summary": "PERMİSSİON denied",
+            "failureClass": "environment_issue",
+            "nextActions": [
+              "Inspect the evidence, change the approach, then retry only with corrected inputs. Current permission mode: default."
+            ],
+            "salientEvidence": [
+              "PERMİSSİON denied"
+            ],
+            "originalError": "PERMİSSİON denied"
+          }
+        },
+        "startedAt": "2026-09-11T00:00:00.000Z",
+        "completedAt": "2026-09-11T00:00:00.000Z"
+      }
     }
   ],
   "names": [
@@ -6418,6 +6634,60 @@
         "name": "read_file",
         "reason": "normalized_match"
       }
+    },
+    {
+      "input": {
+        "id": "fuzzy-non-ascii-dropped",
+        "raw": "réadfiles",
+        "tools": [
+          {
+            "name": "read_file"
+          }
+        ]
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": "fuzzy-non-ascii-inner",
+        "raw": "réad_file",
+        "tools": [
+          {
+            "name": "read_file"
+          }
+        ]
+      },
+      "output": {
+        "name": "read_file",
+        "reason": "fuzzy_match"
+      }
+    },
+    {
+      "input": {
+        "id": "fuzzy-non-ascii-tail",
+        "raw": "readfilé",
+        "tools": [
+          {
+            "name": "read_file"
+          }
+        ]
+      },
+      "output": {
+        "name": "read_file",
+        "reason": "fuzzy_match"
+      }
+    },
+    {
+      "input": {
+        "id": "fuzzy-non-ascii-transposed",
+        "raw": "ŕead_flie",
+        "tools": [
+          {
+            "name": "read_file"
+          }
+        ]
+      },
+      "output": null
     }
   ],
   "deadlines": [

@@ -143,7 +143,25 @@ const scenarios: any[] = [
     calls: [call('a', 'agent', { delay: 3 }), call('b', 'read_file', { delay: 5 }), call('c', 'agent', { delay: 2 }), call('d', 'fast', { delay: 1 })] },
   { name: 'non-readonly-safe-tool-outlives-concurrent-error-in-ts', rustSerializesNonReadOnly: true, drain: true, definitions: [tool('agent', true, { readOnly: false }), tool('read_file', true), tool('fast', true)],
     calls: [call('a', 'agent', { delay: 3 }), call('b', 'read_file', { decision: 'throw' }), call('c', 'fast', { delay: 2 })] },
+  // Round 5. String() of deeply nested arrays: V8 throws RangeError (measured
+  // from depth 2516; Rust's shared bound is js_value::MAX_ARRAY_DEPTH = 2000).
+  // Depth 2000 converts on both sides; 3000 throws on both (20000 for the
+  // matchesType recursion, which V8 survives at 3000). Text JSON keeps the
+  // oracle shallow.
+  ...([[2000, 'under'], [3000, 'over']] as const).flatMap(([d, tag]) => [
+    { name: `deep-array-enum-member-${tag}`, definitions: [tool('p', false, { schemaJson: `{"enum":[${deep(d, '1')}]}` })], calls: [call('a', 'p', 2)] },
+    { name: `deep-array-type-description-${tag}`, definitions: [tool('p', false, { schemaJson: `{"type":["string",${deep(d, '"x"')}]}` })], calls: [call('a', 'p', 2)] },
+    { name: `deep-array-required-key-${tag}`, definitions: [tool('p', false, { schemaJson: `{"type":"object","required":[${deep(d, '"k"')}]}` })], calls: [call('a', 'p', {})] },
+    { name: `deep-array-max-output-tokens-${tag}`, definitions: [tool('write_file', false, { schema: { type: 'object', required: ['content'] } })], contextJson: `{"outputTruncated":true,"maxOutputTokens":${deep(d, '1')}}`, calls: [call('a', 'write_file', {})] },
+    { name: `deep-array-error-details-${tag}`, calls: [{ id: 'a', name: 'read_file', inputJson: `{"fail":"command_failed","failDetails":{"exitCode":${deep(d, '1')}}}` }] },
+    { name: `deep-array-preview-file-path-${tag}`, context: { maxResultBytes: 1 }, calls: [{ id: 'a', name: 'read_file', inputJson: `{"content":[{"type":"file","path":${deep(d, '"p"')}}]}` }] },
+  ]),
+  ...([[2000, 'under'], [20000, 'over']] as const).map(([d, tag]) => (
+    { name: `deep-array-type-match-${tag}`, definitions: [tool('p', false, { schemaJson: `{"type":[${deep(d, '"number"')}]}` })], calls: [call('a', 'p', 2)] })),
 ];
+
+/** JSON text of `leaf` wrapped in d - 1 arrays (nesting depth d). */
+function deep(d: number, leaf: string) { return '['.repeat(d - 1) + leaf + ']'.repeat(d - 1); }
 
 function withPrototypes(schema: any, prototypes: any[] = []) {
   for (const { path, prototype } of prototypes) Object.setPrototypeOf(path.reduce((o: any, k: string) => o[k], schema), prototype);
@@ -185,7 +203,7 @@ async function run(spec: any) {
         if (timeout !== undefined && timeout < delay) throw new PilotDeckToolRuntimeError('tool_timeout', 'Budget expired.');
         if (input.fail === 'Error') throw Error('ordinary failure');
         if (input.fail === 'nonError') throw 'opaque failure';
-        if (input.fail) throw new PilotDeckToolRuntimeError(input.fail, 'fake failure', { stderr: 'ENOENT detail' });
+        if (input.fail) throw new PilotDeckToolRuntimeError(input.fail, 'fake failure', input.failDetails ?? { stderr: 'ENOENT detail' });
         events.push(['end', id, ms]);
         return { content: input.content ?? [{ type: 'text', text: input.value ?? id }], data: input.data,
           metadata: input.metadata, supplementalMessages: input.supplementalMessages };
@@ -205,7 +223,8 @@ async function run(spec: any) {
   const port = createToolSchedulerPort(registry, scheduler);
   const context = { cwd: '/workspace', sessionId: 's', turnId: 't', permissionMode: 'default',
     permissionContext: { mode: 'default', canPrompt: true, additionalWorkingDirectories: [] },
-    now: () => new Date(epoch + ms), abortSignal: signal.signal, ...spec.context };
+    now: () => new Date(epoch + ms), abortSignal: signal.signal, ...spec.context,
+    ...(spec.contextJson === undefined ? {} : JSON.parse(spec.contextJson)) };
   const execution = spec.deadline === undefined ? {} : { operationDeadline: new Date(epoch + spec.deadline).toISOString() };
   let settled = false, outcome: any;
   const calls = spec.calls.map((c: any) => c.inputJson === undefined ? c : { id: c.id, name: c.name, input: JSON.parse(c.inputJson) });
