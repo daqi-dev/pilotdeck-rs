@@ -10,11 +10,11 @@ use crate::{
     metadata::js_trim,
     runtime::project::{DisposeFuture, RuntimeError, RuntimeResources},
 };
-use pilotdeck_protocol::{JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
     future::Future,
-    path::{Path, PathBuf},
+    path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -70,15 +70,50 @@ pub struct MemoryProviderError {
     pub name: String,
     /// JS `error.code`, when the provider supplied one.
     pub code: Option<String>,
-    pub message: String,
+    /// JS `error.message` as UTF-16 units: a `PROJECT_NOT_FOUND` rejection
+    /// embeds the raw `projectKey`, including a lone surrogate. Decoding to a
+    /// Rust `String` would replacement-decode it and alias another project.
+    pub message: JsString,
+    /// R19 host boundary: the native port cannot represent this input or
+    /// state, so the A8 entry must forward the whole request to the Node host
+    /// instead of surfacing this as an ordinary projection error.
+    pub requires_host: bool,
 }
 impl MemoryProviderError {
-    pub fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<JsString>) -> Self {
         Self {
             name: "Error".into(),
             code: None,
             message: message.into(),
+            requires_host: false,
         }
+    }
+    /// `PROJECT_NOT_FOUND`, `Unknown projectKey: <raw key>`
+    /// (projectRegistry.ts:56/62). Build the rejection with the original units
+    /// so a lone surrogate survives to the wire instead of becoming U+FFFD.
+    pub fn unknown_project_key(project_key: &[u16]) -> Self {
+        let mut units = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+        units.extend_from_slice(project_key);
+        Self {
+            name: "DialogGatewayError".into(),
+            code: Some("PROJECT_NOT_FOUND".into()),
+            message: JsString::from_utf16(units),
+            requires_host: false,
+        }
+    }
+    /// Host boundary for a registry/provider input the native port cannot
+    /// represent. Same shape as `runtime/snapshot.rs`: `JS_HOST_REQUIRED`,
+    /// empty message, `requires_host`.
+    pub fn host_required() -> Self {
+        Self {
+            name: "Error".into(),
+            code: Some("JS_HOST_REQUIRED".into()),
+            message: JsString::default(),
+            requires_host: true,
+        }
+    }
+    pub fn requires_host(&self) -> bool {
+        self.requires_host
     }
 }
 
@@ -402,23 +437,30 @@ impl MemoryManagementService for NativeManagement {
 /// through the projection; they are never collapsed into `None` and a false
 /// `CAPABILITY_UNAVAILABLE`.
 pub trait ProjectMemoryRegistry: Send + Sync {
-    /// `dialog.projects.resolveProjectKey`: the input is already the fallback
-    /// when the wire field was absent or null.
-    fn resolve_project_key(&self, project_key: &Path) -> Result<PathBuf, MemoryProviderError>;
+    /// `dialog.projects.resolveProjectKey` compares JS strings by code unit
+    /// (projectRegistry.ts:41-59), so the port receives the raw UTF-16 identity
+    /// of `input.projectKey` / the fallback root. A lone surrogate must not be
+    /// replacement-decoded before the lookup: `"\ud800"` and `"\ufffd"` are
+    /// different projects and `from_utf16_lossy` would alias one onto the
+    /// other. The resolved key is returned as units for the same reason; the
+    /// registry lookup below is keyed by that JS string, never by a `Path`.
+    fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError>;
     fn memory_management(
         &self,
-        project_key: &Path,
+        project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError>;
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct MemoryListInput {
-    pub project_key: Option<PathBuf>,
+    /// Raw wire `projectKey`; absent or null uses the fallback project root.
+    pub project_key: Option<JsString>,
     pub session_key: Option<String>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct MemoryWipeInput {
-    pub project_key: Option<PathBuf>,
+    /// Raw wire `projectKey`; absent or null uses the fallback project root.
+    pub project_key: Option<JsString>,
     pub session_key: Option<String>,
     /// Compared with `=== "session"`; anything else takes the project branch.
     pub scope: Option<String>,
@@ -451,34 +493,38 @@ impl MemoryWipeResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MemoryProjectionError {
-    CapabilityUnavailable,
-    InvalidMemoryScope,
-    /// `resolveProjectKey` / `registry.resolve` threw; the TS methods do not
-    /// catch it, so the shape is carried through unchanged.
-    Registry(MemoryProviderError),
-    Provider(MemoryProviderError),
+pub struct MemoryProjectionError {
+    code: Option<String>,
+    name: String,
+    message: JsString,
+    /// R19 host boundary; see [`MemoryProviderError::requires_host`].
+    requires_host: bool,
 }
 impl MemoryProjectionError {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::CapabilityUnavailable | Self::InvalidMemoryScope => "DialogGatewayError",
-            Self::Registry(error) | Self::Provider(error) => &error.name,
+    fn gateway(code: &'static str, message: &'static str) -> Self {
+        Self {
+            code: Some(code.into()),
+            name: "DialogGatewayError".into(),
+            message: JsString::from(message),
+            requires_host: false,
         }
+    }
+    fn host_required() -> Self {
+        MemoryProviderError::host_required().into()
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
     pub fn code(&self) -> Option<&str> {
-        match self {
-            Self::CapabilityUnavailable => Some("CAPABILITY_UNAVAILABLE"),
-            Self::InvalidMemoryScope => Some("INVALID_MEMORY_SCOPE"),
-            Self::Registry(error) | Self::Provider(error) => error.code.as_deref(),
-        }
+        self.code.as_deref()
     }
-    pub fn message(&self) -> &str {
-        match self {
-            Self::CapabilityUnavailable => "Gateway memory provider is unavailable.",
-            Self::InvalidMemoryScope => "sessionKey is required for a session-scoped wipe.",
-            Self::Registry(error) | Self::Provider(error) => &error.message,
-        }
+    pub fn message(&self) -> &JsString {
+        &self.message
+    }
+    /// True when the native projection hit a host boundary; the A8 entry must
+    /// forward the request, not surface this as a TS-shaped error.
+    pub fn requires_host(&self) -> bool {
+        self.requires_host
     }
     pub fn to_js(&self) -> JsValue {
         let mut object = JsObject::new();
@@ -487,8 +533,18 @@ impl MemoryProjectionError {
             "code".into(),
             self.code().map_or(JsValue::Null, JsValue::from),
         );
-        object.insert("message".into(), JsValue::from(self.message()));
+        object.insert("message".into(), JsValue::String(self.message.clone()));
         JsValue::Object(object)
+    }
+}
+impl From<MemoryProviderError> for MemoryProjectionError {
+    fn from(error: MemoryProviderError) -> Self {
+        Self {
+            code: error.code,
+            name: error.name,
+            message: error.message,
+            requires_host: error.requires_host,
+        }
     }
 }
 
@@ -508,22 +564,43 @@ impl MemoryProjection {
         }
     }
 
-    fn resolution_key(&self, project_key: Option<&Path>) -> Result<PathBuf, MemoryProjectionError> {
+    fn resolution_key(
+        &self,
+        project_key: Option<&JsString>,
+    ) -> Result<JsString, MemoryProjectionError> {
+        let fallback;
+        let key = match project_key {
+            Some(key) => key,
+            None => {
+                // A host-configured fallback root that is not a JS string
+                // cannot be compared by code unit; forward instead of lossy
+                // replacement-decoding it into another project's key.
+                let root = self
+                    .fallback_project_root
+                    .to_str()
+                    .ok_or_else(MemoryProjectionError::host_required)?;
+                fallback = JsString::from(root);
+                &fallback
+            }
+        };
         self.registry
-            .resolve_project_key(project_key.unwrap_or(&self.fallback_project_root))
-            .map_err(MemoryProjectionError::Registry)
+            .resolve_project_key(key)
+            .map_err(MemoryProjectionError::from)
     }
 
     pub fn list(&self, input: &MemoryListInput) -> Result<MemoryListResult, MemoryProjectionError> {
-        let project_key = self.resolution_key(input.project_key.as_deref())?;
+        let project_key = self.resolution_key(input.project_key.as_ref())?;
         let management = self
             .registry
             .memory_management(&project_key)
-            .map_err(MemoryProjectionError::Registry)?
-            .ok_or(MemoryProjectionError::CapabilityUnavailable)?;
-        let items = management
-            .list(100)
-            .map_err(MemoryProjectionError::Provider)?;
+            .map_err(MemoryProjectionError::from)?
+            .ok_or_else(|| {
+                MemoryProjectionError::gateway(
+                    "CAPABILITY_UNAVAILABLE",
+                    "Gateway memory provider is unavailable.",
+                )
+            })?;
+        let items = management.list(100).map_err(MemoryProjectionError::from)?;
         let items = match input.session_key.as_deref() {
             // TS truthiness: an empty string lists everything, a whitespace
             // string filters (and never matches the untrimmed comparison).
@@ -540,21 +617,31 @@ impl MemoryProjection {
     }
 
     pub fn wipe(&self, input: &MemoryWipeInput) -> Result<MemoryWipeResult, MemoryProjectionError> {
-        let project_key = self.resolution_key(input.project_key.as_deref())?;
+        let project_key = self.resolution_key(input.project_key.as_ref())?;
         let management = self
             .registry
             .memory_management(&project_key)
-            .map_err(MemoryProjectionError::Registry)?
-            .ok_or(MemoryProjectionError::CapabilityUnavailable)?;
+            .map_err(MemoryProjectionError::from)?
+            .ok_or_else(|| {
+                MemoryProjectionError::gateway(
+                    "CAPABILITY_UNAVAILABLE",
+                    "Gateway memory provider is unavailable.",
+                )
+            })?;
         if input.scope.as_deref() == Some("session") {
             let session_key = input
                 .session_key
                 .as_deref()
                 .filter(|session_key| !js_trim(session_key).is_empty())
-                .ok_or(MemoryProjectionError::InvalidMemoryScope)?;
+                .ok_or_else(|| {
+                    MemoryProjectionError::gateway(
+                        "INVALID_MEMORY_SCOPE",
+                        "sessionKey is required for a session-scoped wipe.",
+                    )
+                })?;
             management
                 .clear_session(session_key)
-                .map_err(MemoryProjectionError::Provider)?;
+                .map_err(MemoryProjectionError::from)?;
             return Ok(MemoryWipeResult {
                 wiped: true,
                 scope: "session",
@@ -562,10 +649,41 @@ impl MemoryProjection {
         }
         management
             .clear("current_project")
-            .map_err(MemoryProjectionError::Provider)?;
+            .map_err(MemoryProjectionError::from)?;
         Ok(MemoryWipeResult {
             wiped: true,
             scope: "project",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_project_key_keeps_raw_units() {
+        let error = MemoryProviderError::unknown_project_key(&[0xD800]);
+        assert_eq!(error.name, "DialogGatewayError");
+        assert_eq!(error.code.as_deref(), Some("PROJECT_NOT_FOUND"));
+        assert!(!error.requires_host());
+        assert_eq!(
+            error.message.units(),
+            "Unknown projectKey: "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert!(!error.message.units().contains(&0xFFFD));
+    }
+
+    #[test]
+    fn host_required_is_a_marked_boundary() {
+        let error = MemoryProjectionError::host_required();
+        assert_eq!(error.name(), "Error");
+        assert_eq!(error.code(), Some("JS_HOST_REQUIRED"));
+        assert!(error.requires_host());
+        assert!(error.message().units().is_empty());
     }
 }

@@ -1270,6 +1270,137 @@
           ]
         }
       ]
+    },
+    {
+      "name": "project-key-lone-surrogate",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "knownProjects": [
+        "/pdrs-fixture/project",
+        "/pdrs-fixture/project-�"
+      ],
+      "steps": [
+        {
+          "op": "wipe",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "Unknown projectKey: /pdrs-fixture/project-\ud800"
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project-\ud800",
+            "scope": "session",
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project-\ud800"
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "PROJECT_NOT_FOUND",
+            "message": "Unknown projectKey: /pdrs-fixture/project-\ud800"
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project-\ud800"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project-\ud800"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "project-key-literal-fffd",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "knownProjects": [
+        "/pdrs-fixture/project",
+        "/pdrs-fixture/project-�"
+      ],
+      "steps": [
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"}]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project-�"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project-�"
+            },
+            {
+              "op": "resolve",
+              "key": "/pdrs-fixture/project-�"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        }
+      ]
     }
   ]
 }

@@ -408,6 +408,10 @@ async function projectionCase(
     fail?: { op: string; message: string };
     resolveProjectKeyFails?: string;
     registryResolveFails?: string;
+    /// When set, the fake resolver matches these keys by JS string identity and
+    /// rejects everything else with the real `PROJECT_NOT_FOUND` wording. This
+    /// is what distinguishes a lone surrogate from the literal U+FFFD project.
+    knownProjects?: string[];
   },
   inputs: Array<{ op: 'list' | 'wipe'; input: any }>,
 ) {
@@ -433,6 +437,13 @@ async function projectionCase(
       resolveProjectKey: async (key: string) => {
         sharedCalls.push({ op: 'resolveProjectKey', key });
         if (options.resolveProjectKeyFails) throw new Error(options.resolveProjectKeyFails);
+        if (options.knownProjects) {
+          // JS string equality is unit-exact: "\ud800" never matches "\ufffd".
+          if (!options.knownProjects.includes(key)) {
+            throw new DialogGatewayError('PROJECT_NOT_FOUND', `Unknown projectKey: ${key}`);
+          }
+          return key;
+        }
         return `resolved:${key}`;
       },
     },
@@ -477,6 +488,7 @@ async function projectionCase(
     ...(options.fail ? { fail: options.fail } : {}),
     ...(options.resolveProjectKeyFails ? { resolveProjectKeyFails: options.resolveProjectKeyFails } : {}),
     ...(options.registryResolveFails ? { registryResolveFails: options.registryResolveFails } : {}),
+    ...(options.knownProjects ? { knownProjects: options.knownProjects } : {}),
     steps,
   });
 }
@@ -524,6 +536,26 @@ await projectionCase('registry-resolve-throws', { management: 'available', regis
   { op: 'list', input: { projectKey: PROJECT } },
   { op: 'wipe', input: { projectKey: PROJECT, scope: 'project' } },
 ]);
+// Project keys are JS strings compared by UTF-16 code unit: a lone surrogate
+// and the literal U+FFFD project are different identities. The surrogate must
+// be rejected with the original units in `Unknown projectKey: <raw>` (never
+// replacement-decoded to U+FFFD); the U+FFFD key must resolve and reach its own
+// memory management.
+const FFFD_PROJECT = `${PROJECT}-\ufffd`;
+const SURROGATE_PROJECT = `${PROJECT}-\ud800`;
+await projectionCase(
+  'project-key-lone-surrogate',
+  { management: 'available', knownProjects: [PROJECT, FFFD_PROJECT] },
+  [
+    { op: 'wipe', input: { projectKey: SURROGATE_PROJECT, scope: 'session', sessionKey: 's1' } },
+    { op: 'list', input: { projectKey: SURROGATE_PROJECT } },
+  ],
+);
+await projectionCase(
+  'project-key-literal-fffd',
+  { management: 'available', knownProjects: [PROJECT, FFFD_PROJECT] },
+  [{ op: 'list', input: { projectKey: FFFD_PROJECT } }],
+);
 
 const oracle = {
   sourceCommit,

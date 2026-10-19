@@ -13,7 +13,7 @@ use pilotdeck_gateway::runtime::{
     },
     project::{ProjectRuntimeRegistry, ResourceBundle, RuntimeError, RuntimeResult},
 };
-use pilotdeck_protocol::{JsObject, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -27,26 +27,6 @@ use std::{
 
 const ORACLE: &str = include_str!("fixtures/memory/oracle.json");
 const PROJECT: &str = "/pdrs-fixture/project";
-
-fn js(value: &Value) -> JsValue {
-    parse_json(&value.to_string()).expect("fixture JSON")
-}
-fn error_js(value: &Value) -> JsValue {
-    let mut object = JsObject::new();
-    object.insert(
-        "name".into(),
-        JsValue::from(value["name"].as_str().unwrap()),
-    );
-    object.insert(
-        "code".into(),
-        value["code"].as_str().map_or(JsValue::Null, JsValue::from),
-    );
-    object.insert(
-        "message".into(),
-        JsValue::from(value["message"].as_str().unwrap()),
-    );
-    JsValue::Object(object)
-}
 
 #[derive(Default)]
 struct Events(Mutex<Vec<String>>);
@@ -294,10 +274,31 @@ fn bundle_from_fixture(
 
 #[tokio::test]
 async fn real_ts_memory_bundle_oracle() {
-    baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 3);
-    let cases = oracle["bundleCases"].as_array().unwrap();
+    let oracle = baseline::oracle(ORACLE);
+    assert_eq!(
+        oracle
+            .get("sourceSha256")
+            .and_then(JsValue::as_object)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        oracle
+            .get("projectionCases")
+            .and_then(as_array)
+            .unwrap()
+            .len(),
+        10
+    );
+    // Bundle expectations contain no lone surrogates, so they can be replayed
+    // through serde_json like before; the projection cases below stay in
+    // JsValue because their project keys carry raw UTF-16 units.
+    let bundle = stringify_json(oracle.get("bundleCases").unwrap())
+        .unwrap()
+        .unwrap();
+    let bundle: Value = serde_json::from_str(&bundle).unwrap();
+    let cases = bundle.as_array().unwrap();
     assert_eq!(cases.len(), 10);
     let mut replayed = 0;
     for case in cases {
@@ -441,41 +442,74 @@ async fn real_ts_memory_bundle_oracle() {
         replayed += 1;
     }
     assert_eq!(replayed, 10);
-    assert!(oracle["projectionCases"].as_array().unwrap().len() == 8);
 }
 
-fn optional_path(input: &Value, key: &str) -> Option<PathBuf> {
-    input.get(key).and_then(Value::as_str).map(PathBuf::from)
+fn optional_string(input: &JsValue, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(JsValue::as_string)
+        .and_then(|value| value.to_utf8().ok())
 }
-fn optional_string(input: &Value, key: &str) -> Option<String> {
-    input.get(key).and_then(Value::as_str).map(str::to_owned)
+fn optional_js_string(input: &JsValue, key: &str) -> Option<JsString> {
+    input.get(key).and_then(JsValue::as_string).cloned()
+}
+fn as_array(value: &JsValue) -> Option<&Vec<JsValue>> {
+    match value {
+        JsValue::Array(items) => Some(items),
+        _ => None,
+    }
+}
+fn text(value: &JsValue) -> Option<String> {
+    value.as_string().and_then(|value| value.to_utf8().ok())
+}
+fn call_object(op: &str) -> JsObject {
+    let mut object = JsObject::new();
+    object.insert("op".into(), JsValue::from(op));
+    object
 }
 
 struct ProjectionRegistry {
-    calls: Arc<Mutex<Vec<Value>>>,
+    calls: Arc<Mutex<Vec<JsValue>>>,
     management: Option<Arc<dyn MemoryManagementService>>,
     resolve_key_fail: Option<String>,
     resolve_fail: Option<String>,
+    /// `knownProjects` from the fixture: mimic the real registry's unit-exact
+    /// match and `Unknown projectKey` rejection. `None` keeps the older mock's
+    /// `resolved:<key>` echo.
+    known_projects: Option<Vec<JsString>>,
 }
 impl ProjectMemoryRegistry for ProjectionRegistry {
-    fn resolve_project_key(&self, project_key: &Path) -> Result<PathBuf, MemoryProviderError> {
-        self.calls.lock().unwrap().push(json!({
-            "op": "resolveProjectKey",
-            "key": project_key.to_string_lossy(),
-        }));
+    fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError> {
+        let mut call = call_object("resolveProjectKey");
+        call.insert("key".into(), JsValue::String(project_key.clone()));
+        self.calls.lock().unwrap().push(JsValue::Object(call));
         if let Some(message) = &self.resolve_key_fail {
             return Err(MemoryProviderError::new(message.clone()));
         }
-        Ok(PathBuf::from(format!("resolved:{}", project_key.display())))
+        match &self.known_projects {
+            Some(known) => match known
+                .iter()
+                .find(|known| known.units() == project_key.units())
+            {
+                Some(known) => Ok(known.clone()),
+                None => Err(MemoryProviderError::unknown_project_key(
+                    project_key.units(),
+                )),
+            },
+            None => {
+                let mut units = "resolved:".encode_utf16().collect::<Vec<_>>();
+                units.extend_from_slice(project_key.units());
+                Ok(JsString::from_utf16(units))
+            }
+        }
     }
     fn memory_management(
         &self,
-        project_key: &Path,
+        project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
-        self.calls.lock().unwrap().push(json!({
-            "op": "resolve",
-            "key": project_key.to_string_lossy(),
-        }));
+        let mut call = call_object("resolve");
+        call.insert("key".into(), JsValue::String(project_key.clone()));
+        self.calls.lock().unwrap().push(JsValue::Object(call));
         if let Some(message) = &self.resolve_fail {
             return Err(MemoryProviderError::new(message.clone()));
         }
@@ -484,8 +518,8 @@ impl ProjectMemoryRegistry for ProjectionRegistry {
 }
 
 struct ProjectionManagement {
-    calls: Arc<Mutex<Vec<Value>>>,
-    items: Vec<Value>,
+    calls: Arc<Mutex<Vec<JsValue>>>,
+    items: Vec<JsValue>,
     fail: Option<(String, String)>,
 }
 impl ProjectionManagement {
@@ -500,49 +534,53 @@ impl ProjectionManagement {
 }
 impl MemoryManagementService for ProjectionManagement {
     fn list(&self, limit: usize) -> Result<Vec<JsValue>, MemoryProviderError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(json!({"op": "list", "limit": limit}));
+        let mut call = call_object("list");
+        call.insert("limit".into(), JsValue::Number(limit as f64));
+        self.calls.lock().unwrap().push(JsValue::Object(call));
         self.maybe_fail("list")?;
-        Ok(self.items.iter().map(js).collect())
+        Ok(self.items.clone())
     }
     fn clear(&self, scope: &str) -> Result<(), MemoryProviderError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(json!({"op": "clear", "scope": scope}));
+        let mut call = call_object("clear");
+        call.insert("scope".into(), JsValue::from(scope));
+        self.calls.lock().unwrap().push(JsValue::Object(call));
         self.maybe_fail("clear")
     }
     fn clear_session(&self, session_key: &str) -> Result<(), MemoryProviderError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(json!({"op": "clearSession", "sessionKey": session_key}));
+        let mut call = call_object("clearSession");
+        call.insert("sessionKey".into(), JsValue::from(session_key));
+        self.calls.lock().unwrap().push(JsValue::Object(call));
         self.maybe_fail("clearSession")
     }
 }
 
 #[test]
 fn real_ts_memory_projection_oracle() {
-    let _ = baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    let cases = oracle["projectionCases"].as_array().unwrap();
-    assert_eq!(cases.len(), 8);
+    let oracle = baseline::oracle(ORACLE);
+    let cases = oracle.get("projectionCases").and_then(as_array).unwrap();
+    assert_eq!(cases.len(), 10);
     let mut replayed = 0;
     for case in cases {
+        let name = text(case.get("name").unwrap()).unwrap();
         let calls = Arc::new(Mutex::new(Vec::new()));
         let fail = case.get("fail").map(|fail| {
             (
-                fail["op"].as_str().unwrap().to_owned(),
-                fail["message"].as_str().unwrap().to_owned(),
+                text(fail.get("op").expect("fail op")).expect("fail op text"),
+                text(fail.get("message").expect("fail message")).expect("fail message text"),
             )
         });
+        let known_projects = case.get("knownProjects").map(|projects| {
+            as_array(projects)
+                .expect("knownProjects array")
+                .iter()
+                .map(|project| project.as_string().expect("known project").clone())
+                .collect::<Vec<_>>()
+        });
         let management: Option<Arc<dyn MemoryManagementService>> =
-            if case["management"] == "available" {
+            if text(case.get("management").unwrap()).as_deref() == Some("available") {
                 Some(Arc::new(ProjectionManagement {
                     calls: Arc::clone(&calls),
-                    items: case["items"].as_array().unwrap().clone(),
+                    items: case.get("items").and_then(as_array).expect("items").clone(),
                     fail,
                 }))
             } else {
@@ -551,64 +589,88 @@ fn real_ts_memory_projection_oracle() {
         let registry = Arc::new(ProjectionRegistry {
             calls: Arc::clone(&calls),
             management,
-            resolve_key_fail: case["resolveProjectKeyFails"].as_str().map(str::to_owned),
-            resolve_fail: case["registryResolveFails"].as_str().map(str::to_owned),
+            resolve_key_fail: case.get("resolveProjectKeyFails").and_then(text),
+            resolve_fail: case.get("registryResolveFails").and_then(text),
+            known_projects,
         });
         let projection = MemoryProjection::new(registry, "/pdrs-fixture/fallback");
-        for step in case["steps"].as_array().unwrap() {
+        for step in case.get("steps").and_then(as_array).unwrap() {
             calls.lock().unwrap().clear();
-            let input = &step["input"];
-            let actual = match step["op"].as_str().unwrap() {
-                "list" => projection
+            let input = step.get("input").expect("step input");
+            let actual: Result<JsValue, JsValue> = match text(step.get("op").unwrap()).as_deref() {
+                Some("list") => projection
                     .list(&MemoryListInput {
-                        project_key: optional_path(input, "projectKey"),
+                        project_key: optional_js_string(input, "projectKey"),
                         session_key: optional_string(input, "sessionKey"),
                     })
                     .map(|result| result.to_js())
                     .map_err(|error| error.to_js()),
-                "wipe" => projection
+                Some("wipe") => projection
                     .wipe(&MemoryWipeInput {
-                        project_key: optional_path(input, "projectKey"),
+                        project_key: optional_js_string(input, "projectKey"),
                         session_key: optional_string(input, "sessionKey"),
                         scope: optional_string(input, "scope"),
                     })
                     .map(|result| result.to_js())
                     .map_err(|error| error.to_js()),
-                other => panic!("unknown projection step {other}"),
+                other => panic!("unknown projection step {other:?}"),
             };
-            let expected: JsValue = if let Some(result) = step.get("resultJson") {
-                parse_json(result.as_str().unwrap()).unwrap()
+            if let Some(result) = step.get("resultJson") {
+                let expected = parse_json(
+                    result
+                        .as_string()
+                        .expect("resultJson")
+                        .to_utf8()
+                        .unwrap()
+                        .as_str(),
+                )
+                .unwrap();
+                let actual =
+                    actual.unwrap_or_else(|error| panic!("{name}: unexpected error {error:?}"));
+                assert_eq!(actual, expected, "{name}: result");
             } else {
-                error_js(&step["error"])
-            };
-            match actual {
-                Ok(actual) => {
-                    assert!(
-                        step.get("resultJson").is_some(),
-                        "{}: unexpected success",
-                        case["name"]
-                    );
-                    assert_eq!(actual, expected, "{}: result", case["name"]);
-                }
-                Err(actual) => {
-                    assert!(
-                        step.get("error").is_some(),
-                        "{}: unexpected error",
-                        case["name"]
-                    );
-                    assert_eq!(actual, expected, "{}: error", case["name"]);
-                }
+                let expected = step.get("error").expect("step error").clone();
+                let actual = match actual {
+                    Ok(value) => panic!("{name}: unexpected success {value:?}"),
+                    Err(error) => error,
+                };
+                assert_eq!(actual, expected, "{name}: error");
             }
             assert_eq!(
-                json!(calls.lock().unwrap().clone()),
-                step["calls"],
-                "{}: calls",
-                case["name"]
+                JsValue::Array(calls.lock().unwrap().clone()),
+                *step.get("calls").expect("step calls"),
+                "{name}: calls"
             );
         }
         replayed += 1;
     }
-    assert_eq!(replayed, 8);
+    assert_eq!(replayed, 10);
+}
+
+struct PanicRegistry;
+impl ProjectMemoryRegistry for PanicRegistry {
+    fn resolve_project_key(&self, _: &JsString) -> Result<JsString, MemoryProviderError> {
+        panic!("a non-UTF-8 fallback must not reach the registry")
+    }
+    fn memory_management(
+        &self,
+        _: &JsString,
+    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
+        unreachable!("resolve_project_key runs first")
+    }
+}
+
+#[test]
+fn non_utf8_fallback_is_a_host_boundary() {
+    use std::os::unix::ffi::OsStringExt;
+    let fallback = PathBuf::from(std::ffi::OsString::from_vec(vec![b'/', 0xFF]));
+    assert!(fallback.to_str().is_none());
+    let projection = MemoryProjection::new(Arc::new(PanicRegistry), fallback);
+    let error = projection.list(&MemoryListInput::default()).unwrap_err();
+    assert_eq!(error.name(), "Error");
+    assert_eq!(error.code(), Some("JS_HOST_REQUIRED"));
+    assert!(error.requires_host());
+    assert!(error.message().units().is_empty());
 }
 
 struct Scratch(PathBuf);
