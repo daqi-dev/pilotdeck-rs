@@ -623,7 +623,9 @@ async fn wait_watch<T: Clone + Send + 'static>(mut rx: watch::Receiver<Option<T>
             if let Some(value) = rx.borrow().clone() {
                 return value;
             }
-            panic!("wait_watch: watch sender dropped without delivering a value (spawned task panicked)");
+            panic!(
+                "wait_watch: watch sender dropped without delivering a value (spawned task panicked)"
+            );
         }
     }
 }
