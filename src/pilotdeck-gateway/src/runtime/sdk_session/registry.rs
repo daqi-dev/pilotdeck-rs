@@ -14,7 +14,7 @@ use crate::{
     runtime::plugins::{LoadedPlugin, PluginRuntime, PluginRuntimeError, PluginSkillContribution},
     storage::{TaskBudgetError, TaskBudgetStore},
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsString, JsValue};
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -518,28 +518,22 @@ impl SdkSessionRegistry {
                         .get("permissionMode")
                         .is_some_and(|value| !value.to_value().is_undefined())
                 {
-                    let value = existing.to_value();
-                    if let JsValue::Object(object) = &value {
-                        let mut next = JsObject::new();
-                        for (key, value) in object.entries() {
-                            if !key.equals_str("permissionMode") {
-                                next.insert(key.clone(), value.clone());
-                            }
-                        }
-                        overrides.set(session_key, &SessionValue::from(JsValue::Object(next)));
-                    }
+                    // TS `const { permissionMode: _removed, ...rest } = existing`
+                    // replaces the top level only; nested handles stay shared.
+                    let next = existing.spread();
+                    let _removed = next.remove("permissionMode");
+                    overrides.set(session_key, &next);
                 }
                 result.cleared.push("permissions.defaultMode");
             } else {
                 if let Some(overrides) = &mut self.overrides {
+                    // TS `{ ...existing, permissionMode }`: `get` already
+                    // returns a fresh top level sharing the nested nodes.
                     let existing = overrides
                         .get(session_key)
                         .unwrap_or_else(SessionValue::object);
-                    let mut value = existing.to_value();
-                    if let JsValue::Object(object) = &mut value {
-                        object.insert("permissionMode".into(), default_mode);
-                    }
-                    overrides.set(session_key, &SessionValue::from(value));
+                    existing.set("permissionMode", default_mode);
+                    overrides.set(session_key, &existing);
                 }
                 result.applied.push("permissions.defaultMode");
             }

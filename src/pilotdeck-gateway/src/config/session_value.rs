@@ -72,6 +72,20 @@ impl SessionValue {
         }
     }
 
+    /// Deletes an own object property, keeping every remaining nested handle.
+    /// Callers should mutate a [`Self::spread`] so the store's top level is
+    /// replaced while the nested objects stay shared.
+    pub fn remove(&self, name: &str) -> Option<Self> {
+        let mut node = self.lock();
+        let Node::Object(entries) = &mut *node else {
+            panic!("expected session object")
+        };
+        entries
+            .iter()
+            .position(|(key, _)| key.equals_str(name))
+            .map(|index| entries.remove(index).1)
+    }
+
     pub fn items(&self) -> Vec<Self> {
         let Node::Array(items) = &*self.lock() else {
             panic!("expected session array")
