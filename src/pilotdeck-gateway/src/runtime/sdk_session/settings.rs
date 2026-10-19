@@ -491,31 +491,39 @@ fn extract_source_overlay(value: &JsValue) -> JsValue {
 
 // ─────────────────────────────────────────────────────────── settings resolution
 
-fn resolve_pilot_home(env: &Env, cwd: &Path) -> PathBuf {
+fn resolve_pilot_home(env: &Env, cwd: &Path, homedir: Option<&Path>) -> PathBuf {
     let raw = env
         .get("PILOT_HOME")
         .map(String::as_str)
         .unwrap_or("~/.pilotdeck");
     if raw == "~" {
-        return home_dir(env);
+        return home_dir(homedir);
     }
     if let Some(rest) = raw.strip_prefix("~/") {
-        return resolve(&home_dir(env), rest);
+        return resolve(&home_dir(homedir), rest);
     }
     resolve(cwd, raw)
 }
 
-pub(super) fn home_dir(env: &Env) -> PathBuf {
-    env.get("HOME")
-        .map(PathBuf::from)
-        // `os.homedir()` reads the process HOME when the injected env omits it.
+/// `os.homedir()`: the process HOME. `homedir` is the host/Test seam for that
+/// one value; the SDK session `env` is deliberately not consulted (Node ignores
+/// `options.env.HOME` for `~`). `None` keeps the gate1 B6 fallback to HOME.
+pub(super) fn home_dir(homedir: Option<&Path>) -> PathBuf {
+    homedir
+        .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-fn source_path(source: SettingSource, project_root: &Path, env: &Env, cwd: &Path) -> PathBuf {
+fn source_path(
+    source: SettingSource,
+    project_root: &Path,
+    env: &Env,
+    cwd: &Path,
+    homedir: Option<&Path>,
+) -> PathBuf {
     match source {
-        SettingSource::User => resolve(&resolve_pilot_home(env, cwd), "pilotdeck.yaml"),
+        SettingSource::User => resolve(&resolve_pilot_home(env, cwd, homedir), "pilotdeck.yaml"),
         SettingSource::Project => resolve(project_root, ".pilotdeck/pilotdeck.yaml"),
         SettingSource::Local => resolve(project_root, ".pilotdeck/pilotdeck.local.yaml"),
         SettingSource::Managed => unreachable!("managed settings are host-owned"),
@@ -535,8 +543,9 @@ fn read_source_settings(
     project_root: &Path,
     env: &Env,
     cwd: &Path,
+    homedir: Option<&Path>,
 ) -> Result<Option<JsValue>, SdkSessionError> {
-    let path = source_path(source, project_root, env, cwd);
+    let path = source_path(source, project_root, env, cwd, homedir);
     if !path.exists() {
         return Ok(None);
     }
@@ -606,6 +615,9 @@ pub struct ResolveSettingsOptions<'a> {
     pub project_root: &'a Path,
     pub cwd: &'a Path,
     pub env: &'a Env,
+    /// `os.homedir()` result. `None` reads the process HOME; the session `env`
+    /// never supplies it (TS parity).
+    pub homedir: Option<&'a Path>,
     pub host_defaults: Option<&'a JsValue>,
     pub host_managed_settings: Option<&'a JsValue>,
     pub host_setting_sources: Option<&'a JsValue>,
@@ -627,7 +639,13 @@ pub fn resolve_session_settings(
     for source in sources {
         let source_settings = match source {
             SettingSource::Managed => managed.clone(),
-            other => read_source_settings(other, options.project_root, options.env, options.cwd)?,
+            other => read_source_settings(
+                other,
+                options.project_root,
+                options.env,
+                options.cwd,
+                options.homedir,
+            )?,
         };
         resolved = merge_settings(resolved, source_settings);
     }

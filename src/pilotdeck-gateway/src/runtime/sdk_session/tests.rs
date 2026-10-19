@@ -137,6 +137,7 @@ fn registry_with_overrides(
                 plugin_runtime: runtime,
             }),
         )
+        .with_homedir(root)
         .with_organization_policy(policy)
         .with_plugin_loader(Arc::new(NamedLoader))
         .with_clock(Arc::new(|| 1_000.0)),
@@ -511,6 +512,7 @@ async fn set_config_clears_recorded_project_budget() {
                 plugin_runtime: runtime,
             }),
         )
+        .with_homedir(scratch.path())
         .with_plugin_loader(Arc::new(NamedLoader))
         .with_task_budget(Arc::new(Budget {
             cleared: Arc::clone(&cleared),
@@ -563,12 +565,56 @@ fn hook_event_enum_matches_shared_protocol_list() {
 
 #[test]
 fn home_dir_falls_back_to_process_home() {
-    let mut env = Env::new();
-    env.remove("HOME");
     let process_home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"));
-    assert_eq!(home_dir(&env), process_home);
+    assert_eq!(home_dir(None), process_home);
+}
+
+#[test]
+fn injected_env_home_does_not_shadow_os_homedir() {
+    let scratch = scratch::Scratch::new("sdk-session-home-source");
+    let process_home = scratch.path().join("process-home");
+    let env_home = scratch.path().join("env-home");
+    for (home, model) in [
+        (&process_home, "process-home-model"),
+        (&env_home, "env-home-model"),
+    ] {
+        let directory = home.join("settings");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("pilotdeck.yaml"),
+            format!("agent: {{model: {model}}}\n"),
+        )
+        .unwrap();
+    }
+
+    let mut env = Env::new();
+    env.insert("HOME".into(), env_home.to_string_lossy().into_owned());
+    env.insert("PILOT_HOME".into(), "~/settings".into());
+    let sources = JsValue::Array(vec!["user".into()]);
+    let resolved = resolve_session_settings(ResolveSettingsOptions {
+        project_root: scratch.path(),
+        cwd: scratch.path(),
+        env: &env,
+        // Stands in for `os.homedir()`; tests cannot rewrite the process HOME.
+        homedir: Some(&process_home),
+        host_defaults: None,
+        host_managed_settings: None,
+        host_setting_sources: Some(&sources),
+        settings: None,
+        setting_sources: None,
+        host_enforced_settings: None,
+    })
+    .unwrap()
+    .expect("process-home settings resolve");
+
+    let model = resolved
+        .get("agent")
+        .and_then(|agent| agent.get("model"))
+        .and_then(JsValue::as_string)
+        .map(|model| model.to_utf8().unwrap());
+    assert_eq!(model.as_deref(), Some("process-home-model"));
 }
 
 #[test]
@@ -635,6 +681,7 @@ async fn abort_after_project_budget_write_keeps_ledger_and_retry_conflicts() {
                 plugin_runtime: runtime,
             }),
         )
+        .with_homedir(scratch.path())
         .with_plugin_loader(Arc::new(NamedLoader))
         .with_task_budget(Arc::new(TaskBudgetStorePort::new(store)))
         .with_clock(Arc::new(|| 0.0_f64)),
