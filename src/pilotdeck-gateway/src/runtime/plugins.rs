@@ -582,26 +582,27 @@ async fn drain_one_plugin(
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
 ) -> Result<(), PluginRuntimeError> {
     loop {
-        // We must register the Notified future *before* releasing the lock so
-        // that any notify_waiters() call in release_lease_plugins that fires
-        // between the lock release and the first .await is not missed.
+        // `Notify::notified()` only registers the waiter when the future is
+        // first polled, not when it is created.  We must call `.enable()` while
+        // still holding the lock so the waiter is registered before we release
+        // the guard.  This closes the race with `release_lease_plugins`
+        // calling `notify_waiters()` between the lock release and the .await.
+        // Pattern mirrors config/store.rs `wait_done` / `run_or_wait`.
         //
-        // Pattern: clone Arc<Notify> inside the lock, then call .notified()
-        // while the guard is still held (so the future is registered), keep
-        // `waiters` alive across .await so the borrow is valid.
-        let (referenced, waiters) = {
-            let st = state_mutex.lock().await;
-            (
-                st.registry.is_plugin_referenced(&plugin),
-                Arc::clone(&st.registry.waiters),
-            )
-        };
-        if !referenced {
+        // Clone the Arc<Notify> first so the Notified future borrows from the
+        // local `waiters`, not from the MutexGuard — the guard can then drop
+        // while the pinned future stays valid.
+        let st = state_mutex.lock().await;
+        if !st.registry.is_plugin_referenced(&plugin) {
+            drop(st);
             break;
         }
-        // notified() borrows `waiters` (an Arc<Notify>).  The future is
-        // registered here; `waiters` stays live until after .await completes.
-        waiters.notified().await;
+        let waiters = Arc::clone(&st.registry.waiters);
+        let notified = waiters.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        drop(st);
+        notified.await;
     }
     if let Some(dispose) = &plugin.dispose {
         dispose().await.map_err(PluginRuntimeError::new)?;
