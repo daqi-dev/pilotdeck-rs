@@ -52,6 +52,11 @@ fn property<'a>(v: &'a JsValue, k: &str) -> Result<&'a JsValue, Error> {
 fn is(v: &JsValue, s: &str) -> bool {
     v.as_string().is_some_and(|v| v.equals_str(s))
 }
+fn unknown_project_key(units: &[u16]) -> Error {
+    let mut message = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(units);
+    error("PROJECT_NOT_FOUND", JsString::from_utf16(message))
+}
 pub(crate) fn response<F: Files>(
     request: &JsValue,
     metadata: &Metadata<F>,
@@ -94,10 +99,19 @@ fn execute<F: Files>(
     let Some(project_string) = project.as_string() else {
         return Err(path_argument(project));
     };
-    let requested = resolve(
-        &metadata.cwd,
-        &String::from_utf16_lossy(project_string.units()),
-    );
+    let project_units = project_string.units();
+    // `projectRegistry.ts:41-59` resolves the key and compares the resulting JS
+    // strings by code unit. A lone surrogate therefore names its own path and
+    // must not be replacement-decoded before the lookup: on a filesystem that
+    // can store U+FFFD, `"\ud800"` and `"\ufffd"` are different projects and
+    // `from_utf16_lossy` would alias one onto the other. Disk-derived project
+    // keys are always valid UTF-8, so an unpaired surrogate can never name home
+    // or a registered project; reject with the original units, exactly as TS
+    // does before any filesystem access.
+    let Some(project_path) = project_string.to_utf8().ok() else {
+        return Err(unknown_project_key(project_units));
+    };
+    let requested = resolve(&metadata.cwd, &project_path);
     let project = if requested == metadata.home {
         metadata.home.to_string_lossy().into_owned()
     } else {
@@ -109,15 +123,7 @@ fn execute<F: Files>(
                 .find(|p| resolve(&metadata.cwd, p) == requested),
             _ => None,
         };
-        found.ok_or_else(|| {
-            error(
-                "PROJECT_NOT_FOUND",
-                format!(
-                    "Unknown projectKey: {}",
-                    String::from_utf16_lossy(project_string.units())
-                ),
-            )
-        })?
+        found.ok_or_else(|| unknown_project_key(project_units))?
     };
     let session = field(params, "sessionKey");
     if matches!(session, JsValue::Undefined | JsValue::Null)

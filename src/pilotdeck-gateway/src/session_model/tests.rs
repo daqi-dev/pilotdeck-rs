@@ -73,6 +73,8 @@ fn recorded_io_error(fact: &serde_json::Value, key: &str) -> io::Result<()> {
     Err(io::Error::from_raw_os_error(errno))
 }
 const IO_FIXTURE: &str = include_str!("../../tests/fixtures/session-model/io-errors.json");
+const PROJECT_KEY_FIXTURE: &str =
+    include_str!("../../tests/fixtures/session-model/project-key-identity.json");
 pub(crate) fn fixture() -> serde_json::Value {
     serde_json::from_str(include_str!(
         "../../tests/fixtures/session-model/cases.json"
@@ -113,6 +115,15 @@ fn illformed_collation_has_precise_host_boundaries_and_node_responses() {
 #[test]
 fn complete_default_provider_matches_node_wire_fixtures() {
     verify_responses(&fixture());
+}
+/// The U+FFFD project and the lone-surrogate spelling are distinct registry
+/// identities. `project-key-lone-surrogate` is the alias negative control: a
+/// lossy decode would make it resolve onto the registered U+FFFD project.
+#[test]
+fn project_key_identity_matches_the_node_registry() {
+    let fixture: serde_json::Value = serde_json::from_str(PROJECT_KEY_FIXTURE).unwrap();
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 3);
+    verify_responses(&fixture);
 }
 #[test]
 fn filesystem_stages_match_real_node_failures_and_races() {

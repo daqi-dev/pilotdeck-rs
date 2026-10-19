@@ -406,7 +406,12 @@ impl<F: Files> Metadata<F> {
             if resolve(&self.cwd, &root) == self.home {
                 continue;
             }
-            projects.push(self.summary(&root, Some(&dir), JsString::from(root.as_str())));
+            projects.push(self.summary(
+                &root,
+                Some(&root),
+                Some(&dir),
+                JsString::from(root.as_str()),
+            ));
         }
         // Stable, like JS Array.sort: activity ties retain UTF-8 byte directory order.
         projects.sort_by(|left, right| {
@@ -422,14 +427,18 @@ impl<F: Files> Metadata<F> {
         });
         object([("projects", JsValue::Array(projects))])
     }
-    fn describe_storage(&self, root: &str) -> Option<PathBuf> {
+    fn describe_storage(&self, root: &str, identity: Option<&str>) -> Option<PathBuf> {
         let projects_dir = self.home.join("projects");
         let target = resolve(&self.cwd, root);
         let candidate = projects_dir.join(project_id(&target));
+        let matches = |marker: &str| {
+            identity
+                .is_some_and(|identity| resolve(&self.cwd, marker) == resolve(&self.cwd, identity))
+        };
         let mut legacy = None;
         if self.files.stat(&candidate).is_ok_and(|stat| stat.directory) {
             match self.marker(&candidate) {
-                Some(marker) if !marker.is_empty() && resolve(&self.cwd, &marker) == target => {
+                Some(marker) if !marker.is_empty() && matches(&marker) => {
                     return Some(candidate);
                 }
                 None => legacy = Some(candidate),
@@ -440,9 +449,9 @@ impl<F: Files> Metadata<F> {
         // TS returns undefined on failed readdir, even if legacy was found.
         for (id, directory) in self.files.entries(&projects_dir).ok()? {
             if directory
-                && self.marker(&projects_dir.join(&id)).is_some_and(|marker| {
-                    !marker.is_empty() && resolve(&self.cwd, &marker) == target
-                })
+                && self
+                    .marker(&projects_dir.join(&id))
+                    .is_some_and(|marker| !marker.is_empty() && matches(&marker))
             {
                 return Some(projects_dir.join(id));
             }
@@ -450,10 +459,21 @@ impl<F: Files> Metadata<F> {
         legacy
     }
     pub fn describe_project(&self, root: &JsString) -> JsValue {
+        // Node's fs layer replacement-encodes a lone surrogate, but the
+        // registry identity comparison in `listProjects.ts:120-160` keeps the
+        // original JS string. Use the lossy text for filesystem paths and the
+        // fallback project id, while marker comparisons only accept a
+        // representable identity; otherwise `"\ud800"` would alias onto a
+        // project whose path contains literal U+FFFD.
         let path = String::from_utf16_lossy(root.units());
-        self.summary(&path, self.describe_storage(&path).as_deref(), root.clone())
+        let identity = root.to_utf8().ok();
+        let storage = self.describe_storage(&path, identity.as_deref());
+        self.summary(&path, identity.as_deref(), storage.as_deref(), root.clone())
     }
     pub(crate) fn chat_dir(&self, root: &str) -> PathBuf {
+        self.chat_dir_with_identity(root, Some(root))
+    }
+    fn chat_dir_with_identity(&self, root: &str, identity: Option<&str>) -> PathBuf {
         let target = resolve(&self.cwd, root);
         let projects_dir = self.home.join("projects");
         for (id, directory) in self.files.entries(&projects_dir).unwrap_or_default() {
@@ -462,7 +482,9 @@ impl<F: Files> Metadata<F> {
             }
             if let Some(marker) = self.marker(&projects_dir.join(&id))
                 && !marker.is_empty()
-                && resolve(&self.cwd, &marker) == target
+                && identity.is_some_and(|identity| {
+                    resolve(&self.cwd, &marker) == resolve(&self.cwd, identity)
+                })
                 && self
                     .files
                     .stat(&resolve(&self.cwd, &marker))
@@ -473,7 +495,13 @@ impl<F: Files> Metadata<F> {
         }
         projects_dir.join(project_id(&target)).join("chats")
     }
-    fn summary(&self, root: &str, storage: Option<&Path>, wire_root: JsString) -> JsValue {
+    fn summary(
+        &self,
+        root: &str,
+        identity: Option<&str>,
+        storage: Option<&Path>,
+        wire_root: JsString,
+    ) -> JsValue {
         let created = storage
             .and_then(|dir| self.files.stat(dir).ok())
             .map(|stat| {
@@ -483,7 +511,7 @@ impl<F: Files> Metadata<F> {
                     stat.ctime_ms
                 }
             });
-        let chat_dir = self.chat_dir(root);
+        let chat_dir = self.chat_dir_with_identity(root, identity);
         let mut activity = Vec::new();
         for (name, _) in self.files.entries(&chat_dir).unwrap_or_default() {
             let Some(session) = name.strip_suffix(".jsonl") else {
