@@ -638,16 +638,21 @@ impl HookRuntime {
             let _ = done.wait_for(|done| *done).await;
             return;
         }
-        self.0.bus.dispose();
-        self.0.pending.dispose().await;
-        self.0.callback.dispose().await;
-        let mut drained = self.0.drained.subscribe();
-        let _ = drained.wait_for(|count| *count == 0).await;
-        {
-            let mut state = self.0.state.lock().unwrap();
-            *state = RuntimeState::Disposed;
-        }
-        self.0.dispose_done.send_replace(true);
+        // C5: the drain must not live inside this future. `TurnScope` bounds
+        // `handler.dispose()` with a timeout and drops the future on expiry;
+        // keeping the drain in a detached task means state still reaches
+        // Disposed and a later dispose() never waits forever.
+        let inner = self.0.clone();
+        tokio::spawn(async move {
+            inner.bus.dispose();
+            inner.pending.dispose().await;
+            inner.callback.dispose().await;
+            let mut drained = inner.drained.subscribe();
+            let _ = drained.wait_for(|count| *count == 0).await;
+            *inner.state.lock().unwrap() = RuntimeState::Disposed;
+            inner.dispose_done.send_replace(true);
+        });
+        let _ = done.wait_for(|done| *done).await;
     }
 }
 

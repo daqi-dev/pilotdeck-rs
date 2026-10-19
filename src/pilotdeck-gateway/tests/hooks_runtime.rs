@@ -159,7 +159,7 @@ async fn command_executor_matches_real_ts_subprocesses() {
     let root = scratch_root(&scratch);
     write_scripts(&oracle, &root);
     let cases = array(field(&oracle, "command"));
-    assert_eq!(cases.len(), 15);
+    assert_eq!(cases.len(), 22);
     for case in cases {
         let name = text(field(case, "name"));
         let command = substitute_text(&text(field(case, "command")), &[("<dir>", &root)]);
@@ -181,16 +181,19 @@ async fn command_executor_matches_real_ts_subprocesses() {
                 Some(signal)
             }
         };
-        let result = CommandHookExecutor::default()
-            .execute(CommandHookOptions {
+        let result = timeout(
+            Duration::from_secs(15),
+            CommandHookExecutor::default().execute(CommandHookOptions {
                 command: command.into(),
                 hook_input: object(field(case, "hookInput")),
                 cwd: cwd.into(),
                 env: case.get("env").map(object),
                 signal,
                 timeout_ms: case.get("timeoutMs").map(number),
-            })
-            .await;
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("command case {name} did not resolve within 15s"));
         assert_eq!(
             mask_paths(&json(&result.to_value()), &root),
             text(field(case, "expected")),
@@ -245,6 +248,45 @@ async fn timed_out_command_leaves_no_process() {
     assert!(dead, "timed out shell leader {pid:?} is still alive");
 }
 
+/// C6: a same-group grandchild can keep stdin open while the command never
+/// reads the >64 KiB payload, leaving the writer blocked. Finishing the hook
+/// must abort that writer task, not leak it past the execution.
+#[tokio::test]
+async fn command_cleanup_aborts_stdin_writer() {
+    let before = tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks();
+    let mut input = JsObject::new();
+    input.insert("big".into(), JsValue::String("x".repeat(200_000).into()));
+    let result = timeout(
+        Duration::from_secs(10),
+        CommandHookExecutor::default().execute(CommandHookOptions {
+            // The shell exits immediately; `sleep` inherits all three pipes and
+            // neither reads stdin nor closes stdout.
+            command: "sleep 30 &".into(),
+            hook_input: input,
+            cwd: std::env::temp_dir().to_string_lossy().into_owned().into(),
+            env: None,
+            signal: None,
+            timeout_ms: Some(500.0),
+        }),
+    )
+    .await
+    .expect("cleanup must not hang while a grandchild holds the pipes");
+    assert_eq!(result.outcome, HookOutcome::Timeout);
+    // Let abort/join of the writer and pipe readers settle before counting.
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
+            <= before,
+        "stdin writer task leaked past command cleanup"
+    );
+}
+
 // ---------------------------------------------------------------- HTTP mock
 
 fn response(status: u16, body: Vec<u8>) -> hyper::Response<http_body_util::Full<bytes::Bytes>> {
@@ -258,9 +300,16 @@ fn selected_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
     ["content-type", "x-a", "x-b", "x-c", "x-d"]
         .into_iter()
         .filter_map(|name| {
-            headers
-                .get(name)
-                .map(|value| (name.to_owned(), value.to_str().unwrap().to_owned()))
+            headers.get(name).map(|value| {
+                // Node's http server exposes header bytes as latin1 strings
+                // (`José` is E9 on the wire), so decode the same way here.
+                let value = value
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| char::from(*byte))
+                    .collect();
+                (name.to_owned(), value)
+            })
         })
         .collect()
 }
@@ -365,7 +414,7 @@ async fn http_executor_matches_real_ts_and_records_requests() {
     let refused = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
     let cases = array(field(field(&oracle, "http"), "cases"));
-    assert_eq!(cases.len(), 12);
+    assert_eq!(cases.len(), 15);
     let executor = HttpHookExecutor::new();
     for case in cases {
         let name = text(field(case, "name"));
@@ -436,6 +485,48 @@ async fn http_executor_matches_real_ts_and_records_requests() {
             );
         }
     }
+    server.abort();
+    let _ = server.await;
+}
+
+/// P1: TS `fetch` gives up after undici's 300 s headers timeout and reports
+/// `fetch failed`. The default is 300 s (too slow for a test), so inject a
+/// short one against a server that accepts but never responds.
+#[tokio::test]
+async fn http_headers_timeout_projects_fetch_failed() {
+    assert_eq!(
+        HttpHookExecutor::new().timeout(),
+        Duration::from_secs(300),
+        "default must match undici headersTimeout"
+    );
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    let started = Instant::now();
+    let result = timeout(
+        Duration::from_secs(5),
+        HttpHookExecutor::with_timeout(Duration::from_millis(100)).execute(HttpHookOptions {
+            url: format!("http://{address}/").into(),
+            headers: None,
+            allowed_env_vars: None,
+            hook_input: JsObject::new(),
+            env: None,
+            signal: None,
+        }),
+    )
+    .await
+    .expect("a headers timeout must resolve the request");
+    assert_eq!(result.outcome, HookOutcome::NonBlockingError);
+    assert_eq!(
+        String::from_utf16_lossy(result.stderr.units()),
+        "fetch failed"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
     server.abort();
     let _ = server.await;
 }
@@ -1140,6 +1231,57 @@ async fn lifecycle_dispatch_matches_real_ts() {
         mask_paths(&json(field(&value, "messages")), &root),
         text(field(section, "dispatchMessages"))
     );
+    // The session runtime is reused across turns: a second dispatch still runs
+    // hooks and keeps the first turn's pending async registration.
+    let second = runtime
+        .dispatch(LifecycleDispatchInput {
+            event: "Stop".into(),
+            base_input: base_input.clone(),
+            payload: Some(object(&parse_json(r#"{"extra":"v"}"#).unwrap())),
+            match_query: Some("Stop".into()),
+            cwd: root.clone().into(),
+            env: Some(object(
+                &parse_json(r#"{"PATH":"/usr/bin:/bin","HOME":"/tmp"}"#).unwrap(),
+            )),
+            signal: None,
+        })
+        .await
+        .unwrap();
+    let across = field(section, "acrossTurns");
+    assert_eq!(
+        mask_paths(&json(&value), &root),
+        text(field(across, "first"))
+    );
+    assert_eq!(
+        mask_paths(
+            &json(&JsValue::Array(
+                result
+                    .pending_async_hooks
+                    .iter()
+                    .map(|descriptor| descriptor.to_value())
+                    .collect()
+            )),
+            &root
+        ),
+        text(field(across, "firstPending"))
+    );
+    assert_eq!(
+        mask_paths(&json(&second.to_value()), &root),
+        text(field(across, "second"))
+    );
+    assert_eq!(
+        mask_paths(
+            &json(&JsValue::Array(
+                second
+                    .pending_async_hooks
+                    .iter()
+                    .map(|descriptor| descriptor.to_value())
+                    .collect()
+            )),
+            &root
+        ),
+        text(field(across, "secondPending"))
+    );
     runtime.dispose().await;
     let error = runtime
         .dispatch(LifecycleDispatchInput {
@@ -1246,8 +1388,10 @@ async fn lifecycle_dispatch_matches_real_ts() {
     // client validates.
     let handler_settings =
         parsed_settings(&substitute(field(section, "settings"), &[("<dir>", &root)]));
+    let handler_runtime =
+        LifecycleRuntime::new(HookRuntime::with_options(handler_settings, fixed_options()));
     let handler = host_lifecycle::Handler::new(
-        LifecycleRuntime::new(HookRuntime::with_options(handler_settings, fixed_options())),
+        handler_runtime.clone(),
         host_lifecycle::Binding {
             session_id: "session-1".into(),
             turn_id: "turn-1".into(),
@@ -1273,7 +1417,24 @@ async fn lifecycle_dispatch_matches_real_ts() {
         mask_paths(&json(field(&JsValue::Object(response), "result")), &root),
         text(field(section, "dispatch"))
     );
+    // TS dispatcher dispose never disposes the session lifecycle runtime, so a
+    // second turn still executes hooks.
     handler.dispose().await.unwrap();
+    let mut payload = JsObject::new();
+    payload.insert("extra".into(), "v".into());
+    let response = handler
+        .call(module_call(
+            "dispatch",
+            "Stop",
+            Some(JsValue::Object(payload)),
+        ))
+        .await
+        .expect("handler dispose must not dispose the session runtime");
+    assert_eq!(
+        mask_paths(&json(field(&JsValue::Object(response), "result")), &root),
+        text(field(field(section, "acrossTurns"), "second"))
+    );
+    handler_runtime.dispose().await;
     let mut payload = JsObject::new();
     payload.insert("extra".into(), "v".into());
     let error = handler
@@ -1336,6 +1497,163 @@ async fn lifecycle_dispatch_matches_real_ts() {
         "Lifecycle payload must be an object."
     );
     handler.dispose().await.unwrap();
+}
+
+/// P1: `Handler::dispose` is the per-turn dispatcher teardown and must not
+/// dispose the session-level runtime. A second turn still runs command and
+/// callback hooks, and a pending async registration from turn 1 survives both
+/// the dispose and the next turn.
+#[tokio::test]
+async fn lifecycle_handler_dispose_keeps_session_state_across_turns() {
+    let calls = Arc::new(Mutex::new(0usize));
+    let settings: HooksSettings = vec![(
+        "Stop".into(),
+        vec![HookMatcher {
+            hooks: vec![
+                HookCommand::Callback {
+                    name: "cb".into(),
+                    condition: None,
+                    status_message: None,
+                },
+                HookCommand::Command {
+                    command: r#"printf '{"systemMessage":"round"}'"#.into(),
+                    shell: None,
+                    asynchronous: None,
+                    async_rewake: None,
+                    common: HookCommon::default(),
+                },
+                HookCommand::Command {
+                    command: r#"printf '{"async":true}'"#.into(),
+                    shell: None,
+                    asynchronous: None,
+                    async_rewake: None,
+                    common: HookCommon::default(),
+                },
+            ],
+            ..HookMatcher::default()
+        }],
+    )];
+    let hooks = HookRuntime::with_options(settings, fixed_options());
+    hooks
+        .callback_executor()
+        .register(
+            &"cb".into(),
+            handler({
+                let calls = calls.clone();
+                move |_| {
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        *calls.lock().unwrap() += 1;
+                        Ok(CallbackResult::Text("{}".into()))
+                    })
+                }
+            }),
+        )
+        .unwrap();
+    let runtime = LifecycleRuntime::new(hooks);
+    let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+    let handler = host_lifecycle::Handler::new(
+        runtime.clone(),
+        host_lifecycle::Binding {
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+            cwd: cwd.clone().into(),
+            permission_mode: None,
+            base_env: None,
+            signal: None,
+        },
+    );
+
+    let response = handler
+        .call(module_call("dispatch", "Stop", None))
+        .await
+        .unwrap();
+    let first = field(&JsValue::Object(response), "result").clone();
+    assert!(json(field(&first, "effects")).contains("round"));
+    let first_pending = array(field(&first, "pendingAsyncHooks"));
+    assert_eq!(first_pending.len(), 1);
+    let first_id = string(field(&first_pending[0], "id"));
+    assert_eq!(*calls.lock().unwrap(), 1);
+
+    handler.dispose().await.unwrap();
+
+    // Pending async and callback registrations survive the turn teardown.
+    assert!(runtime.complete_async_hook(
+        &first_id,
+        AsyncHookCompletion {
+            stdout: Some(r#"{"reason":"late"}"#.into()),
+            ..Default::default()
+        }
+    ));
+    assert_eq!(runtime.collect_async_hook_responses().len(), 1);
+
+    let response = handler
+        .call(module_call("dispatch", "Stop", None))
+        .await
+        .expect("second turn must still run hooks");
+    let second = field(&JsValue::Object(response), "result").clone();
+    assert!(json(field(&second, "effects")).contains("round"));
+    let second_pending = array(field(&second, "pendingAsyncHooks"));
+    assert_eq!(second_pending.len(), 1);
+    assert_ne!(
+        string(field(&second_pending[0], "id")),
+        first_id,
+        "the second turn registers a new pending async hook"
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        2,
+        "callback survives and runs again"
+    );
+
+    runtime.dispose().await;
+}
+
+/// C5: dropping the first `dispose()` future (as `TurnScope`'s bounded wait
+/// does) must not leave the runtime stuck in `draining`; a later dispose must
+/// still finish.
+#[tokio::test]
+async fn runtime_dispose_survives_dropped_first_caller() {
+    let settings: HooksSettings = vec![(
+        "Stop".into(),
+        vec![HookMatcher {
+            hooks: vec![HookCommand::Command {
+                command: "sleep 0.4".into(),
+                shell: None,
+                asynchronous: None,
+                async_rewake: None,
+                common: HookCommon::default(),
+            }],
+            ..HookMatcher::default()
+        }],
+    )];
+    let runtime = HookRuntime::with_options(settings, fixed_options());
+    let input = HookRuntimeRunInput {
+        event: "Stop".into(),
+        hook_input: JsObject::new(),
+        match_query: Some("Stop".into()),
+        cwd: std::env::temp_dir().to_string_lossy().into_owned().into(),
+        env: None,
+        signal: None,
+    };
+    let running = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.run(input).await })
+    };
+    tokio::task::yield_now().await;
+    let disposing = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.dispose().await })
+    };
+    tokio::task::yield_now().await;
+    assert_eq!(runtime.lifecycle_state(), "draining");
+    disposing.abort();
+    let _ = disposing.await;
+    timeout(Duration::from_secs(3), runtime.dispose())
+        .await
+        .expect("a later dispose must not hang after the first caller is dropped");
+    assert_eq!(runtime.lifecycle_state(), "disposed");
+    let _ = running.await;
 }
 
 fn module_call(operation: &str, event: &str, payload: Option<JsValue>) -> JsValue {

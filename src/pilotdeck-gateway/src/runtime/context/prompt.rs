@@ -425,8 +425,11 @@ pub(crate) fn iso_timestamp_now() -> String {
     iso_timestamp(ms)
 }
 
-/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`; equivalent to `new Date(ms).toISOString()`
-/// for the representable range JS accepts.
+/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ` for years 0000–9999 and finite values in
+/// the JS Date range `|ms| <= 8.64e15`. Inside that domain this matches
+/// `new Date(ms).toISOString()`; extended `±YYYYYY` years, NaN, and values
+/// outside the range are unsupported. The only caller is `iso_timestamp_now`
+/// (current wall clock), so those boundaries are unreachable here.
 pub(crate) fn iso_timestamp(timestamp_ms: f64) -> String {
     let ms = timestamp_ms as i64;
     let days = ms.div_euclid(86_400_000);

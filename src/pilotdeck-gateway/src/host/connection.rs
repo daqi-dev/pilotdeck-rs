@@ -309,65 +309,19 @@ impl Connection {
     }
 
     fn kill_group(&mut self) {
-        #[cfg(unix)]
-        if let Some(group) = self.group.take() {
-            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-        }
+        crate::process_group::kill(self.group.take(), rustix::process::Signal::KILL);
     }
     #[cfg(unix)]
     async fn wait_for_exit_unreaped(&mut self) -> Result<bool, HostError> {
-        let Some(group) = self.group else {
-            return Ok(true);
-        };
-        let observe = async {
-            // WNOWAIT retains the leader (including a zombie) so its process
-            // group ID cannot be reused before our final group signal.
-            #[cfg(not(any(
-                target_os = "cygwin",
-                target_os = "horizon",
-                target_os = "openbsd",
-                target_os = "redox",
-                target_os = "wasi"
-            )))]
-            loop {
-                use rustix::process::{WaitId, WaitIdOptions, waitid};
-                match waitid(
-                    WaitId::Pid(group),
-                    WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-                ) {
-                    Ok(Some(_)) => return Ok(()),
-                    Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
-                    Err(rustix::io::Errno::INTR) => continue,
-                    Err(error) => return Err(HostError::io(error.into())),
-                }
-            }
-            // Platforms without WNOWAIT conservatively use the whole grace
-            // period. Never substitute try_wait: that would reap the leader.
-            #[cfg(any(
-                target_os = "cygwin",
-                target_os = "horizon",
-                target_os = "openbsd",
-                target_os = "redox",
-                target_os = "wasi"
-            ))]
-            {
-                let _ = group;
-                std::future::pending::<Result<(), HostError>>().await
-            }
-        };
-        match timeout(self.limits.close_timeout, observe).await {
-            Ok(result) => result.map(|()| true),
-            Err(_) => Ok(false),
-        }
+        crate::process_group::wait_for_exit_unreaped(self.group, self.limits.close_timeout)
+            .await
+            .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
         #[cfg(unix)]
         {
             if !self.wait_for_exit_unreaped().await? {
-                if let Some(group) = self.group {
-                    let _ =
-                        rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
-                }
+                crate::process_group::kill(self.group, rustix::process::Signal::TERM);
                 self.wait_for_exit_unreaped().await?;
             }
             // Also clean descendants of a naturally exited leader. Clear the
