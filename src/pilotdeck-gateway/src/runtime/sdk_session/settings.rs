@@ -6,6 +6,7 @@ use crate::{config::Env, metadata::resolve};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashSet,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -505,14 +506,29 @@ fn resolve_pilot_home(env: &Env, cwd: &Path, homedir: Option<&Path>) -> PathBuf 
     resolve(cwd, raw)
 }
 
+/// `os.homedir()` for a process without `HOME`: libuv's `uv_os_homedir` asks
+/// `getpwuid_r(geteuid())` for `pw_dir` and only then gives up. `None` means
+/// "HOME is not set"; an empty HOME is a real value libuv returns as-is, so it
+/// must stay empty instead of reaching the passwd lookup. rustc 1.99's
+/// `std::env::home_dir` returns a set HOME as-is (empty included) and only for
+/// an unset HOME reads `getpwuid_r(getuid()).pw_dir`, so it matches libuv
+/// except for setuid processes (`getuid` vs `geteuid`).
+pub(super) fn home_dir_from(home: Option<OsString>) -> PathBuf {
+    match home {
+        Some(home) => PathBuf::from(home),
+        None => std::env::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+    }
+}
+
 /// `os.homedir()`: the process HOME. `homedir` is the host/Test seam for that
 /// one value; the SDK session `env` is deliberately not consulted (Node ignores
-/// `options.env.HOME` for `~`). `None` keeps the gate1 B6 fallback to HOME.
+/// `options.env.HOME` for `~`). Without the seam the process HOME is used and,
+/// when it is unset, `std::env::home_dir()` (passwd fallback) before the
+/// historical `/`.
 pub(super) fn home_dir(homedir: Option<&Path>) -> PathBuf {
     homedir
         .map(Path::to_path_buf)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .unwrap_or_else(|| home_dir_from(std::env::var_os("HOME")))
 }
 
 fn source_path(
