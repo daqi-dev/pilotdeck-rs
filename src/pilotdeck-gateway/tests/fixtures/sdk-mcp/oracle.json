@@ -8520,6 +8520,843 @@
             "allow": []
           },
           "calls": []
+        },
+        {
+          "step": {
+            "op": "override",
+            "input": {
+              "sessionKey": 5,
+              "serverName": "x",
+              "mode": "auto"
+            }
+          },
+          "result": {
+            "error": {
+              "name": "TypeError",
+              "code": null,
+              "message": "input.sessionKey?.trim is not a function"
+            }
+          },
+          "state": {
+            "servers": [],
+            "overrides": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    "auto"
+                  ],
+                  [
+                    "a__b",
+                    "auto"
+                  ],
+                  [
+                    "_a_",
+                    "auto"
+                  ],
+                  [
+                    "😀",
+                    "auto"
+                  ],
+                  [
+                    "a😀b",
+                    "auto"
+                  ],
+                  [
+                    "---",
+                    "auto"
+                  ]
+                ]
+              ],
+              [
+                "other",
+                [
+                  [
+                    "no-live-entry",
+                    "auto"
+                  ]
+                ]
+              ]
+            ],
+            "rules": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a__b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "_a_",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "😀",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__😀__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a😀b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "---",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__---__*",
+                      "force": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "projects": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__😀__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__---__*",
+                "force": true
+              }
+            ],
+            "allow": []
+          },
+          "calls": []
+        },
+        {
+          "step": {
+            "op": "override",
+            "input": {
+              "sessionKey": true,
+              "serverName": "x",
+              "mode": "auto"
+            }
+          },
+          "result": {
+            "error": {
+              "name": "TypeError",
+              "code": null,
+              "message": "input.sessionKey?.trim is not a function"
+            }
+          },
+          "state": {
+            "servers": [],
+            "overrides": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    "auto"
+                  ],
+                  [
+                    "a__b",
+                    "auto"
+                  ],
+                  [
+                    "_a_",
+                    "auto"
+                  ],
+                  [
+                    "😀",
+                    "auto"
+                  ],
+                  [
+                    "a😀b",
+                    "auto"
+                  ],
+                  [
+                    "---",
+                    "auto"
+                  ]
+                ]
+              ],
+              [
+                "other",
+                [
+                  [
+                    "no-live-entry",
+                    "auto"
+                  ]
+                ]
+              ]
+            ],
+            "rules": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a__b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "_a_",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "😀",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__😀__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a😀b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "---",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__---__*",
+                      "force": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "projects": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__😀__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__---__*",
+                "force": true
+              }
+            ],
+            "allow": []
+          },
+          "calls": []
+        },
+        {
+          "step": {
+            "op": "override",
+            "input": {
+              "sessionKey": [
+                "s"
+              ],
+              "serverName": "x",
+              "mode": "auto"
+            }
+          },
+          "result": {
+            "error": {
+              "name": "TypeError",
+              "code": null,
+              "message": "input.sessionKey?.trim is not a function"
+            }
+          },
+          "state": {
+            "servers": [],
+            "overrides": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    "auto"
+                  ],
+                  [
+                    "a__b",
+                    "auto"
+                  ],
+                  [
+                    "_a_",
+                    "auto"
+                  ],
+                  [
+                    "😀",
+                    "auto"
+                  ],
+                  [
+                    "a😀b",
+                    "auto"
+                  ],
+                  [
+                    "---",
+                    "auto"
+                  ]
+                ]
+              ],
+              [
+                "other",
+                [
+                  [
+                    "no-live-entry",
+                    "auto"
+                  ]
+                ]
+              ]
+            ],
+            "rules": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a__b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "_a_",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "😀",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__😀__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a😀b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "---",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__---__*",
+                      "force": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "projects": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__😀__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__---__*",
+                "force": true
+              }
+            ],
+            "allow": []
+          },
+          "calls": []
+        },
+        {
+          "step": {
+            "op": "override",
+            "input": {
+              "sessionKey": "s",
+              "serverName": 5,
+              "mode": "auto"
+            }
+          },
+          "result": {
+            "error": {
+              "name": "TypeError",
+              "code": null,
+              "message": "input.serverName?.trim is not a function"
+            }
+          },
+          "state": {
+            "servers": [],
+            "overrides": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    "auto"
+                  ],
+                  [
+                    "a__b",
+                    "auto"
+                  ],
+                  [
+                    "_a_",
+                    "auto"
+                  ],
+                  [
+                    "😀",
+                    "auto"
+                  ],
+                  [
+                    "a😀b",
+                    "auto"
+                  ],
+                  [
+                    "---",
+                    "auto"
+                  ]
+                ]
+              ],
+              [
+                "other",
+                [
+                  [
+                    "no-live-entry",
+                    "auto"
+                  ]
+                ]
+              ]
+            ],
+            "rules": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a__b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "_a_",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "😀",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__😀__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a😀b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "---",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__---__*",
+                      "force": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "projects": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__😀__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__---__*",
+                "force": true
+              }
+            ],
+            "allow": []
+          },
+          "calls": []
+        },
+        {
+          "step": {
+            "op": "override",
+            "input": {
+              "sessionKey": "s",
+              "serverName": true,
+              "mode": "auto"
+            }
+          },
+          "result": {
+            "error": {
+              "name": "TypeError",
+              "code": null,
+              "message": "input.serverName?.trim is not a function"
+            }
+          },
+          "state": {
+            "servers": [],
+            "overrides": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    "auto"
+                  ],
+                  [
+                    "a__b",
+                    "auto"
+                  ],
+                  [
+                    "_a_",
+                    "auto"
+                  ],
+                  [
+                    "😀",
+                    "auto"
+                  ],
+                  [
+                    "a😀b",
+                    "auto"
+                  ],
+                  [
+                    "---",
+                    "auto"
+                  ]
+                ]
+              ],
+              [
+                "other",
+                [
+                  [
+                    "no-live-entry",
+                    "auto"
+                  ]
+                ]
+              ]
+            ],
+            "rules": [
+              [
+                "s",
+                [
+                  [
+                    "a b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a__b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "_a_",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "😀",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__😀__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "a😀b",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__a_b__*",
+                      "force": true
+                    }
+                  ],
+                  [
+                    "---",
+                    {
+                      "source": "session",
+                      "behavior": "ask",
+                      "toolName": "mcp__---__*",
+                      "force": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "projects": [],
+            "ask": [
+              {
+                "source": "policy",
+                "behavior": "ask",
+                "toolName": "Bash"
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__😀__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__a_b__*",
+                "force": true
+              },
+              {
+                "source": "session",
+                "behavior": "ask",
+                "toolName": "mcp__---__*",
+                "force": true
+              }
+            ],
+            "allow": []
+          },
+          "calls": []
         }
       ]
     },
@@ -9116,6 +9953,12 @@
                 {
                   "name": "session",
                   "mcpServers": {
+                    "2": {
+                      "command": "two"
+                    },
+                    "10": {
+                      "command": "ten"
+                    },
                     "a": {
                       "command": "z"
                     },
@@ -9222,6 +10065,14 @@
           "result": {
             "ok": {
               "servers": [
+                {
+                  "name": "2",
+                  "status": "configured"
+                },
+                {
+                  "name": "10",
+                  "status": "configured"
+                },
                 {
                   "name": "a",
                   "status": "configured"
@@ -13728,6 +14579,1706 @@
             ],
             [
               "refresh"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "prototype-env",
+      "projectPlugins": [],
+      "sessionPlugins": [],
+      "configured": null,
+      "refreshError": null,
+      "resolveError": null,
+      "closeError": null,
+      "gateway": true,
+      "steps": [
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "toString": {
+                  "type": "stdio",
+                  "command": "${env:toString}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "toString"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "toString": {
+                  "type": "stdio",
+                  "command": "${env:toString}"
+                },
+                "constructor": {
+                  "type": "stdio",
+                  "command": "${env:constructor}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "constructor"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "constructor",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:constructor}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "toString": {
+                  "type": "stdio",
+                  "command": "${env:toString}"
+                },
+                "constructor": {
+                  "type": "stdio",
+                  "command": "${env:constructor}"
+                },
+                "proto": {
+                  "type": "stdio",
+                  "command": "${env:__proto__}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "proto"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "constructor",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:constructor}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "proto",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:__proto__}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "toString": {
+                  "type": "stdio",
+                  "command": "${env:toString}"
+                },
+                "constructor": {
+                  "type": "stdio",
+                  "command": "${env:constructor}"
+                },
+                "proto": {
+                  "type": "stdio",
+                  "command": "${env:__proto__}"
+                },
+                "hasOwnProperty": {
+                  "type": "stdio",
+                  "command": "${env:hasOwnProperty}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "hasOwnProperty"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "constructor",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:constructor}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "proto",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:__proto__}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "hasOwnProperty",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:hasOwnProperty}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "toString": {
+                  "type": "stdio",
+                  "command": "${env:toString}"
+                },
+                "constructor": {
+                  "type": "stdio",
+                  "command": "${env:constructor}"
+                },
+                "proto": {
+                  "type": "stdio",
+                  "command": "${env:__proto__}"
+                },
+                "hasOwnProperty": {
+                  "type": "stdio",
+                  "command": "${env:hasOwnProperty}"
+                },
+                "valueOf": {
+                  "type": "stdio",
+                  "command": "${env:valueOf}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "valueOf"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "constructor",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:constructor}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "proto",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:__proto__}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "hasOwnProperty",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:hasOwnProperty}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "valueOf",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:valueOf}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "status",
+            "input": {
+              "sessionKey": "s"
+            }
+          },
+          "result": {
+            "ok": {
+              "servers": [
+                {
+                  "name": "toString",
+                  "status": "configured"
+                },
+                {
+                  "name": "constructor",
+                  "status": "configured"
+                },
+                {
+                  "name": "proto",
+                  "status": "configured"
+                },
+                {
+                  "name": "hasOwnProperty",
+                  "status": "configured"
+                },
+                {
+                  "name": "valueOf",
+                  "status": "configured"
+                }
+              ]
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "toString",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:toString}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "constructor",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:constructor}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "proto",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:__proto__}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "hasOwnProperty",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:hasOwnProperty}"
+                      },
+                      "enabled": true
+                    }
+                  ],
+                  [
+                    "valueOf",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${env:valueOf}"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "home-expansion",
+      "projectPlugins": [],
+      "sessionPlugins": [],
+      "configured": null,
+      "refreshError": null,
+      "resolveError": null,
+      "closeError": null,
+      "gateway": true,
+      "steps": [
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "tilde": {
+                  "type": "stdio",
+                  "command": "~/bin/node"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "tilde"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "tilde",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "~/bin/node"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "tildeOnly": {
+                  "type": "stdio",
+                  "command": "~"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "tildeOnly"
+              ],
+              "removed": [
+                "tilde"
+              ],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "tildeOnly",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "~"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "userHome": {
+                  "type": "stdio",
+                  "command": "${userHome}/bin/node"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "userHome"
+              ],
+              "removed": [
+                "tildeOnly"
+              ],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "userHome",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${userHome}/bin/node"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "userHomeOnly": {
+                  "type": "stdio",
+                  "command": "${userHome}"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [],
+              "removed": [],
+              "errors": [
+                {
+                  "name": "userHomeOnly",
+                  "error": "no recognized transport (need command or url)"
+                }
+              ]
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "userHome",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "${userHome}/bin/node"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "sessionKey": "s",
+              "servers": {
+                "url": {
+                  "type": "streamable_http",
+                  "url": "${userHome}/mcp"
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "url"
+              ],
+              "removed": [
+                "userHome"
+              ],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "url",
+                    {
+                      "config": {
+                        "type": "streamable_http",
+                        "url": "${userHome}/mcp"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "status",
+            "input": {
+              "sessionKey": "s"
+            }
+          },
+          "result": {
+            "ok": {
+              "servers": [
+                {
+                  "name": "url",
+                  "status": "configured"
+                }
+              ]
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "url",
+                    {
+                      "config": {
+                        "type": "streamable_http",
+                        "url": "${userHome}/mcp"
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              null
+            ],
+            [
+              "refresh"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-key",
+      "projectPlugins": [],
+      "sessionPlugins": [],
+      "configured": null,
+      "refreshError": null,
+      "resolveError": null,
+      "closeError": null,
+      "gateway": true,
+      "steps": [
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "projectKey": "proj",
+              "sessionKey": "s",
+              "servers": {
+                "a": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "server.js"
+                  ],
+                  "env": {
+                    "A": "b"
+                  },
+                  "cwd": "/tmp",
+                  "timeout": 5
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [
+                "a"
+              ],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "a",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "node",
+                        "args": [
+                          "server.js"
+                        ],
+                        "env": {
+                          "A": "b"
+                        },
+                        "cwd": "/tmp",
+                        "timeout": 5
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              "proj"
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "status",
+            "input": {
+              "projectKey": "proj",
+              "sessionKey": "s"
+            }
+          },
+          "result": {
+            "ok": {
+              "servers": [
+                {
+                  "name": "a",
+                  "status": "configured"
+                }
+              ]
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "a",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "node",
+                        "args": [
+                          "server.js"
+                        ],
+                        "env": {
+                          "A": "b"
+                        },
+                        "cwd": "/tmp",
+                        "timeout": 5
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              "proj"
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              "proj"
+            ],
+            [
+              "refresh"
+            ]
+          ]
+        },
+        {
+          "step": {
+            "op": "set",
+            "input": {
+              "projectKey": "",
+              "sessionKey": "s",
+              "servers": {
+                "a": {
+                  "type": "stdio",
+                  "command": "node",
+                  "args": [
+                    "server.js"
+                  ],
+                  "env": {
+                    "A": "b"
+                  },
+                  "cwd": "/tmp",
+                  "timeout": 5
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": {
+              "added": [],
+              "removed": [],
+              "errors": []
+            }
+          },
+          "state": {
+            "servers": [
+              [
+                "s",
+                [
+                  [
+                    "a",
+                    {
+                      "config": {
+                        "type": "stdio",
+                        "command": "node",
+                        "args": [
+                          "server.js"
+                        ],
+                        "env": {
+                          "A": "b"
+                        },
+                        "cwd": "/tmp",
+                        "timeout": 5
+                      },
+                      "enabled": true
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "overrides": [],
+            "rules": [],
+            "projects": [
+              [
+                "s",
+                "/pdrs-fixture/project"
+              ]
+            ],
+            "ask": [],
+            "allow": []
+          },
+          "calls": [
+            [
+              "resolve",
+              "proj"
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
+            ],
+            [
+              "resolve",
+              "proj"
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "resolve",
+              ""
+            ],
+            [
+              "refresh"
+            ],
+            [
+              "closeSession",
+              {
+                "sessionKey": "s",
+                "reason": "sdk_mcp_servers_changed"
+              }
             ]
           ]
         }

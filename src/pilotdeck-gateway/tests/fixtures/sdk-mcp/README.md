@@ -38,23 +38,27 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 Rust `tests/sdk_mcp.rs` 逐场景逐步骤回放，结果、状态与调用序列都按
 `stringify` 深比较；`baseline::oracle` 始终校验提交与哈希形状，设置
-`PDRS_BASELINE` 时再用 Git 重算闭包字节。
+`PDRS_BASELINE` 时再用 Git 重算闭包字节。当前语料为 **16 场景 / 132 步**，
+回放与生成器都断言这两个精确条数，空或截断的 oracle 不会通过。
 
 | 场景 | 覆盖 |
 |---|---|
 | basic | set 的 added/removed、重复 toggle、reconnect 成功/禁用/未知、set 保留 disabled、空 set 删除 |
 | invalid-configs | `servers` 缺键/null、空对象、stdio 缺/空 command、http 缺/空 url、`null` 配置的 TypeError、字符串/数字配置、数组/字符串 servers 的 `Object.entries` 键序、非可迭代 `args`、只给 `httpUrl`、占位符展开为空/空白 |
 | reserved-names | 项目插件与会话插件占名；混合错误批不改状态、不 closeSession |
-| permission | auto/default/clear、重复 auto、`normalizeMcpPermissionSegment` 的空白/下划线/非 ASCII/emoji、生成本地规则对象与 ask 数组同身份、无 live 权限条目时只存 override、session/server/mode 的缺键/null/空串/非法值逐字错误 |
+| permission | auto/default/clear、重复 auto、`normalizeMcpPermissionSegment` 的空白/下划线/非 ASCII/emoji、生成本地规则对象与 ask 数组同身份、无 live 权限条目时只存 override、session/server/mode 的缺键/null/空串/非法值以及非字符串 sessionKey/serverName 的 TypeError |
 | permission-session-order | 两个 live 会话的生成规则 Map 在更新 s 后仍保持 `s,t` 插入序（TS `Map.set` 不移动已有键） |
-| status-order | 会话插件先入、SDK 服务器覆盖同名状态、禁用状态、无/空/null sessionKey 空投影、项目插件不进入列表 |
+| status-order | 会话插件先入、插件名整数键排在普通键前、SDK 服务器覆盖同名状态、禁用状态、无/空/null sessionKey 空投影、项目插件不进入列表 |
+| prototype-env | `${env:toString|constructor|__proto__|hasOwnProperty|valueOf}` 经 `Object.prototype` 回落得到非空 command，配置有效并 added |
+| home-expansion | `~/`、`~`、`${userHome}` 在 command 与 url 中展开；HOME 固定为 `` $` ``，`${userHome}` 单独出现按 GetSubstitution 展开为空（诊断），`${userHome}/x` 保持非空 |
+| project-key | 字符串 `projectKey`（含空串）原样传给 resolver，并进入 `sdkSessionProjects` |
 | errors | refresh 拒绝、resolve 拒绝、closeSession 拒绝（状态已改）、无 gateway 时不调用 close |
 | config-key-order | 整数键 JSON 顺序、相同配置重复 set 不算 added、改 command 算 added |
 | toggle-enabled | `enabled` 原值保留（null/0/空串/"false"/缺键）与 status 真值、nullish 时 re-set 回落 true |
 | explicit-undefined | 输入显式 `undefined` 三处：sessionKey/serverName/mode 的错误、config 的 TypeError、toggle enabled 的 `undefined` 原值及 re-set `?? true` |
 
 已知限制：`LoadedPlugin.mcp_servers` 是 `serde_json::Value`，默认对象映射按键排序，
-无法保留插件 manifest 的 JS 插入顺序。夹具的插件键按字典序给出，因此状态投影的
-插件先后顺序不覆盖任意 manifest 键序；会话 SDK 服务器的顺序仍按真实 Map 顺序
-逐项比较。该字段由 A6.3-pr7b 的加载器填充，届时若需要任意键序，应在加载边界
-保留原始键序。
+无法保留插件 manifest 的 JS 插入顺序。整数键（数组索引）已由
+`collect_plugin_mcp_names` 按数值升序排到普通键之前，与 `Object.keys` 的可计算部分
+一致；普通键仍按 serde 的字典序给出，不覆盖任意 manifest 插入序。该字段由
+A6.3-pr7b 的加载器填充，届时若需要任意键序，应在加载边界保留原始键序。
