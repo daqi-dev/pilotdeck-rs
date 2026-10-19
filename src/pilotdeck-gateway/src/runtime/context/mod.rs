@@ -1,6 +1,8 @@
 //! Host-owned context runtime. `prepare` owns prompt assembly, PILOTDECK.md
 //! instruction discovery and message projection; memory attachments land in
-//! A6.6-pr5b, tool-result budgeting in A6.6-pr6 and compaction in A6.6-pr7+.
+//! A6.6-pr5b, tool-result budgeting in A6.6-pr6; `compaction` holds the
+//! model-free snip / micro passes (A6.6-pr7).
+pub mod compaction;
 mod instructions;
 mod prepare;
 mod prompt;

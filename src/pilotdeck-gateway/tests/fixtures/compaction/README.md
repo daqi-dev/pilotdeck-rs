@@ -13,7 +13,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 
 生成器先跑 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`：固定 Git 绝对路径、HEAD 等于 `cc7c4e6`、已跟踪树无改动、整棵 `src` 逐 blob 比对；再按 import 传递闭包复算 `sourceSha256`。每次运行在输出目录下 `mkdtemp` 一个 `.generate-*` 临时目录，只清理本次创建的目录；transcript 落盘行、返回值与错误都来自真实 TS，随机 UUID/场景目录归一化后写入 `oracle.json`；生成器连跑两次逐字节一致（UUID 归一化后）。
 
-`oracle.json.scenarios[]`（9 组，Rust 逐场景重放步骤结果与整份 transcript 文件字节）：
+`oracle.json.scenarios[]`（11 组，Rust 逐场景重放步骤结果与整份 transcript 文件字节）：
 
 | 场景 | 覆盖 |
 |---|---|
@@ -21,7 +21,9 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 | compacted-replacement | `durableContextRuntime` 的 compacted 分支顺序：started -> 延迟 completion；`TurnRunner` 的 durable 分支：一个 `control_boundary` 原子 replacement（`snapshot.version=1` + 完整 messages）-> commit 写 `compaction_completed` |
 | deferred-failure | started -> 延迟 completion -> `failDeferredCompaction` 写 `compaction_failed`；随后的 commit 是无操作 |
 | control-boundaries | microcompact / resume / manual / 无 snapshot 的 compact boundary：writer 原样落盘，不补字段 |
-| errors | 无 pending 的 defer；无 bracket 的 completed/failed；重复 started；非法 messageCount/maxContextTokens/missing；空 error；error=null 的 V8 TypeError；全部拒绝且不发布 sequence |
+| double-defer-overwrites | 同一 bracket 两次 defer：TS 静默覆盖 completion，commit 写最后一次 |
+| compaction-during-open-step | 打开的 step 与未收尾的 tool call 期间 compaction_started/completed 仍被接受：钉住 domain switch 在 tool-call 校验之前处理 compaction 的短路 |
+| errors | 无 pending 的 defer；无 bracket 的 completed/failed；重复 started；非法 messageCount/maxContextTokens/missing；空 error；error=null 的 V8 TypeError；`messageCount` 2^53-1 收/2^53 拒、`0`/`-0` 收；`maxContextTokens` 的 `null`/`true`/`"4096"` 拒；draft 自带 `type` 时 spread 覆盖为 `tool_call` 并走 `step_not_open`；全部拒绝且不发布 sequence |
 | restore | 重开并 `SessionRuntime.restore` 后：pending compaction 清空、commit 无操作、域里仍开着的 bracket 可以正常 completed，第二次 completed 报 `invalid_compaction`；序号/父链连续 |
 | outside-turn | 未 startTurn 时写 compaction_started/completed/failed -> `event_outside_turn`，transcript 不增长 |
 | non-string-operation-ids | 数字/数组（含嵌套、null/undefined 元素）/空数组/普通对象/带不可调用 `toString` 的对象/布尔 operationId：`Set` 引用语义、`Array#join`/`Object#toString` 文案，以及 `TypeError: Cannot convert object to primitive value` |

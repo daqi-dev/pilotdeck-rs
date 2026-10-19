@@ -14,6 +14,8 @@
 //! PDRS_BASELINE and Node/tsx, like the run-registry fixture.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/scratch.rs"]
+mod scratch;
 
 use base64::Engine as _;
 use pilotdeck_gateway::storage::{
@@ -22,6 +24,7 @@ use pilotdeck_gateway::storage::{
     WorkspaceSnapshotResult, create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use scratch::{owned_path, remove_owned, remove_owned_with};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -29,7 +32,7 @@ use std::{
     ffi::OsString,
     fs, io,
     os::unix::{ffi::OsStringExt, fs::symlink},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -98,64 +101,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = remove_owned(&self.0, &self.0, true);
     }
-}
-
-/// Lexical ownership check: every delete may only target the per-run tree that
-/// owns it. The old fixed-path P0 removed `/tmp/pdrs-r9-*` while every sentinel
-/// lived inside a per-run tree, so those sentinels could not observe the
-/// regression (round-4 P1). This check runs before the filesystem is touched,
-/// which makes it independent of where a sentinel lives.
-fn outside_run_error(root: &Path, path: &Path) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        format!(
-            "remove refused: {} is outside the run directory {}",
-            path.display(),
-            root.display()
-        ),
-    )
-}
-
-fn owned_path<'a>(root: &Path, path: &'a Path) -> io::Result<&'a Path> {
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| outside_run_error(root, path))?;
-    let mut depth = 0usize;
-    for component in relative.components() {
-        match component {
-            Component::ParentDir => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| outside_run_error(root, path))?;
-            }
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(outside_run_error(root, path));
-            }
-        }
-    }
-    Ok(path)
-}
-
-/// The `remove` hook is injectable so the negative control can prove a refused
-/// delete never reaches the filesystem (`remove_owned_with` with a recorder).
-fn remove_owned_with<F>(root: &Path, path: &Path, recursive: bool, remove: F) -> io::Result<()>
-where
-    F: FnOnce(&Path, bool) -> io::Result<()>,
-{
-    owned_path(root, path)?;
-    remove(path, recursive)
-}
-
-fn remove_owned(root: &Path, path: &Path, recursive: bool) -> io::Result<()> {
-    remove_owned_with(root, path, recursive, |path, recursive| {
-        if recursive {
-            fs::remove_dir_all(path)
-        } else {
-            fs::remove_file(path)
-        }
-    })
 }
 
 // ------------------------------------------------------------- JsValue tools
