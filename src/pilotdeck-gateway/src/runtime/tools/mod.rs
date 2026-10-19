@@ -252,7 +252,7 @@ pub fn create_tool_error_result(
                 ("type", "text".into()),
                 (
                     "text",
-                    string(format_tool_error_content(message, error.details.as_ref())),
+                    string(format_tool_error_content(message, error.details.as_ref())?),
                 ),
             ]))]),
         ),
