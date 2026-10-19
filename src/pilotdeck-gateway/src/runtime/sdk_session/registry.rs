@@ -124,6 +124,8 @@ pub struct SdkSessionOptions {
     pub fallback_project_root: PathBuf,
     pub cwd: PathBuf,
     pub env: Env,
+    /// `os.homedir()` override; `None` reads the process HOME like Node.
+    pub homedir: Option<PathBuf>,
     pub resolver: Arc<dyn SdkRuntimeResolver>,
     pub organization_policy: Option<OrganizationPolicy>,
     pub plugin_loader: Option<Arc<dyn SdkPluginLoader>>,
@@ -142,6 +144,7 @@ impl SdkSessionOptions {
             fallback_project_root: fallback_project_root.into(),
             cwd: cwd.into(),
             env,
+            homedir: None,
             resolver,
             organization_policy: None,
             plugin_loader: None,
@@ -156,6 +159,10 @@ impl SdkSessionOptions {
     }
     pub fn with_organization_policy(mut self, policy: Option<OrganizationPolicy>) -> Self {
         self.organization_policy = policy;
+        self
+    }
+    pub fn with_homedir(mut self, homedir: impl Into<PathBuf>) -> Self {
+        self.homedir = Some(homedir.into());
         self
     }
     pub fn with_plugin_loader(mut self, loader: Arc<dyn SdkPluginLoader>) -> Self {
@@ -324,6 +331,7 @@ impl SdkSessionRegistry {
             project_root: &runtime.project_root,
             cwd: &self.options.cwd,
             env: &self.options.env,
+            homedir: self.options.homedir.as_deref(),
             host_defaults: settings.and_then(|value| value.session_defaults.as_ref()),
             host_managed_settings: settings
                 .and_then(|value| value.managed_session_settings.as_ref()),

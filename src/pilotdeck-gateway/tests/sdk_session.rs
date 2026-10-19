@@ -576,6 +576,7 @@ async fn real_ts_sdk_session_oracle() {
                 project_root: &project_root,
                 cwd: root,
                 env: &env_map,
+                homedir: Some(case_dir.as_path()),
                 host_defaults: Some(&host_defaults),
                 host_managed_settings: Some(&host_managed),
                 host_setting_sources: Some(&host_sources),
@@ -1031,6 +1032,7 @@ async fn replay_registry_case(case: &JsValue, snapshot: &JsValue, root: &Path) {
             plugin_runtime,
         }),
     )
+    .with_homedir(case_dir.as_path())
     .with_organization_policy(policy)
     .with_plugin_loader(Arc::new(TestLoader))
     .with_task_budget(Arc::new(TaskBudgetStorePort::new(budget_store)))
