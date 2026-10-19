@@ -211,7 +211,7 @@ catalog过滤后多于一项且排序id含孤立高/低surrogate、session同seq
 
 ## R19：projectKey 的原始 UTF-16 身份
 
-`project-key-identity.json` 是独立新增的 3 个真实 Node WS 原件，由
+`project-key-identity.json` 是独立新增的 6 个真实 Node WS 原件，由
 `tests/record_session_model_project_key.mts` 在全新隔离 scratch 生成，不改
 历史 `cases.json`。它覆盖 `session_model_get` 在 `projectRegistry.ts:41-59`
 的原始单元身份：
@@ -224,6 +224,17 @@ catalog过滤后多于一项且排序id含孤立高/低surrogate、session同seq
   把该 key 变成已注册的 U+FFFD 项目并返回成功。
 - `project-key-lone-surrogate-unknown`：无 U+FFFD 对应项，单独锁定错误文案
   的原始 units。
+- `project-key-folded-lone-surrogate`：绝对式
+  `/fixture/project-\ud800/../project`。`path.resolve` 是纯词法折叠、不检查
+  段内容，`..` 把含代理项的段弹掉后得到 `/fixture/project`，命中已注册项目
+  并成功回包（回包 `projectKey` 是注册项的解析结果 `/fixture/project`）。
+- `project-key-folded-lone-surrogate-relative`：同一折叠的相对式
+  `project-\ud800/../project`。录制时把进程 cwd 切到案例根（fixture 的
+  `cwd=/fixture`），其余案例恢复仓根 cwd。
+- `project-key-folded-surviving-lone-surrogate`：`..` 之后仍有孤立代理项
+  （`/fixture/project-\ud800/../project-\ud800` → `/fixture/project-\ud800`）。
+  先归一化、后判定不可表示，仍按 `PROJECT_NOT_FOUND` 处理并保留原始 units；
+  这是“只折叠、不放过存活代理项”的负控。
 
 Node 的 fs 层会把孤立代理项编码成 U+FFFD（本机实测 `statSync` 会命中
 U+FFFD 文件），但 registry 比较发生在 fs 之前且按 JS code unit 进行；两者

@@ -34,7 +34,7 @@ use super::{
 };
 use crate::{
     js_value::number_string,
-    metadata::{js_trim, resolve as lexical_resolve},
+    metadata::{js_trim, resolve as lexical_resolve, resolve_units},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
@@ -1202,36 +1202,8 @@ fn path_string(path: &Path) -> String {
 const SLASH: u16 = b'/' as u16;
 const DOT: u16 = b'.' as u16;
 
-/// Node `path.resolve(base, value)` over raw UTF-16 units. A lone surrogate
-/// survives the lexical pass, so `fs.validatePath` can quote the original JS
-/// string instead of the U+FFFD a lossy conversion would show.
 fn resolve_path_units(base: &str, value: &JsString) -> JsString {
-    let mut source = Vec::new();
-    if value.units().first() != Some(&SLASH) {
-        source.extend(base.encode_utf16());
-        source.push(SLASH);
-    }
-    source.extend_from_slice(value.units());
-    let mut segments: Vec<&[u16]> = Vec::new();
-    for segment in source.split(|unit| *unit == SLASH) {
-        if segment.is_empty() || (segment.len() == 1 && segment[0] == DOT) {
-            continue;
-        }
-        if is_dot_dot(segment) {
-            segments.pop();
-        } else {
-            segments.push(segment);
-        }
-    }
-    let mut output = Vec::with_capacity(source.len().max(1));
-    output.push(SLASH);
-    for (index, segment) in segments.iter().enumerate() {
-        if index > 0 {
-            output.push(SLASH);
-        }
-        output.extend_from_slice(segment);
-    }
-    JsString::from_utf16(output)
+    resolve_units(base, value)
 }
 
 fn is_dot_dot(segment: &[u16]) -> bool {

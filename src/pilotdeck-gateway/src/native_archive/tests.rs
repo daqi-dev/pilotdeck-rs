@@ -620,3 +620,77 @@ fn archive_nul_long_paths_use_real_node_128_utf16_diagnostics() {
         );
     }
 }
+
+/// `native_archive_*` resolves `projectKey` through the same
+/// `projectRegistry.ts`/`path.resolve` seam as session metadata. Node folds
+/// `..` lexically before comparing, so a surrogate-bearing segment that the
+/// fold removes must not reject the key; only a surviving surrogate is
+/// unrepresentable. Measured:
+/// `path.resolve('/fixture/project-\ud800/../project') === '/fixture/project'`.
+#[test]
+fn project_key_folds_lone_surrogate_segments_before_registration() {
+    let mut files = HashMap::new();
+    files.insert(
+        PathBuf::from("/fixture/home"),
+        serde_json::json!({
+            "directory": true, "size": 0, "entries": [["projects", true]]
+        }),
+    );
+    files.insert(
+        PathBuf::from("/fixture/home/projects"),
+        serde_json::json!({
+            "directory": true, "size": 0, "entries": [["registered", true]]
+        }),
+    );
+    files.insert(
+        PathBuf::from("/fixture/home/projects/registered"),
+        serde_json::json!({
+            "directory": true, "size": 0, "entries": [["chats", true]]
+        }),
+    );
+    files.insert(
+        PathBuf::from("/fixture/home/projects/registered/.cwd"),
+        serde_json::json!({
+            "directory": false,
+            "size": 17,
+            "base64": STANDARD.encode("/fixture/project\n"),
+        }),
+    );
+    files.insert(
+        PathBuf::from("/fixture/project"),
+        serde_json::json!({ "directory": true, "size": 0, "entries": [] }),
+    );
+    let metadata = Metadata {
+        home: PathBuf::from("/fixture/home"),
+        cwd: PathBuf::from("/fixture"),
+        files: Snapshot { files },
+    };
+    for key in [
+        "/fixture/project-\\ud800/../project",
+        "project-\\ud800/../project",
+    ] {
+        let params = parse_json(&format!(r#"{{"projectKey":"{key}"}}"#)).unwrap();
+        assert_eq!(
+            project(&metadata, &params).unwrap(),
+            PathBuf::from("/fixture/project"),
+            "{key}"
+        );
+    }
+    for key in [
+        "/fixture/project-\\ud800",
+        "/fixture/project-\\ud800/../project-\\ud800",
+    ] {
+        let params = parse_json(&format!(r#"{{"projectKey":"{key}"}}"#)).unwrap();
+        let (code, message) = project(&metadata, &params).unwrap_err();
+        assert_eq!(code, "PROJECT_NOT_FOUND", "{key}");
+        let mut units = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+        units.extend(
+            parse_json(&format!("\"{key}\""))
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .units(),
+        );
+        assert_eq!(message.units(), units, "{key}");
+    }
+}

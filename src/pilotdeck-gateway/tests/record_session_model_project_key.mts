@@ -1,7 +1,7 @@
 // Real TS project-key identity oracle for `session_model_get`.
 // node --import <B>/node_modules/tsx/dist/loader.mjs <this> <B> <output> <scratch>
 //
-// Two registry identities that are distinct as JS strings but collision-prone
+// Registry identities that are distinct as JS strings but collision-prone
 // under a lossy UTF-16 -> UTF-8 decode:
 //   * a project path containing LITERAL U+FFFD, registered in `projects/`;
 //   * the same path with U+FFFD replaced by a lone high surrogate.
@@ -10,6 +10,11 @@
 // path is a registered project. Node's fs layer separately encodes a lone
 // surrogate as U+FFFD, which is why the two must not be conflated at the
 // registry/identity seam.
+// `path.resolve` is lexical and never inspects segment content, so a `..`
+// after a surrogate-bearing segment removes it before the comparison:
+// `/fixture/project-\ud800/../project` resolves to the registered
+// `/fixture/project`. The relative spelling is resolved against the case root
+// (the fixture's `cwd=/fixture`) and must reach the same project.
 import {mkdir,writeFile,readFile,stat,readdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -37,15 +42,27 @@ await mkdir(fffdProject,{recursive:true});
 await mkdir(join(home,'projects','registered-fffd','chats'),{recursive:true});
 await writeFile(join(home,'projects','registered-fffd','.cwd'),fffdProject+'\n');
 const loneProject=join(root,'project-\ud800');
-const cases=[
+// `join` would fold `..`; keep the raw lexical spelling for the fold cases.
+const foldsToProject=`${root}/project-\ud800/../project`;
+const foldsToLoneProject=`${root}/project-\ud800/../project-\ud800`;
+const cases:Array<[string,string,boolean?]>=[
   ['project-key-literal-fffd',fffdProject],
   // Negative control: lossy-decoding this key would alias it onto fffdProject.
   ['project-key-lone-surrogate',loneProject],
   // No U+FFFD counterpart: isolates the error message's raw units.
   ['project-key-lone-surrogate-unknown',join(root,'missing-\ud800')],
+  // `..` drops the surrogate-bearing segment before the registry comparison.
+  ['project-key-folded-lone-surrogate',foldsToProject],
+  // Same fold with a relative key, resolved against the case root.
+  ['project-key-folded-lone-surrogate-relative','project-\ud800/../project',true],
+  // Negative control: normalization happens, but the surviving lone surrogate
+  // still names an unregistered project and must keep its raw error units.
+  ['project-key-folded-surviving-lone-surrogate',foldsToLoneProject],
 ];
+const originalCwd=process.cwd();
 const results:any[]=[];let routerCalls=0;
-for(const [id,projectKey] of cases){
+for(const [id,projectKey,relative] of cases){
+  process.chdir(relative?root:originalCwd);
   const env={PILOT_HOME:home};
   const plane=createProjectSessionDataPlane();const dialog=new GatewayDialogBundle({pilotHome:home,sessionCatalog:plane.catalog});
   const bundle=new GatewaySessionModelBundle({fallbackProjectKey:home,resolveProjectKey:dialog.projects.resolveProjectKey,router:{hasActiveTurn(){routerCalls++;throw Error('runtime touched');},async close(){routerCalls++;throw Error('runtime touched');}},selectionPort:new NativeSessionModelSelectionPort({pilotHome:home,now:()=>new Date(),storageProvider:plane.persistence}),policy:new NativeSessionModelSelectionPolicy(env)});
@@ -62,5 +79,6 @@ for(const [id,projectKey] of cases){
   results.push(JSON.parse(replace(JSON.stringify({id,home,cwd:'/fixture',env,request:JSON.stringify(normalizedRequest),response,files,process:{pid:0,alive:true,eperm:false,killCalls:[],loadKillCalls:[]},forward:false}))));
   console.log(id,JSON.parse(response).ok?'OK':JSON.parse(response).error.code);
 }
+process.chdir(originalCwd);
 await mkdir(resolve(output,'..'),{recursive:true});
 await writeFile(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,routerCalls,cases:results},null,2)+'\n');

@@ -2,12 +2,16 @@
 //! no retention window. Custom authorization/retention/artifact stores are A6
 //! extension points, unimplemented here (not exemptions).
 use crate::{
-    metadata::{Files, Metadata, js_trim, object, resolve, text_field},
+    metadata::{Files, Metadata, js_trim, object, resolve, resolved_identity, text_field},
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
-use std::{cmp::Ordering, io, path::Path};
+use std::{
+    cmp::Ordering,
+    io,
+    path::{Path, PathBuf},
+};
 
 type Error = (&'static str, JsString);
 type Result<T> = std::result::Result<T, Error>;
@@ -197,14 +201,16 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         let Some(s) = value.as_string() else {
             return Err(path_type(value, "paths[0]"));
         };
-        // Node path.resolve retains lone surrogates for project-key identity;
-        // disk markers contain decoded UTF-8 and cannot match such a key.
-        if s.to_utf8().is_err() {
+        // Node path.resolve retains lone surrogates for project-key identity,
+        // but it folds `.`/`..` first. A surrogate-bearing segment removed by
+        // `..` therefore never reaches the comparison; only a surviving one is
+        // unrepresentable, and disk markers (valid UTF-8) cannot match it.
+        let Some(requested) = resolved_identity(&metadata.cwd, s) else {
             let mut units: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
             units.extend(s.units());
             return Err(("PROJECT_NOT_FOUND", JsString::from_utf16(units)));
-        }
-        resolve(&metadata.cwd, &String::from_utf16_lossy(s.units()))
+        };
+        PathBuf::from(requested)
     };
     if requested == metadata.home {
         return Ok(requested);
