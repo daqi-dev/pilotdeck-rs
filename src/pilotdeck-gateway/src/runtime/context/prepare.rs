@@ -58,6 +58,9 @@ pub struct Options {
     pub runtime_context_surface: RuntimeContextSurface,
     pub instruction_discovery: Option<InstructionDiscovery>,
     pub prompt_contributions: Option<PromptContributionRegistry>,
+    /// `DefaultContextRuntimeOptions.toolResultBudget`; `None` keeps the
+    /// pass-through `applyToolResults` behavior.
+    pub tool_result_budget: Option<Arc<super::tool_budget::ToolResultBudget>>,
     pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     /// Host identity rendered in the user-context block. TS reads
     /// `process.platform` / `process.version`; the Rust host has no Node, so
@@ -74,6 +77,7 @@ impl Default for Options {
             runtime_context_surface: RuntimeContextSurface::SystemPrompt,
             instruction_discovery: None,
             prompt_contributions: None,
+            tool_result_budget: None,
             now: None,
             platform: None,
             node_version: None,
@@ -88,6 +92,7 @@ struct Inner {
     runtime_context_surface: RuntimeContextSurface,
     instruction_discovery: Option<InstructionDiscovery>,
     prompt_contributions: Option<PromptContributionRegistry>,
+    tool_result_budget: Option<Arc<super::tool_budget::ToolResultBudget>>,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
     state: Mutex<HashMap<Option<JsString>, TimeState>>,
 }
@@ -126,6 +131,7 @@ impl DefaultContextRuntime {
                 runtime_context_surface: options.runtime_context_surface,
                 instruction_discovery: options.instruction_discovery,
                 prompt_contributions: options.prompt_contributions,
+                tool_result_budget: options.tool_result_budget,
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
                 state: Mutex::new(HashMap::new()),
             }),
@@ -462,10 +468,99 @@ impl DefaultContextRuntime {
             ("materialization", JsValue::Object(materialization)),
         ]))
     }
+
+    /// `DefaultContextRuntime.applyToolResults` (TS:427-473): rewrite the new
+    /// tool-result message and supplemental media messages, then append them to
+    /// the caller's message list. Persistence failures become a diagnostic and
+    /// leave the original messages untouched.
+    async fn apply_tool_results_input(&self, fields: JsObject) -> Result<JsValue, HostError> {
+        let tool_result_message = fields
+            .get("toolResultMessage")
+            .cloned()
+            .unwrap_or(UNDEFINED.clone());
+        let turn_id = fields.get("turnId").and_then(JsValue::as_string).cloned();
+        let input_messages = match fields.get("messages") {
+            Some(JsValue::Array(messages)) => messages.clone(),
+            _ => Vec::new(),
+        };
+        let supplemental = match fields.get("supplementalMessages") {
+            Some(JsValue::Array(messages)) => messages.clone(),
+            _ => Vec::new(),
+        };
+        let mut appended = tool_result_message.clone();
+        let mut supplements = supplemental.clone();
+        let mut diagnostics = Vec::new();
+        if let Some(budget) = &self.inner.tool_result_budget {
+            // TS assigns `appended` before awaiting `Promise.all` on the
+            // supplemental messages, so a supplemental failure keeps the
+            // rewritten primary message. Promise.all still starts every
+            // supplemental rewrite; their file side effects are not rolled back.
+            match budget
+                .apply_to_message(&tool_result_message, turn_id.as_ref())
+                .await
+            {
+                Ok(value) => appended = value,
+                Err(error) => diagnostics.push(persistence_diagnostic(error.message)),
+            }
+            if diagnostics.is_empty() {
+                let mut rewritten = Vec::with_capacity(supplemental.len());
+                let mut failure = None;
+                for item in &supplemental {
+                    let Some(tool_call_id) = item.get("toolCallId").and_then(JsValue::as_string)
+                    else {
+                        failure.get_or_insert_with(|| {
+                            "Cannot read properties of undefined (reading 'trim')".to_owned()
+                        });
+                        continue;
+                    };
+                    let message = item.get("message").cloned().unwrap_or(UNDEFINED.clone());
+                    match budget
+                        .apply_to_supplemental_message(&message, tool_call_id, turn_id.as_ref())
+                        .await
+                    {
+                        Ok(replaced) => rewritten.push(object(vec![
+                            ("toolCallId", JsValue::String(tool_call_id.clone())),
+                            ("message", replaced),
+                        ])),
+                        Err(error) => {
+                            failure.get_or_insert(error.message);
+                        }
+                    }
+                }
+                match failure {
+                    Some(message) => diagnostics.push(persistence_diagnostic(message)),
+                    None => supplements = rewritten,
+                }
+            }
+        }
+        let mut messages = input_messages;
+        messages.push(appended.clone());
+        for item in &supplements {
+            messages.push(item.get("message").cloned().unwrap_or(UNDEFINED.clone()));
+        }
+        let mut appended_messages = vec![appended];
+        appended_messages.extend(
+            supplements
+                .iter()
+                .map(|item| item.get("message").cloned().unwrap_or(UNDEFINED.clone())),
+        );
+        Ok(object(vec![
+            ("messages", JsValue::Array(messages)),
+            ("appendedMessages", JsValue::Array(appended_messages)),
+            ("diagnostics", JsValue::Array(diagnostics)),
+        ]))
+    }
 }
 impl ContextRuntime for DefaultContextRuntime {
     fn supports(&self, operation: Operation) -> bool {
-        operation == Operation::PrepareForModel
+        matches!(
+            operation,
+            Operation::PrepareForModel | Operation::ApplyToolResults
+        )
+    }
+    fn apply_tool_results(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let runtime = self.clone();
+        Box::pin(async move { runtime.apply_tool_results_input(input.fields).await })
     }
     fn prepare_for_model(&self, input: ContextInput) -> HostFuture<JsValue> {
         let runtime = self.clone();
@@ -1200,6 +1295,17 @@ fn contribution_value(value: Option<&JsValue>) -> Option<String> {
 fn display(value: &JsValue) -> String {
     crate::js_value::display(value).unwrap_or_default()
 }
+fn persistence_diagnostic(message: String) -> JsValue {
+    object(vec![
+        ("code", "tool_result_persistence_failed".into()),
+        ("severity", "error".into()),
+        (
+            "message",
+            JsValue::String(format!("Failed to persist large tool result: {message}").into()),
+        ),
+    ])
+}
+
 fn object(fields: Vec<(&str, JsValue)>) -> JsValue {
     let mut object = JsObject::new();
     for (key, value) in fields {

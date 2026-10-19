@@ -6,6 +6,7 @@ pub mod compaction;
 mod instructions;
 mod prepare;
 mod prompt;
+pub mod tool_budget;
 
 pub use instructions::{
     InstructionDiscovery, Layer as InstructionLayer, Scope as InstructionScope,

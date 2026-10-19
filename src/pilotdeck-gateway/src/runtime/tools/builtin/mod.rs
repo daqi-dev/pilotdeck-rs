@@ -85,13 +85,13 @@ pub(super) fn truthy(value: &JsValue) -> bool {
 /// UTF-16 lexical pieces of POSIX `path` operations. The tools only run on
 /// Unix hosts today, but keeping these as units avoids a lossy round trip for
 /// keys derived from the model input.
-pub(super) fn is_absolute(path: &JsString) -> bool {
+pub(crate) fn is_absolute(path: &JsString) -> bool {
     path.units()
         .first()
         .is_some_and(|unit| *unit == b'/' as u16)
 }
 
-pub(super) fn normalize(path: &JsString) -> JsString {
+pub(crate) fn normalize(path: &JsString) -> JsString {
     let mut parts: Vec<Vec<u16>> = Vec::new();
     let absolute = is_absolute(path);
     for part in path.units().split(|unit| *unit == b'/' as u16) {
@@ -120,7 +120,7 @@ pub(super) fn normalize(path: &JsString) -> JsString {
     JsString::from_utf16(units)
 }
 
-pub(super) fn join(base: &JsString, child: &JsString) -> JsString {
+pub(crate) fn join(base: &JsString, child: &JsString) -> JsString {
     if is_absolute(child) {
         return normalize(child);
     }
@@ -132,7 +132,7 @@ pub(super) fn join(base: &JsString, child: &JsString) -> JsString {
     normalize(&JsString::from_utf16(units))
 }
 
-pub(super) fn dirname(path: &JsString) -> JsString {
+pub(crate) fn dirname(path: &JsString) -> JsString {
     let units = path.units();
     if units.is_empty() {
         return JsString::from(".");
@@ -150,7 +150,7 @@ pub(super) fn dirname(path: &JsString) -> JsString {
     JsString::from_utf16(units[..index].to_vec())
 }
 
-pub(super) fn basename(path: &JsString) -> JsString {
+pub(crate) fn basename(path: &JsString) -> JsString {
     let units = path.units();
     let mut end = units.len();
     while end > 1 && units[end - 1] == b'/' as u16 {
@@ -180,7 +180,7 @@ pub(super) fn lower(value: &JsString) -> String {
 }
 
 /// `path.relative(from, to)`; callers add `|| "."` where the baseline does.
-pub(super) fn relative(from: &JsString, to: &JsString) -> JsString {
+pub(crate) fn relative(from: &JsString, to: &JsString) -> JsString {
     let from = normalize(from);
     let to = normalize(to);
     let from_parts: Vec<&[u16]> = from
