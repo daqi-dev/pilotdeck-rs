@@ -322,8 +322,10 @@ pub(crate) fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Opt
                 if key.equals_str("length") {
                     return Some(Operand::Number(items.len() as f64));
                 }
-                if let Some(index) = array_index(key)
-                    && let Some(value) = items.get(index)
+                // ECMAScript array indices stop at 2^32-2, the same bound as
+                // the shared key rule; larger keys are ordinary properties.
+                if let Some(index) = key.array_index()
+                    && let Some(value) = items.get(index as usize)
                 {
                     return Some(Operand::Value(value));
                 }
@@ -365,25 +367,6 @@ pub(crate) fn is_array_prototype_method(key: &JsString) -> bool {
     ARRAY_PROTOTYPE_METHODS
         .iter()
         .any(|name| key.equals_str(name))
-}
-
-/// Own array index key, or `None` for `length`, non-canonical numbers and other
-/// keys. JSON arrays only ever carry canonical index keys.
-fn array_index(key: &JsString) -> Option<usize> {
-    let units = key.units();
-    if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
-        return None;
-    }
-    let mut index = 0usize;
-    for &unit in units {
-        if !(u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
-            return None;
-        }
-        index = index
-            .checked_mul(10)?
-            .checked_add(usize::from(unit - u16::from(b'0')))?;
-    }
-    Some(index)
 }
 
 fn path_or_root(prefix: &JsString) -> JsString {

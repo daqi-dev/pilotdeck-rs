@@ -26,27 +26,11 @@ fn field_error(prefix: &str, key: &JsString) -> PortError {
     units.push(u16::from(b'.'));
     error(JsString::from_utf16(units))
 }
-fn index_key(key: &JsString) -> Option<u32> {
-    let units = key.units();
-    if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
-        return None;
-    }
-    let mut value = 0u32;
-    for &unit in units {
-        if !(u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
-            return None;
-        }
-        value = value
-            .checked_mul(10)?
-            .checked_add(u32::from(unit - u16::from(b'0')))?;
-    }
-    (value != u32::MAX).then_some(value)
-}
 fn entries(obj: &JsObject) -> Vec<(&JsString, &JsValue)> {
     let mut indexed = Vec::new();
     let mut other = Vec::new();
     for (key, value) in obj.entries() {
-        if let Some(index) = index_key(key) {
+        if let Some(index) = key.array_index() {
             indexed.push((index, key, value));
         } else {
             other.push((key, value));

@@ -121,21 +121,7 @@ impl PricingMap {
 /// `0..=4294967294`. `Object.entries` enumerates these before every other key,
 /// in ascending numeric order, which visibly changes the substring scan order.
 fn array_index(key: &str) -> Option<u32> {
-    let bytes = key.as_bytes();
-    if bytes.is_empty() || (bytes.len() > 1 && bytes[0] == b'0') {
-        return None;
-    }
-    let mut value = 0u64;
-    for &byte in bytes {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        value = value * 10 + u64::from(byte - b'0');
-        if value > u64::from(u32::MAX - 1) {
-            return None;
-        }
-    }
-    Some(value as u32)
+    pilotdeck_protocol::JsString::from(key).array_index()
 }
 
 struct DefaultRate {
