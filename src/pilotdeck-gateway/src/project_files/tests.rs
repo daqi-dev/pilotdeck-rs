@@ -605,6 +605,26 @@ fn utf16_paths_use_normalized_containment_and_preserve_response_string() {
     }
 }
 
+/// Any `projectKey` containing a lone surrogate stays host-owned even when
+/// `..` would fold the segment away: `text_field` rejects the UTF-16 key before
+/// `registered`, so this port must not manufacture `Unknown projectKey` from a
+/// lossy string. TS resolves the raw units and owns both the fold and wording.
+#[test]
+fn project_key_with_folded_lone_surrogate_stays_host_owned() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let params = parse_json(r#"{"projectKey":"project-\ud800/../missing","limit":1}"#).unwrap();
+    assert!(execute(&metadata, "project_files_list", &params).is_none());
+    let request = parse_json(
+        r#"{"type":"request","id":"x","method":"project_files_list","params":{"projectKey":"project-\ud800/../missing","limit":1}}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        route_with_metadata(&request, Some(&metadata)),
+        Route::Forward
+    ));
+}
+
 #[test]
 fn deep_max_bytes_array_is_a_local_error_not_a_stack_overflow() {
     let temp = Temp::new();

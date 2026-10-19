@@ -193,6 +193,15 @@ fn registry<F: Files>(metadata: &Metadata<F>) -> Metadata<RegistryFiles<'_, F>> 
         },
     }
 }
+/// `Unknown projectKey: ${projectKey}` (projectRegistry.ts:57) with the raw
+/// UTF-16 units of the caller's key. `display` replacement-decodes a lone
+/// surrogate, which would change the message even though the key itself stayed
+/// unavailable.
+fn unknown_project_key(units: &[u16]) -> Error {
+    let mut message: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
+    message.extend_from_slice(units);
+    ("PROJECT_NOT_FOUND", JsString::from_utf16(message))
+}
 fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::path::PathBuf> {
     let value = field(params, "projectKey");
     let requested = if nullish(value) {
@@ -206,9 +215,7 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
         // `..` therefore never reaches the comparison; only a surviving one is
         // unrepresentable, and disk markers (valid UTF-8) cannot match it.
         let Some(requested) = resolved_identity(&metadata.cwd, s) else {
-            let mut units: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
-            units.extend(s.units());
-            return Err(("PROJECT_NOT_FOUND", JsString::from_utf16(units)));
+            return Err(unknown_project_key(s.units()));
         };
         PathBuf::from(requested)
     };
@@ -218,17 +225,15 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
     if registry(metadata).has_registered_project(&requested) {
         return Ok(requested);
     }
-    Err(error(
-        "PROJECT_NOT_FOUND",
-        &format!(
-            "Unknown projectKey: {}",
-            if nullish(value) {
-                metadata.cwd.to_string_lossy().into_owned()
-            } else {
-                display(value)?
-            }
+    // The fallback key is the host's cwd path (a Rust `Path`); a string key
+    // keeps its original units, including one folded out of the identity.
+    Err(match value.as_string() {
+        Some(s) => unknown_project_key(s.units()),
+        None => error(
+            "PROJECT_NOT_FOUND",
+            &format!("Unknown projectKey: {}", metadata.cwd.to_string_lossy()),
         ),
-    ))
+    })
 }
 fn fs_error(e: io::Error, method: &str, operation: &str, path: &Path) -> Error {
     if crate::project_files::nofollow_loop(&e) {

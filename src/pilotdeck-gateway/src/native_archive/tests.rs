@@ -679,6 +679,11 @@ fn project_key_folds_lone_surrogate_segments_before_registration() {
     for key in [
         "/fixture/project-\\ud800",
         "/fixture/project-\\ud800/../project-\\ud800",
+        // `.`/`..` removes the surrogate-bearing segment, but the normalized
+        // key is still unregistered: the miss wording keeps the original units
+        // rather than the lossy `/fixture/missing` spelling.
+        "/fixture/project-\\ud800/../missing",
+        "project-\\ud800/../missing",
     ] {
         let params = parse_json(&format!(r#"{{"projectKey":"{key}"}}"#)).unwrap();
         let (code, message) = project(&metadata, &params).unwrap_err();
@@ -693,4 +698,65 @@ fn project_key_folds_lone_surrogate_segments_before_registration() {
         );
         assert_eq!(message.units(), units, "{key}");
     }
+}
+
+/// Real Node WS recording of the same `projectRegistry.ts` seam for
+/// `native_archive_manifest`. `project-folded-unknown` is the lossy-message
+/// negative control: `..` removes the surrogate-bearing segment before the
+/// registry compare, but the rejection still carries the caller's original
+/// units. A lossy `display(value)` would spell `/fixture/missing` as U+FFFD.
+#[test]
+fn project_key_miss_keeps_raw_units_like_real_node() {
+    assert_fixture_hash(
+        include_bytes!("../../tests/fixtures/native-archive/project-key-identity.json"),
+        "50ea9249e7d0a17ddd679e75e9a1fc9d7bd9990571302a4b3a1a95a21526fd22",
+    );
+    let data: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/native-archive/project-key-identity.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        data["baselineCommit"],
+        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+    );
+    assert_eq!(data["node"], "v22.22.0");
+    let metadata = metadata_from_data(&data);
+    let cases = data["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 4);
+    for case in cases {
+        let Route::LocalResponse(raw) = route_with_metadata(
+            &parse(case["request"].as_str().unwrap().as_bytes()).unwrap(),
+            Some(&metadata),
+        ) else {
+            panic!("{} must terminate locally", case["id"])
+        };
+        assert_eq!(
+            raw,
+            case["response"].as_str().unwrap().as_bytes(),
+            "{}",
+            case["id"]
+        );
+    }
+    let unknown = cases
+        .iter()
+        .find(|case| case["id"] == "project-folded-unknown")
+        .unwrap();
+    let response = parse_json(unknown["response"].as_str().unwrap()).unwrap();
+    let message = response
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(JsValue::as_string)
+        .unwrap();
+    assert!(message.units().contains(&0xD800));
+    assert!(!message.units().contains(&0xFFFD));
+    let registered = cases
+        .iter()
+        .find(|case| case["id"] == "project-folded-registered")
+        .unwrap();
+    assert_eq!(
+        parse_json(registered["response"].as_str().unwrap())
+            .unwrap()
+            .get("ok"),
+        Some(&JsValue::Bool(true))
+    );
 }

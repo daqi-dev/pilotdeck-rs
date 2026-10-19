@@ -121,11 +121,13 @@ fn complete_default_provider_matches_node_wire_fixtures() {
 /// lossy decode would make it resolve onto the registered U+FFFD project.
 /// The folded cases exercise `path.resolve` before that comparison: `..` can
 /// drop a surrogate-bearing segment, while a surviving surrogate still fails
-/// with its raw units.
+/// with its raw units. `project-key-folded-unknown` folds the surrogate away
+/// but the normalized key is still unregistered, so the rejection must also
+/// keep the caller's original units (not a lossy U+FFFD spelling).
 #[test]
 fn project_key_identity_matches_the_node_registry() {
     let fixture: serde_json::Value = serde_json::from_str(PROJECT_KEY_FIXTURE).unwrap();
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 6);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 7);
     verify_responses(&fixture);
 }
 #[test]

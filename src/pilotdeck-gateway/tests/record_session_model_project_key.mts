@@ -55,6 +55,9 @@ const cases:Array<[string,string,boolean?]>=[
   ['project-key-folded-lone-surrogate',foldsToProject],
   // Same fold with a relative key, resolved against the case root.
   ['project-key-folded-lone-surrogate-relative','project-\ud800/../project',true],
+  // Folded key is still unregistered: the miss wording keeps the caller's
+  // original units even though the surrogate no longer affects the lookup.
+  ['project-key-folded-unknown',`${root}/project-\ud800/../missing`],
   // Negative control: normalization happens, but the surviving lone surrogate
   // still names an unregistered project and must keep its raw error units.
   ['project-key-folded-surviving-lone-surrogate',foldsToLoneProject],
