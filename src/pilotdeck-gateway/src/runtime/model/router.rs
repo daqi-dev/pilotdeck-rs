@@ -544,7 +544,11 @@ impl RouterRuntime {
                             &next,
                             &messages,
                             base_usage.as_ref(),
-                        );
+                        )
+                        .await
+                        .map_err(|error| {
+                            RouterRuntimeError::new("router_decision_failed", error.message)
+                        })?;
                         selection = Some(cache_aware.selection);
                         cache_aware_switch = cache_aware.mutation;
                         token_saver_tier = if cache_aware_switch

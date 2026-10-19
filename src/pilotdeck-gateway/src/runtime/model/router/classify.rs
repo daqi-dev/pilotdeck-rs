@@ -647,18 +647,32 @@ pub fn parse_tier(
 /// JS `\b` is ASCII-word based (no `u` flag here), unlike Rust's Unicode `\b`;
 /// the literal itself uses ES non-unicode `i` matching, so the haystack must not
 /// be lowercased with Rust's full Unicode casing (U+212A would fold to `k`).
+///
+/// `\b` is a *transition* between a word and a non-word code unit, not merely
+/// "both neighbours are non-word": at the start position it requires
+/// `is_word(prev) != is_word(needle[0])`, and symmetrically at the end. For an
+/// all-ASCII-word needle that is equivalent, but a needle starting or ending
+/// with a non-word code unit (CJK, `-`, `.`, …) only matches when the adjacent
+/// haystack code unit *is* a word unit — exactly what `new RegExp("\\b" + tier
+/// + "\\b", "i")` does in the TS baseline.
 fn contains_word(haystack: &[u16], needle: &[u16]) -> bool {
-    if needle.is_empty() || needle.len() > haystack.len() {
+    let Some((&first, rest)) = needle.split_first() else {
+        return false;
+    };
+    if needle.len() > haystack.len() {
         return false;
     }
+    let last = *rest.last().unwrap_or(&first);
+    let needle_starts_word = is_js_word_unit(first);
+    let needle_ends_word = is_js_word_unit(last);
     for start in 0..=haystack.len() - needle.len() {
         if !matches_units_ci(haystack, start, needle) {
             continue;
         }
         let end = start + needle.len();
-        let before_ok = start == 0 || !is_js_word_unit(haystack[start - 1]);
-        let after_ok = end == haystack.len() || !is_js_word_unit(haystack[end]);
-        if before_ok && after_ok {
+        let before_word = start > 0 && is_js_word_unit(haystack[start - 1]);
+        let after_word = haystack.get(end).is_some_and(|unit| is_js_word_unit(*unit));
+        if before_word != needle_starts_word && needle_ends_word != after_word {
             return true;
         }
     }
