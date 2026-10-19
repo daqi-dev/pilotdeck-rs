@@ -25,7 +25,6 @@ pub(crate) struct Scratch {
     token: String,
 }
 
-
 impl Scratch {
     pub(crate) fn new(prefix: &str) -> Self {
         let token = uuid::Uuid::new_v4().to_string();
