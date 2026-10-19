@@ -1,17 +1,22 @@
+> ## 2026-10-19 · 23:52：三单已合并，两单 rebase 后重新入队
+> A6.6-pr6 #349、A6.3-pr8 #350、A6.5-pr11 #352 已 MERGED。A6.7-pr4 #351、A6.5-pr5 #353 已 rebase 并重新入队。决策卡三张已人批选 B（深度上限差、硬链接口径、Grok Bot 评审谱系）。**Grok Bot 正式加入评审谱系**（A6.5-pr5 测试：P0=0 P1=1 P2=3 P3=2，发现其他两家都漏的 P1）。
+
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-19 07:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.4-pr3 | gate | ready | PR #307 已入队等 CI（codex→DeepSeek 接手；gate5 0/0，P2 见 #317）
-- A6.6-pr9 | gate | ready | PR #319 已入队等 CI（DeepSeek；P2 见 #318）
-- A6.7-pr5 | gate | ready | PR #320 已入队等 CI（codex→Claude 接手；P2 见 #312）
-- A6.6-pr2 | gate | ready | 已 rebase 拿到 #316 的 gitleaks 放行，闸门 gate2 中（wt-a64-pr11，DeepSeek）；过了开 PR（P2 见 #314）
-- A6.6-pr4 | gate | ready | 两家确认 0/0，闸门 gate2 中（wt-a66-pr3，DeepSeek）
-- A6.5-pr3 | gate | ready | 四轮评审收敛 0/0，闸门中（wt-a67-pr2，codex→Claude 接手）；并发分组改为 safe && readOnly（决策卡待人复核）
-- A6.3-pr3 | impl | ready | ConfigStore（wt-a6-recorder，claude/a63-pr3，Claude 子代理）；先清 #310
-- A6.6-pr5 | impl | ready | prepareForModel 主干（wt-a63-pr1，deepseek/a66-pr5，DeepSeek）；先清 #313
-- p2-sweep-6 | impl | ready | P2-跟进 已超 10 个：有空槽就开一批
-- #275 | coord | blocked | 合并闸门机器校验「谁写谁不审」：同一类 Markdown 绕过修了 8 轮未收敛，挂起转 draft；重启需人选 (a) 标准 CommonMark 解析器（新依赖）或 (b) 评审声明改走 label/JSON 通道
+updated: 2026-10-18 18:01 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6-X0 | gate | ready | 宿主 module 路由（wt-a6-x0，codex/a6-x0 @bbc7a8f）：闸门 P1×1、P2×5 一轮修完，复跑 321/0；增量确认（DeepSeek dsh + Claude）与 gate2 并行，过了即入队（串行热点）
+- A6.3-pr1 | gate | ready | 配置 diff/classify（wt-a63-pr1 @92c325d，DeepSeek）：二轮 0/0，transientRetry 已补；gate2 中 → PR
+- A6.3-pr6 | review | ready | 会话权限 registry（wt-a63-pr6 @ae04160，DeepSeek）：复跑 325/0；codex + GLM 评审中
+- A6.7-pr3 | review | ready | hooks 配置解析与匹配（wt-a67-pr3 @dda1d79，codex）：复跑 318/0；DeepSeek dsh + GLM 评审中
+- A6.4-pr11 | impl | ready | task budget 账本（wt-a64-pr11，codex）：两家 0/0，便宜 P2 一轮修复中 → 闸门
+- D2-pr1 | impl | ready | skills migrate（wt-d1-cli，codex）：umask P1 经协调者实测驳回（异步 fs.cp 保留源 mode）；legacy-skills-current 按 TS 实录填期望中
+- F2-A34-pr2 | review | ready | A 类样板（wt-f34b @9faff3b，Claude）：行数断言已补，旧侧 r4 3/3 PASS、基线零写入；增量确认 DeepSeek dsh + codex
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：生成器已通过，回放 3/4（双向交叉通过），_FAILED.json 字节数差异第五轮
+- A6.4-pr2a | impl | ready | 定价 + 本地 token 估算纯函数（wt-a64-pr2a，DeepSeek dsh）：实现中
+- p2-sweep-4 | review | ready | P2 清账（wt-p2-sweep-4，codex）：修 #235、#251，复跑中 → DeepSeek dsh + GLM
+- A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
+- A6.5-pr1 | impl | blocked | capability + permission 适配；等 A6-X0 合并
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -20,32 +25,9 @@ updated: 2026-10-19 07:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
 
-> ## 2026-10-19 07:00 · /loop
-> 合并：#309（board）、#311 A6.3-pr2、#315 A6.6-pr1、#316（gitleaks 放行 5 个公开基线源文件哈希）。入队等 CI：#307 A6.4-pr3、#319 A6.6-pr9、#320 A6.7-pr5。
-> **codex 额度耗尽至 10-25 09:29**：三个 codex 半成品分别由 DeepSeek（A6.6-pr1）与 Claude 子代理（A6.5-pr3、A6.7-pr5）接手，作者谱系取并集；评审改由剩余三家补位，仍两家非作者，不降级。三张 AI 代批卡待人复核（`state/decisions-20261017.md` 末尾）：codex 补位、A6.5-pr3 并发分组（已按评审实证修订一次）、闸门复跑只剩 P2 归入跟进单（#310 #312–#314 #317 #318）。
-> **持有人与后台**：协调者本会话。worktree 10/12，磁盘 76.0/100 GiB（清了各 worktree 的 target/debug/incremental，_tmp/archive 未动）。**下一步**：三个 PR 合入后核邮箱；A6.6-pr2/A6.6-pr4/A6.5-pr3 闸门过即开 PR；A6.3-pr3、A6.6-pr5 实现中。
-
-> ## 2026-10-19 04:52 · /loop 两小时交接（自 00:35 起）
-> 合并 9 个产品 PR：#291 A6.3-pr6、#294 A6.6-pr3、#295 A6.7-pr2、#296 A6.4-pr2b、#298 A6-recorder、#299 p2-sweep-5（清 #280，生成器统一溯源守卫）、#300 A6.5-pr2、#302 A6.3-pr4、#306 A6.7-pr1。#294、#306 曾因宿主测试 `close_timeout_kills_and_reaps…` 偶发失败被队列踢出，登记 #308 后重新入队。
-> 现在 #307（A6.4-pr3）因 #306 的 runtime/mod.rs 冲突 rebase 后重跑闸门；腾出的 5 个 worktree 复用（均已合并、无未提交改动，worker 的 _tmp 证据保留）派了新单：codex 做 A6.6-pr1、A6.5-pr3、A6.7-pr5，DeepSeek 做 A6.6-pr2、A6.6-pr9。
-> **持有人与后台**：协调者本会话。worktree 10/12（含 #275 两个），磁盘 82.1/100 GiB，P2-跟进 30 个。在跑：5 个实现、DeepSeek 修 A6.3-pr2、A6.6-pr4 两家评审、#307 闸门。**下一步**：#307 闸门过即入队；A6.3-pr2 修完开 PR 后放出 A6.3-pr3；磁盘超 90 GiB 时先清已合并 worktree 的 target。
-
-> ## 2026-10-19 00:35 · /loop 两小时交接（自 17:10 起，期间 22:40 有一次中段记录）
-> 合并（17:10 以来共 19 个 PR）：产品方面有 #266 A6-X0、#267 A6.3-pr1、#272 A6.4-pr11、#278 A6.7-pr3、#279 D2-pr1、#284 F2-A34-pr2、#285 A6.5-pr1、#286 A6.4-pr2a、#288 A6.4-pr1，以及 #257/#262 B2 重冻结和 #269 p2-sweep-4；其余是 board 与规则（含 #282 署名口径 B、#264 模型分工 v2）。入队中：#291 A6.3-pr6。
-> 用户定的规则：署名按 B（原样提交 worker 产物时署实际实现方）；可以 squash 未合并分支改成实署名；四角色闸门同时 ≤2 个。挂起：#275（见 READY）。换人实现：A6.4-pr1 DeepSeek→codex，A6.3-pr6 DeepSeek→codex，A6.6-pr3 GLM→DeepSeek，A6-recorder DeepSeek→codex。看板「重派次数」为 4；DeepSeek 在有并发和生命周期的单上多次被 codex 抓出 P1，这类单今后起手就派 codex。
-> **持有人与后台**：协调者本会话。worktree 12/12，磁盘 67.3/100 GiB，P2-跟进 30 个。在跑：A6.6-pr3 拆分闸门、三路评审（A6.7-pr2、A6.4-pr2b、A6.5-pr2）、codex 修 A6-recorder。**下一步**：A6.5-pr2 合入后放出 A6.7-pr1；空出槽位就开 p2-sweep-5。
-
-> ## 2026-10-18 22:40 · /loop
-> 合并：#278（A6.7-pr3）、#281（board）、#282（署名口径 B，用户本人在协调者会话确认，已写入 CLAUDE.md）、#284（F2-A34-pr2）、#285（A6.5-pr1）。入队中：#279（D2）、#286（A6.4-pr2a）。#275 由守护会话移交给协调者：评审多轮在同一类 Markdown 绕过上来回，改成结构性规则（标记须顶格、独占一行、不在围栏或缩进代码块里，author 只多算不少算）。A6.6-pr3 的 codex 评审抓到一个 P0：夹具会递归删除固定的 /tmp 目录；main 上同类排查无命中。**用户定闸门并行 ≤2**：四角色闸门同时最多 2 个，GLM 评审另留最多 2 个余量（共用 ZAI key 全局并发约 10，超限立即 429，见 `state/memory/20261018-glm-concurrency.md`），排队用 `_tmp/20261018-a6-split/gate-serial.sh`。待用户答复：A6.4-pr1、A6.3-pr6 是否 squash 成实署名的单提交（不碰 main 历史），以便 Claude 当第二家评审。新 P2-跟进 #280、#283。
-
-> ## 2026-10-18 21:08 · /loop
-> 合并：#276（board）、#278（A6.7-pr3 hooks 配置，含 V8 资源边界卡 B，卡已入 decisions）。GLM 第二家评审改走 claude -p 智谱通道之后不再超时；闸门改为串行并排除 oracle.json（会招来「oracle 未入库」的误报，已两次用 ls-tree 和 ls-files 驳回）。换人实现：A6.6-pr3 GLM→DeepSeek（GLM 没有 Bash，第六轮超时）；A6.3-pr6 DeepSeek 修三轮仍未收敛，挂起该线，改由 codex 重设计。#275 落地后作者谱系包含 Co-Authored-By，协调者提交的单 Claude 都算作者，有两单因此缺第二家评审：署名口径 B 等用户本人在本会话确认（守护会话转达的不算）。协调者的一次过失：修复任务书里凭记忆写了评审 P1 标题，与原文不符，发现后停掉重发，教训写进 memory。新 P2-跟进 #277、#280。worktree 12/12。
-
-> ## 2026-10-18 19:55 · /loop
-> 合并：#268（board）、#269（p2-sweep-4：#235、#251 修复，#251 留一条未对齐）、#272（A6.4-pr11）。A6.4-pr1 原由 DeepSeek 写，codex 评审报了 7 条并发 P1，按 v2「并发归 codex」改由 codex 接手（看板 redispatch+1）。GLM 两类超时：作为第二家评审时大 diff 跑满 40 分钟，改由 Claude 顶上（`_tmp/20261018-a6-split/glm-timeout-note.md`）；四个闸门并行时 GLM 角色超时，改成串行队列，且不审 oracle.json（`gate-serial.sh`）。anthropic 闸门通道在 .env.local 里没有密钥，不可用。新 P2-跟进 #270（A6.4-pr11 闸门）、#271（project_files 负载假红）、#273（D2）、#274（F2）。worktree 12/12。
-
-> ## 2026-10-18 18:30 · /loop
-> 合并：#264（board + 模型分工 v2）、**#266（A6-X0）**、**#267（A6.3-pr1，DeepSeek 第一单）**。X0 合入后当轮放出 A6.4-pr1（DeepSeek）和 A6.5-pr1（codex），复用已合并的两个 worktree，证据先归档到 `_tmp/archive/`。新 P2-跟进 #265（X0 遗留，前置于 A6.4-pr1 / A6.5-pr1，已写进两单任务书）。A6.7-pr3 两家撞上「V8 资源耗尽边界」P1，按卡 B 处理（AI 代批，待人复核）。A6.4-pr2a 的 gitleaks 误报按 `.gitleaks.toml` 现行做法以精确值放行。worktree 12/12。
+> ## 2026-10-19 13:40 · Grok Bot 通道探针（旁线，非产品单）
+> **结果**：官方 App 无 CLI；`gbot` 0.12.4 因缺 `gateway-descriptor.json` 不可用（`EnsureSandBox 401`）。改走 `npx -p @cursor/bdk bdk login` 个人 key + `api.cursor.com/v0/grokbot/*`，三次冒烟通（`GBOT-OK`/`GBOT-CALL-OK`/`GBOT-ENV-OK`）；封装 `scripts/grokbot-call.py`，key 在 `.env.local` 的 `CURSOR_ACCESS_TOKEN`。
+> **边界**：undocumented、key 等价账号、消息经 Cursor 云端；**未定为第四家评审谱系**，要用先人定。详见 `state/memory/20261019-grokbot-channel.md`。
 
 > ## 2026-10-18 18:01 · /loop
 > 合并：#262（B2 归档登记）、#263（board）。人定**模型分工 v2**（经守护会话转达）：规格单交 DeepSeek（dsh）实现；评审第一家 DeepSeek（dsh read-only），第二家 codex，难单加 Claude；四角色审查仍用 GLM。卡见 decisions-20261017 末节，memory 见 20261018-dsh-channel。从本轮起评审改用 `_tmp/20261018-a6-split/review.sh`（可组合 glm/codex/dsh/claude）。仲裁：D2 的 umask P1 经协调者最小实测驳回（`_tmp/20261018-d2-skills/arb/`）。worktree 12/12，cargo 槽 3/4。**下一步**：X0 过 gate2 和增量确认后立即入队，合入后当轮放出 A6.4-pr1 / A6.5-pr1。
@@ -193,5 +175,51 @@ updated: 2026-10-19 07:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **现场核实**：main 已含全部实质成果（ICU collation、gateway errno、set-merge、A5.1 账本、exp014/015 fixtures），`cargo check --workspace` 通过。旁线研究 009/010 已保存在 codex/a5-112-resume@c7d9f53。
 > **下一步（按序）**：① 救 Draft PR #138（WS 握手字节保留，真代码，对应 P1 #56）与 #141（metadata errno，对应 P0 前置 #139）走完评审合并；② 评估 #142/#150 去留，关闭纯文档 PR #151；③ 开 #46（A4 gateway 透传 + 10 method 本地化，P0 主线）；④ 阶段 D（#122 起）。分工：codex 写实现、Claude Code 一路评审、GLM 协调+评审。
 > **资源**：_build+_tmp 已到 46G 上限、worktree 5 个满；开新树前必须先清理回收（wt-p2c 的未跟踪 none/ 已在主仓，可清）。下方 codex 密码文段落一律作历史，不作为当前指令。
+
+> ## 2026-10-19 · 本轮进展：#319/#338 合并，#337 入队，#340/#341 开 PR，GLM 策略调整
+> **合并**：#319 (A6.6-pr9) + #338 (A6.4-pr4) 已合并 main；#337 (A6.6-pr5) 全绿入队（DIRTY = merge group rebase 进行中）。
+> **新 PR**：#340 (A6.3-pr7 PluginRuntime，Claude 写，427 passed)；#341 (A6.5-pr4 内置文件工具，DeepSeek 写，519 passed；check 修复 49d5c1d，pr-gate 等子代理 gate4 结果）。
+> **GLM 告急策略（用户 10-19 指示）**：闸门改 Claude 子代理（会话认证，0 GLM），GLM 留给 DeepSeek PR 的最终第二家评审；Claude 写的 PR 改用 DeepSeek 并行评审取优。策略记 `state/memory/20261019-glm-scarcity-deepseek-shift.md`。
+> **待办**：① gate4 子代理完成后更新 #341 PR 描述，入队；② #337 等合并确认；③ #340 (A6.3-pr7) 等 CI 绿后 gate；④ A6.5-pr4 还需 GLM 作第二家评审（Claude gate 为第一家，GLM 为第二家，DeepSeek 是作者不能审）。
+> 
+> ## 2026-10-19 · 当前轮：GLM/codex 额度告急，切 Claude 子代理做闸门，节省 GLM 给最终双审
+> **已完成**：A6.6-pr9 dsh-r5（native_archive UTF-16 miss 分支改用 s.units()，金样补 4 条）提交推送 `deepseek/a66-pr9`；A6.4-pr4 dsh-r3（cache_policy_select 改 async 经 cpu::run，contains_word 改 JS \b 跃迁语义）提交推送 `deepseek/a64-pr4`；A6.6-pr5 P0+P1 fix（73076eb：stable_serialize 显式栈 + maxMessages 负/小数对齐）推送 `deepseek/a66-pr5`。
+> **GLM 告急应对（用户 10-19 指示）**：闸门改 Claude 子代理（`Agent` 工具，会话认证，0 GLM），节省 GLM 给最终双审（DeepSeek 作者 PR 的第二家仍需 GLM）。策略记 `state/memory/20261019-glm-scarcity-deepseek-shift.md`。
+> **进行中**：3 个 Claude 子代理并行跑闸门——A6.6-pr5 gate4（fix diff 1084 行，验 stable_serialize 显式栈 + maxMessages）；A6.4-pr4 gate3（fix diff 966 行，验 cpu::run + JS \b）；A6.6-pr9 gate5（fix diff 715 行，验 native_archive units）。A6.3-pr7 PluginRuntime Claude 子代理仍在写代码（wt-a6-recorder）。
+> **A6.5-pr4**：gate 发现 4 个 P1（spawn_blocking × 2、backslash normalization、PDF read-before-classify、regular-file gate for FIFO），dsh-r1 已修并自证（exit=0），未提交——等 A6.6-pr5/A6.4-pr4/A6.6-pr9 闸门结果处理完再提交。
+> **资源**：_build+_tmp 89.4 GiB（上限 100）；worktree 11 个（上限 12）；cargo 0/4。
+> **停下条件**：gate 子代理完成后读结果，P0=P1=0 的开 PR + 入队；有新 P1 的派 DeepSeek 修。codex 额度 2026-10-25 09:29 恢复。
+
+> ## 2026-10-19 · 下午：#340、#341 合入，#337 rebase 重跑
+> **合入**：#340（A6.3-pr7 PluginRuntime：gate3 0/0，`drain_one_plugin` 已改用 pin+enable 关闭通知竞态）、#341（A6.5-pr4）均 MERGED；邮箱核验：作者 noreply、提交者主邮箱（§五已知缺口）。#340 原先零 CI 的根因：和 main 在 `runtime/mod.rs` 冲突，GitHub 不触发 workflow。
+> **纠错**：#337 之前记作「入队 DIRTY」不对——实为 CONFLICTING，**不在队列里**（同样是 mod.rs 冲突）。已 rebase 到最新 main 并真合并（`context` + `memory` 都保留），本地 fmt/clippy/gateway 测试全绿，强推 27ad01b，PR 描述 head= 已更新；CI 绿后入队。教训：判断是否入队以 GraphQL `isInMergeQueue` 为准，不看 mergeStateStatus。
+> **下一步**：① #337 入队、合入；② 下方 READY 块已过时（A6-X0、A6.3-pr1、A6.4-pr4、A6.6-pr9 等已合入），下一轮先按 `gh pr list --state merged` 对一遍再取下一单。
+
+> ## 2026-10-19 · 16:30：#337 合入；A6.6-pr7 进闸门；新派 3 单 DeepSeek
+> **合入**：#337（A6.6-pr5）MERGED，邮箱同前。
+> **A6.6-pr7**（wt-a64-pr11，deepseek/a66-pr7 @6032da0）：两家 r2 均 0/0；rebase 三处冲突（runtime/mod.rs、context/mod.rs、tests/common/scratch.rs）按语义全保留，599/0；Claude 子代理闸门 gate1 进行中（`_tmp/20261019-a66-pr7/gate1/`），PR 描述草稿 `_tmp/20261019-a66-pr7/pr-body.md`（Closes #314）。
+> **新派**（以 main 87cedf0 为基，任务书在 `_tmp/20261019-<码>/task.md`）：A6.6-pr6 tool-result 预算（wt-a6-x0）· A6.3-pr8 SDK 会话配置（wt-a63-pr1，给 A6.7-pr6 留挂点）· A6.7-pr4 HookRuntime + 执行器（wt-a65-pr2）。评审计划：Claude 闸门 + Claude/GLM 两家。
+> **资源**：派活前 96.0 GiB，已删 7 个已合入工作树的增量缓存和其中 4 个的整个 target，降到 69.7 GiB；worktree 10/12。
+> **还没开的 A6 切片**（拆单对 main 日志）：A6.4-pr5~9（provider HTTP，TLS 依赖待人定）、A6.5-pr5/6/7/9~12、A6.6-pr8/10、A6.7-pr6（等 A6.3-pr8）。
+
+> ## 2026-10-19 · 18:45 交接：#343 合入；三单本地过闸门待 GLM；境外网络中断
+> **合入**：#343（A6.6-pr7）MERGED，#314 随之关闭；开 #342（toolPairIntegrity 收编，前置 A6.6-pr8）、#344（spill TOCTOU，前置 A6.9）。
+> **网络**：约 17:40 起 GitHub / api.z.ai（GLM）/ api.anthropic.com 全部 TLS 失败，DeepSeek 与境内站点正常。推送、开 PR、GLM 第二家评审全部挂起；不降级单评审。恢复后照 `_tmp/20261019-github-pending.md` 逐项做（后台已挂恢复通知）。
+> **待 GLM 后开 PR**（Claude 闸门均已 0/0，提交只在本地）：
+> - A6.6-pr6 tool-result 预算（wt-a6-x0 @f79fdd4）：gate1 P1 符号链接 → gate2 P1 硬链接 → gate3 PASS。GLM r2 待重跑。
+> - A6.3-pr8 SDK 会话配置（wt-a63-pr1 @7e1c48c）：gate1 4×P1 → 拆目录 + 修 → gate2/3/4 PASS；驳回过一次把 workspace `unsafe_code` 降为 deny 的改法（改用 std::env::home_dir）。GLM r2 待重跑。
+> **在修**：A6.7-pr4 HookRuntime（wt-a65-pr2 @1fe06e2）：进程组终止逻辑已被打回 3 次（孤儿 / 正常完成误杀组 / 超时跳过 TERM 宽限），fixg3 要求先列 TS 终止语义决策表再整体实现；**这次再不过就挂起转人工**。
+> **在写**：A6.5-pr5 写文件族 + file history（wt-a66-pr3）、A6.5-pr11 SDK MCP 配置（wt-a67-pr2），DeepSeek。
+> **待建跟进**：A6.7-pr4 https/NFKC/stringify/HTTP 超时口径；三个时序不稳测试（`_tmp/20261019-a66-pr6/p2c-flaky.md`）。
+> **资源**：build+tmp 96.2 → 86.3 GiB（删闲置树增量与 wt-a64-pr11 target）；worktree 10/12。
+
+> ## 2026-10-19 · 23:52：三单已合并，两单需手动 rebase
+> A6.6-pr6 #349、A6.3-pr8 #350、A6.5-pr11 #352 已 MERGED。**A6.7-pr4 #351、A6.5-pr5 #353 需手动 rebase**（`mergeable: false, mergeable_state: dirty`，前三单合入后产生冲突）。GLM 第二家已完成（配额两轮，最终尽力而为跑完）。**Grok Bot 并行测试**（A6.5-pr5）：P0=0 P1=1 P2=3 P3=2，**发现一条其他两家都漏的 P1**（文件变目录后 `getConflictPaths`/`rewind` 与 TS 相反，`_tmp/20261019-a65-pr5/rv-grok-full.md`）——表明 Grok Bot 有独特价值，可考虑加入评审谱系。新决策卡两张（深度上限差、写工具硬链接口径），见 `state/decisions-20261019.md`，均 AI 代批待人复核。
+
+> ## 2026-10-19 · 22:30：五单已开 PR，#349 已合并、三单在队列
+> A6.6-pr6 #349 已 MERGED；A6.3-pr8 #350、A6.5-pr11 #352、A6.5-pr5 #353 在 merge queue；A6.7-pr4 #351 等 CI。GLM 第二家已完成（配额两轮，最终尽力而为跑完）。**Grok Bot 并行测试**（A6.5-pr5）：P0=0 P1=1 P2=3 P3=2，**发现一条其他两家都漏的 P1**（文件变目录后 `getConflictPaths`/`rewind` 与 TS 相反，`_tmp/20261019-a65-pr5/rv-grok-full.md`）——表明 Grok Bot 有独特价值，可考虑加入评审谱系。新决策卡两张（深度上限差、写工具硬链接口径），见 `state/decisions-20261019.md`，均 AI 代批待人复核。
+
+> ## 2026-10-19 · 20:00：五单本地全过 Claude 闸门，网络仍断
+> A6.6-pr6 @f79fdd4、A6.3-pr8 @7e1c48c、A6.7-pr4 @4c7cbc5、A6.5-pr11 @1657804、A6.5-pr5 @205c794 均 P0=P1=0（结果块在各 `_tmp/20261019-<码>/gate*/summary.md`）。卡在：GitHub / Z.AI 不通 → 推送、GLM 第二家、开 PR。恢复后照 `_tmp/20261019-github-pending.md` 逐项做（第 6 条：合并顺序与 `$` 展开两份收一份）。在制品已达 5 单，暂停派新实现。新决策卡两张（深度上限差、写工具硬链接口径），见 `state/decisions-20261019.md`，均 AI 代批待人复核。
 
 > 📦 2026-10-17 以前的历史段和「OmO 大规模重构案例调研」段已原样移到 [`state/board-archive-202610.md`](board-archive-202610.md)。
