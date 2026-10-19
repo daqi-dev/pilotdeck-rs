@@ -1035,6 +1035,52 @@
       ]
     },
     {
+      "name": "read-text-eof-lone-cr",
+      "steps": [
+        {
+          "op": "file",
+          "path": "cr-eof.txt",
+          "content": "abc\r"
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "cr-eof.txt"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|abc\r"
+              }
+            ],
+            "data": {
+              "filePath": "cr-eof.txt",
+              "kind": "text",
+              "startLine": 1,
+              "endLine": 1,
+              "totalLines": 1,
+              "truncated": false,
+              "autoPaged": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "read-invalid-utf8",
       "steps": [
         {
@@ -1301,6 +1347,97 @@
             "error": {
               "code": "invalid_tool_input",
               "message": "Notebook <root>/bad.ipynb is not valid JSON."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "read-notebook-cell-type-number",
+      "steps": [
+        {
+          "op": "file",
+          "path": "typed.ipynb",
+          "content": "{\"cells\":[{\"cell_type\":5,\"source\":\"x\"}]}"
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "typed.ipynb"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|# Cell 0 (5)\n2|x"
+              }
+            ],
+            "data": {
+              "filePath": "typed.ipynb",
+              "kind": "notebook",
+              "startLine": 1,
+              "endLine": 2,
+              "totalLines": 2,
+              "truncated": false,
+              "cellCount": 1
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "read-notebook-non-array-cells",
+      "steps": [
+        {
+          "op": "file",
+          "path": "cells-object.ipynb",
+          "content": "{\"cells\":{}}"
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "cells-object.ipynb"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "1|"
+              }
+            ],
+            "data": {
+              "filePath": "cells-object.ipynb",
+              "kind": "notebook",
+              "startLine": 1,
+              "endLine": 1,
+              "totalLines": 1,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
             }
           }
         }
@@ -1734,6 +1871,10 @@
         {
           "op": "call",
           "index": 2
+        },
+        {
+          "op": "call",
+          "index": 3
         }
       ],
       "calls": [
@@ -1803,6 +1944,198 @@
             ]
           },
           "execute": null
+        },
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "doc.pdf",
+            "pages": "1-99999999999999999999"
+          },
+          "validate": {
+            "ok": false,
+            "issues": [
+              {
+                "path": "pages",
+                "code": "invalid_schema",
+                "message": "pages exceeds the maximum of 20 pages per request."
+              }
+            ]
+          },
+          "execute": null
+        }
+      ]
+    },
+    {
+      "name": "read-image-jpeg-fast-path",
+      "steps": [
+        {
+          "op": "file",
+          "path": "pic.jpg",
+          "base64": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQf/Z"
+        },
+        {
+          "op": "call",
+          "index": 0
+        },
+        {
+          "op": "call",
+          "index": 1
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "pic.jpg"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "image",
+                "mimeType": "image/jpeg",
+                "data": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQf/Z",
+                "bytes": 1026,
+                "detail": "low"
+              }
+            ],
+            "data": {
+              "filePath": "pic.jpg",
+              "kind": "image",
+              "mimeType": "image/jpeg",
+              "bytes": 1026,
+              "originalBytes": 1026
+            }
+          },
+          "context": {
+            "modelMultimodal": {
+              "input": [
+                "image"
+              ],
+              "imageDetail": "low"
+            }
+          }
+        },
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "pic.jpg"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "File unchanged since the last read. Refer to the earlier read_file result instead of re-reading it."
+              }
+            ],
+            "data": {
+              "filePath": "pic.jpg",
+              "kind": "image",
+              "unchanged": true
+            },
+            "metadata": {
+              "unchanged": true
+            }
+          },
+          "context": {
+            "modelMultimodal": {
+              "input": [
+                "image"
+              ],
+              "imageDetail": "low"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "read-pdf-document-block",
+      "steps": [
+        {
+          "op": "file",
+          "path": "doc.pdf",
+          "content": "not a pdf"
+        },
+        {
+          "op": "call",
+          "index": 0
+        },
+        {
+          "op": "call",
+          "index": 1
+        }
+      ],
+      "calls": [
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "doc.pdf"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "PDF file read: doc.pdf (9 bytes)"
+              }
+            ],
+            "data": {
+              "filePath": "doc.pdf",
+              "kind": "pdf",
+              "bytes": 9
+            }
+          },
+          "context": {
+            "modelMultimodal": {
+              "input": [
+                "pdf"
+              ]
+            }
+          }
+        },
+        {
+          "tool": "read_file",
+          "now": 1767225600000,
+          "input": {
+            "file_path": "doc.pdf"
+          },
+          "validate": {
+            "ok": true
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "File unchanged since the last read. Refer to the earlier read_file result instead of re-reading it."
+              }
+            ],
+            "data": {
+              "filePath": "doc.pdf",
+              "kind": "pdf",
+              "unchanged": true
+            },
+            "metadata": {
+              "unchanged": true
+            }
+          },
+          "context": {
+            "modelMultimodal": {
+              "input": [
+                "pdf"
+              ]
+            }
+          }
         }
       ]
     },
