@@ -128,7 +128,7 @@ impl ToolResultBudget {
     pub async fn apply_to_message(
         &self,
         message: &JsValue,
-        turn_id: Option<&JsString>,
+        turn_id: Option<&JsValue>,
     ) -> Result<JsValue, ToolBudgetError> {
         require_message(message)?;
         if !is_user_message(message) {
@@ -160,8 +160,8 @@ impl ToolResultBudget {
     pub async fn apply_to_supplemental_message(
         &self,
         message: &JsValue,
-        tool_call_id: &JsString,
-        turn_id: Option<&JsString>,
+        tool_call_id: Option<&JsString>,
+        turn_id: Option<&JsValue>,
     ) -> Result<JsValue, ToolBudgetError> {
         require_message(message)?;
         if !is_user_message(message) {
@@ -172,7 +172,7 @@ impl ToolResultBudget {
         let mut modified = false;
         for (index, block) in content.iter().enumerate() {
             let (replaced, changed) = self
-                .maybe_replace_media(block, index, Some(tool_call_id), turn_id)
+                .maybe_replace_media(block, index, tool_call_id, turn_id)
                 .await?;
             modified |= changed;
             rewritten.push(replaced);
@@ -186,7 +186,7 @@ impl ToolResultBudget {
     async fn maybe_replace_tool_result(
         &self,
         block: &JsValue,
-        turn_id: Option<&JsString>,
+        turn_id: Option<&JsValue>,
     ) -> Result<(JsValue, Vec<JsValue>, bool), ToolBudgetError> {
         let content = block_array(block, "content")?.to_vec();
         if !content.iter().any(is_tool_result_media_block) {
@@ -224,10 +224,10 @@ impl ToolResultBudget {
     async fn maybe_replace_text_tool_result(
         &self,
         block: &JsValue,
-        turn_id: Option<&JsString>,
+        turn_id: Option<&JsValue>,
     ) -> Result<(JsValue, bool), ToolBudgetError> {
         let tool_call_id = required_string(block, "toolCallId")?;
-        let replacement_key = scoped_tool_result_key(&tool_call_id, turn_id);
+        let replacement_key = scoped_tool_result_key(&tool_call_id, turn_id)?;
         if let Some(record) = self
             .state
             .lock()
@@ -346,7 +346,7 @@ impl ToolResultBudget {
         block: &JsValue,
         index: usize,
         tool_call_id: Option<&JsString>,
-        turn_id: Option<&JsString>,
+        turn_id: Option<&JsValue>,
     ) -> Result<(JsValue, bool), ToolBudgetError> {
         let Some(media_type) = block_type(block) else {
             return Ok((block.clone(), false));
@@ -364,15 +364,21 @@ impl ToolResultBudget {
             return Ok((block.clone(), false));
         }
         // TS reads `mimeType` only after the size guard, so a small malformed
-        // media block stays untouched instead of throwing.
-        let mime_type = media_mime_type(block)?;
+        // media block stays untouched instead of throwing. PDF's
+        // `extensionForMedia` branch returns before `.split`, so a missing
+        // mimeType is kept as `undefined` (JSON drops the output key).
+        let mime_type = if media_type == "pdf" {
+            block.get("mimeType").cloned().unwrap_or(JsValue::Undefined)
+        } else {
+            JsValue::String(media_mime_type(block)?)
+        };
 
         let extension = extension_for_media(media_type, &mime_type);
         let hash = hash_string(&data);
         let tool_call_id = tool_call_id.ok_or_else(|| {
             ToolBudgetError::new("Cannot read properties of undefined (reading 'trim')")
         })?;
-        let scoped_key = scoped_tool_result_key(tool_call_id, turn_id);
+        let scoped_key = scoped_tool_result_key(tool_call_id, turn_id)?;
         let id = format!(
             "{}-{}-{}-{}",
             String::from_utf16_lossy(scoped_key.units()),
@@ -395,9 +401,11 @@ impl ToolResultBudget {
         object.insert("originalBytes".into(), JsValue::Number(original_bytes));
         object.insert("preview".into(), JsValue::String(preview));
         object.insert("hasMore".into(), JsValue::Bool(true));
-        object.insert("mimeType".into(), JsValue::String(mime_type));
+        object.insert("mimeType".into(), mime_type);
         object.insert("mediaType".into(), JsValue::String(media_type.into()));
-        if let Some(pages) = block.get("pages").filter(|value| !value.is_undefined()) {
+        if media_type == "pdf"
+            && let Some(pages) = block.get("pages").filter(|value| !value.is_undefined())
+        {
             object.insert("pages".into(), pages.clone());
         }
         if media_type == "image"
@@ -551,7 +559,12 @@ fn looks_like_json(value: &JsString) -> bool {
     trimmed.starts_with('{') || trimmed.starts_with('[')
 }
 
-fn scoped_tool_result_key(tool_call_id: &JsString, turn_id: Option<&JsString>) -> JsString {
+/// TS `scopedToolResultKey`: `undefined` means unscoped, but `null` reaches
+/// `safePathPart` and throws on `.trim()`. Non-strings fail on `.trim` too.
+fn scoped_tool_result_key(
+    tool_call_id: &JsString,
+    turn_id: Option<&JsValue>,
+) -> Result<JsString, ToolBudgetError> {
     let safe_tool_call_id = {
         let value = safe_path_part(&String::from_utf16_lossy(tool_call_id.units()));
         if value.is_empty() {
@@ -560,13 +573,25 @@ fn scoped_tool_result_key(tool_call_id: &JsString, turn_id: Option<&JsString>) -
             value
         }
     };
-    let safe_turn_id = turn_id
-        .map(|value| safe_path_part(&String::from_utf16_lossy(value.units())))
-        .filter(|value| !value.is_empty());
-    match safe_turn_id {
+    let safe_turn_id = match turn_id {
+        None | Some(JsValue::Undefined) => None,
+        Some(JsValue::Null) => {
+            return Err(ToolBudgetError::new(
+                "Cannot read properties of null (reading 'trim')",
+            ));
+        }
+        Some(JsValue::String(value)) => {
+            let value = safe_path_part(&String::from_utf16_lossy(value.units()));
+            (!value.is_empty()).then_some(value)
+        }
+        Some(_) => {
+            return Err(ToolBudgetError::new("turnId.trim is not a function"));
+        }
+    };
+    Ok(match safe_turn_id {
         Some(turn) => JsString::from(format!("{turn}-{safe_tool_call_id}")),
         None => JsString::from(safe_tool_call_id),
-    }
+    })
 }
 
 fn safe_path_part(value: &str) -> String {
@@ -678,11 +703,11 @@ fn count_tokens(text: &JsString) -> Result<usize, ToolBudgetError> {
 
 fn media_preview(
     media_type: &str,
-    mime_type: &JsString,
+    mime_type: &JsValue,
     original_bytes: f64,
     block: &JsValue,
 ) -> JsString {
-    let mime_type = String::from_utf16_lossy(mime_type.units());
+    let mime_type = crate::js_value::display(mime_type).unwrap_or_default();
     let size = format!("{} bytes", number_string(original_bytes));
     if media_type == "pdf" {
         let pages = block
@@ -705,11 +730,14 @@ fn media_preview(
     }
 }
 
-fn extension_for_media(media_type: &str, mime_type: &JsString) -> String {
+fn extension_for_media(media_type: &str, mime_type: &JsValue) -> String {
     if media_type == "pdf" {
         return "pdf.b64".into();
     }
-    let mime_type = String::from_utf16_lossy(mime_type.units());
+    let mime_type = mime_type
+        .as_string()
+        .map(|value| String::from_utf16_lossy(value.units()))
+        .unwrap_or_default();
     let sub_type = mime_type.split('/').nth(1).unwrap_or_default();
     let filtered: String = sub_type
         .to_lowercase()
@@ -903,8 +931,18 @@ fn copy_file_if_absent(
 ) -> Result<bool, ToolBudgetError> {
     ensure_directory(root, &dirname(destination))?;
     let pair = format!("{}' -> '{}", path_text(source), path_text(destination));
-    let bytes =
-        fs::read(os_path(source)).map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
+    let source_path = os_path(source);
+    // `create_new` protects the destination; the source needs the same lstat
+    // check because a pre-planted spill-path symlink would otherwise be read
+    // through and copied outside the spill tree.
+    match fs::symlink_metadata(&source_path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(permission_denied("copyfile", source));
+        }
+        Ok(_) => {}
+        Err(error) => return Err(io_error(error, "copyfile", Some(&pair))),
+    }
+    let bytes = fs::read(&source_path).map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
     let destination_path = os_path(destination);
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -946,9 +984,20 @@ mod tests {
 
     #[test]
     fn key_and_hash_keep_utf16_code_units() {
+        let turn = JsValue::String(JsString::from("turn 2"));
         assert_eq!(
-            scoped_tool_result_key(&JsString::from("call/1"), Some(&JsString::from("turn 2"))),
+            scoped_tool_result_key(&JsString::from("call/1"), Some(&turn)).unwrap(),
             JsString::from("turn-2-call-1")
+        );
+        assert_eq!(
+            scoped_tool_result_key(&JsString::from("call/1"), None).unwrap(),
+            JsString::from("call-1")
+        );
+        assert_eq!(
+            scoped_tool_result_key(&JsString::from("call/1"), Some(&JsValue::Null))
+                .unwrap_err()
+                .message,
+            "Cannot read properties of null (reading 'trim')"
         );
         assert_eq!(safe_path_part("///"), "");
         assert_eq!(hash_string(&JsString::from("abc")), "1a47e90b");
