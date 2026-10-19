@@ -297,13 +297,15 @@ pub(crate) fn collect_tool_result_ids(messages: &[JsValue]) -> IdSet {
 }
 
 /// TS `stripUnpairedToolCalls`: drop tool calls without results, then drop
-/// messages whose whole content vanished.
+/// every message with empty content. The trailing `.filter` runs over all
+/// roles and also removes messages that already had `content: []` before this
+/// pass, not only the ones this pass emptied.
 pub(crate) fn strip_unpaired_tool_calls(messages: &[JsValue], paired: &IdSet) -> Vec<JsValue> {
     messages
         .iter()
-        .filter_map(|message| {
+        .map(|message| {
             if !is_role(message, "assistant") {
-                return Some(message.clone());
+                return message.clone();
             }
             let blocks = content(message);
             let filtered: Vec<JsValue> = blocks
@@ -315,24 +317,23 @@ pub(crate) fn strip_unpaired_tool_calls(messages: &[JsValue], paired: &IdSet) ->
                 .cloned()
                 .collect();
             if filtered.len() == blocks.len() {
-                return Some(message.clone());
+                return message.clone();
             }
-            if filtered.is_empty() {
-                return None;
-            }
-            Some(replace_content(message, filtered))
+            replace_content(message, filtered)
         })
+        .filter(|message| !content(message).is_empty())
         .collect()
 }
 
 /// TS `stripUnpairedToolResults`: drop tool results / media references whose
-/// call is gone, then drop messages whose whole content vanished.
+/// call is gone, then drop every message with empty content (see
+/// `strip_unpaired_tool_calls`).
 pub(crate) fn strip_unpaired_tool_results(messages: &[JsValue], paired: &IdSet) -> Vec<JsValue> {
     messages
         .iter()
-        .filter_map(|message| {
+        .map(|message| {
             if !is_role(message, "user") {
-                return Some(message.clone());
+                return message.clone();
             }
             let blocks = content(message);
             let filtered: Vec<JsValue> = blocks
@@ -344,13 +345,11 @@ pub(crate) fn strip_unpaired_tool_results(messages: &[JsValue], paired: &IdSet) 
                 .cloned()
                 .collect();
             if filtered.len() == blocks.len() {
-                return Some(message.clone());
+                return message.clone();
             }
-            if filtered.is_empty() {
-                return None;
-            }
-            Some(replace_content(message, filtered))
+            replace_content(message, filtered)
         })
+        .filter(|message| !content(message).is_empty())
         .collect()
 }
 

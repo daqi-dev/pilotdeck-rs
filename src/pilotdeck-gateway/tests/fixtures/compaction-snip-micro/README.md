@@ -1,6 +1,6 @@
 # Compaction snip / micro TS fixtures
 
-固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。被测 TS 入口：`src/context/compaction/SnipEngine.ts` 与 `src/context/compaction/MicroCompactionEngine.ts`，连同 `toolPairIntegrity.ts`、`protectedContext.ts`、`TokenBudgetManager.ts`、`tokenizer.ts` 与 `model/protocol/toolResultContent.ts` 的 import 传递闭包。`oracle.json` 记录整棵 `src` 的来源守卫（`bindSourceTree`）、闭包内每个文件的 SHA-256、en-US locale 断言、探针原值，以及 29 个场景的真实 TS 输入/输出。
+固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。被测 TS 入口：`src/context/compaction/SnipEngine.ts` 与 `src/context/compaction/MicroCompactionEngine.ts`，连同 `toolPairIntegrity.ts`、`protectedContext.ts`、`TokenBudgetManager.ts`、`tokenizer.ts` 与 `model/protocol/toolResultContent.ts` 的 import 传递闭包。`oracle.json` 记录整棵 `src` 的来源守卫（`bindSourceTree`）、闭包内每个文件的 SHA-256、en-US locale 断言、探针原值，以及 36 个场景的真实 TS 输入/输出。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -12,9 +12,9 @@ cd src
 cargo test --locked --offline -p pilotdeck-gateway --test compaction_snip_micro
 ```
 
-生成器先跑 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`（显式 Git 绝对路径、HEAD 固定、已跟踪树干净、整棵 `src` 逐 blob 比对），再按 import 传递闭包复算 `sourceSha256`。每次运行在输出目录下 `mkdtemp` 一个 `.generate-*` 临时目录，只清理本次创建的目录；`oracle.json` 先写 `.tmp` 再 rename。生成器连跑两次逐字节一致（没有随机值；token 数与消息字节都来自真实 TS）。
+生成器先跑 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`（显式 Git 绝对路径、HEAD 固定、已跟踪树干净、整棵 `src` 逐 blob 比对），再按 import 传递闭包复算 `sourceSha256`。每次运行在输出目录下 `mkdtemp` 一个 `.generate-*` 临时目录，`oracle.json.tmp` 写在该目录内再 rename 到 `oracle.json`（同一文件系统）；清理前先用 `assertOwnedScratch` 确认目标是本次的直接 `.generate-*` 目录。生成器连跑两次逐字节一致（没有随机值；token 数与消息字节都来自真实 TS）。
 
-`oracle.json.scenarios[]`（29 组，Rust 逐场景按序序列化比较）：
+`oracle.json.scenarios[]`（36 组，Rust 逐场景按序序列化比较）：
 
 | 场景 | 覆盖 |
 |---|---|
@@ -29,13 +29,17 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction_snip_micro
 | protected-default-tools / protected-memory-context / protected-custom-names | 默认保护 `read_skill`、`<memory-context>`、自定义 protectedToolNames 及各自 anchor |
 | dangling-tool-pairs | 保留侧 tool_call 无 result、保留侧 tool_result 无 call：两侧剥离并上报 `danglingToolCallIds` |
 | trailing-assistant | 末尾 assistant 后补 continuation user sentinel |
+| empty-assistant-content-dropped / empty-user-content-dropped | TS 的 `stripUnpaired*` 末尾 `.filter(m => m.content.length > 0)` 对所有角色生效：保留侧本来就空的 assistant / user 消息也被删；负控断言输入含空消息、输出不含 |
+| keep-head-turns-nan | `keepHeadTurns: NaN` 经 `Math.max`/`Math.min` 仍是 NaN，boundary 文本保留 `headTurns="NaN"`；JSON 用 `{$:'NaN'}` 记录，Rust 回放解码 |
 | synthetic-anchor / media-reference-tool-result | `metadata.synthetic` 不作 anchor；`media_reference`（带 toolCallId）按 tool-result-only 归组 |
 | few-results-skip | 可压缩 result 数 ≤ keepLatest，原样返回 |
 | rewrite-oldest-keep-two | 6 个 read_file result，keepLatest=2，只重写前 4 个 |
+| keep-latest-zero / keep-latest-negative / keep-latest-fractional | keepLatest 为 0、-1、1.5 时 TS 取到数组外/非整数下标，`undefined - 1 = NaN`，所有 result 都进重写窗口 |
 | non-compactable-names | 非 COMPACTABLE_TOOL_NAMES 原样 |
 | protected-tool-result / protected-override-null | protectedToolNames 拦截；input 传 null 时解除保护 |
 | trim-to-tokens / trim-to-bytes | trimToTokens 与 trimToBytes→tokens 两条预算 |
 | image-pdf-clear-and-size | 旧 user 消息里的独立 image/pdf 清成文本占位，`rewrittenBytes` 计入 data 长度；tool_result 内 image 也被压成文本 preview |
+| tool-result-image-url | tool_result 内 `source:'url'` 的 image flatten 成 `[Image: <mime>, <url>]`（不是 base64 字符数），负控断言 preview 保留 url 原文 |
 | unicode-token-slicing | 中文/emoji 的 UTF-16 二分切片 |
 | idempotent-second-pass / emergency-tighten-preview | 第二次跑不再改；768→256 应急预算可收紧已有 preview |
 

@@ -40,8 +40,21 @@ fn object(fields: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue 
     JsValue::Object(value)
 }
 
+// JSON cannot carry NaN/Infinity; the generator records those options as
+// `{$: 'NaN'}` etc. (same tag shape as the config-changes fixture).
 fn optional_f64(value: &JsValue) -> Option<f64> {
-    value.as_number()
+    if let Some(number) = value.as_number() {
+        return Some(number);
+    }
+    let Some(JsValue::String(tag)) = value.get("$") else {
+        return None;
+    };
+    match tag.to_utf8().expect("UTF-8 special number tag").as_str() {
+        "NaN" => Some(f64::NAN),
+        "Infinity" => Some(f64::INFINITY),
+        "-Infinity" => Some(f64::NEG_INFINITY),
+        other => panic!("unknown special number tag {other}"),
+    }
 }
 
 fn names(value: &JsValue) -> Option<Vec<String>> {
@@ -149,7 +162,7 @@ fn real_ts_snip_and_micro_scenarios_match_byte_for_byte() {
     let oracle = baseline::oracle(ORACLE);
     assert_eq!(s(field(&oracle, "locale")), "en-US");
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 29, "scenario count");
+    assert_eq!(scenarios.len(), 36, "scenario count");
     let mut seen = std::collections::HashSet::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
