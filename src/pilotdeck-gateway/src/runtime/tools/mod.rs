@@ -1,5 +1,6 @@
 //! Native tool registration and batch execution. The scheduler owns every
 //! child future, so cancellation of its host operation cannot detach work.
+pub mod builtin;
 mod recovery;
 pub mod registry;
 pub mod scheduler;

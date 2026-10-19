@@ -898,9 +898,15 @@ fn content_text(v: &JsValue) -> Result<String, HostError> {
 /// applyResultSizeLimit's metadata. `Err` is the RangeError a too-deep
 /// String() raises there; TS throws it inside the execute try block.
 fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsObject>, HostError> {
-    let Some(max) = max.filter(|n| *n >= 0.0) else {
+    let Some(max) = max else {
         return Ok(None);
     };
+    // TS `applyResultSizeLimit` tests `maxBytes < 0` (false for NaN) and then
+    // reaches head/tail truncation with NaN budgets. The runtime only consumes
+    // `.metadata`, so NaN reports a truncated body sized from the separator.
+    if max < 0.0 {
+        return Ok(None);
+    }
     let binary = |v: &JsValue| {
         v.get("type")
             .and_then(JsValue::as_string)
@@ -921,6 +927,18 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
             "originalBytes",
             JsValue::Number(original as f64),
         )])));
+    }
+    if max.is_nan() {
+        let suffix = "\n[Tool output truncated: head and tail shown.]";
+        let separator = "\n... [middle omitted] ...\n";
+        return Ok(Some(object([
+            ("truncated", JsValue::Bool(true)),
+            ("originalBytes", JsValue::Number(original as f64)),
+            (
+                "returnedBytes",
+                JsValue::Number((separator.len() + original + suffix.len()) as f64),
+            ),
+        ])));
     }
     if original as f64 <= max {
         return Ok(None);
@@ -957,4 +975,47 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
         ("originalBytes", JsValue::Number(original as f64)),
         ("returnedBytes", JsValue::Number(returned as f64)),
     ])))
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    fn text_content(value: &str) -> Vec<JsValue> {
+        vec![JsValue::Object(object([
+            ("type", JsValue::from("text")),
+            ("text", JsValue::from(value)),
+        ]))]
+    }
+
+    #[test]
+    fn preview_metadata_negative_and_nan_limits_match_ts() {
+        let content = text_content("abcdefghijklmnopqrstuvwxyz");
+        assert!(
+            preview_metadata(&content, Some(-1.0)).unwrap().is_none(),
+            "maxBytes < 0 disables the limit, including the context fallback"
+        );
+        let metadata = preview_metadata(&content, Some(f64::NAN))
+            .unwrap()
+            .expect("NaN still runs head/tail truncation in TS");
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&JsValue::Object(metadata))
+                .unwrap()
+                .unwrap(),
+            r#"{"truncated":true,"originalBytes":26,"returnedBytes":98}"#
+        );
+        let image = vec![JsValue::Object(object([
+            ("type", JsValue::from("image")),
+            ("data", JsValue::from("AAAA")),
+        ]))];
+        let metadata = preview_metadata(&image, Some(f64::NAN))
+            .unwrap()
+            .expect("binary metadata");
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&JsValue::Object(metadata))
+                .unwrap()
+                .unwrap(),
+            r#"{"originalBytes":4}"#
+        );
+    }
 }
