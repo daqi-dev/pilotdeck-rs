@@ -2,6 +2,12 @@
 //! command executor. Both spawn a leader in its own group (`process_group(0)`)
 //! and must not lose the group while a descendant still holds a pipe.
 //!
+//! Cleanup policy belongs to the caller, not to this module: the sidecar
+//! connection owns every descendant and clears the group after a natural exit,
+//! while the hook executor mirrors TS `commandRunner` and only signals the
+//! group on timeout/abort (a successful hook may leave its own background
+//! process running).
+//!
 //! The leader is observed with `WNOWAIT` so it stays a zombie (and therefore
 //! its PGID cannot be reused) until the caller has sent the final group
 //! signal; only then may `Child::wait` reap it.

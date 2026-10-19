@@ -741,10 +741,16 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
         let _ = task.await;
     }
 
-    // A naturally exited leader can still leave same-group descendants behind
-    // (for example `sleep 20 >/dev/null &`); once both pipes are at EOF the
-    // hook result is complete, so clean the group instead of orphaning it.
-    crate::process_group::kill(group, rustix::process::Signal::KILL);
+    // Timeout/abort owns the whole group: send the final KILL here because the
+    // loop can break on pipe EOF before the 3 s kill timer fires. A normal
+    // completion must not signal the group: TS `commandRunner` only kills on
+    // timeout/abort, so a background process a hook deliberately starts
+    // (`cmd >/dev/null 2>&1 &`) survives it. On that path only the leader is
+    // reaped, and the group is not awaited either.
+    let terminated = timed_or_cancelled;
+    if terminated {
+        crate::process_group::kill(group, rustix::process::Signal::KILL);
+    }
     let mut exit_code = None;
     if !forced {
         match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
@@ -753,8 +759,11 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
                 guard.reap();
             }
             _ => {
+                // The leader outlived a normal completion: fall back to the
+                // group contract so it cannot leak.
                 forced = true;
                 timed_out = true;
+                crate::process_group::kill(group, rustix::process::Signal::KILL);
             }
         }
     } else {
@@ -782,7 +791,9 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
         err_task.abort();
         let _ = err_task.await;
     }
-    crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+    if terminated || forced {
+        crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+    }
 
     let mut stderr = stderr_bytes;
     if forced {

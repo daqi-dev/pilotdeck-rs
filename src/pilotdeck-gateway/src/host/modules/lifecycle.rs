@@ -43,8 +43,8 @@ impl Handler {
             ports: Some(Ports { runtime, binding }),
         }
     }
-    /// TS `NullLifecycleRuntime`: dispatch is empty, dispose still reaches the
-    /// empty hook runtime.
+    /// TS `NullLifecycleRuntime`: dispatch is empty. This handler's `dispose` is
+    /// a no-op (the dispatcher never disposes the session runtime).
     pub fn null(binding: Binding) -> Self {
         Self::new(LifecycleRuntime::null(), binding)
     }

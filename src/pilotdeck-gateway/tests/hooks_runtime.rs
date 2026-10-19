@@ -143,12 +143,45 @@ fn write_scripts(oracle: &JsValue, root: &str) {
         .get("scripts")
         .and_then(JsValue::as_object)
         .expect("scripts");
-    assert_eq!(scripts.entries().len(), 15);
+    assert_eq!(scripts.entries().len(), 16);
     for (path, content) in scripts.entries() {
         let path = path.to_utf8().unwrap().replace("<dir>", root);
         let path = std::path::Path::new(&path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text(content)).unwrap();
+    }
+}
+
+/// Kills a background process a fixture started, including when an assertion
+/// panics, so a failed replay cannot leave an orphan behind.
+struct BackgroundProcess {
+    pid: i32,
+    armed: bool,
+}
+impl BackgroundProcess {
+    fn new(pid: i32) -> Self {
+        Self { pid, armed: true }
+    }
+    fn alive(&self) -> bool {
+        rustix::process::Pid::from_raw(self.pid)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+    }
+    fn kill(&mut self) {
+        if self.armed
+            && let Some(pid) = rustix::process::Pid::from_raw(self.pid)
+        {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
+    }
+    /// The process is confirmed gone; never signal this PID again in case it
+    /// was reused before the guard drops.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+impl Drop for BackgroundProcess {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -159,7 +192,7 @@ async fn command_executor_matches_real_ts_subprocesses() {
     let root = scratch_root(&scratch);
     write_scripts(&oracle, &root);
     let cases = array(field(&oracle, "command"));
-    assert_eq!(cases.len(), 22);
+    assert_eq!(cases.len(), 23);
     for case in cases {
         let name = text(field(case, "name"));
         let command = substitute_text(&text(field(case, "command")), &[("<dir>", &root)]);
@@ -194,11 +227,44 @@ async fn command_executor_matches_real_ts_subprocesses() {
         )
         .await
         .unwrap_or_else(|_| panic!("command case {name} did not resolve within 15s"));
+        // The guard is created before the comparison so a mismatch still kills
+        // the background process this case started.
+        let background = case.get("detachedPidFile").map(|value| {
+            let path = substitute_text(&text(value), &[("<dir>", &root)]);
+            let pid = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("background pid file {path}: {error}"))
+                .trim()
+                .parse::<i32>()
+                .expect("background pid");
+            BackgroundProcess::new(pid)
+        });
         assert_eq!(
             mask_paths(&json(&result.to_value()), &root),
             text(field(case, "expected")),
             "command case {name}"
         );
+        if let Some(mut background) = background {
+            let delay = number(field(case, "detachedAliveAfterMs")) as u64;
+            sleep(Duration::from_millis(delay)).await;
+            assert!(
+                background.alive(),
+                "command case {name}: background process {} must survive a successful hook",
+                background.pid
+            );
+            background.kill();
+            for _ in 0..200 {
+                if !background.alive() {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+            assert!(
+                !background.alive(),
+                "command case {name}: background process {} was not cleaned up",
+                background.pid
+            );
+            background.disarm();
+        }
     }
 }
 
