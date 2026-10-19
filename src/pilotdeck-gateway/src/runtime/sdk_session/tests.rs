@@ -10,7 +10,7 @@ mod scratch;
 
 use super::*;
 use crate::{
-    config::{Env, session_overrides::SessionConfigOverrides},
+    config::{Env, session_overrides::SessionConfigOverrides, session_value::SessionValue},
     runtime::plugins::{LoadedPlugin, PluginRuntime, PluginRuntimeOptions, PluginSource},
     storage::{TaskBudgetError, TaskBudgetStore},
 };
@@ -106,6 +106,14 @@ fn snapshot() -> JsValue {
 }
 
 fn registry(root: &Path, policy: Option<OrganizationPolicy>) -> SdkSessionRegistry {
+    registry_with_overrides(root, policy, SessionConfigOverrides::new())
+}
+
+fn registry_with_overrides(
+    root: &Path,
+    policy: Option<OrganizationPolicy>,
+    overrides: SessionConfigOverrides,
+) -> SdkSessionRegistry {
     let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
         project_root: root.to_path_buf(),
         pilot_home: root.join("home"),
@@ -133,7 +141,7 @@ fn registry(root: &Path, policy: Option<OrganizationPolicy>) -> SdkSessionRegist
         .with_plugin_loader(Arc::new(NamedLoader))
         .with_clock(Arc::new(|| 1_000.0)),
     )
-    .with_overrides(SessionConfigOverrides::new())
+    .with_overrides(overrides)
 }
 
 #[test]
@@ -318,6 +326,56 @@ fn flag_settings_tristate_and_existing_override_removal() {
     assert_eq!(
         overrides.get(&key).unwrap().to_value(),
         JsValue::Object(JsObject::new())
+    );
+}
+
+#[test]
+fn flag_settings_preserve_nested_override_handles() {
+    let scratch = scratch::Scratch::new("sdk-session-flag-identity");
+    let key: JsString = "s".into();
+    // Seed the store the way A6.6/A6.7 will: one permissionRules handle that
+    // outlives the flag writes. TS spreads the top level in both branches, so
+    // the handle must still compare equal afterwards.
+    let rules = SessionValue::object();
+    rules.set("allow", SessionValue::array(vec![]));
+    let held = SessionValue::object();
+    held.set("permissionRules", rules);
+    let mut overrides = SessionConfigOverrides::new();
+    overrides.set(&key, &held);
+    let mut registry = registry_with_overrides(scratch.path(), None, overrides);
+    assert!(
+        registry
+            .session_overrides()
+            .unwrap()
+            .same_permission_rules(&key, &held)
+    );
+
+    registry
+        .apply_flag_settings(
+            &key,
+            &js_object(vec![(
+                "permissions",
+                js_object(vec![("defaultMode", "plan".into())]),
+            )]),
+        )
+        .unwrap();
+    assert!(
+        registry
+            .session_overrides()
+            .unwrap()
+            .same_permission_rules(&key, &held),
+        "applying permissionMode must keep the nested permissionRules handle"
+    );
+
+    registry
+        .apply_flag_settings(&key, &js_object(vec![("permissions", JsValue::Null)]))
+        .unwrap();
+    assert!(
+        registry
+            .session_overrides()
+            .unwrap()
+            .same_permission_rules(&key, &held),
+        "clearing permissionMode must keep the nested permissionRules handle"
     );
 }
 
