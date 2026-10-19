@@ -655,8 +655,8 @@
   "node": "v22.22.0",
   "locale": "en-US",
   "counts": {
-    "cases": 31,
-    "steps": 34
+    "cases": 37,
+    "steps": 40
   },
   "cases": [
     {
@@ -1682,6 +1682,301 @@
             ]
           },
           "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kept\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"kept\"}]}],\"diagnostics\":[]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "turn-id-number",
+      "toolResultsDir": "<fixture>/turn-id-number/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1000,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": 42,
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-number-turn",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "inline body"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-number-turn\",\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-number-turn\",\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"diagnostics\":[{\"code\":\"tool_result_persistence_failed\",\"severity\":\"error\",\"message\":\"Failed to persist large tool result: value.trim is not a function\"}]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "toolcallid-number-text",
+      "toolResultsDir": "<fixture>/toolcallid-number-text/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1000,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": 42,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "inline body"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":42,\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":42,\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"diagnostics\":[{\"code\":\"tool_result_persistence_failed\",\"severity\":\"error\",\"message\":\"Failed to persist large tool result: value.trim is not a function\"}]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "toolcallid-missing-text",
+      "toolResultsDir": "<fixture>/toolcallid-missing-text/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1000,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "inline body"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":[{\"type\":\"text\",\"text\":\"inline body\"}]}]}],\"diagnostics\":[{\"code\":\"tool_result_persistence_failed\",\"severity\":\"error\",\"message\":\"Failed to persist large tool result: Cannot read properties of undefined (reading 'trim')\"}]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "toolcallid-number-media",
+      "toolResultsDir": "<fixture>/toolcallid-number-media/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 100,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": 42,
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "data": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+                      "mimeType": "image/png"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":42,\"content\":[{\"type\":\"image\",\"source\":\"base64\",\"data\":\"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM\",\"mimeType\":\"image/png\"}]}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":42,\"content\":[{\"type\":\"image\",\"source\":\"base64\",\"data\":\"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM\",\"mimeType\":\"image/png\"}]}]}],\"diagnostics\":[{\"code\":\"tool_result_persistence_failed\",\"severity\":\"error\",\"message\":\"Failed to persist large tool result: value.trim is not a function\"}]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "supplemental-toolcallid-number-small",
+      "toolResultsDir": "<fixture>/supplemental-toolcallid-number-small/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1000,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-main-small",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "main result"
+                    }
+                  ]
+                }
+              ]
+            },
+            "supplementalMessages": [
+              {
+                "toolCallId": 42,
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "small supplemental"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-main-small\",\"content\":[{\"type\":\"text\",\"text\":\"main result\"}]}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"small supplemental\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-main-small\",\"content\":[{\"type\":\"text\",\"text\":\"main result\"}]}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"small supplemental\"}]}],\"diagnostics\":[]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
+        }
+      ]
+    },
+    {
+      "name": "supplemental-toolcallid-number-media",
+      "toolResultsDir": "<fixture>/supplemental-toolcallid-number-media/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 100,
+        "maxResultSizeTokens": 1000
+      },
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-main-number",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "main result"
+                    }
+                  ]
+                }
+              ]
+            },
+            "supplementalMessages": [
+              {
+                "toolCallId": 42,
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "data": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+                      "mimeType": "image/png"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-main-number\",\"content\":[{\"type\":\"text\",\"text\":\"main result\"}]}]},{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":\"base64\",\"data\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"mimeType\":\"image/png\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"call-main-number\",\"content\":[{\"type\":\"text\",\"text\":\"main result\"}]}]},{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":\"base64\",\"data\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"mimeType\":\"image/png\"}]}],\"diagnostics\":[{\"code\":\"tool_result_persistence_failed\",\"severity\":\"error\",\"message\":\"Failed to persist large tool result: value.trim is not a function\"}]}",
           "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"}]"
         }
       ]

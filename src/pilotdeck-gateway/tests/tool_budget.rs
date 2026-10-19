@@ -18,8 +18,8 @@ use std::{
     sync::Arc,
 };
 const ORACLE: &str = include_str!("fixtures/tool-budget/oracle.json");
-const CASES: usize = 31;
-const STEPS: usize = 34;
+const CASES: usize = 37;
+const STEPS: usize = 40;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -353,7 +353,8 @@ async fn spill_rejects_symlinked_copy_source() {
     fs::create_dir_all(&dir).unwrap();
     // The spill target already exists as a symlink to a file outside the
     // tool-results tree. create_new() refuses to follow it, so the alias copy
-    // is the only place that could read the secret; it must lstat first.
+    // is the only place that could read the secret; it opens O_NOFOLLOW and
+    // rejects the link without reading its target.
     std::os::unix::fs::symlink(&secret_path, dir.join("turn-file-call-file.txt")).unwrap();
 
     let budget = ToolResultBudget::new(ToolResultBudgetOptions {
@@ -418,6 +419,88 @@ async fn spill_rejects_symlinked_copy_source() {
         fs::read_dir(&refs).unwrap().count(),
         0,
         "refs must not receive the symlinked source"
+    );
+    assert_eq!(fs::read_to_string(&secret_path).unwrap(), "TOP-SECRET");
+    assert_eq!(foreign_entries(outside.path()), 1);
+}
+
+#[tokio::test]
+async fn spill_rejects_hardlinked_copy_source() {
+    let scratch = Scratch::new("tool-budget-hardlink");
+    let outside = Scratch::new("tool-budget-hardlink-outside");
+    let secret_path = outside.path().join("secret.txt");
+    fs::write(&secret_path, b"TOP-SECRET").unwrap();
+    let dir = scratch.path().join("tool-results/session");
+    fs::create_dir_all(&dir).unwrap();
+    // The spill target already exists as a hard link to an outside inode. It
+    // is a regular file with nlink == 2, so the old `is_file()` check accepted
+    // it and the alias copy read the outside bytes into refs/. The source must
+    // be opened with O_NOFOLLOW and fstat'ed on that handle: regular file and
+    // nlink == 1, never a second directory entry to the same inode.
+    fs::hard_link(&secret_path, dir.join("turn-hard-call-hard.txt")).unwrap();
+
+    let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+        tool_results_dir: dir.clone(),
+        max_result_size_chars: Some(1),
+        max_result_size_tokens: Some(100),
+        preview_bytes: None,
+    });
+    let message = obj(vec![
+        ("role", "user".into()),
+        (
+            "content",
+            JsValue::Array(vec![obj(vec![
+                ("type", "tool_result".into()),
+                ("toolCallId", "call-hard".into()),
+                (
+                    "content",
+                    JsValue::Array(vec![obj(vec![
+                        ("type", "text".into()),
+                        ("text", "payload".into()),
+                    ])]),
+                ),
+            ])]),
+        ),
+    ]);
+    let turn = JsValue::String(pilotdeck_protocol::JsString::from("turn-hard"));
+    let error = budget
+        .apply_to_message(&message, Some(&turn))
+        .await
+        .unwrap_err();
+    assert!(error.message.contains("EACCES"), "{}", error.message);
+    assert!(!error.message.contains("TOP-SECRET"), "{}", error.message);
+
+    // The runtime surface must not leak the outside bytes either: the error is
+    // only a diagnostic and refs/ stays empty.
+    let runtime = DefaultContextRuntime::new(Options {
+        tool_result_budget: Some(Arc::new(budget)),
+        locale: Some("en-US".into()),
+        ..Options::default()
+    });
+    let mut fields = JsObject::new();
+    fields.insert("turnId".into(), turn);
+    fields.insert("toolResultMessage".into(), message);
+    let result = runtime
+        .apply_tool_results(ContextInput {
+            fields,
+            abort_signal: None,
+            budget_evaluator: None,
+        })
+        .await
+        .unwrap();
+    let output = stringify_json(&result).unwrap().unwrap();
+    assert!(!output.contains("TOP-SECRET"), "{output}");
+    let diagnostic = &array(field(&result, "diagnostics"))[0];
+    assert!(
+        text(field(diagnostic, "message")).contains("EACCES"),
+        "{output}"
+    );
+    let refs = scratch.path().join("tool-results/refs");
+    assert!(refs.is_dir(), "refs directory should exist but be empty");
+    assert_eq!(
+        fs::read_dir(&refs).unwrap().count(),
+        0,
+        "refs must not receive the hardlinked source"
     );
     assert_eq!(fs::read_to_string(&secret_path).unwrap(), "TOP-SECRET");
     assert_eq!(foreign_entries(outside.path()), 1);

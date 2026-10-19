@@ -36,7 +36,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   SHA-256、≤4096 字节文件的原文）。
 
 Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完整 `outputJson` 与
-`filesJson` 的逐字节内容，条数精确断言（31 cases / 34 steps）。路径统一规范化为
+`filesJson` 的逐字节内容，条数精确断言（37 cases / 40 steps）。路径统一规范化为
 `<fixture>`；`locale` 固定 en-US。
 
 覆盖：
@@ -57,6 +57,10 @@ Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完�
 - `turnId: null`：文本 tool_result（无论内联与否）在 `safePathPart` 处报
   `Cannot read properties of null (reading 'trim')`；未读取 turnId 的空 primary +
   小 supplemental 正常通过；
+- 非字符串 id：`turnId` 为 number、主块 `toolCallId` 为 number（文本与超限媒体
+  两条分支）时报 `value.trim is not a function`（V8 以 `safePathPart` 的参数名
+  `value` 命名）；supplemental 的非字符串 `toolCallId` 小消息正常通过、超限媒体
+  报同一条文案；
 - 空 tool_result、assistant 消息不参与预算；小 image 缺 `mimeType` 时 TS 在尺寸
   早退后才读它，保持原块；tool_result 内 audio 不参与媒体预算；
 - emoji / CJK / 代理对切断：head+tail 预览按 UTF-16 单元切尾，跨代理对产生孤立
@@ -72,8 +76,9 @@ Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完�
 - 安全负例（Rust 侧集成测试，不对拍 TS 的越界写）：`toolCallId` 路径穿越形状被
   TS 同款正则压平；`toolResultsDir` 自身是符号链接、或 root 下中间目录是符号
   链接时拒绝写入（EACCES），外部目录保持空；spill 目标已被预置为指向目录外文件
-  的符号链接时，别名复制在 `symlink_metadata` 处拒绝（EACCES），外部内容不进入
-  任何输出或 `refs/`。
+  的符号链接或硬链接时，别名复制以 `O_NOFOLLOW` 打开源并用句柄 `fstat` 要求
+  `is_file && nlink == 1`，拒绝（EACCES）且不读取外部内容，外部内容不进入任何
+  输出或 `refs/`。
 
 ## 切分点
 

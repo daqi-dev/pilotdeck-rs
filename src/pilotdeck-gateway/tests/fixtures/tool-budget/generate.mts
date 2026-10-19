@@ -521,6 +521,92 @@ await runCase({
 });
 
 await runCase({
+  name: 'turn-id-number',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        // safePathPart's parameter is `value`; V8 names it in the TypeError.
+        turnId: 42,
+        toolResultMessage: user([toolResult('call-number-turn', [text('inline body')])]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'toolcallid-number-text',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        // A non-string toolCallId reaches safePathPart before any spill work.
+        toolResultMessage: user([toolResult(42, [text('inline body')])]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'toolcallid-missing-text',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        // A missing id is `undefined`; V8 reports the `.trim` read, not the
+        // removed `toolCallId` property access.
+        toolResultMessage: user([toolResult(undefined, [text('inline body')])]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'toolcallid-number-media',
+  budget: { maxResultSizeChars: 100, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        // The media branch only reads the id once the block is over budget.
+        toolResultMessage: user([toolResult(42, [image('M'.repeat(120), 'image/png')])]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'supplemental-toolcallid-number-small',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([toolResult('call-main-small', [text('main result')])]),
+        supplementalMessages: [
+          // TS keeps the non-string id in the wrapper when it is never read.
+          { toolCallId: 42, message: user([text('small supplemental')]) },
+        ],
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'supplemental-toolcallid-number-media',
+  budget: { maxResultSizeChars: 100, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([toolResult('call-main-number', [text('main result')])]),
+        supplementalMessages: [
+          // Oversized media reaches scopedToolResultKey and throws there.
+          { toolCallId: 42, message: user([image('N'.repeat(120), 'image/png')]) },
+        ],
+      },
+    },
+  ],
+});
+
+await runCase({
   name: 'empty-and-nonuser',
   budget: { maxResultSizeChars: 1, maxResultSizeTokens: 1_000 },
   steps: [
