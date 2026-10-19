@@ -127,17 +127,34 @@ const flat = (parts: any[][]) => parts.flat();
 const tokens = (messages: any[]) => new TokenBudgetManager().estimateMessagesTokens(messages);
 const longText = (label: string) => `${label} ` + Array.from({ length: 500 }, (_, index) => `token${index}-${'abc'.repeat(4)}`).join(' ');
 
+// JSON has no NaN/Infinity. Record those option values as `{$: 'NaN'}` (the
+// same tag shape as the config-changes/session-overrides fixtures); the Rust
+// replay decodes the tag in `optional_f64`.
+function jsonSafe(value: any): any {
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return { $: 'NaN' };
+    if (value === Infinity) return { $: 'Infinity' };
+    if (value === -Infinity) return { $: '-Infinity' };
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(jsonSafe);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, jsonSafe(child)]));
+  }
+  return value;
+}
+
 const scenarios: any[] = [];
 function snip(name: string, input: any[], options: any = {}, callOptions: any = {}) {
   const engine = new SnipEngine(options);
   const result = engine.snip(input, callOptions);
-  scenarios.push({ name, engine: 'snip', options, callOptions, input, result });
+  scenarios.push({ name, engine: 'snip', options: jsonSafe(options), callOptions: jsonSafe(callOptions), input, result });
   return result;
 }
 function micro(name: string, input: any[], options: any = {}, inputOptions: any = {}) {
   const engine = new MicroCompactionEngine(options);
   const result = engine.apply({ messages: input, ...inputOptions });
-  scenarios.push({ name, engine: 'micro', options, inputOptions, input, result });
+  scenarios.push({ name, engine: 'micro', options: jsonSafe(options), inputOptions: jsonSafe(inputOptions), input, result });
   return result;
 }
 
@@ -380,6 +397,69 @@ snip('constrained-custom-head-tail', turns(10), { keepHeadTurns: 1, keepTailTurn
   scenarios.push({ name: 'emergency-tighten-preview', engine: 'micro', options: { keepLatest: 1, trimToTokens: 768 }, inputOptions: {}, input, result: normal });
   scenarios.push({ name: 'emergency-tighten-preview-result', engine: 'micro', options: { keepLatest: 1, trimToTokens: 256 }, inputOptions: {}, input: normal.messages, result: emergency });
 }
+{
+  // P2-2: `toolResultIndices[length - keepLatest]` is undefined for 0, a
+  // negative number and a fractional number, so `undefined - 1` is NaN and
+  // `index > NaN` is false: every compactable result falls in the rewrite
+  // window. The Rust `rewrite_until: None` branch must match that exactly.
+  const cases = [
+    ['keep-latest-zero', 0],
+    ['keep-latest-negative', -1],
+    ['keep-latest-fractional', 1.5],
+  ] as const;
+  for (const [name, keepLatest] of cases) {
+    const input = flat(Array.from({ length: 5 }, (_, index) => [
+      user(`request ${index + 1}`),
+      { ...assistant('call'), content: [call(`z${index + 1}`, 'read_file')] },
+      { role: 'user', content: [result(`z${index + 1}`, longText(`NUMERIC-${keepLatest}-${index + 1}`))] },
+    ]));
+    const output = micro(name, input, { keepLatest });
+    assert.equal(output.rewritten, 5, `negative control: keepLatest ${keepLatest} rewrites every result`);
+  }
+}
+{
+  // P2-2: a tool_result image with `source: 'url'` must flatten to
+  // `[Image: <mime>, <url>]`, not the base64-character count. The URL is long
+  // enough that the preview path rewrites it and keeps the URL visible.
+  const url = `https://example.com/assets/${'x'.repeat(120)}.png`;
+  const input = flat(Array.from({ length: 2 }, (_, index) => [
+    user(`url request ${index + 1}`),
+    { ...assistant('call'), content: [call(`w${index + 1}`, 'read_file')] },
+    { role: 'user', content: [resultBlocks(`w${index + 1}`, [{ type: 'image', source: 'url', data: url, mimeType: 'image/png' }])] },
+  ]));
+  const output = micro('tool-result-image-url', input, { keepLatest: 0, trimToTokens: 24 });
+  assert.equal(output.rewritten, 2, 'negative control: both url images are rewritten');
+  assert.ok(JSON.stringify(output.messages).includes(url), 'negative control: the preview keeps the url rather than a base64 count');
+}
+{
+  // P1-1: TS's stripUnpairedToolCalls ends with `.filter((m) => m.content.length > 0)`
+  // over every role, so a retained `content: []` message disappears even though
+  // no block was filtered in this pass. The tail group is kept by the tail floor.
+  const input = [...turns(8), { role: 'assistant', content: [] }];
+  const result = snip('empty-assistant-content-dropped', input, {}, { targetTokens: 1 });
+  assert.equal(result.applied, true);
+  assert.ok(input.some((message) => message.content.length === 0), 'input has an empty assistant message');
+  assert.ok(!result.messages.some((message) => message.content.length === 0), 'negative control: empty assistant content is dropped');
+}
+{
+  // P1-1 for stripUnpairedToolResults: the same trailing `.filter` removes a
+  // user message that was already empty before this pass.
+  const input = [...turns(8), { role: 'user', content: [] }];
+  const result = snip('empty-user-content-dropped', input, {}, { targetTokens: 1 });
+  assert.equal(result.applied, true);
+  assert.ok(input.some((message) => message.content.length === 0), 'input has an empty user message');
+  assert.ok(!result.messages.some((message) => message.content.length === 0), 'negative control: empty user content is dropped');
+}
+{
+  // P2-2: `Math.max(0, NaN)` stays NaN. With a constrained target the
+  // boundary text carries the unmodified `headTurns="NaN"`, pinning the
+  // option path and JS number formatting. (The unconstrained head-loop
+  // `Math.min(NaN, len)` is followed by a tail walk that keeps every turn,
+  // so it is not separately observable.)
+  const result = snip('keep-head-turns-nan', turns(8), { keepHeadTurns: NaN }, { targetTokens: 1 });
+  assert.equal(result.applied, true);
+  assert.ok(JSON.stringify(result.messages).includes('headTurns=\\"NaN\\"'), 'negative control: NaN is rendered, not coerced');
+}
 
 // ------------------------------------------------------------ probes (RESULT)
 const probes = {
@@ -412,20 +492,24 @@ const oracle: Record<string, any> = {
 const serialized = `${JSON.stringify(oracle, null, 2)}\n`;
 
 const scratch = await mkdtemp(join(output, '.generate-'));
-function assertOwned(path: string) {
+/** Deletes stay confined to this run's own direct `.generate-*` directory. */
+function assertOwnedScratch(path: string): string {
   const rel = relative(output, path);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`refused to remove ${path}: outside ${output}`);
+  if (!rel.startsWith('.generate-') || rel.includes(sep) || isAbsolute(rel)) {
+    throw new Error(`refused to remove ${path}: not this run's mkdtemp tree under ${output}`);
   }
+  return path;
 }
 try {
+  assertOwnedScratch(scratch);
   const target = join(output, 'oracle.json');
-  const temporary = join(output, 'oracle.json.tmp');
+  // Write inside the per-run mkdtemp directory (same filesystem), so two
+  // generators writing this fixture concurrently cannot share a temp name.
+  const temporary = join(scratch, 'oracle.json.tmp');
   await writeFile(temporary, serialized);
   await rename(temporary, target);
 } finally {
-  assertOwned(scratch);
-  await rm(scratch, { recursive: true, force: true });
+  await rm(assertOwnedScratch(scratch), { recursive: true, force: true });
 }
 
 console.log(`wrote ${scenarios.length} scenarios, ${Object.keys(sourceSha256).length} source hashes`);
