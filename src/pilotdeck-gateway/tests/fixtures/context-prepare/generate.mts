@@ -309,6 +309,16 @@ const extensionFull: Extension = {
   ],
 };
 
+const sevenProjectionMessages = () => [
+  user(text('u1')),
+  assistant(text('a1')),
+  user(text('u2')),
+  assistant(call('c1')),
+  user(result('c1')),
+  assistant(text('a3')),
+  user(text('u3')),
+];
+
 const cases: Case[] = [
   {
     name: 'basic',
@@ -448,6 +458,44 @@ const cases: Case[] = [
             assistant(text('a2')),
           ],
         }),
+      },
+    ],
+  },
+  {
+    // JS `maxMessages` is `number`: negative limits take the truncation path
+    // and can drop more messages than exist, fractional positive limits read
+    // `messages[cutIndex]` as undefined (TypeError), NaN/Infinity never
+    // truncate. These values are the measured TS baseline outputs.
+    name: 'projection-max-messages-js-number-edge',
+    steps: [
+      {
+        clockMs: baseClock,
+        input: baseInput({ maxMessages: -1, messages: sevenProjectionMessages() }),
+      },
+      {
+        clockMs: baseClock,
+        input: baseInput({
+          maxMessages: { $number: '-0' },
+          messages: sevenProjectionMessages(),
+        }),
+      },
+      {
+        clockMs: baseClock,
+        input: baseInput({
+          maxMessages: { $number: 'NaN' },
+          messages: sevenProjectionMessages(),
+        }),
+      },
+      {
+        clockMs: baseClock,
+        input: baseInput({
+          maxMessages: { $number: 'Infinity' },
+          messages: sevenProjectionMessages(),
+        }),
+      },
+      {
+        clockMs: baseClock,
+        input: baseInput({ maxMessages: 2.5, messages: sevenProjectionMessages() }),
       },
     ],
   },
@@ -958,9 +1006,45 @@ const cases: Case[] = [
     ],
   },
 ];
-assert.equal(cases.length, 40, 'case count');
+assert.equal(cases.length, 41, 'case count');
 
 // ---------------------------------------------------------------- execute
+// JSON cannot carry NaN/Infinity/-0. Inputs use {$number: "..."} markers and
+// are decoded before the runtime call; recorded inputs keep the marker so the
+// Rust replay can rebuild the exact JS number.
+function decodeNumbers(value: any): any {
+  if (Array.isArray(value)) return value.map(decodeNumbers);
+  if (value && typeof value === 'object') {
+    if (Object.keys(value).length === 1 && typeof value.$number === 'string') {
+      switch (value.$number) {
+        case 'NaN': return NaN;
+        case 'Infinity': return Infinity;
+        case '-Infinity': return -Infinity;
+        case '-0': return -0;
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, decodeNumbers(item)]),
+    );
+  }
+  return value;
+}
+function encodeNumbers(value: any): any {
+  if (typeof value === 'number') {
+    if (Object.is(value, -0)) return { $number: '-0' };
+    if (Number.isNaN(value)) return { $number: 'NaN' };
+    if (value === Infinity) return { $number: 'Infinity' };
+    if (value === -Infinity) return { $number: '-Infinity' };
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(encodeNumbers);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, encodeNumbers(item)]),
+    );
+  }
+  return value;
+}
 function substitute(value: any, root: string): any {
   if (typeof value === 'string') return value.split(fixture).join(root);
   if (Array.isArray(value)) return value.map((item) => substitute(item, root));
@@ -1083,13 +1167,15 @@ for (const spec of cases) {
     } else {
       delete process.env.PILOTDECK_MANAGED_CONFIG;
     }
-    const input = substitute(
-      step.messagesFromPrevious
-        ? { ...step.input, messages: previousOutput.messages }
-        : step.input,
-      output,
+    const input = decodeNumbers(
+      substitute(
+        step.messagesFromPrevious
+          ? { ...step.input, messages: previousOutput.messages }
+          : step.input,
+        output,
+      ),
     );
-    const normalizedInput = normalize(input, output);
+    const normalizedInput = normalize(encodeNumbers(input), output);
     const controller = new AbortController();
     abortState.controller = step.abort ? controller : undefined;
     abortState.mode = step.abort;

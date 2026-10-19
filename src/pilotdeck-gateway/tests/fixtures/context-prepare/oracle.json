@@ -1649,6 +1649,488 @@
       ]
     },
     {
+      "name": "projection-max-messages-js-number-edge",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u1"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a1"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u2"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "c1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "result c1"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a3"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u3"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "maxMessages": -1
+          },
+          "output": "{\"messages\":[],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[{\"code\":\"context_truncated\",\"severity\":\"warning\",\"message\":\"Truncated 8 message(s) to respect maxMessages=-1.\"}],\"boundaries\":[],\"metadata\":{\"droppedCount\":8,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u1"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a1"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u2"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "c1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "result c1"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a3"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u3"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "maxMessages": {
+              "$number": "-0"
+            }
+          },
+          "output": "{\"messages\":[],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[{\"code\":\"context_truncated\",\"severity\":\"warning\",\"message\":\"Truncated 7 message(s) to respect maxMessages=0.\"}],\"boundaries\":[],\"metadata\":{\"droppedCount\":7,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u1"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a1"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u2"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "c1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "result c1"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a3"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u3"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "maxMessages": {
+              "$number": "NaN"
+            }
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u1\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u2\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_call\",\"id\":\"c1\",\"name\":\"lookup\",\"input\":{\"q\":\"c1\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"c1\",\"content\":[{\"type\":\"text\",\"text\":\"result c1\"}]}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u3\"}]}],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u1"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a1"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u2"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "c1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "result c1"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a3"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u3"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "maxMessages": {
+              "$number": "Infinity"
+            }
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u1\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u2\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_call\",\"id\":\"c1\",\"name\":\"lookup\",\"input\":{\"q\":\"c1\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"toolCallId\":\"c1\",\"content\":[{\"type\":\"text\",\"text\":\"result c1\"}]}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u3\"}]}],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u1"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a1"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u2"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "id": "c1",
+                    "name": "lookup",
+                    "input": {
+                      "q": "c1"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "c1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "result c1"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a3"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "u3"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "maxMessages": 2.5
+          },
+          "error": "Cannot read properties of undefined (reading 'content')"
+        }
+      ]
+    },
+    {
       "name": "projection-orphan",
       "setup": {},
       "steps": [
