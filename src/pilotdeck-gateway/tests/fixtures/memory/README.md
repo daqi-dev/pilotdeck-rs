@@ -38,7 +38,8 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   `INVALID_MEMORY_SCOPE`、provider 缺失的 `CAPABILITY_UNAVAILABLE`（先于
   scope 校验）、provider 抛错原样传播、projectKey 缺省 fallback 与解析后键、
   `resolveProjectKey` 拒绝与 `registry.resolve` 抛错原样传播（不折叠成
-  `CAPABILITY_UNAVAILABLE`）。
+  `CAPABILITY_UNAVAILABLE`）、projectKey 的 UTF-16 身份（孤立代理项按原始
+  units 拒绝，字面 U+FFFD 项目独立解析，二者不互相别名）。
 
 ## 回放
 
@@ -47,5 +48,5 @@ cd src
 cargo test --locked --offline -p pilotdeck-gateway --test memory
 ```
 
-`tests/memory.rs` 精确断言 10 个 bundle case、8 个 projection case 及每个
+`tests/memory.rs` 精确断言 10 个 bundle case、10 个 projection case 及每个
 step；回放顺序、事件、工厂入参、返回/错误与调用序列均来自 oracle。
