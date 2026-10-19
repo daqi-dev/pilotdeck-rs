@@ -297,7 +297,7 @@ pub(super) fn string_field(fields: &JsObject, key: &str) -> JsString {
         .cloned()
         .unwrap_or_else(|| "undefined".into())
 }
-pub(super) fn js_space(c: char) -> bool {
+pub(crate) fn js_space(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000D}' | ' ' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
 }
 pub(super) fn truthy(value: &JsValue) -> bool {

@@ -1,18 +1,23 @@
 #![allow(clippy::result_large_err)]
-//! Built-in read-only file tools. Every implementation follows the fixed TS
-//! baseline under `resources/PilotDeck/src/tool/builtin`; filesystem paths are
-//! resolved lexically in UTF-16 first so path identity and state keys keep the
-//! original wire spelling, and only the OS boundary uses an `OsStr`.
+//! Built-in file tools. Every implementation follows the fixed TS baseline
+//! under `resources/PilotDeck/src/tool/builtin`; filesystem paths are resolved
+//! lexically in UTF-16 first so path identity and state keys keep the original
+//! wire spelling, and only the OS boundary uses an `OsStr`.
+pub mod edit_file;
+pub mod edit_notebook;
 pub mod glob;
 pub mod read_file;
 pub mod time;
+pub mod write_file;
 
 use crate::{
     host::HostError,
     runtime::tools::{ExecutableTool, ToolRegistration, ToolRegistry},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use sha2::{Digest, Sha256};
 use std::{
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
     time::UNIX_EPOCH,
@@ -35,6 +40,23 @@ pub fn read_only_tools() -> Vec<Arc<dyn ExecutableTool>> {
         Arc::new(glob::GlobTool::new()),
         Arc::new(time::GetCurrentTimeTool::new()),
     ]
+}
+
+/// A6.5-pr5 write family. Registered separately from the read-only catalog so
+/// A6.5-pr3's permission layer can group mutations.
+pub fn write_tools() -> Vec<Arc<dyn ExecutableTool>> {
+    vec![
+        Arc::new(write_file::WriteFileTool::new()),
+        Arc::new(edit_file::EditFileTool::new()),
+        Arc::new(edit_notebook::EditNotebookTool::new()),
+    ]
+}
+
+pub fn register_write_tools(registry: &ToolRegistry) -> Result<Vec<ToolRegistration>, HostError> {
+    write_tools()
+        .into_iter()
+        .map(|tool| registry.register(tool))
+        .collect()
 }
 
 pub(super) fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
@@ -473,4 +495,516 @@ pub(super) fn js_value_string(
         .map_err(|_| {
             crate::runtime::tools::ToolError::failed(crate::js_value::StackOverflow::MESSAGE)
         })
+}
+
+// ---------------------------------------------------------------------------
+// Write-family support (write_file / edit_file / edit_notebook).
+//
+// `writeSnapshots.ts`, `pathSafety.ts` for writes and `NodeFsPort.writeText`.
+// These stay in the shared module so the three tools cannot drift apart.
+
+const WRITE_DENY_DIRECTORIES: &[&str] = &[".git", "node_modules", "dist"];
+const NOT_READ: &str = "File has not been read yet. Read it first before writing to it.";
+const CHANGED: &str = "File has changed since the last read. Read it again before writing to it.";
+
+pub(super) fn read_text_file(path: &JsString) -> Result<String, crate::runtime::tools::ToolError> {
+    let metadata = fs::metadata(os_path(path)).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            tool_error(
+                "file_not_found",
+                format!("File {} does not exist.", text(path)),
+            )
+        } else {
+            failed(error, "stat", path)
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} is not a regular file.", text(path)),
+        ));
+    }
+    let bytes = fs::read(os_path(path)).map_err(|error| failed(error, "open", path))?;
+    if bytes.contains(&0) {
+        return Err(tool_error(
+            "invalid_tool_input",
+            format!("{} appears to be a binary file.", text(path)),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(super) struct WriteResult {
+    pub created: bool,
+    pub mtime_ms: f64,
+}
+
+/// `NodeFsPort.writeText` with `allowOverwrite: true`; parent directories are
+/// created lazily and the returned mtime is already floored like TS.
+pub(super) fn write_text_file(
+    path: &JsString,
+    content: &str,
+) -> Result<WriteResult, crate::runtime::tools::ToolError> {
+    let existing = match fs::metadata(os_path(path)) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(failed(error, "stat", path)),
+    };
+    if let Some(metadata) = &existing
+        && !metadata.is_file()
+    {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} exists and is not a regular file.", text(path)),
+        ));
+    }
+    let os_path = os_path(path);
+    if let Some(parent) = os_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| failed(error, "mkdir", path))?;
+    }
+    fs::write(&os_path, content.as_bytes()).map_err(|error| failed(error, "open", path))?;
+    let written = fs::metadata(&os_path).map_err(|error| failed(error, "stat", path))?;
+    Ok(WriteResult {
+        created: existing.is_none(),
+        mtime_ms: metadata_mtime_ms(&written),
+    })
+}
+
+fn metadata_mtime_ms(metadata: &fs::Metadata) -> f64 {
+    let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+    match modified.duration_since(UNIX_EPOCH) {
+        Ok(duration) => (duration.as_millis() as f64).floor(),
+        Err(error) => -(error.duration().as_millis() as f64).floor(),
+    }
+}
+
+fn hash_text(content: &str) -> String {
+    format!("{:x}", Sha256::digest(content.as_bytes()))
+}
+
+fn write_snapshot(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+) -> Option<JsValue> {
+    context
+        .host
+        .files
+        .write_snapshots
+        .lock()
+        .unwrap()
+        .get_key(absolute)
+        .cloned()
+}
+
+pub(super) fn record_write_snapshot(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+    content: &str,
+    mtime_ms: f64,
+    range: Option<(Option<f64>, Option<f64>)>,
+) {
+    let mut entry = object([
+        ("absolutePath", string(absolute.clone())),
+        ("mtimeMs", JsValue::Number(mtime_ms.floor())),
+        ("contentHash", string(hash_text(content))),
+    ]);
+    if let Some((offset, limit)) = range {
+        if let Some(offset) = offset {
+            entry.insert("offset".into(), JsValue::Number(offset));
+        }
+        if let Some(limit) = limit {
+            entry.insert("limit".into(), JsValue::Number(limit));
+        }
+    }
+    context
+        .host
+        .files
+        .write_snapshots
+        .lock()
+        .unwrap()
+        .insert(absolute.clone(), JsValue::Object(entry));
+}
+
+pub(super) fn invalidate_read_file_state(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+) {
+    let mut prefix = absolute.units().to_vec();
+    prefix.extend_from_slice(&[b':' as u16, b':' as u16]);
+    let mut state = context.host.files.read_file_state.lock().unwrap();
+    if state.is_empty() {
+        return;
+    }
+    let kept: Vec<(JsString, JsValue)> = state
+        .entries()
+        .iter()
+        .filter(|(key, _)| !key.units().starts_with(&prefix))
+        .cloned()
+        .collect();
+    let mut next = JsObject::new();
+    for (key, value) in kept {
+        next.insert(key, value);
+    }
+    *state = next;
+}
+
+fn changed_error(
+    absolute: &JsString,
+    expected_mtime: f64,
+    actual_mtime: f64,
+) -> crate::runtime::tools::ToolError {
+    let mut details = JsObject::new();
+    details.insert("absolutePath".into(), string(absolute.clone()));
+    details.insert("expectedMtimeMs".into(), JsValue::Number(expected_mtime));
+    details.insert("actualMtimeMs".into(), JsValue::Number(actual_mtime));
+    let mut error = tool_error("invalid_tool_input", CHANGED);
+    error.details = Some(details);
+    error
+}
+
+/// `validateWriteSnapshotFresh`: returns whether the file exists. The caller
+/// only converts the two read-state messages into schema issues.
+pub(super) fn validate_write_snapshot_fresh(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+) -> Result<bool, crate::runtime::tools::ToolError> {
+    let metadata = match fs::metadata(os_path(absolute)) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(failed(error, "stat", absolute)),
+    };
+    if !metadata.is_file() {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} is not a regular file.", text(absolute)),
+        ));
+    }
+    let Some(snapshot) = write_snapshot(context, absolute) else {
+        return Err(tool_error("invalid_tool_input", NOT_READ));
+    };
+    let expected_mtime = snapshot
+        .get("mtimeMs")
+        .and_then(JsValue::as_number)
+        .unwrap_or(f64::NAN);
+    let actual_mtime = metadata_mtime_ms(&metadata);
+    if actual_mtime == expected_mtime {
+        return Ok(true);
+    }
+    let full_read = snapshot.get("offset").is_none() && snapshot.get("limit").is_none();
+    if full_read {
+        let previous = read_text_file(absolute)?;
+        let recorded = snapshot
+            .get("contentHash")
+            .and_then(JsValue::as_string)
+            .map(text)
+            .unwrap_or_default();
+        if hash_text(&previous) == recorded {
+            return Ok(true);
+        }
+    }
+    Err(changed_error(absolute, expected_mtime, actual_mtime))
+}
+
+pub(super) struct Freshness {
+    pub exists: bool,
+    pub previous_content: Option<String>,
+}
+
+/// `ensureWriteSnapshotFresh`: like validate, but also returns the content used
+/// for the structured patch / diff.
+pub(super) fn ensure_write_snapshot_fresh(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+) -> Result<Freshness, crate::runtime::tools::ToolError> {
+    let metadata = match fs::metadata(os_path(absolute)) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Freshness {
+                exists: false,
+                previous_content: None,
+            });
+        }
+        Err(error) => return Err(failed(error, "stat", absolute)),
+    };
+    if !metadata.is_file() {
+        return Err(tool_error(
+            "file_conflict",
+            format!("{} is not a regular file.", text(absolute)),
+        ));
+    }
+    let Some(snapshot) = write_snapshot(context, absolute) else {
+        return Err(tool_error("invalid_tool_input", NOT_READ));
+    };
+    let expected_mtime = snapshot
+        .get("mtimeMs")
+        .and_then(JsValue::as_number)
+        .unwrap_or(f64::NAN);
+    let actual_mtime = metadata_mtime_ms(&metadata);
+    let previous = read_text_file(absolute)?;
+    let full_read = snapshot.get("offset").is_none() && snapshot.get("limit").is_none();
+    if actual_mtime != expected_mtime {
+        if full_read {
+            let recorded = snapshot
+                .get("contentHash")
+                .and_then(JsValue::as_string)
+                .map(text)
+                .unwrap_or_default();
+            if hash_text(&previous) == recorded {
+                return Ok(Freshness {
+                    exists: true,
+                    previous_content: Some(previous),
+                });
+            }
+        }
+        return Err(changed_error(absolute, expected_mtime, actual_mtime));
+    }
+    if !full_read {
+        return Ok(Freshness {
+            exists: true,
+            previous_content: Some(previous),
+        });
+    }
+    let recorded = snapshot
+        .get("contentHash")
+        .and_then(JsValue::as_string)
+        .map(text)
+        .unwrap_or_default();
+    if hash_text(&previous) != recorded {
+        return Err(changed_error(absolute, expected_mtime, actual_mtime));
+    }
+    Ok(Freshness {
+        exists: true,
+        previous_content: Some(previous),
+    })
+}
+
+fn write_denied(relative: &JsString) -> bool {
+    let first: Vec<u16> = relative
+        .units()
+        .split(|unit| *unit == b'/' as u16)
+        .next()
+        .map(<[u16]>::to_vec)
+        .unwrap_or_default();
+    WRITE_DENY_DIRECTORIES
+        .iter()
+        .any(|denied| first == denied.encode_utf16().collect::<Vec<_>>())
+}
+
+fn denied_error(relative: &JsString) -> crate::runtime::tools::ToolError {
+    tool_error(
+        "path_not_allowed",
+        format!("Writing to {} is not allowed by default.", text(relative)),
+    )
+}
+
+/// Extra containment guard for mutations. TS `pathSafety` is lexical unless
+/// `mustExist`; the task requires writes to stay inside an allowed root, so a
+/// symlinked target or symlinked parent that resolves outside is rejected, as
+/// is an existing multiply-linked file (a hard link aliases bytes owned by
+/// another path). This is deliberately stricter than the TS NodeFsPort.
+fn guard_write_containment(
+    input: &JsString,
+    absolute: &JsString,
+    root: &JsString,
+    relative: &JsString,
+) -> Result<(), crate::runtime::tools::ToolError> {
+    let target = os_path(absolute);
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let link =
+                fs::read_link(&target).map_err(|error| failed(error, "readlink", absolute))?;
+            let target = if link.is_absolute() {
+                link
+            } else {
+                target.parent().unwrap_or(Path::new("/")).join(link)
+            };
+            let target = normalize(&JsString::from(target.to_string_lossy().as_ref()));
+            let real = canonical(&target).unwrap_or_else(|| {
+                nearest_existing_ancestor(&target).unwrap_or_else(|| target.clone())
+            });
+            let real_root = canonical(root).unwrap_or_else(|| root.clone());
+            if !within_root(&real, &real_root) {
+                return Err(tool_error(
+                    "path_not_allowed",
+                    format!(
+                        "Path {} resolves outside the PilotDeck workspace.",
+                        text(input)
+                    ),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if fs::metadata(os_path(&target))
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.nlink() > 1)
+                {
+                    return Err(denied_error(relative));
+                }
+            }
+        }
+        Ok(metadata) => {
+            let real = canonical(absolute).unwrap_or_else(|| absolute.clone());
+            let real_root = canonical(root).unwrap_or_else(|| root.clone());
+            if !within_root(&real, &real_root) {
+                return Err(tool_error(
+                    "path_not_allowed",
+                    format!(
+                        "Path {} resolves outside the PilotDeck workspace.",
+                        text(input)
+                    ),
+                ));
+            }
+            if metadata.is_file() {
+                let followed =
+                    fs::metadata(&target).map_err(|error| failed(error, "stat", absolute))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if followed.nlink() > 1 {
+                        return Err(denied_error(relative));
+                    }
+                }
+                #[cfg(not(unix))]
+                let _ = followed;
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let probe = nearest_existing_ancestor(absolute).unwrap_or_else(|| normalize(root));
+            let real = canonical(&probe).unwrap_or(probe);
+            let real_root = canonical(root).unwrap_or_else(|| root.clone());
+            if !within_root(&real, &real_root) {
+                return Err(tool_error(
+                    "path_not_allowed",
+                    format!(
+                        "Path {} resolves outside the PilotDeck workspace.",
+                        text(input)
+                    ),
+                ));
+            }
+        }
+        Err(error) => return Err(failed(error, "stat", absolute)),
+    }
+    Ok(())
+}
+
+fn nearest_existing_ancestor(path: &JsString) -> Option<JsString> {
+    let mut current = os_path(path);
+    while current.pop() {
+        if fs::symlink_metadata(&current).is_ok() {
+            return Some(js_path(&current));
+        }
+    }
+    None
+}
+
+/// Write variant of `resolvePilotDeckWorkspacePath`. `must_exist` mirrors the
+/// notebook resolver; `allow_outside` is the host permission decision, never a
+/// model-controlled input.
+pub(super) fn resolve_write_path(
+    input: &JsString,
+    context: &crate::runtime::tools::ToolRunContext,
+    must_exist: bool,
+    allow_outside: bool,
+) -> Result<ResolvedPath, crate::runtime::tools::ToolError> {
+    let input_text = text(input);
+    if input.is_empty() || input_text.contains('\0') {
+        return Err(invalid(
+            "Path must be a non-empty string without null bytes.",
+        ));
+    }
+    let cwd = cwd(context);
+    let absolute = if is_absolute(input) {
+        normalize(input)
+    } else {
+        join(&cwd, input)
+    };
+    let relative_cwd = relative(&cwd, &absolute);
+    let relative_cwd = if relative_cwd.is_empty() {
+        JsString::from(".")
+    } else {
+        relative_cwd
+    };
+    if permission_mode(context).equals_str("bypassPermissions") {
+        if write_denied(&relative_cwd) {
+            return Err(denied_error(&relative_cwd));
+        }
+        return Ok(ResolvedPath {
+            absolute,
+            relative: relative_cwd,
+        });
+    }
+
+    let mut roots = vec![normalize(&cwd)];
+    roots.extend(
+        additional_working_directories(context)
+            .iter()
+            .map(normalize),
+    );
+    let root = roots
+        .iter()
+        .find(|root| within_root(&absolute, root))
+        .cloned();
+    let Some(root) = root else {
+        if allow_outside {
+            if write_denied(&relative_cwd) {
+                return Err(denied_error(&relative_cwd));
+            }
+            return Ok(ResolvedPath {
+                absolute,
+                relative: relative_cwd,
+            });
+        }
+        return Err(tool_error(
+            "path_not_allowed",
+            format!("Path {input_text} is outside the PilotDeck workspace."),
+        ));
+    };
+    let relative_path = relative(&root, &absolute);
+    let relative_path = if relative_path.is_empty() {
+        JsString::from(".")
+    } else {
+        relative_path
+    };
+    if write_denied(&relative_path) {
+        return Err(denied_error(&relative_path));
+    }
+    if must_exist {
+        let real = canonical(&absolute).ok_or_else(|| {
+            tool_error(
+                "file_not_found",
+                format!("File {input_text} does not exist."),
+            )
+        })?;
+        let real_root = canonical(&root).unwrap_or_else(|| root.clone());
+        if !within_root(&real, &real_root) {
+            return Err(tool_error(
+                "path_not_allowed",
+                format!("Path {input_text} resolves outside the PilotDeck workspace."),
+            ));
+        }
+    }
+    if !allow_outside {
+        guard_write_containment(input, &absolute, &root, &relative_path)?;
+    }
+    Ok(ResolvedPath {
+        absolute,
+        relative: relative_path,
+    })
+}
+
+/// `context.messageId ?? context.turnId`, already a host-set string.
+pub(super) fn message_id(context: &crate::runtime::tools::ToolRunContext) -> String {
+    context
+        .fields
+        .get("messageId")
+        .and_then(JsValue::as_string)
+        .or_else(|| context.fields.get("turnId").and_then(JsValue::as_string))
+        .map(|value| String::from_utf16_lossy(value.units()))
+        .unwrap_or_default()
+}
+
+pub(super) fn file_history(
+    context: &crate::runtime::tools::ToolRunContext,
+) -> Option<&crate::storage::file_history::FileHistoryStore> {
+    context.host.file_history.as_ref()?.downcast_ref()
 }
