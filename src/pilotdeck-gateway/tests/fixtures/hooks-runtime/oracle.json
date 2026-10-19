@@ -650,6 +650,80 @@
       "expected": "{\"stdout\":\"hi\\n\",\"stderr\":\"\",\"outcome\":\"timeout\",\"output\":{\"type\":\"sync\"}}"
     },
     {
+      "name": "grandchild-holds-stdout-briefly",
+      "command": "sleep 0.4 & echo hi",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "timeoutMs": 5000,
+      "expected": "{\"stdout\":\"hi\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "term-handler-grace",
+      "command": "bash -c 'trap \"sleep 1; touch <dir>/term-grace.marker; exit 0\" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "timeoutMs": 1000,
+      "markerFile": "<dir>/term-grace.marker",
+      "markerWaitMs": 3500,
+      "expected": "{\"stdout\":\"hi\\n\",\"stderr\":\"\",\"outcome\":\"timeout\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "term-handler-grace-abort",
+      "command": "bash -c 'trap \"sleep 1; touch <dir>/term-handler-grace-abort.marker; exit 0\" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "timeoutMs": 600000,
+      "abortAtMs": 500,
+      "markerFile": "<dir>/term-handler-grace-abort.marker",
+      "markerWaitMs": 4000,
+      "expected": "{\"stdout\":\"hi\\n\",\"stderr\":\"\",\"outcome\":\"cancelled\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "grandchild-ignores-term-abort",
+      "command": "bash -c 'trap \"\" TERM; sleep 20' & echo hi; sleep 20",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "timeoutMs": 600000,
+      "abortAtMs": 500,
+      "expected": "{\"stdout\":\"hi\\n\",\"stderr\":\"\",\"outcome\":\"cancelled\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
       "name": "shell-path-empty-falls-back",
       "command": "printf 'empty-ok\\n'",
       "cwd": "<dir>",

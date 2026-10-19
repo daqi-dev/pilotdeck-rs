@@ -6,7 +6,10 @@
 //! connection owns every descendant and clears the group after a natural exit,
 //! while the hook executor mirrors TS `commandRunner` and only signals the
 //! group on timeout/abort (a successful hook may leave its own background
-//! process running).
+//! process running). On timeout/abort the hook executor sends TERM first, then
+//! keeps the leader unreaped for TS's 3 s grace before the final KILL; a
+//! result that resolves at pipe EOF hands that deferred KILL to a background
+//! task instead of cutting the grace short.
 //!
 //! The leader is observed with `WNOWAIT` so it stays a zombie (and therefore
 //! its PGID cannot be reused) until the caller has sent the final group
@@ -64,6 +67,51 @@ pub(crate) fn leader_exited_unreaped(group: Pid) -> Result<bool, rustix::io::Err
     {
         let _ = group;
         Ok(false)
+    }
+}
+
+/// Exit code of an already-exited leader observed without reaping it.
+///
+/// `None` when the leader was killed by a signal, has not been observed as
+/// exited, or the platform cannot wait with `WNOWAIT`. The zombie (and therefore
+/// its PGID) stays reserved for the caller's later group signal + `Child::wait`.
+pub(crate) fn leader_exit_code_unreaped(group: Option<Pid>) -> Option<i32> {
+    let group = group?;
+    // `WaitIdStatus::exit_status` is unavailable on these targets even when
+    // `waitid` itself exists; fall back to the next `Child::wait` instead.
+    #[cfg(not(any(
+        target_os = "cygwin",
+        target_os = "emscripten",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "wasi"
+    )))]
+    {
+        use rustix::process::{WaitId, WaitIdOptions, waitid};
+        match waitid(
+            WaitId::Pid(group),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(status)) => status.exit_status(),
+            _ => None,
+        }
+    }
+    #[cfg(any(
+        target_os = "cygwin",
+        target_os = "emscripten",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "wasi"
+    ))]
+    {
+        let _ = group;
+        None
     }
 }
 

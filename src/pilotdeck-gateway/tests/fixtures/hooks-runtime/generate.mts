@@ -3,7 +3,7 @@
 // command hooks spawn real scripts in this run's mkdtemp tree, HTTP hooks talk
 // to a loopback mock server, and callback hooks are injected.
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -202,6 +202,9 @@ async function commandCase(input: {
   hookInput?: any;
   detachedPidFile?: string;
   detachedAliveAfterMs?: number;
+  /** TERM-handler cleanup marker: after the result, wait then require it exists. */
+  markerFile?: string;
+  markerWaitMs?: number;
 }) {
   const maskedCommand = input.command ?? `/bin/bash '${input.script}'`;
   const command = actual(maskedCommand);
@@ -217,6 +220,16 @@ async function commandCase(input: {
   });
   if (ac && input.abortAtMs! > 0) setTimeout(() => ac.abort(), input.abortAtMs);
   const result = await running;
+  if (input.markerFile) {
+    // The result resolves at `close`, but TS keeps its TERM->3 s->KILL timer
+    // alive. A descendant that cleans up in its TERM handler must finish
+    // before that KILL; record the observation, then remove the marker.
+    const markerWaitMs = input.markerWaitMs ?? 2500;
+    await new Promise(resolve => setTimeout(resolve, markerWaitMs));
+    assert.equal(existsSync(actual(input.markerFile)), true,
+      `TERM-handler cleanup marker ${input.markerFile} was cut short by SIGKILL`);
+    try { unlinkSync(actual(input.markerFile)); } catch { /* already gone */ }
+  }
   const detachedAliveAfterMs = input.detachedPidFile ? (input.detachedAliveAfterMs ?? 500) : undefined;
   if (input.detachedPidFile) {
     // A successful hook must leave `cmd >/dev/null 2>&1 &` running (TS
@@ -244,6 +257,9 @@ async function commandCase(input: {
     ...(input.abortAtMs !== undefined ? { abortAtMs: input.abortAtMs } : {}),
     ...(input.detachedPidFile
       ? { detachedPidFile: input.detachedPidFile, detachedAliveAfterMs }
+      : {}),
+    ...(input.markerFile
+      ? { markerFile: input.markerFile.split(root).join('<dir>'), markerWaitMs: input.markerWaitMs ?? 2500 }
       : {}),
     ...(input.script ? { script: input.script } : {}),
     expected: json(result),
@@ -364,6 +380,37 @@ await commandCase({
   name: 'grandchild-ignores-term',
   command: `bash -c 'trap "" TERM; sleep 20' & echo hi; sleep 20`,
   timeoutMs: 1000,
+});
+// Close waits for pipe EOF: a floating grandchild that holds stdout for 400 ms
+// delays a *normal* completion, and no group signal is sent.
+await commandCase({
+  name: 'grandchild-holds-stdout-briefly',
+  command: 'sleep 0.4 & echo hi',
+  timeoutMs: 5000,
+});
+// TERM-handler cleanup must not be cut short: TS sends TERM at timeout, the
+// handler takes 1 s, and SIGKILL follows 3 s after TERM. The result itself
+// resolves at close (about the timeout) because stdio is redirected.
+await commandCase({
+  name: 'term-handler-grace',
+  command: `bash -c 'trap "sleep 1; touch ${root}/term-grace.marker; exit 0" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29`,
+  timeoutMs: 1000,
+  markerFile: `${root}/term-grace.marker`,
+  markerWaitMs: 3500,
+});
+await commandCase({
+  name: 'term-handler-grace-abort',
+  command: `bash -c 'trap "sleep 1; touch ${root}/term-handler-grace-abort.marker; exit 0" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29`,
+  timeoutMs: 600000,
+  abortAtMs: 500,
+  markerFile: `${root}/term-handler-grace-abort.marker`,
+  markerWaitMs: 4000,
+});
+await commandCase({
+  name: 'grandchild-ignores-term-abort',
+  command: `bash -c 'trap "" TERM; sleep 20' & echo hi; sleep 20`,
+  timeoutMs: 600000,
+  abortAtMs: 500,
 });
 // PILOTDECK_SHELL_PATH truthiness/PATH semantics (runtime/commandShell.ts).
 await commandCase({
