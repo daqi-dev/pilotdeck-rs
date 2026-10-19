@@ -4,6 +4,7 @@ use super::{
     AutoOrchestrateConfig, RouterConfig, RouterModelInvocation, RouterModelRef,
     config::LITELLM_RETRY_JITTER, field, js_text, number, object_field,
 };
+use crate::host::HostError;
 use crate::model_cost::{calculate_cache_read_cost, calculate_input_cost};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
@@ -12,37 +13,43 @@ pub struct CachePolicyResult {
     pub mutation: Option<JsValue>,
 }
 
-pub fn cache_policy_select(
+pub async fn cache_policy_select(
     config: &RouterConfig,
     current: Option<&RouterModelRef>,
     next: &RouterModelRef,
     messages: &[JsValue],
     last_usage: Option<&JsValue>,
-) -> CachePolicyResult {
+) -> Result<CachePolicyResult, HostError> {
     let cache_aware = config
         .token_saver
         .as_ref()
         .map(|saver| saver.cache_aware.clone());
     let Some(cache_aware) = cache_aware.filter(|cache| cache.enabled) else {
-        return CachePolicyResult {
+        return Ok(CachePolicyResult {
             selection: next.clone(),
             mutation: None,
-        };
+        });
     };
     let Some(current) = current else {
-        return CachePolicyResult {
+        return Ok(CachePolicyResult {
             selection: next.clone(),
             mutation: None,
-        };
+        });
     };
     if current.provider == next.provider && current.model == next.model {
-        return CachePolicyResult {
+        return Ok(CachePolicyResult {
             selection: next.clone(),
             mutation: None,
-        };
+        });
     }
 
-    let estimated_input_tokens = estimate_input_tokens(messages);
+    // The o200k BPE runs on the shared CPU pool, never on the async reactor
+    // thread. `messages` is cloned for the blocking closure; the copy is cheap
+    // next to tokenization and keeps the estimate inside the 4-permit bound.
+    let messages = messages.to_vec();
+    let estimated_input_tokens =
+        super::super::cpu::run(move || Ok::<_, HostError>(estimate_input_tokens(&messages)))
+            .await?;
     let observed_input_tokens = last_usage
         .and_then(|usage| usage.get("inputTokens"))
         .and_then(JsValue::as_number)
@@ -57,10 +64,10 @@ pub fn cache_policy_select(
         0.0
     };
     if observed_cache_hit_ratio <= 0.0 {
-        return CachePolicyResult {
+        return Ok(CachePolicyResult {
             selection: next.clone(),
             mutation: None,
-        };
+        });
     }
 
     let estimated_cache_read_tokens = (estimated_input_tokens * observed_cache_hit_ratio).floor();
@@ -105,14 +112,14 @@ pub fn cache_policy_select(
         "estimatedInputTokens".into(),
         JsValue::Number(estimated_input_tokens),
     );
-    CachePolicyResult {
+    Ok(CachePolicyResult {
         selection: if should_switch {
             next.clone()
         } else {
             current.clone()
         },
         mutation: Some(JsValue::Object(mutation)),
-    }
+    })
 }
 
 /// `countMessagesTokens`: concatenate canonical text/tool blocks with `\n` and

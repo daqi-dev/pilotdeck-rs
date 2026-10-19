@@ -237,6 +237,51 @@ fn parse_tier_matches_ts_word_boundaries() {
     assert!(parse("nothing to see").is_none());
 }
 
+/// Goldens below are the literal output of the real TS `parseTier` at
+/// `PilotDeck@cc7c4e65` for the same tier list (node probe
+/// `_tmp/20261019-a64-pr4/probe-tier-boundary.json`), covering needles whose
+/// first/last code unit is not an ASCII word unit. `use 简单 mode` and
+/// `x简单y` are mutual negative controls: the old "both neighbours non-word"
+/// check accepted the first and rejected the second, JS does the opposite.
+#[test]
+fn parse_tier_matches_js_word_boundary_goldens() {
+    let tiers: Vec<(JsString, TierConfig)> = ["简单", "beta-", "τ", "simple", "fallback"]
+        .into_iter()
+        .map(|name| {
+            (
+                JsString::from(name),
+                TierConfig {
+                    model: RouterModelRef::new("p".into(), "m".into()),
+                    description: None,
+                },
+            )
+        })
+        .collect();
+    let cases = [
+        ("use 简单 mode", None),
+        ("简单", None),
+        ("x简单y", Some("简单")),
+        ("use beta- now", None),
+        ("beta-", None),
+        ("beta-x", Some("beta-")),
+        ("xbeta-y", None),
+        ("(beta-)", None),
+        ("use τ now", None),
+        ("τ", None),
+        ("xτy", Some("τ")),
+        ("use simple now", Some("simple")),
+        ("xsimple", None),
+        ("simpleton", None),
+        ("use fallback now", Some("fallback")),
+        ("fallbackx", None),
+    ];
+    for (text, expected) in cases {
+        let parsed = parse_tier(&JsString::from(text), &tiers)
+            .map(|tier| tier.to_utf8().expect("utf-8 tier"));
+        assert_eq!(parsed.as_deref(), expected, "parseTier({text:?})");
+    }
+}
+
 #[test]
 fn tier_tag_and_fallback_follow_js_non_unicode_case_folding() {
     let config = saver();
@@ -382,8 +427,8 @@ fn retry_policy_defaults_match_baseline() {
     assert_eq!(zero.delay_ms, 500.0);
 }
 
-#[test]
-fn cache_policy_switches_when_prefill_is_cheaper() {
+#[tokio::test]
+async fn cache_policy_switches_when_prefill_is_cheaper() {
     let mut pricing = crate::model_cost::PricingMap::new();
     pricing.insert(
         "old/m",
@@ -421,7 +466,9 @@ fn cache_policy_switches_when_prefill_is_cheaper() {
         &next,
         &[user_message("hello")],
         Some(&usage),
-    );
+    )
+    .await
+    .expect("cache policy");
     assert_eq!(result.selection.provider.to_utf8().unwrap(), "new");
     let mutation = result.mutation.expect("switched mutation");
     assert_eq!(
@@ -431,6 +478,111 @@ fn cache_policy_switches_when_prefill_is_cheaper() {
             .map(|value| value.to_utf8().unwrap()),
         Some("switched".into())
     );
+}
+
+/// P1 regression: `cache_policy_select` used to run the o200k BPE inline on the
+/// async reactor thread and bypass `cpu::run`'s 4-permit bound. Hold all four
+/// permits, then prove the real decision path waits, while the raw estimator
+/// (negative control) still runs — the estimate is gated by the call site, not
+/// by the tokenizer itself. A regression to the inline call completes within the
+/// timeout and fails the positive assertion.
+#[tokio::test(flavor = "current_thread")]
+async fn cache_policy_estimate_shares_the_cpu_permit_pool() {
+    let mut pricing = crate::model_cost::PricingMap::new();
+    pricing.insert(
+        "old/m",
+        crate::model_cost::ModelPricing {
+            input: Some(100.0),
+            output: None,
+            cache_read: Some(100.0),
+        },
+    );
+    pricing.insert(
+        "new/m",
+        crate::model_cost::ModelPricing {
+            input: Some(0.1),
+            output: None,
+            cache_read: None,
+        },
+    );
+    let config = RouterConfig {
+        token_saver: Some(saver()),
+        stats: StatsConfig {
+            model_pricing: Some(pricing),
+            ..StatsConfig::default()
+        },
+        ..RouterConfig::default()
+    };
+    let current = RouterModelRef::new("old".into(), "m".into());
+    let next = RouterModelRef::new("new".into(), "m".into());
+    let usage = object(vec![
+        ("inputTokens", JsValue::Number(100.0)),
+        ("cacheReadTokens", JsValue::Number(100.0)),
+    ]);
+
+    let started = Arc::new(AtomicUsize::new(0));
+    let mut releases = Vec::new();
+    let mut holders = Vec::new();
+    for _ in 0..4 {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        releases.push(release);
+        let started = started.clone();
+        holders.push(tokio::spawn(async move {
+            crate::runtime::model::cpu::run(move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                let _ = wait.recv();
+                Ok::<_, crate::host::HostError>(())
+            })
+            .await
+        }));
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while started.load(Ordering::SeqCst) < 4 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "four cpu permits were not acquired"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    // Negative control: the raw estimator is not itself gated, so calling it
+    // directly still succeeds while the whole pool is held. The positive
+    // assertion below therefore proves `cache_policy_select` added the gate.
+    let direct =
+        tokio::task::spawn_blocking(|| policy::estimate_input_tokens(&[user_message("hello")]))
+            .await
+            .expect("direct estimate");
+    assert!(direct > 0.0);
+
+    let mut decision = tokio::spawn(async move {
+        policy::cache_policy_select(
+            &config,
+            Some(&current),
+            &next,
+            &[user_message("hello")],
+            Some(&usage),
+        )
+        .await
+        .expect("cache policy")
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut decision)
+            .await
+            .is_err(),
+        "cache_policy_select must wait for a cpu permit while all four are held"
+    );
+
+    for release in releases {
+        release.send(()).expect("release cpu holder");
+    }
+    for holder in holders {
+        holder.await.expect("cpu holder task").expect("cpu holder");
+    }
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), decision)
+        .await
+        .expect("cache policy resumes after a permit frees")
+        .expect("cache policy task");
+    assert_eq!(result.selection.provider.to_utf8().unwrap(), "new");
 }
 
 #[test]

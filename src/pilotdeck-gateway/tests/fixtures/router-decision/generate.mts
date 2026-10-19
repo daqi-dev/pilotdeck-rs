@@ -198,6 +198,54 @@ tokenSaver:
   ],
 });
 
+// 2d. JS `\b` is a word/non-word transition, not "both neighbours are
+//     non-word". A tier whose first or last code unit is not an ASCII word unit
+//     (CJK, trailing `-`, Greek τ) only matches when the adjacent code unit is a
+//     word unit; the pre-fix Rust check matched in the opposite cases. Values
+//     below are the real TS parseTier output (node probe):
+//       use 简单 mode → default fallback; x简单y → 简单
+//       use beta- now → default;        beta-x → beta-
+//       use τ now     → default;        xτy     → τ
+//       use simple now → simple (ASCII control)
+add({
+  id: 'tier-word-boundaries',
+  yaml: yaml(`scenarios: {default: p1/m1}
+tokenSaver:
+  enabled: true
+  judge: p1/m1
+  defaultTier: fallback
+  tiers:
+    简单: {model: p1/m1}
+    "beta-": {model: p1/m2}
+    τ: {model: p3/m1}
+    simple: {model: p3/m3}
+    fallback: {model: p2/m2}`),
+  judgeScript: [
+    { text: 'use 简单 mode' },
+    { text: 'use 简单 mode' },
+    { text: 'use 简单 mode' },
+    { text: 'x简单y' },
+    { text: 'use beta- now' },
+    { text: 'use beta- now' },
+    { text: 'use beta- now' },
+    { text: 'beta-x' },
+    { text: 'use τ now' },
+    { text: 'use τ now' },
+    { text: 'use τ now' },
+    { text: 'xτy' },
+    { text: 'use simple now' },
+  ],
+  steps: [
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'cjk-bare', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'cjk-word-adjacent', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'dash-bare', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'dash-word-adjacent', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'tau-bare', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'tau-word-adjacent', isMainAgent: true },
+    { kind: 'decide', request: request([user('hello')]), sessionId: 'ascii-control', isMainAgent: true },
+  ],
+});
+
 // 3. Sticky: the second main turn with history reuses the first judge result.
 add({
   id: 'sticky',
