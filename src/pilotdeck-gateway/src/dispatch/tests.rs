@@ -113,6 +113,30 @@ fn three_native_methods_match_untouched_a2_ts_raw_bytes() {
 }
 
 #[test]
+fn describe_project_keeps_lone_surrogate_distinct_from_literal_fffd() {
+    let metadata = ordered_projects(&[("registered", "/fixture/project-\u{fffd}")]);
+    let raw = r#"{"type":"request","id":"x","method":"describe_project","params":{"projectKey":"/fixture/project-\ud800"}}"#;
+    let bytes = response(raw, &metadata);
+    let response = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+    let summary = response.get("result").unwrap();
+    let mut expected = "/fixture/project-".encode_utf16().collect::<Vec<_>>();
+    expected.push(0xD800);
+    let project_key = summary
+        .get("projectKey")
+        .and_then(JsValue::as_string)
+        .unwrap();
+    assert_eq!(project_key.units(), expected);
+    let full_path = summary
+        .get("fullPath")
+        .and_then(JsValue::as_string)
+        .unwrap();
+    assert_eq!(full_path.units(), expected);
+    // The registered U+FFFD project has a birth time. A lossy identity would
+    // match its marker and surface that `createdAt` for the surrogate key too.
+    assert!(summary.get("createdAt").is_none());
+}
+
+#[test]
 fn missing_params_and_unknown_project_match_ts_error_and_success_bytes() {
     let metadata = Metadata {
         home: PathBuf::from("/empty"),

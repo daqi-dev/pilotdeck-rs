@@ -208,3 +208,39 @@ EIO 的原始帧转发与 TS 回包透传。白名单与生产原件观测集合
 catalog过滤后多于一项且排序id含孤立高/低surrogate、session同sequence组createdAt含孤立surrogate时，ICU4X会替换为U+FFFD而Node保留不同排序权重，故经JS_HOST_REQUIRED整帧转发。4个host案例由pairing独立观察完整原请求并回放真实Node响应；8个本地正控逐字节比响应且上游静默，并发sentinel形成观察因果。U+FFFD与paired补充面本地，单项/过滤后单项catalog、不同sequence和未入同序组的孤立surrogate均本地。全输入原生化仍有边界，待后续原生UTF16实现；未登记排序差异豁免。
 
 原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)，真实非法dirent未验，不能把单元解码核验视为真实文件系统验收。
+
+## R19：projectKey 的原始 UTF-16 身份
+
+`project-key-identity.json` 是独立新增的 3 个真实 Node WS 原件，由
+`tests/record_session_model_project_key.mts` 在全新隔离 scratch 生成，不改
+历史 `cases.json`。它覆盖 `session_model_get` 在 `projectRegistry.ts:41-59`
+的原始单元身份：
+
+- `project-key-literal-fffd`：注册一个路径含**字面 U+FFFD** 的项目，原样
+  `resolveProjectKey` 成功；回包 `projectKey` 保留 U+FFFD。
+- `project-key-lone-surrogate`：把同一路径的 U+FFFD 换成孤立高代理项。Node
+  `path.resolve` 保留该 code unit，与 U+FFFD 路径按单元比较不相等，故
+  `PROJECT_NOT_FOUND`，message 原样含 `\ud800`。这是别名负控：lossy 解码会
+  把该 key 变成已注册的 U+FFFD 项目并返回成功。
+- `project-key-lone-surrogate-unknown`：无 U+FFFD 对应项，单独锁定错误文案
+  的原始 units。
+
+Node 的 fs 层会把孤立代理项编码成 U+FFFD（本机实测 `statSync` 会命中
+U+FFFD 文件），但 registry 比较发生在 fs 之前且按 JS code unit 进行；两者
+不能混用。Rust 回放用 protocol codec 读取 request 字符串（`serde_json` 不接受
+未配对代理项），文件快照把生成时的 scratch 根替换为 `/fixture` 后重算字节
+长度，因此不同长度的 scratch 两次生成逐字节一致。
+
+复录（仓根运行，Node 22 / 固定基线）：
+
+```sh
+A4_PK="$(mktemp -d /private/tmp/a4-session-project-key.XXXXXX)"
+A4_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+mkdir -p "$A4_PK/isolation/home" "$A4_PK/isolation/xdg" "$A4_PK/isolation/tmp"
+env HOME="$A4_PK/isolation/home" XDG_CONFIG_HOME="$A4_PK/isolation/xdg" \
+  XDG_CACHE_HOME="$A4_PK/isolation/xdg" XDG_DATA_HOME="$A4_PK/isolation/xdg" \
+  TMPDIR="$A4_PK/isolation/tmp" PILOTDECK_SKIP_BROWSER_OPEN=1 SKIP_BROWSER_OPEN=1 \
+  node --import "$A4_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/record_session_model_project_key.mts "$A4_BASELINE" \
+  src/pilotdeck-gateway/tests/fixtures/session-model/project-key-identity.json "$A4_PK"
+```
