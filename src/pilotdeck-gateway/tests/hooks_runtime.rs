@@ -1,0 +1,1420 @@
+//! HookRuntime/executor/lifecycle replay against the real TS oracle.
+//!
+//! `tests/fixtures/hooks-runtime/generate.mts` ran the fixed baseline: command
+//! hooks spawned real scripts in its own mkdtemp tree, HTTP hooks used a
+//! loopback server, callbacks were injected, and LifecycleRuntime dispatched
+//! in-process. This test recreates the same scripts in its own scratch tree,
+//! starts an equivalent loopback server, and compares every result byte for
+//! byte (paths are masked as `<dir>`/`<url>`/`<refused>`/`<cwd>`).
+#[path = "common/baseline.rs"]
+mod baseline;
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use pilotdeck_gateway::{
+    hooks::{config::parse_hooks_config, protocol::*},
+    host::{HostError, modules::lifecycle as host_lifecycle},
+    runtime::hooks::{
+        exec::{
+            CallbackFuture, CallbackHookHandler, CallbackInput, CallbackResult, Cancellation,
+            CommandHookExecutor, CommandHookOptions, HookOutcome, HttpHookExecutor,
+            HttpHookOptions, hook_output_to_value, parse_hook_output,
+        },
+        pending::AsyncHookCompletion,
+        runtime::{
+            HookExecutionEventHandler, HookRuntime, HookRuntimeOptions, HookRuntimeRunInput,
+            LifecycleDispatchInput, LifecycleRuntime, lifecycle_module_failure,
+            validate_lifecycle_dispatch_result,
+        },
+    },
+};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use scratch::Scratch;
+use std::{
+    convert::Infallible,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+use tokio::{
+    net::TcpListener,
+    time::{sleep, timeout},
+};
+
+static UNDEFINED: JsValue = JsValue::Undefined;
+const FIXED_START: &str = "2026-01-01T00:00:00.000Z";
+
+fn oracle() -> JsValue {
+    baseline::oracle(include_str!("fixtures/hooks-runtime/oracle.json"))
+}
+fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+    value.get(key).unwrap_or(&UNDEFINED)
+}
+fn string(value: &JsValue) -> JsString {
+    value.as_string().expect("string").clone()
+}
+fn text(value: &JsValue) -> String {
+    string(value).to_utf8().expect("utf8")
+}
+fn number(value: &JsValue) -> f64 {
+    value.as_number().expect("number")
+}
+fn bool_value(value: &JsValue) -> bool {
+    value.as_bool().expect("bool")
+}
+fn array(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        _ => panic!("expected array: {value:?}"),
+    }
+}
+fn element(value: &JsValue, index: usize) -> &JsValue {
+    &array(value)[index]
+}
+fn object(value: &JsValue) -> JsObject {
+    value.as_object().expect("object").clone()
+}
+fn json(value: &JsValue) -> String {
+    stringify_json(value).unwrap().expect("json")
+}
+fn scratch_root(scratch: &Scratch) -> String {
+    scratch.path().to_string_lossy().into_owned()
+}
+/// Mask this run's scratch tree (and its canonical `/private/...` spelling) the
+/// same way the generator masked its own tree.
+fn mask_paths(text: &str, root: &str) -> String {
+    let real = std::fs::canonicalize(root)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| root.to_owned());
+    text.replace(&real, "<dir>").replace(root, "<dir>")
+}
+/// Fixture JSON values are small and bounded; serialize/replace/reparse keeps
+/// placeholder substitution in one place without recursive product code.
+fn substitute(value: &JsValue, pairs: &[(&str, &str)]) -> JsValue {
+    let mut text = json(value);
+    for (from, to) in pairs {
+        text = text.replace(from, to);
+    }
+    parse_json(&text).unwrap()
+}
+fn substitute_text(value: &str, pairs: &[(&str, &str)]) -> String {
+    let mut text = value.to_owned();
+    for (from, to) in pairs {
+        text = text.replace(from, to);
+    }
+    text
+}
+fn module_message(error: HostError) -> String {
+    let module = error.module_error.expect("module error");
+    String::from_utf16_lossy(module.message.units())
+}
+
+// ---------------------------------------------------------------- parseHookOutput
+
+#[tokio::test]
+async fn parse_hook_output_matches_real_ts() {
+    let oracle = oracle();
+    assert_eq!(text(field(&oracle, "nodeVersion")), "v22.22.0");
+    assert_eq!(
+        field(&oracle, "sourceSha256")
+            .as_object()
+            .expect("source hashes")
+            .entries()
+            .len(),
+        25
+    );
+    let cases = array(field(&oracle, "parse"));
+    assert_eq!(cases.len(), 52);
+    for case in cases {
+        let stdout = text(field(case, "stdout"));
+        let actual = hook_output_to_value(&parse_hook_output(&stdout));
+        assert_eq!(
+            json(&actual),
+            text(field(case, "expected")),
+            "{}",
+            text(field(case, "name"))
+        );
+    }
+}
+
+// ---------------------------------------------------------------- command
+
+fn write_scripts(oracle: &JsValue, root: &str) {
+    let scripts = oracle
+        .get("scripts")
+        .and_then(JsValue::as_object)
+        .expect("scripts");
+    assert_eq!(scripts.entries().len(), 15);
+    for (path, content) in scripts.entries() {
+        let path = path.to_utf8().unwrap().replace("<dir>", root);
+        let path = std::path::Path::new(&path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text(content)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn command_executor_matches_real_ts_subprocesses() {
+    let oracle = oracle();
+    let scratch = Scratch::new("hooks-runtime-command");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let cases = array(field(&oracle, "command"));
+    assert_eq!(cases.len(), 15);
+    for case in cases {
+        let name = text(field(case, "name"));
+        let command = substitute_text(&text(field(case, "command")), &[("<dir>", &root)]);
+        let cwd = substitute_text(&text(field(case, "cwd")), &[("<dir>", &root)]);
+        let signal = match case.get("abortAtMs") {
+            None => None,
+            Some(ms) => {
+                let signal = Cancellation::new();
+                let ms = number(ms);
+                if ms == 0.0 {
+                    signal.abort();
+                } else {
+                    let signal = signal.clone();
+                    tokio::spawn(async move {
+                        sleep(Duration::from_millis(ms as u64)).await;
+                        signal.abort();
+                    });
+                }
+                Some(signal)
+            }
+        };
+        let result = CommandHookExecutor::default()
+            .execute(CommandHookOptions {
+                command: command.into(),
+                hook_input: object(field(case, "hookInput")),
+                cwd: cwd.into(),
+                env: case.get("env").map(object),
+                signal,
+                timeout_ms: case.get("timeoutMs").map(number),
+            })
+            .await;
+        assert_eq!(
+            mask_paths(&json(&result.to_value()), &root),
+            text(field(case, "expected")),
+            "command case {name}"
+        );
+    }
+}
+
+/// Negative control: a timeout must actually kill the owned process group and
+/// reap the leader, not just resolve a future and leave an orphan.
+#[tokio::test]
+async fn timed_out_command_leaves_no_process() {
+    let scratch = Scratch::new("hooks-runtime-reap");
+    let root = scratch_root(&scratch);
+    let pid_file = std::path::Path::new(&root).join("pid");
+    let script = std::path::Path::new(&root).join("sleep.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/bash\nprintf '%s' \"$$\" > '{}'\nprintf 'start\\n'\nsleep 30\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    let result = timeout(
+        Duration::from_secs(10),
+        CommandHookExecutor::default().execute(CommandHookOptions {
+            command: format!("/bin/bash '{}'", script.display()).into(),
+            hook_input: JsObject::new(),
+            cwd: root.clone().into(),
+            env: None,
+            signal: None,
+            timeout_ms: Some(300.0),
+        }),
+    )
+    .await
+    .expect("timeout case must resolve");
+    assert_eq!(result.outcome, HookOutcome::Timeout);
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("script wrote its pid")
+        .parse()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(pid).expect("pid");
+    let mut dead = false;
+    for _ in 0..50 {
+        if rustix::process::test_kill_process(pid).is_err() {
+            dead = true;
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert!(dead, "timed out shell leader {pid:?} is still alive");
+}
+
+// ---------------------------------------------------------------- HTTP mock
+
+fn response(status: u16, body: Vec<u8>) -> hyper::Response<http_body_util::Full<bytes::Bytes>> {
+    hyper::Response::builder()
+        .status(status)
+        .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+        .unwrap()
+}
+
+fn selected_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
+    ["content-type", "x-a", "x-b", "x-c", "x-d"]
+        .into_iter()
+        .filter_map(|name| {
+            headers
+                .get(name)
+                .map(|value| (name.to_owned(), value.to_str().unwrap().to_owned()))
+        })
+        .collect()
+}
+
+fn headers_json(headers: &[(String, String)]) -> String {
+    let entries: Vec<String> = headers
+        .iter()
+        .map(|(name, value)| {
+            format!(
+                "{}:{}",
+                serde_json::to_string(name).unwrap(),
+                serde_json::to_string(value).unwrap()
+            )
+        })
+        .collect();
+    format!("{{{}}}", entries.join(","))
+}
+
+async fn serve_connection(
+    stream: tokio::net::TcpStream,
+    recorded: Arc<Mutex<Vec<JsValue>>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use http_body_util::BodyExt;
+    let service =
+        hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+            let recorded = recorded.clone();
+            async move {
+                let path = request.uri().path().to_owned();
+                let method = request.method().as_str().to_owned();
+                let headers = selected_headers(request.headers());
+                let body = match request.into_body().collect().await {
+                    Ok(body) => body.to_bytes().to_vec(),
+                    Err(_) => Vec::new(),
+                };
+                let body_text = String::from_utf8_lossy(&body).into_owned();
+                let mut recorded_request = JsObject::new();
+                recorded_request.insert("method".into(), JsValue::String(method.into()));
+                recorded_request.insert("path".into(), JsValue::String(path.clone().into()));
+                let mut header_object = JsObject::new();
+                for (name, value) in &headers {
+                    header_object
+                        .insert(name.clone().into(), JsValue::String(value.clone().into()));
+                }
+                recorded_request.insert("headers".into(), JsValue::Object(header_object));
+                recorded_request.insert("body".into(), JsValue::String(body_text.clone().into()));
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(JsValue::Object(recorded_request));
+
+                let response = match path.as_str() {
+                    "/bad" => response(400, br#"{"continue":false,"reason":"bad"}"#.to_vec()),
+                    "/empty" => response(204, Vec::new()),
+                    "/invalid-utf8" => response(200, vec![0xff, 0xfe]),
+                    "/slow" => {
+                        sleep(Duration::from_secs(5)).await;
+                        response(200, b"slow".to_vec())
+                    }
+                    "/echo" => {
+                        let echo = format!(
+                            "{{\"body\":{},\"headers\":{}}}",
+                            serde_json::to_string(&body_text).unwrap(),
+                            headers_json(&headers)
+                        );
+                        response(200, echo.into_bytes())
+                    }
+                    "/server-error" => response(500, Vec::new()),
+                    _ => response(200, br#"{"systemMessage":"hello"}"#.to_vec()),
+                };
+                Ok::<_, Infallible>(response)
+            }
+        });
+    hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+        .await?;
+    Ok(())
+}
+
+async fn mock_server(recorded: Arc<Mutex<Vec<JsValue>>>) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let recorded = recorded.clone();
+            tokio::spawn(async move {
+                let _ = serve_connection(stream, recorded).await;
+            });
+        }
+    });
+    (format!("http://{address}"), task)
+}
+
+#[tokio::test]
+async fn http_executor_matches_real_ts_and_records_requests() {
+    let oracle = oracle();
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = mock_server(recorded.clone()).await;
+    let closed = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let refused = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let cases = array(field(field(&oracle, "http"), "cases"));
+    assert_eq!(cases.len(), 12);
+    let executor = HttpHookExecutor::new();
+    for case in cases {
+        let name = text(field(case, "name"));
+        let target = substitute_text(
+            &text(field(case, "target")),
+            &[("<url>", &base), ("<refused>", &refused)],
+        );
+        let signal = match case.get("abortAtMs") {
+            None => None,
+            Some(ms) => {
+                let signal = Cancellation::new();
+                let ms = number(ms);
+                if ms == 0.0 {
+                    signal.abort();
+                } else {
+                    let signal = signal.clone();
+                    tokio::spawn(async move {
+                        sleep(Duration::from_millis(ms as u64)).await;
+                        signal.abort();
+                    });
+                }
+                Some(signal)
+            }
+        };
+        let before = recorded.lock().unwrap().len();
+        let mut http_env = JsObject::new();
+        http_env.insert("TOKEN".into(), "t".into());
+        http_env.insert("SECRET".into(), "s".into());
+        let result = executor
+            .execute(HttpHookOptions {
+                url: target.into(),
+                headers: case.get("headers").map(object),
+                allowed_env_vars: case
+                    .get("allowedEnvVars")
+                    .map(|values| array(values).iter().map(string).collect()),
+                hook_input: object(field(case, "hookInput")),
+                env: Some(http_env),
+                signal,
+            })
+            .await;
+        assert_eq!(
+            json(&result.to_value()),
+            text(field(case, "expected")),
+            "http case {name}"
+        );
+        let expected_request = field(case, "request");
+        if !expected_request.is_undefined() && !matches!(expected_request, JsValue::Null) {
+            let requests = recorded.lock().unwrap();
+            assert_eq!(requests.len(), before + 1, "http request count {name}");
+            assert_eq!(
+                json(&requests[before]),
+                json(expected_request),
+                "http request {name}"
+            );
+            if name == "headers-env" {
+                // Negative control: only allow-listed variables interpolate.
+                let headers = field(&requests[before], "headers").clone();
+                assert_eq!(text(field(&headers, "x-a")), "t");
+                assert_eq!(text(field(&headers, "x-b")), "t");
+                assert_eq!(text(field(&headers, "x-c")), "");
+                assert_eq!(text(field(&headers, "x-d")), "pret-post");
+            }
+        } else {
+            assert_eq!(
+                recorded.lock().unwrap().len(),
+                before,
+                "http case {name} must not reach the server"
+            );
+        }
+    }
+    server.abort();
+    let _ = server.await;
+}
+
+// ---------------------------------------------------------------- callback
+
+struct FnHandler<F>(F);
+impl<F> CallbackHookHandler for FnHandler<F>
+where
+    F: Fn(CallbackInput) -> CallbackFuture + Send + Sync,
+{
+    fn call(&self, input: CallbackInput) -> CallbackFuture {
+        (self.0)(input)
+    }
+}
+fn handler<F>(f: F) -> Arc<dyn CallbackHookHandler>
+where
+    F: Fn(CallbackInput) -> CallbackFuture + Send + Sync + 'static,
+{
+    Arc::new(FnHandler(f))
+}
+fn text_handler(value: &str) -> Arc<dyn CallbackHookHandler> {
+    let value = value.to_owned();
+    handler(move |_| {
+        let value = value.clone();
+        Box::pin(async move { Ok(CallbackResult::Text(value.into())) })
+    })
+}
+fn throw_handler(message: &str) -> Arc<dyn CallbackHookHandler> {
+    let message = message.to_owned();
+    handler(move |_| {
+        let message = message.clone();
+        Box::pin(async move { Err(message.into()) })
+    })
+}
+
+struct Cases<'a> {
+    cases: &'a [JsValue],
+    index: usize,
+}
+impl<'a> Cases<'a> {
+    fn new(cases: &'a [JsValue]) -> Self {
+        Self { cases, index: 0 }
+    }
+    fn next(&mut self, name: &str) -> &'a JsValue {
+        let case = &self.cases[self.index];
+        self.index += 1;
+        assert_eq!(text(field(case, "name")), name, "callback case order");
+        case
+    }
+    fn finish(&self) {
+        assert_eq!(self.index, self.cases.len(), "unconsumed callback cases");
+    }
+}
+fn assert_case(case: &JsValue, actual: JsValue) {
+    if let Some(error) = case.get("error") {
+        assert_eq!(text(error), text(&actual), "callback error");
+        return;
+    }
+    let expected = field(case, "value");
+    if expected.get("undefined").is_some_and(bool_value) {
+        assert!(actual.is_undefined());
+        return;
+    }
+    assert_eq!(json(&actual), json(expected));
+}
+
+#[tokio::test]
+async fn callback_executor_matches_real_ts() {
+    let oracle = oracle();
+    let cases = array(field(field(&oracle, "callback"), "cases"));
+    assert_eq!(cases.len(), 21);
+    let mut cursor = Cases::new(cases);
+    let ex = pilotdeck_gateway::runtime::hooks::exec::CallbackHookExecutor::new();
+    let input = || CallbackInput {
+        hook_input: JsObject::new(),
+        signal: None,
+    };
+    let name = JsString::from("cb");
+
+    let r1 = ex
+        .register(
+            &"  cb  ".into(),
+            text_handler(r#"{"continue":false,"reason":"cb"}"#),
+        )
+        .unwrap();
+    let mut registered = JsObject::new();
+    registered.insert("name".into(), JsValue::String(r1.name().clone()));
+    registered.insert("generation".into(), JsValue::Number(r1.generation() as f64));
+    registered.insert("active".into(), JsValue::Bool(r1.active()));
+    assert_case(cursor.next("register-trimmed"), JsValue::Object(registered));
+
+    let result = ex.execute(&name, input()).await;
+    assert_case(cursor.next("execute-text"), result.to_value());
+
+    let result = ex.execute(&"nope".into(), input()).await;
+    assert_case(cursor.next("execute-missing"), result.to_value());
+
+    let r2 = ex
+        .register(
+            &name,
+            handler(move |_| {
+                Box::pin(async {
+                    Ok(CallbackResult::Output(HookOutput::Sync(Box::new(
+                        HookSyncOutput {
+                            decision: Some(HookDecision::Block),
+                            reason: Some("r".into()),
+                            ..Default::default()
+                        },
+                    ))))
+                })
+            }),
+        )
+        .unwrap();
+    let mut replaced = JsObject::new();
+    replaced.insert("oldActive".into(), JsValue::Bool(r1.active()));
+    replaced.insert("generation".into(), JsValue::Number(r2.generation() as f64));
+    replaced.insert("active".into(), JsValue::Bool(r2.active()));
+    assert_case(cursor.next("replace"), JsValue::Object(replaced));
+
+    let result = ex.execute(&name, input()).await;
+    assert_case(cursor.next("execute-output"), result.to_value());
+
+    let rv = ex
+        .register(
+            &"void".into(),
+            handler(|_| Box::pin(async { Ok(CallbackResult::Void) })),
+        )
+        .unwrap();
+    let result = ex.execute(&"void".into(), input()).await;
+    assert_case(cursor.next("execute-void"), result.to_value());
+
+    ex.register(&"thrower".into(), throw_handler("boom"))
+        .unwrap();
+    let result = ex.execute(&"thrower".into(), input()).await;
+    assert_case(cursor.next("execute-throw"), result.to_value());
+
+    ex.register(&"throwstr".into(), throw_handler("plain"))
+        .unwrap();
+    let result = ex.execute(&"throwstr".into(), input()).await;
+    assert_case(cursor.next("execute-throw-string"), result.to_value());
+
+    ex.register(&"promise".into(), text_handler(r#"{"decision":"approve"}"#))
+        .unwrap();
+    let result = ex.execute(&"promise".into(), input()).await;
+    assert_case(cursor.next("execute-promise"), result.to_value());
+
+    assert_case(
+        cursor.next("unregister"),
+        JsValue::Bool(ex.unregister(&name).unwrap()),
+    );
+    assert_case(
+        cursor.next("unregister-again"),
+        JsValue::Bool(ex.unregister(&name).unwrap()),
+    );
+    let error = ex
+        .register(&"".into(), text_handler(""))
+        .err()
+        .expect("empty name must fail");
+    assert_case(cursor.next("empty-name-error"), JsValue::String(error));
+
+    assert_case(
+        cursor.next("state-active"),
+        JsValue::String(ex.state().as_str().into()),
+    );
+    ex.dispose().await;
+    assert_case(
+        cursor.next("state-disposed"),
+        JsValue::String(ex.state().as_str().into()),
+    );
+    let result = ex.execute(&"thrower".into(), input()).await;
+    assert_case(cursor.next("execute-after-dispose"), result.to_value());
+    let error = ex
+        .register(&"x".into(), text_handler(""))
+        .err()
+        .expect("register after dispose must fail");
+    assert_case(
+        cursor.next("register-after-dispose-error"),
+        JsValue::String(error),
+    );
+    let mut old = JsObject::new();
+    old.insert("r2".into(), JsValue::Bool(r2.active()));
+    assert_case(
+        cursor.next("old-registration-after-dispose"),
+        JsValue::Object(old),
+    );
+    let mut void = JsObject::new();
+    void.insert("rv".into(), JsValue::Bool(rv.active()));
+    assert_case(
+        cursor.next("void-registration-after-dispose"),
+        JsValue::Object(void),
+    );
+
+    // Dispose waits for one in-flight callback.
+    let ex = pilotdeck_gateway::runtime::hooks::exec::CallbackHookExecutor::new();
+    ex.register(
+        &"slow".into(),
+        handler(|_| {
+            Box::pin(async {
+                sleep(Duration::from_millis(150)).await;
+                Ok(CallbackResult::Text(r#"{"decision":"block"}"#.into()))
+            })
+        }),
+    )
+    .unwrap();
+    let running = {
+        let ex = ex.clone();
+        tokio::spawn(async move { ex.execute(&"slow".into(), input()).await })
+    };
+    tokio::task::yield_now().await;
+    let disposing = {
+        let ex = ex.clone();
+        tokio::spawn(async move { ex.dispose().await })
+    };
+    tokio::task::yield_now().await;
+    assert_case(
+        cursor.next("dispose-drain-state"),
+        JsValue::String(ex.state().as_str().into()),
+    );
+    disposing.await.unwrap();
+    assert_case(
+        cursor.next("dispose-drain-state-after"),
+        JsValue::String(ex.state().as_str().into()),
+    );
+    let result = running.await.unwrap();
+    assert_case(cursor.next("dispose-drain-result"), result.to_value());
+    cursor.finish();
+}
+
+// ---------------------------------------------------------------- HookRuntime
+
+struct RecordingHandler(Arc<Mutex<Vec<JsObject>>>);
+impl HookExecutionEventHandler for RecordingHandler {
+    fn handle(&self, event: &JsObject) {
+        self.0.lock().unwrap().push(event.clone());
+    }
+}
+struct PanicHandler;
+impl HookExecutionEventHandler for PanicHandler {
+    fn handle(&self, _: &JsObject) {
+        panic!("observer");
+    }
+}
+
+fn fixed_options() -> HookRuntimeOptions {
+    HookRuntimeOptions {
+        clock: Arc::new(|| JsString::from(FIXED_START)),
+        shell: None,
+        on_async_registered: None,
+    }
+}
+
+fn parsed_settings(value: &JsValue) -> HooksSettings {
+    let parsed = parse_hooks_config(value);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    parsed.settings
+}
+
+fn run_input(case: &JsValue, root: &str) -> HookRuntimeRunInput {
+    let pairs = [("<dir>", root)];
+    HookRuntimeRunInput {
+        event: string(field(case, "event")),
+        hook_input: object(field(case, "hookInput")),
+        match_query: case.get("matchQuery").map(string),
+        cwd: substitute_text(&text(field(case, "cwd")), &pairs).into(),
+        env: Some(object(field(case, "env"))),
+        signal: None,
+    }
+}
+
+async fn replay_run(
+    runtime: &HookRuntime,
+    case: &JsValue,
+    root: &str,
+    throwing: bool,
+) -> (String, String) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorder = runtime
+        .subscribe_execution_events(Arc::new(RecordingHandler(events.clone())))
+        .unwrap();
+    let thrower = throwing.then(|| {
+        runtime
+            .subscribe_execution_events(Arc::new(PanicHandler))
+            .unwrap()
+    });
+    let result = runtime.run(run_input(case, root)).await.unwrap();
+    recorder.dispose();
+    if let Some(thrower) = thrower {
+        thrower.dispose();
+    }
+    let recorded = JsValue::Array(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .map(JsValue::Object)
+            .collect(),
+    );
+    (json(&result_value(&result)), json(&recorded))
+}
+fn result_value(result: &pilotdeck_gateway::runtime::hooks::HookRuntimeRunResult) -> JsValue {
+    let mut object = JsObject::new();
+    object.insert(
+        "effects".into(),
+        JsValue::Array(
+            result
+                .effects
+                .iter()
+                .map(|effect| effect.to_value())
+                .collect(),
+        ),
+    );
+    object.insert(
+        "events".into(),
+        JsValue::Array(result.events.iter().cloned().map(JsValue::Object).collect()),
+    );
+    object.insert(
+        "blockingErrors".into(),
+        JsValue::Array(
+            result
+                .blocking_errors
+                .iter()
+                .map(|error| error.to_value())
+                .collect(),
+        ),
+    );
+    object.insert(
+        "nonBlockingErrors".into(),
+        JsValue::Array(
+            result
+                .non_blocking_errors
+                .iter()
+                .map(|error| error.to_value())
+                .collect(),
+        ),
+    );
+    object.insert(
+        "pendingAsyncHooks".into(),
+        JsValue::Array(
+            result
+                .pending_async_hooks
+                .iter()
+                .map(|descriptor| descriptor.to_value())
+                .collect(),
+        ),
+    );
+    JsValue::Object(object)
+}
+
+#[tokio::test]
+async fn hook_runtime_matches_real_ts() {
+    let oracle = oracle();
+    let runtime_section = field(&oracle, "runtime");
+    let scratch = Scratch::new("hooks-runtime-runtime");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let settings = parsed_settings(&substitute(
+        field(runtime_section, "settings"),
+        &[("<dir>", &root)],
+    ));
+    let runtime = HookRuntime::with_options(settings, fixed_options());
+    let runs = array(field(runtime_section, "runs"));
+    assert_eq!(runs.len(), 5);
+    for case in runs {
+        let name = text(field(case, "name"));
+        let (result, events) = replay_run(&runtime, case, &root, name == "observer-error").await;
+        assert_eq!(
+            mask_paths(&result, &root),
+            text(field(case, "expected")),
+            "runtime run {name}"
+        );
+        assert_eq!(
+            mask_paths(&events, &root),
+            text(field(case, "expectedEvents")),
+            "runtime events {name}"
+        );
+    }
+    runtime.dispose().await;
+    let dispose = field(runtime_section, "dispose");
+    assert_eq!(runtime.lifecycle_state(), text(field(dispose, "state")));
+    let error = runtime
+        .subscribe_execution_events(Arc::new(RecordingHandler(Arc::new(Mutex::new(Vec::new())))))
+        .err()
+        .expect("subscribe after dispose must fail");
+    assert_eq!(
+        module_message(error),
+        text(field(dispose, "subscribeError"))
+    );
+    let error = runtime
+        .run(run_input(&oracle_runs_first(&oracle), &root))
+        .await
+        .unwrap_err();
+    assert_eq!(module_message(error), text(field(dispose, "runError")));
+
+    // pluginRoot replaces the command cwd.
+    let scratch = Scratch::new("hooks-runtime-plugin-root");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let extra = field(runtime_section, "pluginRoot");
+    let runtime = HookRuntime::with_options(
+        parsed_settings(&substitute(field(extra, "settings"), &[("<dir>", &root)])),
+        fixed_options(),
+    );
+    let (result, events) = replay_run(&runtime, field(extra, "run"), &root, false).await;
+    assert_eq!(
+        mask_paths(&result, &root),
+        text(field(field(extra, "run"), "expected"))
+    );
+    assert_eq!(
+        mask_paths(&events, &root),
+        text(field(field(extra, "run"), "expectedEvents"))
+    );
+    runtime.dispose().await;
+
+    // SessionEnd uses the fixed 1500 ms budget.
+    let scratch = Scratch::new("hooks-runtime-session-end");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let extra = field(runtime_section, "sessionEnd");
+    let runtime = HookRuntime::with_options(
+        parsed_settings(&substitute(field(extra, "settings"), &[("<dir>", &root)])),
+        fixed_options(),
+    );
+    let started = Instant::now();
+    let (result, events) = replay_run(&runtime, field(extra, "run"), &root, false).await;
+    assert_eq!(
+        mask_paths(&result, &root),
+        text(field(field(extra, "run"), "expected"))
+    );
+    assert_eq!(
+        mask_paths(&events, &root),
+        text(field(field(extra, "run"), "expectedEvents"))
+    );
+    assert!(bool_value(field(extra, "elapsedAtLeast1500")));
+    assert!(started.elapsed() >= Duration::from_millis(1500));
+    runtime.dispose().await;
+
+    // Pending async hooks: describe/complete/collect/remove/cancel.
+    let scratch = Scratch::new("hooks-runtime-async");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let extra = field(runtime_section, "async");
+    let runtime = HookRuntime::with_options(
+        parsed_settings(&substitute(field(extra, "settings"), &[("<dir>", &root)])),
+        fixed_options(),
+    );
+    let input = run_input(&oracle_runs_first(&oracle), &root);
+    let result = runtime.run(input).await.unwrap();
+    assert_eq!(json(&result_value(&result)), text(field(extra, "run")));
+    assert_eq!(
+        json(&JsValue::Array(
+            result.events.iter().cloned().map(JsValue::Object).collect()
+        )),
+        text(field(extra, "events"))
+    );
+    assert_eq!(
+        json(&JsValue::Array(
+            result
+                .pending_async_hooks
+                .iter()
+                .map(|descriptor| descriptor.to_value())
+                .collect()
+        )),
+        text(field(extra, "pending"))
+    );
+    let pending = &result.pending_async_hooks[0];
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "collectBefore"))
+    );
+    assert_eq!(
+        runtime.complete_async_hook(
+            &pending.id,
+            AsyncHookCompletion {
+                output: Some(HookOutput::Async(
+                    pilotdeck_gateway::hooks::protocol::HookAsyncOutput::default()
+                )),
+                ..Default::default()
+            }
+        ),
+        bool_value(field(extra, "completeInvalid"))
+    );
+    assert_eq!(
+        runtime.complete_async_hook(
+            &pending.id,
+            AsyncHookCompletion {
+                stdout: Some(r#"{"continue":false,"reason":"r"}"#.into()),
+                ..Default::default()
+            }
+        ),
+        bool_value(field(extra, "completeValid"))
+    );
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "collect"))
+    );
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "collectAgain"))
+    );
+    runtime.remove_delivered_async_responses();
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "afterRemove"))
+    );
+    let second = runtime
+        .run(run_input(&oracle_runs_first(&oracle), &root))
+        .await
+        .unwrap();
+    assert_eq!(
+        json(&JsValue::Array(
+            second
+                .pending_async_hooks
+                .iter()
+                .map(|descriptor| descriptor.to_value())
+                .collect()
+        )),
+        text(field(extra, "secondPending"))
+    );
+    let id = &second.pending_async_hooks[0].id;
+    assert_eq!(
+        runtime.cancel_async_hook(id),
+        bool_value(field(extra, "cancel"))
+    );
+    assert_eq!(
+        runtime.cancel_async_hook(id),
+        bool_value(field(extra, "cancelAgain"))
+    );
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "afterCancel"))
+    );
+    runtime.dispose().await;
+    assert_eq!(
+        runtime.complete_async_hook(
+            &pending.id,
+            AsyncHookCompletion {
+                stdout: Some("{}".into()),
+                ..Default::default()
+            }
+        ),
+        bool_value(field(extra, "completeAfterDispose"))
+    );
+    assert_eq!(
+        json(&JsValue::Array(
+            runtime
+                .collect_async_responses()
+                .iter()
+                .map(|response| response.to_value())
+                .collect()
+        )),
+        text(field(extra, "collectAfterDispose"))
+    );
+
+    // HookRuntime dispatches callback hooks through the injected executor.
+    let scratch = Scratch::new("hooks-runtime-callback-hook");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let extra = field(runtime_section, "callbackHook");
+    // The persistent parser intentionally drops callback hooks; this scenario
+    // exists to exercise HookRuntime's runtime-only callback route.
+    let mut settings =
+        parse_hooks_config(&substitute(field(extra, "settings"), &[("<dir>", &root)])).settings;
+    settings[0].1[0].hooks.insert(
+        0,
+        HookCommand::Callback {
+            name: "cb".into(),
+            condition: None,
+            status_message: None,
+        },
+    );
+    let runtime = HookRuntime::with_options(settings, fixed_options());
+    runtime
+        .callback_executor()
+        .register(
+            &"cb".into(),
+            handler(|_| {
+                Box::pin(async {
+                    // The TS handler returned a `PilotDeckHookOutput`-shaped
+                    // object: `systemMessage` is read, while the unrelated
+                    // `hookSpecificOutput` key is not `specific` and has no
+                    // effect.
+                    Ok(CallbackResult::Output(HookOutput::Sync(Box::new(
+                        HookSyncOutput {
+                            system_message: Some("sys".into()),
+                            ..Default::default()
+                        },
+                    ))))
+                })
+            }),
+        )
+        .unwrap();
+    let case = field(extra, "run");
+    let (result, events) = replay_run(&runtime, case, &root, false).await;
+    assert_eq!(mask_paths(&result, &root), text(field(case, "expected")));
+    assert_eq!(
+        mask_paths(&events, &root),
+        text(field(case, "expectedEvents"))
+    );
+    runtime.dispose().await;
+
+    // dispose drains an in-flight run before reporting disposed.
+    let scratch = Scratch::new("hooks-runtime-drain");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let extra = field(runtime_section, "disposeDrain");
+    let runtime = HookRuntime::with_options(
+        parsed_settings(&substitute(field(extra, "settings"), &[("<dir>", &root)])),
+        fixed_options(),
+    );
+    let input = run_input(&oracle_runs_first(&oracle), &root);
+    let running = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.run(input).await })
+    };
+    tokio::task::yield_now().await;
+    let disposing = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.dispose().await })
+    };
+    tokio::task::yield_now().await;
+    assert_eq!(
+        runtime.lifecycle_state(),
+        text(field(extra, "immediateState"))
+    );
+    disposing.await.unwrap();
+    assert_eq!(runtime.lifecycle_state(), text(field(extra, "afterState")));
+    let result = running.await.unwrap().unwrap();
+    assert_eq!(json(&result_value(&result)), text(field(extra, "result")));
+}
+
+fn oracle_runs_first(oracle: &JsValue) -> JsValue {
+    element(field(field(oracle, "runtime"), "runs"), 0).clone()
+}
+
+// ---------------------------------------------------------------- lifecycle
+
+#[tokio::test]
+async fn lifecycle_dispatch_matches_real_ts() {
+    let oracle = oracle();
+    let section = field(&oracle, "lifecycle");
+    let scratch = Scratch::new("hooks-runtime-lifecycle");
+    let root = scratch_root(&scratch);
+    write_scripts(&oracle, &root);
+    let base_input = object(&substitute(
+        field(section, "baseInput"),
+        &[("<dir>", &root)],
+    ));
+    let settings = parsed_settings(&substitute(field(section, "settings"), &[("<dir>", &root)]));
+    let runtime = LifecycleRuntime::new(HookRuntime::with_options(settings, fixed_options()));
+    let result = runtime
+        .dispatch(LifecycleDispatchInput {
+            event: "Stop".into(),
+            base_input: base_input.clone(),
+            payload: Some(object(&parse_json(r#"{"extra":"v"}"#).unwrap())),
+            match_query: Some("Stop".into()),
+            cwd: root.clone().into(),
+            env: Some(object(
+                &parse_json(r#"{"PATH":"/usr/bin:/bin","HOME":"/tmp"}"#).unwrap(),
+            )),
+            signal: None,
+        })
+        .await
+        .unwrap();
+    let value = result.to_value();
+    assert_eq!(
+        mask_paths(&json(&value), &root),
+        text(field(section, "dispatch"))
+    );
+    assert_eq!(
+        mask_paths(&json(field(&value, "messages")), &root),
+        text(field(section, "dispatchMessages"))
+    );
+    runtime.dispose().await;
+    let error = runtime
+        .dispatch(LifecycleDispatchInput {
+            event: "Stop".into(),
+            base_input,
+            payload: Some(JsObject::new()),
+            match_query: Some("Stop".into()),
+            cwd: root.clone().into(),
+            env: None,
+            signal: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(module_message(error), text(field(section, "disposedError")));
+
+    let null = LifecycleRuntime::null();
+    let empty = null
+        .dispatch(LifecycleDispatchInput {
+            event: "Stop".into(),
+            base_input: JsObject::new(),
+            payload: None,
+            match_query: Some("Stop".into()),
+            cwd: root.clone().into(),
+            env: None,
+            signal: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        json(&empty.to_value()),
+        text(field(section, "nullDispatch"))
+    );
+    null.dispose().await;
+
+    // buildTurnEnvironment, including path resolution and segment sanitizing.
+    // The oracle masks the generator's process cwd as `<cwd>`; a relative
+    // `cwd` argument resolves against the process cwd in both implementations.
+    let cwd = std::env::current_dir()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let env_cases = array(field(section, "envCases"));
+    assert_eq!(env_cases.len(), 6);
+    for case in env_cases {
+        let name = text(field(case, "name"));
+        let base_env = case.get("base").map(object);
+        let cwd_value = substitute_text(&text(field(case, "cwd")), &[("<dir>", &root)]);
+        let actual = host_lifecycle::build_turn_environment(
+            base_env.as_ref(),
+            &cwd_value.clone().into(),
+            &string(field(case, "sessionId")),
+            &string(field(case, "turnId")),
+        );
+        let expected = substitute_text(
+            &text(field(case, "expected")),
+            &[("<dir>", &root), ("<cwd>", &cwd)],
+        );
+        assert_eq!(json(&JsValue::Object(actual)), expected, "env case {name}");
+    }
+
+    // HostLifecycleRuntime error projection and result validation.
+    let host_cases = array(field(section, "hostClientCases"));
+    assert_eq!(host_cases.len(), 11);
+    for case in host_cases {
+        let name = text(field(case, "name"));
+        if name == "request" || name == "request-without-idempotency-key" {
+            continue;
+        }
+        let response = field(case, "response");
+        if bool_value(field(response, "ok")) {
+            let value = response
+                .get("payload")
+                .and_then(JsValue::as_object)
+                .and_then(|payload| payload.get("result"))
+                .unwrap_or(&UNDEFINED);
+            match validate_lifecycle_dispatch_result(value) {
+                Ok(()) => {
+                    assert_eq!(json(value), text(field(case, "resolved")), "{name}");
+                }
+                Err(message) => {
+                    assert_eq!(
+                        String::from_utf16_lossy(message.units()),
+                        text(field(case, "error")),
+                        "{name}"
+                    );
+                }
+            }
+        } else {
+            let (message, code) = lifecycle_module_failure(response);
+            assert_eq!(
+                String::from_utf16_lossy(message.units()),
+                text(field(case, "error")),
+                "{name}"
+            );
+            match (code, case.get("code")) {
+                (None, Some(JsValue::Null)) | (None, None) => {}
+                (Some(code), Some(expected)) => assert_eq!(code, string(expected), "{name}"),
+                (code, expected) => panic!("{name}: code {code:?} vs {expected:?}"),
+            }
+        }
+    }
+
+    // The module adapter produces exactly the dispatch result the sidecar
+    // client validates.
+    let handler_settings =
+        parsed_settings(&substitute(field(section, "settings"), &[("<dir>", &root)]));
+    let handler = host_lifecycle::Handler::new(
+        LifecycleRuntime::new(HookRuntime::with_options(handler_settings, fixed_options())),
+        host_lifecycle::Binding {
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+            cwd: root.clone().into(),
+            permission_mode: Some("default".into()),
+            base_env: Some(object(
+                &parse_json(r#"{"PATH":"/usr/bin:/bin","HOME":"/tmp"}"#).unwrap(),
+            )),
+            signal: None,
+        },
+    );
+    let mut payload = JsObject::new();
+    payload.insert("extra".into(), "v".into());
+    let response = handler
+        .call(module_call(
+            "dispatch",
+            "Stop",
+            Some(JsValue::Object(payload)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        mask_paths(&json(field(&JsValue::Object(response), "result")), &root),
+        text(field(section, "dispatch"))
+    );
+    handler.dispose().await.unwrap();
+    let mut payload = JsObject::new();
+    payload.insert("extra".into(), "v".into());
+    let error = handler
+        .call(module_call(
+            "dispatch",
+            "Stop",
+            Some(JsValue::Object(payload)),
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        module_message(error),
+        "Cannot run hooks; hook runtime is disposed."
+    );
+
+    // Dispatcher-level input validation and the missing-capability default.
+    let empty_handler = host_lifecycle::Handler::default();
+    let error = empty_handler
+        .call(module_call("dispatch", "Stop", None))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        module_message(error),
+        "Host did not provide a lifecycle runtime."
+    );
+    let handler = host_lifecycle::Handler::null(host_lifecycle::Binding {
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        cwd: root.clone().into(),
+        permission_mode: None,
+        base_env: None,
+        signal: None,
+    });
+    let error = handler
+        .call(module_call("other", "Stop", None))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        module_message(error),
+        "Unsupported sidecar lifecycle operation."
+    );
+    let error = handler
+        .call(module_call("dispatch", "Nope", None))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        module_message(error),
+        "Unsupported sidecar lifecycle event: Nope"
+    );
+    let mut call = JsObject::new();
+    call.insert("module".into(), "lifecycle".into());
+    let mut payload = JsObject::new();
+    payload.insert("operation".into(), "dispatch".into());
+    payload.insert("event".into(), "Stop".into());
+    payload.insert("payload".into(), JsValue::Number(5.0));
+    call.insert("payload".into(), JsValue::Object(payload));
+    let error = handler.call(JsValue::Object(call)).await.unwrap_err();
+    assert_eq!(
+        module_message(error),
+        "Lifecycle payload must be an object."
+    );
+    handler.dispose().await.unwrap();
+}
+
+fn module_call(operation: &str, event: &str, payload: Option<JsValue>) -> JsValue {
+    let mut call = JsObject::new();
+    call.insert("module".into(), "lifecycle".into());
+    let mut body = JsObject::new();
+    body.insert("operation".into(), operation.into());
+    body.insert("event".into(), event.into());
+    if let Some(value) = payload {
+        body.insert("payload".into(), value);
+    }
+    call.insert("payload".into(), JsValue::Object(body));
+    JsValue::Object(call)
+}
+
+#[derive(Debug, PartialEq)]
+struct SeenRegistration {
+    hook_name: String,
+    invocation_id: String,
+    timeout_ms: Option<f64>,
+}
+struct RegistrationSink(Arc<Mutex<Vec<SeenRegistration>>>);
+impl pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistrationHandler for RegistrationSink {
+    fn handle(
+        &self,
+        registration: pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistration,
+    ) {
+        self.0.lock().unwrap().push(SeenRegistration {
+            hook_name: registration.hook_name.to_utf8().unwrap(),
+            invocation_id: registration.invocation_id.to_utf8().unwrap(),
+            timeout_ms: registration.timeout_ms,
+        });
+    }
+}
+
+#[tokio::test]
+async fn async_invocation_id_prefers_the_registration_bridge() {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let runtime = HookRuntime::with_options(
+        vec![(
+            "Stop".into(),
+            vec![HookMatcher {
+                hooks: vec![HookCommand::Command {
+                    command:
+                        r#"/bin/echo '{"async":true,"asyncHookId":"aid","asyncTimeout":1.25}'"#
+                            .into(),
+                    shell: None,
+                    asynchronous: None,
+                    async_rewake: Some(true),
+                    common: HookCommon::default(),
+                }],
+                ..HookMatcher::default()
+            }],
+        )],
+        HookRuntimeOptions {
+            clock: Arc::new(|| JsString::from(FIXED_START)),
+            shell: None,
+            on_async_registered: Some(Arc::new(RegistrationSink(sink.clone()))),
+        },
+    );
+    let result = runtime
+        .run(HookRuntimeRunInput {
+            event: "Stop".into(),
+            hook_input: JsObject::new(),
+            match_query: Some("Stop".into()),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned().into(),
+            env: None,
+            signal: None,
+        })
+        .await
+        .unwrap();
+    assert!(result.pending_async_hooks.is_empty());
+    assert_eq!(
+        *sink.lock().unwrap(),
+        vec![SeenRegistration {
+            hook_name: "command".into(),
+            invocation_id: "aid".into(),
+            timeout_ms: Some(1250.0),
+        }]
+    );
+    runtime.dispose().await;
+}

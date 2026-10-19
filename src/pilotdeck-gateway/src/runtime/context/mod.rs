@@ -5,7 +5,7 @@
 pub mod compaction;
 mod instructions;
 mod prepare;
-mod prompt;
+pub(crate) mod prompt;
 pub mod tool_budget;
 
 pub use instructions::{
