@@ -165,7 +165,12 @@ const call = async (tool: string, input: any, extra: any = {}, now = fixed) => {
   current.calls ??= [];
   const record = await execute(tool, input, extra, now);
   current.steps.push({ op: 'call', index: current.calls.length });
-  current.calls.push(record);
+  current.calls.push({
+    ...record,
+    ...(Object.keys(extra).length > 0
+      ? { context: replaceRoot(clean(extra), scratch, outside) }
+      : {}),
+  });
 };
 
 // ---------- read_file ----------
@@ -217,6 +222,12 @@ await apply(current.steps[0]);
 await call('read_file', { file_path: 'cr-no-limit.txt' });
 scenarios.push(current);
 
+current = { name: 'read-text-eof-lone-cr', steps: [] };
+current.steps.push({ op: 'file', path: 'cr-eof.txt', content: 'abc\r' });
+await apply(current.steps[0]);
+await call('read_file', { file_path: 'cr-eof.txt' });
+scenarios.push(current);
+
 current = { name: 'read-invalid-utf8', steps: [] };
 current.steps.push({ op: 'file', path: 'invalid.txt', base64: 'Yf9iCg==' });
 await apply(current.steps[0]);
@@ -261,6 +272,20 @@ current = { name: 'read-notebook-invalid-json', steps: [] };
 current.steps.push({ op: 'file', path: 'bad.ipynb', content: 'not json' });
 await apply(current.steps[0]);
 await call('read_file', { file_path: 'bad.ipynb' });
+scenarios.push(current);
+
+current = { name: 'read-notebook-cell-type-number', steps: [] };
+current.steps.push({ op: 'file', path: 'typed.ipynb', content: JSON.stringify({ cells: [
+  { cell_type: 5, source: 'x' },
+] }) });
+await apply(current.steps[0]);
+await call('read_file', { file_path: 'typed.ipynb' });
+scenarios.push(current);
+
+current = { name: 'read-notebook-non-array-cells', steps: [] };
+current.steps.push({ op: 'file', path: 'cells-object.ipynb', content: JSON.stringify({ cells: {} }) });
+await apply(current.steps[0]);
+await call('read_file', { file_path: 'cells-object.ipynb' });
 scenarios.push(current);
 
 current = { name: 'read-dedup-unchanged', steps: [] };
@@ -324,6 +349,22 @@ await apply(current.steps[0]);
 await call('read_file', { file_path: 'doc.pdf' });
 await call('read_file', { file_path: 'doc.pdf', pages: '1-2' });
 await call('read_file', { file_path: 'doc.pdf', pages: '0-1' });
+await call('read_file', { file_path: 'doc.pdf', pages: '1-99999999999999999999' });
+scenarios.push(current);
+
+current = { name: 'read-image-jpeg-fast-path', steps: [] };
+const jpegBytes = Buffer.concat([Buffer.alloc(1024, 0x41), Buffer.from([0xff, 0xd9])]);
+current.steps.push({ op: 'file', path: 'pic.jpg', base64: jpegBytes.toString('base64') });
+await apply(current.steps[0]);
+await call('read_file', { file_path: 'pic.jpg' }, { modelMultimodal: { input: ['image'], imageDetail: 'low' } });
+await call('read_file', { file_path: 'pic.jpg' }, { modelMultimodal: { input: ['image'], imageDetail: 'low' } });
+scenarios.push(current);
+
+current = { name: 'read-pdf-document-block', steps: [] };
+current.steps.push({ op: 'file', path: 'doc.pdf', content: 'not a pdf' });
+await apply(current.steps[0]);
+await call('read_file', { file_path: 'doc.pdf' }, { modelMultimodal: { input: ['pdf'] } });
+await call('read_file', { file_path: 'doc.pdf' }, { modelMultimodal: { input: ['pdf'] } });
 scenarios.push(current);
 
 // ---------- glob ----------

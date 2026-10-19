@@ -331,7 +331,7 @@ fn tool_for(name: &str) -> Box<dyn ExecutableTool> {
 fn builtin_tool_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 50, "scenario count");
+    assert_eq!(scenarios.len(), 55, "scenario count");
     let mut calls = 0;
     for scenario in scenarios {
         let name = text(field(scenario, "name"));
@@ -348,7 +348,7 @@ fn builtin_tool_outputs_match_real_ts() {
             Some(cwd) => scratch.root.join(cwd.to_utf8().unwrap()),
             None => scratch.root.clone(),
         };
-        let replay = ReplayContext::new(&scratch, &cwd);
+        let mut replay = ReplayContext::new(&scratch, &cwd);
         let calls_value = array(field(scenario, "calls"));
         for step in array(field(scenario, "steps")) {
             if text(field(step, "op")) != "call" {
@@ -357,6 +357,11 @@ fn builtin_tool_outputs_match_real_ts() {
             }
             let index = number(field(step, "index")).expect("call index") as usize;
             let call = &calls_value[index];
+            if let Some(context) = field(call, "context").as_object() {
+                for (key, value) in context.entries() {
+                    replay.context.fields.insert(key.clone(), value.clone());
+                }
+            }
             calls += 1;
             let tool_name = text(field(call, "tool"));
             let input = substitute(field(call, "input"), &scratch);
@@ -383,7 +388,69 @@ fn builtin_tool_outputs_match_real_ts() {
             );
         }
     }
-    assert_eq!(calls, 55, "call count");
+    assert_eq!(calls, 63, "call count");
+}
+
+fn multimodal(input: &[&str], image_detail: Option<&str>) -> JsValue {
+    let mut value = object([(
+        "input",
+        JsValue::Array(
+            input
+                .iter()
+                .map(|kind| JsValue::from(*kind))
+                .collect::<Vec<_>>(),
+        ),
+    )]);
+    if let Some(detail) = image_detail {
+        value.insert("imageDetail".into(), JsValue::from(detail));
+    }
+    JsValue::Object(value)
+}
+
+#[test]
+fn multimodal_success_branches_emit_model_visible_payloads() {
+    let scratch = Scratch::new();
+    let mut replay = ReplayContext::new(&scratch, &scratch.root);
+
+    fs::write(scratch.root.join("doc.pdf"), b"not a pdf").unwrap();
+    replay
+        .context
+        .fields
+        .insert("modelMultimodal".into(), multimodal(&["pdf"], None));
+    let output = futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("doc.pdf"))])),
+        replay.context.clone(),
+    ))
+    .unwrap();
+    let supplemental = output.supplemental_messages.expect("PDF supplemental");
+    assert_eq!(supplemental.len(), 1);
+    let message = &supplemental[0];
+    assert_eq!(text(field(message, "role")), "user");
+    assert_eq!(field(message, "isMeta"), &JsValue::Bool(true));
+    let content = &array(field(message, "content"))[0];
+    assert_eq!(text(field(content, "type")), "pdf");
+    assert_eq!(text(field(content, "mimeType")), "application/pdf");
+    assert_eq!(text(field(content, "data")), BASE64.encode(b"not a pdf"));
+    assert_eq!(field(content, "bytes"), &JsValue::Number(9.0));
+
+    let jpeg = [vec![b'A'; 1024], vec![0xff, 0xd9]].concat();
+    fs::write(scratch.root.join("pic.jpg"), &jpeg).unwrap();
+    replay.context.fields.insert(
+        "modelMultimodal".into(),
+        multimodal(&["image"], Some("low")),
+    );
+    let output = futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("pic.jpg"))])),
+        replay.context.clone(),
+    ))
+    .unwrap();
+    let content = &output.content[0];
+    assert_eq!(text(field(content, "type")), "image");
+    assert_eq!(text(field(content, "mimeType")), "image/jpeg");
+    assert_eq!(text(field(content, "data")), BASE64.encode(&jpeg));
+    assert_eq!(field(content, "bytes"), &JsValue::Number(jpeg.len() as f64));
+    assert_eq!(text(field(content, "detail")), "low");
+    assert!(output.supplemental_messages.is_none());
 }
 
 #[test]

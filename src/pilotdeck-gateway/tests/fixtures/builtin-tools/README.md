@@ -13,9 +13,10 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次输出字节一致才更新
-正本。场景 50 个、调用 55 次。生成器断言默认 locale 为 `en-US`（与 `skills` 夹具
+正本。场景 55 个、调用 63 次。生成器断言默认 locale 为 `en-US`（与 `skills` 夹具
 相同）。setup 使用显式 mtime（`utimes`），Rust 回放用 `File::set_modified` 设同一
-值，所以 `glob --sort=modified` 的顺序不依赖文件创建时刻。
+值，所以 `glob --sort=modified` 的顺序不依赖文件创建时刻。带 `modelMultimodal` 的
+调用把该 context 片段记入 `calls[].context`，回放时注入同一字段。
 
 ## 范围切分
 
@@ -26,11 +27,21 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 - **模型支持图片/PDF 时的附件路径**：TS 用 `sharp`/`mupdf` 解码并压缩成
   model-visible content；本运行时没有这两个编码器，也不允许新增 crate。没有
-  multimodal 声明时 TS 本身返回文本提示，夹具覆盖该分支。声明支持时本实现返回
-  同形状的 decode-failure 提示（图片）或 `result_too_large`（PDF），**不声称**与
-  TS 成功附件分支对拍。
+  multimodal 声明时 TS 本身返回文本提示，夹具覆盖该分支。声明支持时：
+  - 完整 JPEG（EOI 且 >1 KiB、未超字节预算）的 fast path 不需要 sharp，已按 TS
+    原样实现并用真实 TS 夹具覆盖；
+  - 非 JPEG 解码、JPEG 修复/压缩仍需要 sharp，返回同形状的 decode-failure 文本；
+  - PDF 原始字节的 document block 不需要解码器，已实现并覆盖；PDF 页数统计与
+    `pages` 的 mupdf 渲染仍不可用（没有 mupdf，也没有新增 PDF 解析 crate）。
 - **PDF 页数**：夹具用非 PDF 字节的 `.pdf`，TS 的 `countPdfPages` 返回
-  `undefined`，因此两边都不带 `, N pages` 后缀。真实 PDF 页数统计未移植。
+  `undefined`，因此两边都不带 `, N pages` 后缀。本实现始终不统计页数，所以真实
+  PDF 的页数后缀与 `>10 pages` 拒绝分支仍是已知偏离。
+- **无 limit 的尾随孤立 CR**：TS `split(/\r?\n/)` 只在 `\r` 后跟 `\n` 时剥除；
+  `read-text-eof-lone-cr` 钉住 `abc\r` 保留 CR 的行为。有 limit 的 readline 仍把
+  孤立 CR 当行终止符（`read-text-lone-cr-with-limit`）。
+- **notebook 畸形输入**：`cell_type` 的 `String(value)` 转换与 `cells` 为非数组对象时
+  的 `cellCount` 省略已有夹具；`cells` 为字符串/类数组对象时的 `length` 索引语义、
+  `outputs` 非数组的 TypeError 文案与 `.ipynb` 目录名仍留作跟进。
 - **时区数据**：TS 用 ICU；Rust 用系统 TZif（经 `pilotdeck-transport` 的既有
   `tz-rs` 依赖），只支持系统 zoneinfo 中存在的 IANA 名与 `±HH[:]MM` offset。
   `Intl` 接受但系统缺失的 ICU 专名会报 invalid timezone。默认时区从 `TZ` 或

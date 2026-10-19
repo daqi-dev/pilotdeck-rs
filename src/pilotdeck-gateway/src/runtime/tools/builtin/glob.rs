@@ -103,7 +103,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
     } else {
         format!("{}/", text(&resolved.relative))
     };
-    let files = walk(&super::os_path(&resolved.absolute), &search_pattern, input)?;
+    let files = walk(&super::os_path(&resolved.absolute), &search_pattern)?;
     let limit = input
         .get("limit")
         .and_then(JsValue::as_number)
@@ -172,9 +172,9 @@ fn slice_limit(files: &[String], limit: f64) -> Vec<String> {
         if limit > 0.0 { length } else { 0 }
     } else {
         let value = limit.trunc();
-        if value == 0.0 && value.is_sign_negative() {
-            length
-        } else if value < 0.0 {
+        // ECMAScript `ToIntegerOrInfinity(-0)` is `+0`; `slice(0, -0)` is
+        // empty, not "all files". `-0.5` truncates to `-0` for the same reason.
+        if value < 0.0 {
             (length as f64 + value).max(0.0) as i64
         } else {
             value.min(length as f64) as i64
@@ -185,10 +185,10 @@ fn slice_limit(files: &[String], limit: f64) -> Vec<String> {
     files[start..end as usize].to_vec()
 }
 
-fn walk(root: &Path, pattern: &JsString, input: &JsValue) -> Result<Vec<String>, ToolError> {
+fn walk(root: &Path, pattern: &JsString) -> Result<Vec<String>, ToolError> {
     let matcher = GlobMatcher::new(pattern)?;
     let mut files: Vec<(String, i64)> = Vec::new();
-    walk_directory(root, "", &matcher, &mut files, input)?;
+    walk_directory(root, "", &matcher, &mut files)?;
     files.sort_by(|left, right| {
         left.1
             .cmp(&right.1)
@@ -202,7 +202,6 @@ fn walk_directory(
     relative: &str,
     matcher: &GlobMatcher,
     files: &mut Vec<(String, i64)>,
-    input: &JsValue,
 ) -> Result<(), ToolError> {
     let entries = std::fs::read_dir(directory).map_err(|error| {
         tool_error(
@@ -240,7 +239,7 @@ fn walk_directory(
             if IGNORED_DIRECTORIES.contains(&name.as_ref()) {
                 continue;
             }
-            walk_directory(&entry.path(), &path, matcher, files, input)?;
+            walk_directory(&entry.path(), &path, matcher, files)?;
         } else if file_type.is_file() && matcher.matches(&path) {
             let Ok(metadata) = entry.metadata() else {
                 continue;
@@ -250,7 +249,6 @@ fn walk_directory(
                 Ok(duration) => duration.as_millis() as i64,
                 Err(error) => -(error.duration().as_millis() as i64),
             };
-            let _ = input;
             files.push((path, milliseconds));
         }
     }
@@ -497,7 +495,28 @@ fn extract_glob_base_directory(pattern: &JsString) -> (JsString, JsString) {
     (base, relative)
 }
 
-#[allow(dead_code)]
-fn _path_parts(path: &Path) -> std::path::Components<'_> {
-    path.components()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn files() -> Vec<String> {
+        ["a", "b", "c"]
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn slice_limit_matches_js_negative_zero_and_negative_ranges() {
+        let files = files();
+        assert!(slice_limit(&files, -0.0).is_empty());
+        assert!(slice_limit(&files, -0.5).is_empty());
+        assert!(slice_limit(&files, 0.0).is_empty());
+        assert_eq!(slice_limit(&files, 2.0), vec!["a", "b"]);
+        assert_eq!(slice_limit(&files, -1.0), vec!["a", "b"]);
+        assert!(slice_limit(&files, -5.0).is_empty());
+        assert!(slice_limit(&files, f64::NAN).is_empty());
+        assert_eq!(slice_limit(&files, f64::INFINITY), files);
+        assert!(slice_limit(&files, f64::NEG_INFINITY).is_empty());
+    }
 }

@@ -13,10 +13,18 @@ use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 
 const MAX_PDF_PAGES_PER_REQUEST: u64 = 20;
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const PDF_EXTRACT_SIZE_THRESHOLD: u64 = 3 * 1024 * 1024;
+/// Node's `createReadStream` hands readline chunks; the exact size is not part
+/// of the observable result. Keep the retained buffer bounded and well below
+/// the 200 KiB auto-page threshold.
+const STREAM_READ_CHUNK_BYTES: usize = 64 * 1024;
 const LARGE_TEXT_AUTO_PAGE_BYTES: usize = 200_000;
 const SAFE_TEXT_BUDGET_BYTES: usize = 80_000;
 const MAX_TEXT_TOKENS: usize = 25_000;
@@ -180,7 +188,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Option<Vec<JsObject>> 
                     string("pages must use formats like \"1-5\" or \"3\"."),
                 ),
             ])),
-            Some(range) if range.1 - range.0 + 1 > MAX_PDF_PAGES_PER_REQUEST => {
+            Some(range) if range.1 - range.0 + 1.0 > MAX_PDF_PAGES_PER_REQUEST as f64 => {
                 issues.push(object([
                     ("path", string("pages")),
                     ("code", string("invalid_schema")),
@@ -309,12 +317,7 @@ fn image_mime(path: &JsString) -> Option<&'static str> {
 }
 
 fn has_binary_extension(path: &JsString) -> bool {
-    let extension = lower(&extname(path));
-    BINARY_EXTENSIONS.contains(&extension.as_str())
-        && !matches!(
-            extension.as_str(),
-            ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" | ".pdf"
-        )
+    BINARY_EXTENSIONS.contains(&lower(&extname(path)).as_str())
 }
 
 fn is_blocked_device_path(path: &str) -> bool {
@@ -349,7 +352,7 @@ fn is_blocked_device_path(path: &str) -> bool {
     WINDOWS_DEVICE_NAMES.contains(&stem.to_uppercase().as_str())
 }
 
-fn parse_pdf_page_range(value: &str) -> Option<(u64, u64)> {
+fn parse_pdf_page_range(value: &str) -> Option<(f64, f64)> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -365,9 +368,11 @@ fn parse_pdf_page_range(value: &str) -> Option<(u64, u64)> {
     {
         return None;
     }
-    let first: u64 = first.parse().ok()?;
-    let last: u64 = last.parse().ok()?;
-    if first < 1 || last < first {
+    // `Number.parseInt` returns a double, including `Infinity` for very long
+    // digit strings; `u64` would report an overflow as a format error instead.
+    let first: f64 = first.parse().ok()?;
+    let last: f64 = last.parse().ok()?;
+    if first < 1.0 || last < first {
         return None;
     }
     Some((first, last))
@@ -432,11 +437,11 @@ fn read_state_set(context: &ToolRunContext, key: JsString, value: JsValue) {
 }
 
 fn image(
-    _input: &JsValue,
+    input: &JsValue,
     context: &ToolRunContext,
     resolved: &ResolvedPath,
     context_stat: &super::Stat,
-    _read_state_key: &JsString,
+    read_state_key: &JsString,
 ) -> Result<ToolOutput, ToolError> {
     let Some(mime_type) = image_mime(&resolved.absolute) else {
         return Err(tool_error(
@@ -476,10 +481,55 @@ fn image(
             ..ToolOutput::default()
         });
     }
-    // The baseline attaches model-visible pixels only after decoding and a
-    // multi-pass sharp compression. That encoder is not part of the gateway's
-    // dependency set, so report the same recoverable decode-failure notice
-    // instead of fabricating image bytes.
+    let max_image_bytes = multimodal
+        .and_then(|value| value.get("maxImageBytes"))
+        .and_then(JsValue::as_number)
+        .map(|value| value.min(MAX_IMAGE_BYTES as f64))
+        .unwrap_or(MAX_IMAGE_BYTES as f64);
+    let image_detail = multimodal
+        .and_then(|value| value.get("imageDetail"))
+        .and_then(JsValue::as_string)
+        .cloned();
+    // The baseline's JPEG fast path is a pure EOI check: complete JPEGs over
+    // 1 KiB pass through unchanged when they already fit the byte budget. That
+    // path needs no sharp/decoder, so it can be reproduced exactly.
+    if mime_type == "image/jpeg" && context_stat.size as f64 <= max_image_bytes {
+        let bytes = std::fs::read(os_path(&resolved.absolute))
+            .map_err(|error| failed(error, "open", &resolved.absolute))?;
+        let has_eoi =
+            bytes.len() >= 2 && bytes[bytes.len() - 2] == 0xff && bytes[bytes.len() - 1] == 0xd9;
+        if has_eoi && bytes.len() > 1000 {
+            read_state_set(
+                context,
+                read_state_key.clone(),
+                read_state_value(context_stat.mtime_ms, ReadKind::Image, input),
+            );
+            let mut content = object([
+                ("type", string("image")),
+                ("mimeType", string("image/jpeg")),
+                ("data", string(BASE64.encode(&bytes))),
+                ("bytes", JsValue::Number(bytes.len() as f64)),
+            ]);
+            if let Some(detail) = image_detail {
+                content.insert("detail".into(), JsValue::String(detail));
+            }
+            return Ok(ToolOutput {
+                content: vec![JsValue::Object(content)],
+                supplemental_messages: None,
+                data: Some(JsValue::Object(object([
+                    ("filePath", string(resolved.relative.clone())),
+                    ("kind", string("image")),
+                    ("mimeType", string("image/jpeg")),
+                    ("bytes", JsValue::Number(bytes.len() as f64)),
+                    ("originalBytes", JsValue::Number(bytes.len() as f64)),
+                ]))),
+                metadata: None,
+            });
+        }
+    }
+    // Non-JPEG decoding and JPEG repair/compression require sharp, which is not
+    // in the gateway dependency set; report the same recoverable notice as the
+    // baseline's decode-failure branch.
     Ok(ToolOutput {
         content: vec![JsValue::Object(object([
             ("type", string("text")),
@@ -514,7 +564,6 @@ fn pdf(
     context_stat: &super::Stat,
     read_state_key: &JsString,
 ) -> Result<ToolOutput, ToolError> {
-    let _ = read_state_key;
     let multimodal = context.fields.get("modelMultimodal");
     let supports = |kind: &str| {
         multimodal
@@ -569,7 +618,7 @@ fn pdf(
             "PDF page rendering is not available in this runtime.",
         ));
     }
-    if !supports_pdf || context_stat.size > 3 * 1024 * 1024 {
+    if !supports_pdf || context_stat.size > PDF_EXTRACT_SIZE_THRESHOLD {
         if !supports_image {
             return Ok(ToolOutput {
                 content: vec![JsValue::Object(object([
@@ -597,10 +646,48 @@ fn pdf(
             "PDF page rendering is not available in this runtime.",
         ));
     }
-    Err(tool_error(
-        "result_too_large",
-        "PDF document blocks are not available in this runtime.",
-    ))
+    // Model supports PDF and the file is small enough. mupdf is not in the
+    // dependency set, so page counting/rendering stays unavailable; the
+    // document-block path itself only needs the raw bytes.
+    let bytes = std::fs::read(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    read_state_set(
+        context,
+        read_state_key.clone(),
+        read_state_value(context_stat.mtime_ms, ReadKind::Pdf, input),
+    );
+    Ok(ToolOutput {
+        content: vec![JsValue::Object(object([
+            ("type", string("text")),
+            (
+                "text",
+                string(format!(
+                    "PDF file read: {} ({} bytes)",
+                    text(&resolved.relative),
+                    context_stat.size
+                )),
+            ),
+        ]))],
+        supplemental_messages: Some(vec![JsValue::Object(object([
+            ("role", string("user")),
+            (
+                "content",
+                JsValue::Array(vec![JsValue::Object(object([
+                    ("type", string("pdf")),
+                    ("mimeType", string("application/pdf")),
+                    ("data", string(BASE64.encode(&bytes))),
+                    ("bytes", JsValue::Number(bytes.len() as f64)),
+                ]))]),
+            ),
+            ("isMeta", JsValue::Bool(true)),
+        ]))]),
+        data: Some(JsValue::Object(object([
+            ("filePath", string(resolved.relative.clone())),
+            ("kind", string("pdf")),
+            ("bytes", JsValue::Number(bytes.len() as f64)),
+        ]))),
+        metadata: None,
+    })
 }
 
 fn notebook(
@@ -622,13 +709,19 @@ fn notebook(
         tool
     })?;
     let notebook = parsed.as_object();
-    let cells: &[JsValue] = notebook
-        .and_then(|value| value.get("cells"))
-        .and_then(|value| match value {
-            JsValue::Array(cells) => Some(cells.as_slice()),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let cells_value = notebook.and_then(|value| value.get("cells"));
+    let cells: &[JsValue] = match cells_value {
+        Some(JsValue::Array(cells)) => cells.as_slice(),
+        _ => &[],
+    };
+    // `notebook.cells ?? []`: missing/null becomes an empty array with a
+    // defined length; an arbitrary non-array object has `length === undefined`
+    // and therefore omits `cellCount` from the serialized data.
+    let cell_count: Option<usize> = match cells_value {
+        Some(JsValue::Array(cells)) => Some(cells.len()),
+        None | Some(JsValue::Null) | Some(JsValue::Undefined) => Some(0),
+        _ => None,
+    };
     let text = render_notebook(cells)?;
     let offset = number(field(input, "offset")).unwrap_or(1.0);
     let limit = number(field(input, "limit"));
@@ -648,20 +741,23 @@ fn notebook(
         number(field(input, "offset")),
         number(field(input, "limit")),
     );
+    let mut data = object([
+        ("filePath", string(resolved.relative.clone())),
+        ("kind", string("notebook")),
+        ("startLine", JsValue::Number(ranged.start_line as f64)),
+        ("endLine", JsValue::Number(ranged.end_line as f64)),
+        ("totalLines", JsValue::Number(ranged.total_lines as f64)),
+        ("truncated", JsValue::Bool(ranged.truncated)),
+    ]);
+    if let Some(count) = cell_count {
+        data.insert("cellCount".into(), JsValue::Number(count as f64));
+    }
     Ok(ToolOutput {
         content: vec![JsValue::Object(object([
             ("type", string("text")),
             ("text", string(numbered)),
         ]))],
-        data: Some(JsValue::Object(object([
-            ("filePath", string(resolved.relative.clone())),
-            ("kind", string("notebook")),
-            ("startLine", JsValue::Number(ranged.start_line as f64)),
-            ("endLine", JsValue::Number(ranged.end_line as f64)),
-            ("totalLines", JsValue::Number(ranged.total_lines as f64)),
-            ("truncated", JsValue::Bool(ranged.truncated)),
-            ("cellCount", JsValue::Number(cells.len() as f64)),
-        ]))),
+        data: Some(JsValue::Object(data)),
         metadata: Some(object([("truncated", JsValue::Bool(ranged.truncated))])),
         supplemental_messages: None,
     })
@@ -680,12 +776,7 @@ fn text_file(
         (context_stat.size as usize > LARGE_TEXT_AUTO_PAGE_BYTES)
             .then_some(DEFAULT_LARGE_TEXT_PREVIEW_LINES as f64)
     });
-    let mut ranged = read_in_range(
-        &resolved.absolute,
-        offset,
-        effective_limit,
-        context_stat.size,
-    )?;
+    let mut ranged = read_in_range(&resolved.absolute, offset, effective_limit)?;
     let mut rendered =
         render_readable_range(&ranged.content, ranged.start_line, ranged.total_lines);
     let mut auto_paged = input_limit.is_none() && effective_limit.is_some();
@@ -693,12 +784,7 @@ fn text_file(
     if auto_paged {
         while is_over_text_budget(&rendered) && ranged.line_count > 1 {
             let next_limit = ((ranged.line_count / 2) as f64).floor().max(1.0);
-            ranged = read_in_range(
-                &resolved.absolute,
-                offset,
-                Some(next_limit),
-                context_stat.size,
-            )?;
+            ranged = read_in_range(&resolved.absolute, offset, Some(next_limit))?;
             rendered =
                 render_readable_range(&ranged.content, ranged.start_line, ranged.total_lines);
         }
@@ -707,12 +793,7 @@ fn text_file(
     if !auto_paged && managed_ref {
         while is_over_text_budget(&rendered) && ranged.line_count > 1 {
             let next_limit = ((ranged.line_count / 2) as f64).floor().max(1.0);
-            ranged = read_in_range(
-                &resolved.absolute,
-                offset,
-                Some(next_limit),
-                context_stat.size,
-            )?;
+            ranged = read_in_range(&resolved.absolute, offset, Some(next_limit))?;
             rendered =
                 render_readable_range(&ranged.content, ranged.start_line, ranged.total_lines);
             tool_result_ref_auto_paged = true;
@@ -849,7 +930,6 @@ fn read_in_range(
     path: &JsString,
     start_line: f64,
     limit: Option<f64>,
-    _total_bytes: u64,
 ) -> Result<Ranged, ToolError> {
     let file_stat = stat(path)?;
     if !matches!(file_stat.kind, StatKind::File) {
@@ -858,8 +938,11 @@ fn read_in_range(
             format!("{} is not a regular file.", text(path)),
         ));
     }
-    let bytes = std::fs::read(os_path(path)).map_err(|error| failed(error, "open", path))?;
     if limit.is_none() {
+        // No limit is only reached for small files: `text_file` supplies the
+        // 2000-line auto-page limit above 200 KiB before calling this function,
+        // and the baseline's `readFileFull` reads the whole buffer too.
+        let bytes = std::fs::read(os_path(path)).map_err(|error| failed(error, "open", path))?;
         if bytes.contains(&0) {
             return Err(tool_error(
                 "invalid_tool_input",
@@ -890,36 +973,188 @@ fn read_in_range(
             mtime_ms: file_stat.mtime_ms,
         });
     }
-    if bytes.contains(&0) {
+    let normalized_start = start_line.max(1.0) as usize;
+    let normalized_limit = limit.unwrap_or(0.0).max(0.0) as usize;
+    let start_index = normalized_start - 1;
+    let end_index_exclusive = start_index.saturating_add(normalized_limit);
+    // `NodeFsPort.readFileLineRange` streams with `createReadStream` while
+    // readline counts every line to report `totalLines`; only the selected
+    // lines are retained. Mirror that: bounded read chunks, one pending line,
+    // and the selected range. The previous `fs::read` path held the whole
+    // file (plus UTF-8 copy) for any limit.
+    let file = std::fs::File::open(os_path(path)).map_err(|error| failed(error, "open", path))?;
+    let streamed = stream_lines(
+        file,
+        STREAM_READ_CHUNK_BYTES,
+        start_index,
+        end_index_exclusive,
+    )
+    .map_err(|error| failed(error, "read", path))?;
+    #[cfg(test)]
+    {
+        LAST_STREAM_PENDING.with(|cell| cell.set(streamed.max_pending_bytes));
+        STREAM_CALLS.with(|cell| cell.set(cell.get() + 1));
+    }
+    if streamed.saw_nul {
         return Err(tool_error(
             "invalid_tool_input",
             format!("{} appears to be a binary file.", text(path)),
         ));
     }
-    let decoded = String::from_utf8_lossy(&bytes).into_owned();
-    let lines = readline_lines(&decoded);
-    let normalized_start = start_line.max(1.0) as usize;
-    let normalized_limit = limit.unwrap_or(0.0).max(0.0) as usize;
-    let start_index = normalized_start - 1;
-    let end_index_exclusive = start_index.saturating_add(normalized_limit);
-    let selected: Vec<&str> = lines
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index >= start_index && *index < end_index_exclusive)
-        .map(|(_, line)| line.as_str())
-        .collect();
+    let total_lines = streamed.total_lines;
+    let selected = streamed.selected;
     let content = selected.join("\n");
-    let (actual_start, actual_end) = actual_range(normalized_start, selected.len(), lines.len());
+    let (actual_start, actual_end) = actual_range(normalized_start, selected.len(), total_lines);
     Ok(Ranged {
         content,
         full_content: None,
         line_count: selected.len(),
-        total_lines: lines.len(),
+        total_lines,
         start_line: actual_start,
         end_line: actual_end,
-        truncated: start_index > 0 || end_index_exclusive < lines.len(),
+        truncated: start_index > 0 || end_index_exclusive < total_lines,
         mtime_ms: file_stat.mtime_ms,
     })
+}
+
+struct StreamedLines {
+    selected: Vec<String>,
+    total_lines: usize,
+    saw_nul: bool,
+    #[allow(dead_code)]
+    max_pending_bytes: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static LAST_STREAM_PENDING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STREAM_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Byte-oriented line reader with Node readline's `crlfDelay: Infinity`
+/// semantics. Decoding each completed line separately is equivalent to decoding
+/// the whole file first: UTF-8 continuation bytes can never be `\r`/`\n`, so a
+/// terminator always ends an invalid/truncated sequence at the same place
+/// `String::from_utf8_lossy` would.
+fn stream_lines<R: Read>(
+    mut reader: R,
+    chunk_size: usize,
+    start_index: usize,
+    end_index_exclusive: usize,
+) -> std::io::Result<StreamedLines> {
+    let mut buffer = vec![0u8; chunk_size.max(1)];
+    let mut pending: Vec<u8> = Vec::new();
+    let mut selected: Vec<String> = Vec::new();
+    let mut total_lines = 0usize;
+    let mut max_pending_bytes = 0usize;
+    let mut saw_nul = false;
+    let mut first_line = true;
+    let mut eof = false;
+
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            eof = true;
+        } else {
+            if buffer[..read].contains(&0) {
+                saw_nul = true;
+                break;
+            }
+            pending.extend_from_slice(&buffer[..read]);
+        }
+        max_pending_bytes = max_pending_bytes.max(pending.len());
+        let mut consumed = 0usize;
+        let mut cursor = 0usize;
+        while cursor < pending.len() {
+            match pending[cursor] {
+                b'\n' => {
+                    push_streamed_line(
+                        &pending[consumed..cursor],
+                        start_index,
+                        end_index_exclusive,
+                        &mut total_lines,
+                        &mut first_line,
+                        &mut selected,
+                    );
+                    cursor += 1;
+                    consumed = cursor;
+                }
+                b'\r' => {
+                    if cursor + 1 < pending.len() {
+                        let separator = if pending[cursor + 1] == b'\n' { 2 } else { 1 };
+                        push_streamed_line(
+                            &pending[consumed..cursor],
+                            start_index,
+                            end_index_exclusive,
+                            &mut total_lines,
+                            &mut first_line,
+                            &mut selected,
+                        );
+                        cursor += separator;
+                        consumed = cursor;
+                    } else if eof {
+                        push_streamed_line(
+                            &pending[consumed..cursor],
+                            start_index,
+                            end_index_exclusive,
+                            &mut total_lines,
+                            &mut first_line,
+                            &mut selected,
+                        );
+                        cursor += 1;
+                        consumed = cursor;
+                    } else {
+                        break;
+                    }
+                }
+                _ => cursor += 1,
+            }
+        }
+        if consumed > 0 {
+            pending.drain(..consumed);
+        }
+        if eof {
+            break;
+        }
+    }
+
+    if !saw_nul && !pending.is_empty() {
+        push_streamed_line(
+            &pending,
+            start_index,
+            end_index_exclusive,
+            &mut total_lines,
+            &mut first_line,
+            &mut selected,
+        );
+    }
+    Ok(StreamedLines {
+        selected,
+        total_lines,
+        saw_nul,
+        max_pending_bytes,
+    })
+}
+
+fn push_streamed_line(
+    bytes: &[u8],
+    start_index: usize,
+    end_index_exclusive: usize,
+    total_lines: &mut usize,
+    first_line: &mut bool,
+    selected: &mut Vec<String>,
+) {
+    let mut line = String::from_utf8_lossy(bytes).into_owned();
+    if *first_line {
+        *first_line = false;
+        if let Some(stripped) = line.strip_prefix('\u{FEFF}') {
+            line = stripped.to_owned();
+        }
+    }
+    if *total_lines >= start_index && *total_lines < end_index_exclusive {
+        selected.push(line);
+    }
+    *total_lines += 1;
 }
 
 fn actual_range(normalized_start: usize, selected: usize, total: usize) -> (usize, usize) {
@@ -937,16 +1172,21 @@ fn strip_bom(value: &str) -> &str {
 
 fn split_lf(value: &str) -> Vec<&str> {
     let mut lines: Vec<&str> = value.split('\n').collect();
-    for line in &mut lines {
-        if let Some(stripped) = line.strip_suffix('\r') {
+    let last = lines.len().saturating_sub(1);
+    for (index, line) in lines.iter_mut().enumerate() {
+        // `split(/\r?\n/)` only strips `\r` when it is part of a `\r\n`
+        // separator; a trailing `\r` in the final unterminated segment stays.
+        if index != last
+            && let Some(stripped) = line.strip_suffix('\r')
+        {
             *line = stripped;
         }
     }
     lines
 }
 
-/// Node readline with `crlfDelay: Infinity`: `\r\n`, `\r` and `\n` each end a
-/// line, and a final terminator does not produce a trailing empty line.
+/// Reference implementation used by the streaming tests.
+#[cfg(test)]
 fn readline_lines(value: &str) -> Vec<String> {
     if value.is_empty() {
         return Vec::new();
@@ -1194,11 +1434,10 @@ fn render_notebook(cells: &[JsValue]) -> Result<String, ToolError> {
     let mut lines: Vec<String> = Vec::new();
     for (index, cell) in cells.iter().enumerate() {
         let cell = cell.as_object();
-        let cell_type = cell
-            .and_then(|cell| cell.get("cell_type"))
-            .and_then(JsValue::as_string)
-            .map(text_of)
-            .unwrap_or_else(|| "unknown".into());
+        let cell_type = match cell.and_then(|cell| cell.get("cell_type")) {
+            None | Some(JsValue::Null) | Some(JsValue::Undefined) => "unknown".to_owned(),
+            Some(value) => js_text(value)?,
+        };
         lines.push(format!("# Cell {index} ({cell_type})"));
         if let Some(execution_count) = cell.and_then(|cell| cell.get("execution_count"))
             && !matches!(execution_count, JsValue::Undefined | JsValue::Null)
@@ -1304,6 +1543,29 @@ fn normalize_multiline(value: Option<&JsValue>) -> Result<String, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::Write as _,
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempPath(PathBuf);
+    impl Drop for TempPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn temp_path(label: &str) -> TempPath {
+        let unique = format!(
+            "pdrs-read-stream-{}-{}-{label}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
+        );
+        TempPath(std::env::temp_dir().join(unique))
+    }
 
     #[test]
     fn read_state_key_preserves_original_utf16_path_identity() {
@@ -1318,5 +1580,145 @@ mod tests {
         let key = read_state_key(&path, ReadKind::Text, &input);
         assert_eq!(&key.units()[..path.units().len()], path.units());
         assert!(key.units().contains(&0xd800), "lone surrogate survives");
+    }
+
+    #[test]
+    fn split_lf_matches_js_crlf_split_at_eof() {
+        assert_eq!(split_lf("abc\r"), vec!["abc\r"]);
+        assert_eq!(split_lf("a\r\nb"), vec!["a", "b"]);
+        assert_eq!(split_lf("a\n\r"), vec!["a", "\r"]);
+        assert_eq!(split_lf("a\rb"), vec!["a\rb"]);
+        assert_eq!(split_lf("a\r\r\n"), vec!["a\r", ""]);
+    }
+
+    #[test]
+    fn parse_pdf_page_range_uses_js_parse_int_semantics() {
+        assert_eq!(parse_pdf_page_range("1-2"), Some((1.0, 2.0)));
+        assert_eq!(parse_pdf_page_range("0-1"), None);
+        assert_eq!(parse_pdf_page_range("2-1"), None);
+        let (first, last) = parse_pdf_page_range("1-99999999999999999999").unwrap();
+        assert_eq!(first, 1.0);
+        assert!(last > 1e19);
+        assert!(last - first + 1.0 > MAX_PDF_PAGES_PER_REQUEST as f64);
+    }
+
+    #[test]
+    fn notebook_cell_type_uses_js_string_conversion() {
+        let cells = vec![
+            JsValue::Object(object([
+                ("cell_type", JsValue::Number(5.0)),
+                ("source", string("x")),
+            ])),
+            JsValue::Object(object([("cell_type", JsValue::Null)])),
+        ];
+        assert_eq!(
+            render_notebook(&cells).unwrap(),
+            "# Cell 0 (5)\nx\n\n# Cell 1 (unknown)"
+        );
+    }
+
+    fn expected_readline_lines(bytes: &[u8]) -> Vec<String> {
+        readline_lines(&String::from_utf8_lossy(bytes))
+    }
+
+    fn streamed_lines(bytes: &[u8], chunk_size: usize) -> Vec<String> {
+        stream_lines(
+            std::io::Cursor::new(bytes.to_vec()),
+            chunk_size,
+            0,
+            usize::MAX,
+        )
+        .unwrap()
+        .selected
+    }
+
+    #[test]
+    fn streaming_lines_match_readline_across_chunk_boundaries() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"\n",
+            b"\r",
+            b"\r\n",
+            b"a\r",
+            b"a\r\n",
+            b"a\n\r",
+            b"\xEF\xBB\xBFa\r\nb",
+            b"a\xE2\x82\nb",
+            b"a\xFF\r\nb",
+            b"\xF0\x9F\x99\x82\r\n\xC3\xA9",
+        ];
+        for bytes in cases {
+            let expected = expected_readline_lines(bytes);
+            for chunk_size in 1..=7 {
+                assert_eq!(
+                    streamed_lines(bytes, chunk_size),
+                    expected,
+                    "bytes={bytes:?} chunk={chunk_size}"
+                );
+            }
+        }
+
+        // Deterministic invalid/valid UTF-8 soup: multi-byte sequences split at
+        // every possible chunk boundary and lone `\r` terminators.
+        const ALPHABET: &[u8] = &[
+            b'a', b'b', b'\n', b'\r', 0x80, 0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0xF0, 0x9F, 0x99, 0x82,
+            0xFF, 0xC0, 0xAF,
+        ];
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state
+        };
+        for _ in 0..96 {
+            let length = (next() % 160) as usize;
+            let mut bytes = Vec::with_capacity(length);
+            for _ in 0..length {
+                bytes.push(ALPHABET[(next() as usize) % ALPHABET.len()]);
+            }
+            let expected = expected_readline_lines(&bytes);
+            for chunk_size in [1, 2, 3, 5, 7, 16, 64] {
+                assert_eq!(
+                    streamed_lines(&bytes, chunk_size),
+                    expected,
+                    "bytes={bytes:?} chunk={chunk_size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_large_file_keeps_only_chunks_and_selected_lines() {
+        let path = temp_path("large");
+        let line = format!("{}\n", "x".repeat(63));
+        let mut unit = String::with_capacity(64 * 1024);
+        for _ in 0..1024 {
+            unit.push_str(&line);
+        }
+        {
+            let file = std::fs::File::create(&path.0).unwrap();
+            let mut writer = std::io::BufWriter::new(file);
+            for _ in 0..1024 {
+                writer.write_all(unit.as_bytes()).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        assert_eq!(std::fs::metadata(&path.0).unwrap().len(), 64 * 1024 * 1024);
+
+        LAST_STREAM_PENDING.with(|cell| cell.set(0));
+        STREAM_CALLS.with(|cell| cell.set(0));
+        let js_path = JsString::from(path.0.to_string_lossy().as_ref());
+        let ranged = read_in_range(&js_path, 1.0, Some(5.0)).unwrap();
+        assert_eq!(ranged.line_count, 5);
+        assert_eq!(ranged.total_lines, 1_048_576);
+        assert_eq!(ranged.content.len(), 5 * 63 + 4);
+        assert!(ranged.truncated);
+        let pending = LAST_STREAM_PENDING.with(std::cell::Cell::get);
+        assert!(
+            pending <= STREAM_READ_CHUNK_BYTES + 64,
+            "retained pending buffer was {pending} bytes"
+        );
+        assert_eq!(STREAM_CALLS.with(std::cell::Cell::get), 1);
     }
 }
