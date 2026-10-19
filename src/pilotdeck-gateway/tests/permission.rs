@@ -168,13 +168,13 @@ async fn permission_oracle_replays_in_order() {
     let default_scenarios = array(oracle.get("defaults").expect("defaults"), "defaults");
 
     // Exact cardinality: a dropped or duplicated scenario fails here first.
-    assert_eq!(match_scenarios.len(), 38);
-    assert_eq!(decision_scenarios.len(), 56);
+    assert_eq!(match_scenarios.len(), 47);
+    assert_eq!(decision_scenarios.len(), 67);
     assert_eq!(mode_scenarios.len(), 9);
     assert_eq!(default_scenarios.len(), 4);
     for (name, expected) in [
-        ("matches", 38.0),
-        ("decisions", 56.0),
+        ("matches", 47.0),
+        ("decisions", 67.0),
         ("modes", 9.0),
         ("defaults", 4.0),
     ] {
@@ -420,6 +420,151 @@ async fn negative_controls_reject_case_folding_and_swapped_rule_priority() {
             "the negative control needs both an allow and a deny match"
         );
     }
+}
+
+#[tokio::test]
+async fn empty_cwd_is_skipped_instead_of_becoming_root() {
+    // TS: path.resolve(path.join("", "secret.env")) is
+    // `<process cwd>/secret.env`; it is not `/secret.env`. A port that
+    // concatenates `cwd + "/" + value` unconditionally flips both match
+    // assertions below, so this is the negative control for the P0 fix.
+    let process_cwd = std::env::current_dir().expect("process cwd");
+    assert_ne!(
+        process_cwd,
+        std::path::Path::new("/"),
+        "cwd-empty expectations assume a non-root process cwd"
+    );
+    let context = create_default_permission_context(DefaultPermissionContextOptions {
+        cwd: JsString::from(""),
+        ..Default::default()
+    });
+    let input = JsValue::Object({
+        let mut input = JsObject::new();
+        input.insert("file_path".into(), JsValue::from("secret.env"));
+        input
+    });
+    let read_file = JsString::from("read_file");
+    let relative_rule =
+        PermissionRule::new("user", "allow", "read_file").with_pattern("/*/secret.env");
+    let root_rule = PermissionRule::new("user", "allow", "read_file").with_pattern("/secret.env");
+    assert!(match_permission_rule(
+        &relative_rule,
+        &read_file,
+        &input,
+        Some(&context)
+    ));
+    assert!(!match_permission_rule(
+        &root_rule,
+        &read_file,
+        &input,
+        Some(&context)
+    ));
+
+    // The same pair at the decision layer: `/*/secret.env` denies, while the
+    // root-only pattern must not match and read_file falls through to allow.
+    for (pattern, expected) in [("/*/secret.env", "deny"), ("/secret.env", "allow")] {
+        let mut rules = PermissionRuleSet::default();
+        rules
+            .deny
+            .push(PermissionRule::new("user", "deny", "read_file").with_pattern(pattern));
+        let context = create_default_permission_context(DefaultPermissionContextOptions {
+            cwd: JsString::from(""),
+            rules,
+            can_prompt: Some(true),
+            ..Default::default()
+        });
+        let tool = FakeTool {
+            name: read_file.clone(),
+            kind: None,
+            read_only: JsValue::Bool(true),
+            checks: Mutex::new(vec![]),
+            calls: AtomicUsize::new(0),
+        };
+        let decision = decide(&context, &tool, &input, &JsString::from("call-1"))
+            .await
+            .expect("decision");
+        assert_eq!(
+            decision.get("type").and_then(JsValue::as_string),
+            Some(&JsString::from(expected)),
+            "pattern {pattern}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn malformed_tool_ask_is_rejected_like_the_typescript_throw() {
+    fn ask(reason: Option<JsValue>) -> JsValue {
+        let mut value = JsObject::new();
+        value.insert("type".into(), JsValue::from("ask"));
+        if let Some(reason) = reason {
+            value.insert("reason".into(), reason);
+        }
+        JsValue::Object(value)
+    }
+    fn reason(entries: &[(&str, JsValue)]) -> JsValue {
+        let mut value = JsObject::new();
+        for (key, item) in entries {
+            value.insert((*key).into(), item.clone());
+        }
+        JsValue::Object(value)
+    }
+
+    let context = create_default_permission_context(DefaultPermissionContextOptions {
+        cwd: JsString::from("/ws/project"),
+        can_prompt: Some(true),
+        ..Default::default()
+    });
+    let input = JsValue::Object({
+        let mut input = JsObject::new();
+        input.insert("file_path".into(), JsValue::from("src/a.rs"));
+        input
+    });
+    let malformed = [
+        // `decision.reason.type` throws (TypeError).
+        ask(None),
+        // `decision.reason.rule.source` throws.
+        ask(Some(reason(&[("type", JsValue::from("rule"))]))),
+        // `decision.reason.rule.toolName.startsWith` throws.
+        ask(Some(reason(&[
+            ("type", JsValue::from("rule")),
+            ("force", JsValue::Bool(true)),
+            ("source", JsValue::from("session")),
+        ]))),
+    ];
+    for check in malformed {
+        let tool = FakeTool {
+            name: JsString::from("write_file"),
+            kind: None,
+            read_only: JsValue::Bool(false),
+            checks: Mutex::new(vec![check]),
+            calls: AtomicUsize::new(0),
+        };
+        let result = decide(&context, &tool, &input, &JsString::from("call-1")).await;
+        assert!(result.is_err(), "malformed ask must fail closed");
+    }
+
+    // The baseline returns before finalizeAsk in bypass mode, so a malformed
+    // tool ask is still allowed there (no dereference happens).
+    let bypass = create_default_permission_context(DefaultPermissionContextOptions {
+        cwd: JsString::from("/ws/project"),
+        mode: Some(PermissionMode::new("bypassPermissions")),
+        can_prompt: Some(true),
+        ..Default::default()
+    });
+    let tool = FakeTool {
+        name: JsString::from("write_file"),
+        kind: None,
+        read_only: JsValue::Bool(false),
+        checks: Mutex::new(vec![ask(None)]),
+        calls: AtomicUsize::new(0),
+    };
+    let decision = decide(&bypass, &tool, &input, &JsString::from("call-1"))
+        .await
+        .expect("bypass short-circuits before finalizeAsk");
+    assert_eq!(
+        decision.get("type").and_then(JsValue::as_string),
+        Some(&JsString::from("allow"))
+    );
 }
 
 #[test]
