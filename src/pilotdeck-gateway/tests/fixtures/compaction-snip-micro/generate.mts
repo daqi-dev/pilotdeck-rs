@@ -461,6 +461,99 @@ snip('constrained-custom-head-tail', turns(10), { keepHeadTurns: 1, keepTailTurn
   assert.ok(JSON.stringify(result.messages).includes('headTurns=\\"NaN\\"'), 'negative control: NaN is rendered, not coerced');
 }
 
+// --------------------------------------- gate1 boundary #1: surrogate splits
+{
+  // The token-prefix/suffix cut is by UTF-16 code unit, so a cut can land
+  // between a high and a low surrogate. The baseline keeps that lone code
+  // unit (it does not substitute U+FFFD) and its JSON.stringify emits
+  // `\udXXX`; the oracle must carry that escape literally and the Rust replay
+  // must reproduce the same code unit. These are the real `surrogate-cases`
+  // inputs: the first and third cut on pair boundaries (0 lone code units);
+  // the triple repeat splits one pair (1 lone low surrogate).
+  const cases = [
+    ['surrogate-emoji-only', '🙂'.repeat(400), 0],
+    ['surrogate-emoji-triple', '😀👍🎉'.repeat(200), 1],
+    ['surrogate-mixed-prefix', 'x😀👍🎉'.repeat(150), 0],
+  ] as const;
+  for (const [name, text, loneSurrogates] of cases) {
+    const input = flat([1, 2].map((n) => [
+      user(`r${n}`),
+      { ...assistant('call'), content: [call(`e${n}`, 'bash')] },
+      { role: 'user', content: [result(`e${n}`, text)] },
+    ]));
+    const output = micro(name, input, { keepLatest: 1, trimToTokens: 96 });
+    assert.equal(output.rewritten, 1, `negative control: ${name} rewrites the older result`);
+    const escapes = JSON.stringify(output.messages).match(/\\ud[89a-f][0-9a-f]{2}/g) ?? [];
+    assert.equal(
+      escapes.length,
+      loneSurrogates,
+      `${name} must keep ${loneSurrogates} lone surrogate code unit(s)`,
+    );
+  }
+}
+
+// ----------------------------------------- gate1 boundary #2: numeric quirks
+{
+  // The real `quirk-cases` set: 21 inputs for the four budget options plus
+  // keepLatest. `Math.max(1, NaN)` is NaN in TS, so a NaN target never
+  // constrains the tail; Rust's `f64::max` would return 1 and start pruning.
+  // jsonSafe is applied only to the option objects below; inputs and results
+  // stay raw so message content can never be mistaken for an option value.
+  for (const value of [NaN, 0, -5, Infinity, 2.7]) {
+    const result = snip(`targetTokens=${value}`, turns(8), {}, { targetTokens: value });
+    if (value === 0 || value === -5 || value === 2.7) {
+      assert.equal(result.applied, true, `${value} targetTokens constrains the tail`);
+      assert.equal(result.turnsSnipped, 14, `${value} targetTokens snips the middle`);
+    } else {
+      assert.equal(result.applied, false, `${value} targetTokens keeps every turn`);
+      assert.equal(result.turnsSnipped, 0, `${value} targetTokens snips nothing`);
+    }
+  }
+  for (const value of [NaN, 2.7, -3, Infinity]) {
+    const result = snip(`targetTotalTokens=${value}`, turns(8), {}, { targetTotalTokens: value });
+    if (value === 2.7 || value === -3) {
+      assert.equal(result.applied, true, `${value} targetTotalTokens constrains the tail`);
+      assert.equal(result.turnsSnipped, 14, `${value} targetTotalTokens snips the middle`);
+    } else {
+      assert.equal(result.applied, false, `${value} targetTotalTokens keeps every turn`);
+      assert.equal(result.turnsSnipped, 0, `${value} targetTotalTokens snips nothing`);
+    }
+  }
+  const unknownItemInput = flat([1, 2, 3, 4].map((n) => [
+    user(`req ${n}`),
+    { ...assistant('call'), content: [call(`u${n}`, 'bash')] },
+    {
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        toolCallId: `u${n}`,
+        content: [t('a'), { type: 'audio' }, { type: 'audio' }, { type: 'audio' }, { type: 'audio' }, t('b')],
+      }],
+    },
+  ]));
+  for (const value of [10, 14, 15, 16, 17, 18, 20, 24]) {
+    const result = snip(`unknown-item targetTokens=${value}`, unknownItemInput, {}, { targetTokens: value });
+    assert.equal(result.applied, true, `${value} targetTokens still constrains the unknown item`);
+    assert.equal(result.turnsSnipped, 6, `${value} targetTokens snips six turns`);
+  }
+  const numericLongText = 'tok ' + Array.from({ length: 500 }, (_, index) => `token${index}`).join(' ');
+  const numericMicroInput = flat([1, 2, 3].map((n) => [
+    user(`r${n}`),
+    { ...assistant('call'), content: [call(`m${n}`, 'bash')] },
+    { role: 'user', content: [result(`m${n}`, numericLongText)] },
+  ]));
+  const microCases = [
+    ['trimToTokens=NaN', { keepLatest: 1, trimToTokens: NaN }, 2],
+    ['trimToBytes=NaN', { keepLatest: 1, trimToBytes: NaN }, 2],
+    ['keepLatest=NaN', { keepLatest: NaN }, 3],
+    ['keepLatest=-Infinity', { keepLatest: -Infinity }, 3],
+  ] as const;
+  for (const [name, options, rewritten] of microCases) {
+    const output = micro(name, numericMicroInput, options);
+    assert.equal(output.rewritten, rewritten, `negative control: ${name} rewrites ${rewritten} results`);
+  }
+}
+
 // ------------------------------------------------------------ probes (RESULT)
 const probes = {
   locale,
@@ -490,6 +583,9 @@ const oracle: Record<string, any> = {
   scenarios,
 };
 const serialized = `${JSON.stringify(oracle, null, 2)}\n`;
+// A lone surrogate only survives into the oracle as the `\udXXX` escape; if
+// this assertion fails the fixture stopped pinning the split-pair path.
+assert.ok(serialized.includes('\\ud'), 'oracle must retain at least one lone surrogate escape');
 
 const scratch = await mkdtemp(join(output, '.generate-'));
 /** Deletes stay confined to this run's own direct `.generate-*` directory. */
