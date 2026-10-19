@@ -4,6 +4,7 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 use base64::Engine as _;
+use pilotdeck_gateway::host::Cancellation;
 use pilotdeck_gateway::host::modules::context::{ContextInput, ContextRuntime};
 use pilotdeck_gateway::runtime::context::{
     ContributedCommand, ContributedPrompt, ContributedSkill, ContributionContext,
@@ -18,8 +19,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 37;
-const STEPS: usize = 55;
+const CASES: usize = 40;
+const STEPS: usize = 58;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -161,7 +162,12 @@ fn materialize(oracle: &JsValue, root: &Path) {
     }
 }
 
-fn text_provider(spec: &JsValue) -> TextProvider {
+/// Per-step abort mode (`before` / `section` / `variable`). Providers abort the
+/// request signal they receive through `ContributionContext`, so the corpus
+/// proves the field is propagated, not just consulted at the entry point.
+type AbortMode = Arc<Mutex<Option<String>>>;
+
+fn text_provider(spec: &JsValue, abort_mode: &AbortMode) -> TextProvider {
     let Some(dynamic) = spec.get("dynamic").and_then(JsValue::as_object) else {
         return TextProvider::Static(text(field(spec, "text")));
     };
@@ -176,14 +182,34 @@ fn text_provider(spec: &JsValue) -> TextProvider {
         .and_then(JsValue::as_string)
         .map(|value| String::from_utf16_lossy(value.units()))
         .unwrap_or_default();
-    TextProvider::Dynamic(Arc::new(move |_: &ContributionContext| {
+    let when = dynamic
+        .get("when")
+        .and_then(JsValue::as_string)
+        .map(|value| String::from_utf16_lossy(value.units()))
+        .unwrap_or_default();
+    let abort_mode = abort_mode.clone();
+    TextProvider::Dynamic(Arc::new(move |context: &ContributionContext| {
         let kind = kind.clone();
         let value = value.clone();
         let message = message.clone();
+        let when = when.clone();
+        let abort_mode = abort_mode.clone();
+        // The future is `'static`, so the provider must abort synchronously
+        // here rather than borrow `context` from inside the async block.
+        if kind == "abort-when" && abort_mode.lock().unwrap().as_deref() == Some(when.as_str()) {
+            context
+                .abort
+                .as_ref()
+                .expect("provider receives the request abort signal")
+                .cancel(None);
+        }
         Box::pin(async move {
             match kind.as_str() {
                 "throw" => Err(message),
                 "non-string" => Ok(value),
+                "abort-when" => Ok(JsValue::String(
+                    value.as_string().cloned().expect("abort provider value"),
+                )),
                 _ => Ok(JsValue::String(
                     value
                         .as_string()
@@ -248,6 +274,7 @@ async fn prepare_for_model_matches_real_ts() {
                     managed,
                 )
             });
+        let abort_mode: AbortMode = Arc::new(Mutex::new(None));
         let prompt_contributions =
             setup
                 .get("contributions")
@@ -275,7 +302,7 @@ async fn prepare_for_model_matches_real_ts() {
                             .register_section(SectionContribution {
                                 name: text(field(section, "name")),
                                 order: number(field(section, "order")),
-                                text: text_provider(section),
+                                text: text_provider(section, &abort_mode),
                                 complete: field(section, "complete").as_bool().unwrap_or(false),
                             })
                             .unwrap();
@@ -289,15 +316,25 @@ async fn prepare_for_model_matches_real_ts() {
                             .register_runtime_context(RuntimeContextContribution {
                                 name: text(field(context, "name")),
                                 order: number(field(context, "order")),
-                                text: text_provider(context),
+                                text: text_provider(context, &abort_mode),
                             })
                             .unwrap();
                     }
                     for variable in contributions.get("variables").map(array).unwrap_or(&[]) {
                         let value = text(field(variable, "value"));
+                        let abort = field(variable, "abort").as_bool().unwrap_or(false);
                         let provider: VariableProvider =
-                            Arc::new(move |_: &ContributionContext| {
+                            Arc::new(move |context: &ContributionContext| {
                                 let value = value.clone();
+                                if abort {
+                                    context
+                                        .abort
+                                        .as_ref()
+                                        .expect(
+                                            "variable provider receives the request abort signal",
+                                        )
+                                        .cancel(None);
+                                }
                                 Box::pin(async move { Ok(Some(value)) })
                             });
                         registry
@@ -326,10 +363,23 @@ async fn prepare_for_model_matches_real_ts() {
             *clock.lock().unwrap() = number(field(step, "clockMs"));
             let input = decode_fixture(field(step, "input"), &root_string);
             let fields = input.as_object().expect("input object").clone();
+            let abort = step
+                .get("abort")
+                .and_then(JsValue::as_string)
+                .map(|value| String::from_utf16_lossy(value.units()));
+            *abort_mode.lock().unwrap() = abort.clone();
+            let abort_signal = abort.as_ref().map(|mode| {
+                let signal = Cancellation::default();
+                if mode == "before" {
+                    signal.cancel(None);
+                }
+                signal
+            });
             let result = runtime
                 .prepare_for_model(ContextInput {
                     fields,
-                    abort_signal: None,
+                    abort_signal: abort_signal
+                        .map(|signal| Arc::new(signal) as Arc<dyn std::any::Any + Send + Sync>),
                     budget_evaluator: None,
                 })
                 .await;

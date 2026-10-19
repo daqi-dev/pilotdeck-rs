@@ -444,6 +444,35 @@ pub struct ContributionContext {
     pub permission_mode: String,
     pub run_mode: Option<String>,
     pub additional_working_directories: Vec<String>,
+    /// TS `abortSignal`; `prepare_for_model` adopts the request's host
+    /// [`crate::host::Cancellation`]. Providers see the same one-shot signal.
+    pub abort: Option<crate::host::Cancellation>,
+}
+impl ContributionContext {
+    /// TS `context.abortSignal?.throwIfAborted()`.
+    ///
+    /// The default TS reason is a DOMException whose message is exactly
+    /// `This operation was aborted`; `Cancellation` stores the synthetic
+    /// `host_abort` marker for an absent reason, so map that back to the
+    /// default before reporting. An explicit string reason is thrown verbatim,
+    /// like `controller.abort("reason")`.
+    pub(crate) fn throw_if_aborted(&self) -> Result<(), String> {
+        let Some(signal) = &self.abort else {
+            return Ok(());
+        };
+        if !signal.is_cancelled() {
+            return Ok(());
+        }
+        Err(
+            match signal
+                .reason()
+                .filter(|reason| !reason.equals_str("host_abort"))
+            {
+                Some(reason) => String::from_utf16_lossy(reason.units()),
+                None => "This operation was aborted".into(),
+            },
+        )
+    }
 }
 /// A dynamic text provider returns a JS value, not a `String`: TS validates
 /// `typeof value !== "string"` *after* the provider resolves, so the value can
@@ -769,6 +798,7 @@ impl PromptContributionRegistry {
                     self.inner.name
                 ));
             }
+            context.throw_if_aborted()?;
             (
                 state.generation,
                 state
@@ -834,7 +864,9 @@ impl PromptContributionRegistry {
         }
         let mut assembled_variables = options.variables;
         for (name, provider) in variables {
+            context.throw_if_aborted()?;
             let value = provider(context).await?;
+            context.throw_if_aborted()?;
             if let Some(entry) = assembled_variables
                 .iter_mut()
                 .find(|(existing, _)| existing == &name)
@@ -940,18 +972,18 @@ async fn resolve_text(
     context: &ContributionContext,
     label: &str,
 ) -> Result<String, String> {
-    match provider {
-        TextProvider::Static(text) => Ok(text.clone()),
+    context.throw_if_aborted()?;
+    let value = match provider {
+        TextProvider::Static(text) => JsValue::String(text.clone().into()),
         // A rejected provider propagates its own error unchanged, exactly like
         // TS `await provider(context)`. Only a resolved non-string hits the
         // TypeError-shaped message below.
-        TextProvider::Dynamic(provider) => {
-            let value = provider(context).await?;
-            match &value {
-                JsValue::String(text) => Ok(String::from_utf16_lossy(text.units())),
-                _ => Err(format!("{label} must resolve to a string")),
-            }
-        }
+        TextProvider::Dynamic(provider) => provider(context).await?,
+    };
+    context.throw_if_aborted()?;
+    match &value {
+        JsValue::String(text) => Ok(String::from_utf16_lossy(text.units())),
+        _ => Err(format!("{label} must resolve to a string")),
     }
 }
 fn capture_tool_schemas(source: Option<&[JsValue]>) -> Result<Vec<JsValue>, String> {
