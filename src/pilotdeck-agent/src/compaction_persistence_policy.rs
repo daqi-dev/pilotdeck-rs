@@ -67,11 +67,6 @@ fn collection(value: &JsValue) -> ContextMessageCollection {
         _ => ContextMessageCollection::BoundaryOnly(BoundarySnapshot::capture(value)),
     }
 }
-fn array_index(key: &JsString) -> Option<u32> {
-    let text = key.to_utf8().ok()?;
-    let index = text.parse::<u32>().ok()?;
-    (index != u32::MAX && index.to_string() == text).then_some(index)
-}
 fn spread(value: &JsValue) -> JsObject {
     let mut out = JsObject::new();
     match value {
@@ -79,7 +74,7 @@ fn spread(value: &JsValue) -> JsObject {
             // Object spread enumerates canonical integer indices first. The
             // insertion slot survives subsequent marker overwrite.
             let mut entries: Vec<_> = value.entries().iter().collect();
-            entries.sort_by_key(|(key, _)| array_index(key).map_or((1, 0), |index| (0, index)));
+            entries.sort_by_key(|(key, _)| key.array_index().map_or((1, 0), |index| (0, index)));
             for (key, value) in entries {
                 out.insert(key.clone(), value.clone());
             }

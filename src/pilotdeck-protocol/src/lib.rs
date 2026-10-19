@@ -42,7 +42,9 @@ impl JsString {
     }
     /// Canonical array-index key: the decimal form of `0..=2^32-2` without a
     /// sign or leading zeros. `Object.keys`/`JSON.stringify` enumerate these
-    /// first in ascending numeric order. Single shared implementation.
+    /// first in ascending numeric order, and only these are array elements.
+    /// Product crates share this one rule; `pilotdeck-yaml`'s differential
+    /// test keeps an independent copy on purpose, as its oracle.
     pub fn array_index(&self) -> Option<u32> {
         let units = &self.0;
         if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
@@ -324,8 +326,10 @@ mod prototype_tests {
 mod array_index_tests {
     use super::JsString;
 
-    /// The five former private copies (codec, hooks, config value/snapshot,
-    /// tool context) were either this unit scan or the UTF-8 parse below.
+    /// The former private copies (protocol codec; gateway hooks, config
+    /// value/snapshot/changes, tool context; agent session state, tool
+    /// failures, request materialization, compaction persistence) were
+    /// either this unit scan or the UTF-8 parse below.
     fn utf8_parse(key: &JsString) -> Option<u32> {
         let text = key.to_utf8().ok()?;
         let value: u32 = text.parse().ok()?;

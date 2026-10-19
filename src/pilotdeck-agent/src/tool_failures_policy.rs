@@ -149,18 +149,13 @@ fn error_entries(results: &[BoundarySnapshot]) -> PortResult<Vec<&JsValue>> {
     }
     Ok(entries)
 }
-fn index_key(k: &JsString) -> Option<u32> {
-    let raw = k.to_utf8().ok()?;
-    let value = raw.parse::<u32>().ok()?;
-    (value < u32::MAX && value.to_string() == raw).then_some(value)
-}
 fn spread(v: &JsValue) -> JsObject {
     match v {
         JsValue::Object(o) => {
             let mut indices = Vec::new();
             let mut others = Vec::new();
             for entry in o.entries() {
-                match index_key(&entry.0) {
+                match entry.0.array_index() {
                     Some(index) => indices.push((index, entry)),
                     None => others.push(entry),
                 }

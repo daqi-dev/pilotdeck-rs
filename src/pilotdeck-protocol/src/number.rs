@@ -21,7 +21,8 @@ pub fn number_to_string(number: f64) -> String {
 }
 
 /// `Number.prototype.toFixed(6)`: the exact binary rational is scaled by 1e6
-/// and rounded to the nearest integer, ties up (ECMA-262 §21.1.3.3). Values
+/// and rounded to the nearest integer; an exact half rounds the magnitude up,
+/// i.e. away from zero for negatives, as V8 does (ECMA-262 §21.1.3.3). Values
 /// with `|x| >= 1e21` and non-finite values fall back to `toString`. A
 /// negative value that rounds to zero keeps its sign (`"-0.000000"`), `-0`
 /// does not. For `|x| < 1e21`, `x * 1e6 < 2^90` and the significand times
@@ -100,6 +101,9 @@ mod tests {
             (0.0078125, "0.007813"),
             (-0.0078125, "-0.007813"),
             (0.0234375, "0.023438"),
+            // Biased exponent 947: shift == 128, the first short-circuited
+            // shift (1.3234889800848443e-23).
+            (f64::from_bits(947_u64 << 52), "0.000000"),
         ] {
             assert_eq!(to_fixed_6(value), expected, "{value:e}");
         }
