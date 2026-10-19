@@ -39,6 +39,9 @@ jobs:
         run: cargo fmt --all --check
       - name: lint
         run: cargo clippy --all-targets -- -D warnings
+      - name: 实际 Tap 共享 Notify 回退负控（恢复后才跑全套）
+        working-directory: .
+        run: python3 -I scripts/check-acquisition-notify-regression.py
       - name: 测试
         run: cargo test --all
       - name: B2 冻结与批准依据（干净检出）

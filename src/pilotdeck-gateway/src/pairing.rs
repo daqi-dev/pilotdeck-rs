@@ -129,76 +129,139 @@ where
     D: AsyncWrite + Unpin,
     F: crate::metadata::Files + Send + Sync + 'static,
 {
+    #[cfg(test)]
+    let observer = order_probe::current();
+    #[cfg(test)]
+    let acquisition = result_acquisition::current();
     let mut decoder = Decoder::default();
     let mut jobs = JoinSet::new();
     let mut ready = VecDeque::new();
     loop {
         match decoder.next() {
-            Ok(Some(frame)) => match acceptor::action(&frame) {
-                Action::Text => {
-                    let request = dispatch::parse(&frame.payload);
-                    let eligible = {
-                        let mut state = downstream.lock().await;
-                        if !state.handshake_started {
-                            state.handshake_started = true;
-                            if !request.as_ref().is_some_and(dispatch::is_hello) {
+            Ok(Some(frame)) => {
+                #[cfg(test)]
+                observer.parsed(&frame);
+                #[cfg(test)]
+                acquisition.parsed(&frame);
+                match acceptor::action(&frame) {
+                    Action::Text => {
+                        let request = dispatch::parse(&frame.payload);
+                        let eligible = {
+                            let mut state = downstream.lock().await;
+                            if !state.handshake_started {
+                                state.handshake_started = true;
+                                if !request.as_ref().is_some_and(dispatch::is_hello) {
+                                    state.invalidated = true;
+                                }
+                            } else if !request.as_ref().is_some_and(dispatch::is_request) {
+                                // This can be queued while hello_ok is in flight.
+                                // TS is already authed when it sends hello_ok, so
+                                // invalid JSON / nonrequests will close the pair.
                                 state.invalidated = true;
                             }
-                        } else if !request.as_ref().is_some_and(dispatch::is_request) {
-                            // This can be queued while hello_ok is in flight.
-                            // TS is already authed when it sends hello_ok, so
-                            // invalid JSON / nonrequests will close the pair.
-                            state.invalidated = true;
-                        }
-                        state.authenticated && !state.invalidated && !state.closed
-                    };
-                    if eligible && request.as_ref().is_some_and(dispatch::is_local) {
-                        let request = request.expect("eligible local request");
-                        if dispatch::needs_files(&request) {
-                            let metadata = metadata.cloned();
-                            // Completion is polled only after the current input
-                            // buffer: TS dispatches promises without blocking
-                            // its frame parser, so coalesced close/ping wins.
-                            jobs.spawn_blocking(move || {
-                                let route =
-                                    dispatch::route_with_metadata(&request, metadata.as_deref());
-                                (frame, route)
-                            });
-                        } else {
-                            match dispatch::route_with_metadata(&request, metadata.map(Arc::as_ref))
-                            {
-                                Route::Forward => forward_or_drain(&mut writer, &frame).await,
-                                route => ready.push_back((frame, route)),
+                            state.authenticated && !state.invalidated && !state.closed
+                        };
+                        if eligible && request.as_ref().is_some_and(dispatch::is_local) {
+                            let request = request.expect("eligible local request");
+                            if dispatch::needs_files(&request) {
+                                let metadata = metadata.cloned();
+                                #[cfg(test)]
+                                let observed = observer.job(&frame);
+                                #[cfg(test)]
+                                let result_observer = observed.clone();
+                                #[cfg(test)]
+                                let result_acquisition = acquisition.clone();
+                                // Completion is polled only after the current input
+                                // buffer: TS dispatches promises without blocking
+                                // its frame parser, so coalesced close/ping wins.
+                                let _task = jobs.spawn_blocking(move || {
+                                    let route = dispatch::route_with_metadata(
+                                        &request,
+                                        metadata.as_deref(),
+                                    );
+                                    #[cfg(test)]
+                                    result_observer.result_ready(&route);
+                                    #[cfg(test)]
+                                    result_acquisition.route_returned(&frame, &route);
+                                    #[cfg(test)]
+                                    result_acquisition.closure_result(&frame, &route);
+                                    (frame, route)
+                                });
+                                #[cfg(test)]
+                                observed.spawned(_task);
+                            } else {
+                                let route = dispatch::route_with_metadata(
+                                    &request,
+                                    metadata.map(Arc::as_ref),
+                                );
+                                #[cfg(test)]
+                                observer.job(&frame).result_ready(&route);
+                                match route {
+                                    Route::Forward => forward_or_drain(&mut writer, &frame).await,
+                                    route => ready.push_back((frame, route)),
+                                }
                             }
+                        } else {
+                            forward_or_drain(&mut writer, &frame).await;
                         }
-                    } else {
+                    }
+                    Action::Ping => {
+                        downstream.lock().await.pings_pending += 1;
                         forward_or_drain(&mut writer, &frame).await;
                     }
+                    Action::Close => {
+                        downstream.lock().await.closed = true;
+                        forward_or_drain(&mut writer, &frame).await;
+                        // TS returns from handleData on close, ignoring subsequent
+                        // coalesced frames. Keep both streams alive until receive
+                        // drains TS's queued event/response/close and reaches EOF.
+                        return std::future::pending().await;
+                    }
+                    Action::Ignore => {}
                 }
-                Action::Ping => {
-                    downstream.lock().await.pings_pending += 1;
-                    forward_or_drain(&mut writer, &frame).await;
-                }
-                Action::Close => {
-                    downstream.lock().await.closed = true;
-                    forward_or_drain(&mut writer, &frame).await;
-                    // TS returns from handleData on close, ignoring subsequent
-                    // coalesced frames. Keep both streams alive until receive
-                    // drains TS's queued event/response/close and reaches EOF.
-                    return std::future::pending().await;
-                }
-                Action::Ignore => {}
-            },
+            }
             Ok(None) => {
+                #[cfg(test)]
+                observer.sample("decoder_empty");
                 let can_emit = downstream.lock().await.pings_pending == 0;
-                if can_emit && let Some((frame, route)) = ready.pop_front() {
+                #[cfg(test)]
+                if can_emit && let Some((frame, route)) = acquisition.released() {
                     emit_or_forward(&mut writer, downstream, frame, route).await?;
+                    acquisition.release_emit_completed();
+                    continue;
+                }
+                if can_emit && let Some((frame, route)) = ready.pop_front() {
+                    #[cfg(test)]
+                    observer.sample("before_immediate_emit");
+                    emit_or_forward(&mut writer, downstream, frame, route).await?;
+                    continue;
+                }
+                #[cfg(test)]
+                if acquisition.bypass_enabled() {
+                    tokio::select! {
+                        biased;
+                        result = acquisition.bypassed(), if can_emit => {
+                            let (frame, route) = acquisition.taken(result.0, result.1).expect("M1 bypass is not cached");
+                            emit_or_forward(&mut writer, downstream, frame, route).await?;
+                        }
+                        result = reader.read_buf(&mut decoder.buffer) => {
+                            if result? == 0 { return Ok(()); }
+                        }
+                        _ = ping_completed.notified(), if !can_emit => {},
+                    }
                     continue;
                 }
                 tokio::select! {
                     biased;
                     result = jobs.join_next(), if can_emit && !jobs.is_empty() => {
                         let (frame, route) = result.expect("nonempty jobs").map_err(std::io::Error::other)?;
+                        #[cfg(test)]
+                        observer.joined(&frame);
+                        #[cfg(test)]
+                        let (frame, route) = match acquisition.taken(frame, route) {
+                            Some(result) => result,
+                            None => continue,
+                        };
                         emit_or_forward(&mut writer, downstream, frame, route).await?;
                     }
                     result = reader.read_buf(&mut decoder.buffer) => {
@@ -252,3 +315,9 @@ async fn forward_or_drain<W: AsyncWrite + Unpin>(writer: &mut W, frame: &frame::
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod order_probe;
+
+#[cfg(test)]
+mod result_acquisition;
