@@ -316,7 +316,39 @@ HEAD
             expand_replacement("没有 $ 模式", "m", "pre", "post"),
             "没有 $ 模式"
         );
-     5de77f1 (fix(gateway) A6.5-pr5 闸门 P1×3：根内链接守卫无条件执行（allow 只放行词法根外路径）；逐级跟随符号链接的真实路径解析，堵两跳链与根外目录链逃逸；edit_file 单处替换按 JS $ 模式展开（js_value::expand_replacement）；用户工作区硬链接按 TS 允许；line_delta 线性化；夹具 45 场景 / 86 调用)
+    }
+
+    #[test]
+    fn replacement_patterns_follow_get_substitution() {
+        assert_eq!(expand_replacement("$$", "m", "pre", "post"), "$");
+        assert_eq!(expand_replacement("$&", "m", "pre", "post"), "m");
+        assert_eq!(expand_replacement("$`", "m", "pre", "post"), "pre");
+        assert_eq!(expand_replacement("$'", "m", "pre", "post"), "post");
+        assert_eq!(
+            expand_replacement("$1 $<n> $ $x $$ $& $` $'", "m", "pre", "post"),
+            "$1 $<n> $ $x $ m pre post"
+        );
+        assert_eq!(
+            expand_replacement("没有 $ 模式", "m", "pre", "post"),
+            "没有 $ 模式"
+        );
+    }
+
+    #[test]
+    fn json_stringify_reports_the_shared_depth_bound() {
+        let nested_value = nested(MAX_ARRAY_DEPTH);
+        assert!(json_stringify(&nested_value).is_ok());
+        assert_eq!(
+            json_stringify(&nested(MAX_ARRAY_DEPTH + 1)),
+            Err(StackOverflow)
+        );
+        let mut object = JsValue::Object(Default::default());
+        for _ in 0..=MAX_ARRAY_DEPTH {
+            let mut parent = pilotdeck_protocol::JsObject::new();
+            parent.insert("x".into(), object);
+            object = JsValue::Object(parent);
+        }
+        assert_eq!(json_stringify(&object), Err(StackOverflow));
     }
 
     #[test]

@@ -270,6 +270,12 @@ struct Replay {
 
 impl Replay {
     fn new(root: &Path, scenario: &JsValue) -> Self {
+        Self::new_with(root, root, &[], scenario)
+    }
+
+    /// Variant for guards that depend on how the caller spells `cwd` (case /
+    /// Unicode normalization) or on additional allowed roots.
+    fn new_with(root: &Path, cwd: &Path, additional: &[&Path], scenario: &JsValue) -> Self {
         let records = Arc::new(Mutex::new(Vec::new()));
         let warnings = Arc::new(Mutex::new(Vec::new()));
         let backup_dir = match field(scenario, "backupDir").as_string() {
@@ -300,10 +306,18 @@ impl Replay {
         let permission = object([
             ("mode", JsValue::from("default")),
             ("canPrompt", JsValue::Bool(true)),
-            ("additionalWorkingDirectories", JsValue::Array(Vec::new())),
+            (
+                "additionalWorkingDirectories",
+                JsValue::Array(
+                    additional
+                        .iter()
+                        .map(|path| JsValue::from(path.to_string_lossy().as_ref()))
+                        .collect(),
+                ),
+            ),
         ]);
         let fields = object([
-            ("cwd", JsValue::from(root.to_string_lossy().as_ref())),
+            ("cwd", JsValue::from(cwd.to_string_lossy().as_ref())),
             ("permissionMode", JsValue::from("default")),
             ("permissionContext", JsValue::Object(permission)),
             (
@@ -1025,6 +1039,100 @@ fn scheduled_allow_decision_still_contains_symlink_escape() {
 }
 
 #[test]
+fn symlink_boundaries_still_reject_escapes() {
+    let root = scratch::Scratch::new("write-tools-symlink-boundaries");
+    let outside = scratch::Scratch::new("write-tools-symlink-boundaries-outside");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    // cwd itself is a symlink to the real root.
+    std::os::unix::fs::symlink(&case, root.path().join("rootlink")).unwrap();
+    let replay = Replay::new_with(
+        &root.path().join("rootlink"),
+        &root.path().join("rootlink"),
+        &[],
+        &JsValue::Object(JsObject::new()),
+    );
+    // A dangling link at the edge, a `..` in a link target that walks out
+    // through a directory link, and a chain longer than the guard limit.
+    std::os::unix::fs::symlink(outside.path().join("dangling.txt"), case.join("dangling")).unwrap();
+    fs::create_dir(outside.path().join("deep")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("deep"), case.join("deeplink")).unwrap();
+    std::os::unix::fs::symlink("deeplink/../dotdot-escape.txt", case.join("dotdot")).unwrap();
+    let chain = case.join("chain41");
+    fs::create_dir(&chain).unwrap();
+    for index in 0..41 {
+        let target = if index + 1 == 41 {
+            outside
+                .path()
+                .join("chain-escape.txt")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            format!("h{}", index + 1)
+        };
+        std::os::unix::fs::symlink(&target, chain.join(format!("h{index}"))).unwrap();
+    }
+    let results = scheduled_execute(
+        &replay,
+        vec![
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("plain.txt")),
+                    ("content", JsValue::from("inside\n")),
+                ])),
+            ),
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("dangling")),
+                    ("content", JsValue::from("escaped\n")),
+                ])),
+            ),
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("dotdot")),
+                    ("content", JsValue::from("escaped\n")),
+                ])),
+            ),
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("chain41/h0")),
+                    ("content", JsValue::from("escaped\n")),
+                ])),
+            ),
+        ],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "root symlink must still be writable: {:?}",
+        results[0]
+    );
+    assert_eq!(
+        fs::read_to_string(case.join("plain.txt")).unwrap(),
+        "inside\n"
+    );
+    for (index, label) in [(1, "dangling"), (2, "dotdot"), (3, "chain41")] {
+        assert!(
+            scheduled_error_code(&results[index]).is_some(),
+            "{label} must be rejected: {:?}",
+            results[index]
+        );
+        assert!(
+            !scheduled_error_message(&results[index])
+                .unwrap_or_default()
+                .is_empty(),
+            "{label}"
+        );
+    }
+    assert!(!outside.path().join("dangling.txt").exists());
+    assert!(!outside.path().join("dotdot-escape.txt").exists());
+    assert!(!outside.path().join("chain-escape.txt").exists());
+}
+
+#[test]
 fn scheduled_allow_decision_still_permits_outside_paths() {
     let root = scratch::Scratch::new("write-tools-scheduled-outside");
     let outside = scratch::Scratch::new("write-tools-scheduled-outside-target");
@@ -1235,6 +1343,244 @@ fn edit_file_expands_dollar_replacement_patterns() {
         fs::read_to_string(case.join("literal.txt")).unwrap(),
         "$& $$ $& $$\n"
     );
+}
+
+/// B1: the kernel resolves `caseroot` to `CaseRoot`, so containment must use
+/// the same real spelling on both sides. The write succeeds in TS; the first
+/// implementation rejected every in-root write when cwd spelling differed.
+fn alias_cwd_write_and_edit(disk: &Path, alias: &Path, label: &str) {
+    fs::write(disk.join("old.txt"), "old\n").unwrap();
+    let replay = Replay::new_with(disk, alias, &[], &JsValue::Object(JsObject::new()));
+    futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([("file_path", JsValue::from("old.txt"))])),
+        replay.context.clone(),
+    ))
+    .unwrap_or_else(|error| panic!("{label}: read must succeed: {error:?}"));
+    let results = scheduled_execute(
+        &replay,
+        vec![
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("new.txt")),
+                    ("content", JsValue::from("new\n")),
+                ])),
+            ),
+            (
+                "edit_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("old.txt")),
+                    ("old_string", JsValue::from("old")),
+                    ("new_string", JsValue::from("edited")),
+                ])),
+            ),
+        ],
+    );
+    for (index, result) in results.iter().enumerate() {
+        assert!(
+            scheduled_error_code(result).is_none(),
+            "{label}: call {index} must succeed: {result:?}"
+        );
+    }
+    assert_eq!(fs::read_to_string(disk.join("new.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(disk.join("old.txt")).unwrap(),
+        "edited\n"
+    );
+}
+
+#[test]
+fn case_insensitive_cwd_spelling_writes_and_edits() {
+    let root = scratch::Scratch::new("write-tools-case-cwd");
+    let disk = root.path().join("CaseRoot");
+    fs::create_dir(&disk).unwrap();
+    let alias = root.path().join("caseroot");
+    if fs::canonicalize(&alias).is_err() {
+        eprintln!("skip: volume is case-sensitive");
+        return;
+    }
+    alias_cwd_write_and_edit(&disk, &alias, "case-insensitive cwd");
+}
+
+#[test]
+fn nfd_directory_with_nfc_cwd_writes_and_edits() {
+    let root = scratch::Scratch::new("write-tools-nfd-cwd");
+    let disk = root.path().join("Cafe\u{301}");
+    fs::create_dir(&disk).unwrap();
+    let alias = root.path().join("Caf\u{e9}");
+    if fs::canonicalize(&alias).is_err() {
+        eprintln!("skip: volume distinguishes NFC/NFD");
+        return;
+    }
+    alias_cwd_write_and_edit(&disk, &alias, "NFC cwd over NFD directory");
+}
+
+#[test]
+fn ordinary_io_errors_are_not_reported_as_outside() {
+    let root = scratch::Scratch::new("write-tools-io-errors");
+    let case = root.path().join("case");
+    fs::create_dir(&case).unwrap();
+    fs::write(case.join("afile"), "not a directory\n").unwrap();
+    std::os::unix::fs::symlink("loopb", case.join("loopa")).unwrap();
+    std::os::unix::fs::symlink("loopa", case.join("loopb")).unwrap();
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    let results = scheduled_execute(
+        &replay,
+        vec![
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("afile/x")),
+                    ("content", JsValue::from("x\n")),
+                ])),
+            ),
+            (
+                "write_file",
+                JsValue::Object(object([
+                    ("file_path", JsValue::from("loopa")),
+                    ("content", JsValue::from("x\n")),
+                ])),
+            ),
+        ],
+    );
+    assert_eq!(
+        scheduled_error_code(&results[0]).as_deref(),
+        Some("tool_execution_failed"),
+        "{:?}",
+        results[0]
+    );
+    let notdir = scheduled_error_message(&results[0]).unwrap_or_default();
+    assert!(
+        notdir.starts_with("ENOTDIR: not a directory, stat '"),
+        "{notdir}"
+    );
+    assert!(!notdir.contains("resolves outside"), "{notdir}");
+    assert_eq!(
+        scheduled_error_code(&results[1]).as_deref(),
+        Some("tool_execution_failed"),
+        "{:?}",
+        results[1]
+    );
+    let loop_message = scheduled_error_message(&results[1]).unwrap_or_default();
+    assert!(
+        loop_message.starts_with("ELOOP: too many symbolic links encountered, stat '"),
+        "{loop_message}"
+    );
+    assert!(!loop_message.contains("resolves outside"), "{loop_message}");
+}
+
+#[test]
+fn permission_denied_is_not_reported_as_outside() {
+    let root = scratch::Scratch::new("write-tools-eacces");
+    let case = root.path().join("case");
+    let locked = case.join("locked");
+    fs::create_dir_all(&locked).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root bypasses the permission bits; skip rather than assert a different OS
+    // behavior than the one Node would report for the same user.
+    let denied = fs::symlink_metadata(locked.join("x"))
+        .err()
+        .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied);
+    if !denied {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skip: user bypasses mode 000 (running as root)");
+        return;
+    }
+    let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("locked/x")),
+                ("content", JsValue::from("x\n")),
+            ])),
+        )],
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        scheduled_error_code(&results[0]).as_deref(),
+        Some("tool_execution_failed"),
+        "{:?}",
+        results[0]
+    );
+    let message = scheduled_error_message(&results[0]).unwrap_or_default();
+    assert!(
+        message.starts_with("EACCES: permission denied, stat '"),
+        "{message}"
+    );
+    assert!(!message.contains("resolves outside"), "{message}");
+}
+
+#[test]
+fn in_root_link_to_another_allowed_root_is_writable() {
+    let root = scratch::Scratch::new("write-tools-cross-root");
+    let work = root.path().join("work");
+    let lib2 = root.path().join("lib2");
+    fs::create_dir(&work).unwrap();
+    fs::create_dir(&lib2).unwrap();
+    std::os::unix::fs::symlink(&lib2, work.join("shared")).unwrap();
+    let replay = Replay::new_with(
+        &work,
+        &work,
+        &[lib2.as_path()],
+        &JsValue::Object(JsObject::new()),
+    );
+    let results = scheduled_execute(
+        &replay,
+        vec![(
+            "write_file",
+            JsValue::Object(object([
+                ("file_path", JsValue::from("shared/x.ts")),
+                ("content", JsValue::from("export const x = 1;\n")),
+            ])),
+        )],
+    );
+    assert!(
+        scheduled_error_code(&results[0]).is_none(),
+        "{:?}",
+        results[0]
+    );
+    assert_eq!(
+        fs::read_to_string(lib2.join("x.ts")).unwrap(),
+        "export const x = 1;\n"
+    );
+}
+
+#[test]
+fn file_history_backup_refuses_preplanted_links() {
+    for symlink in [false, true] {
+        let root = scratch::Scratch::new("write-tools-backup-link");
+        let backups = root.path().join("backups");
+        fs::create_dir(&backups).unwrap();
+        let victim = root.path().join("victim.txt");
+        let file = root.path().join("doc.txt");
+        fs::write(&victim, "victim\n").unwrap();
+        fs::write(&file, "original\n").unwrap();
+        let name = get_backup_file_name(&resolve_node_path(file.to_str().unwrap()), 1);
+        let backup = backups.join(&name);
+        if symlink {
+            std::os::unix::fs::symlink(&victim, &backup).unwrap();
+        } else {
+            fs::hard_link(&victim, &backup).unwrap();
+        }
+        let store = FileHistoryStore::new(FileHistoryOptions {
+            backup_dir: backups,
+            max_file_bytes: None,
+            max_snapshots: None,
+            now: Some(Arc::new(|| FIXED_MS)),
+            on_snapshot_recorded: None,
+            warn: None,
+        });
+        assert!(
+            store.track_edit(file.to_str().unwrap(), "m1").is_err(),
+            "pre-planted {} backup target must be refused",
+            if symlink { "symlink" } else { "hard link" }
+        );
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "victim\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "victim\n");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "original\n");
+    }
 }
 
 #[test]

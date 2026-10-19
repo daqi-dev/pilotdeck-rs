@@ -108,6 +108,10 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     let path = input_path(input);
     let resolved = match resolve_write_path(&path, context, false, true) {
         Ok(resolved) => resolved,
+        // A real filesystem error (ENOTDIR/EACCES/ELOOP) is an execution
+        // failure in TS, not a schema issue; only lexical/real containment
+        // failures are reported as invalid input here.
+        Err(error) if error.code == "tool_execution_failed" => return Err(error),
         Err(error) => return Ok(Some(vec![issue("file_path", error.message.clone())])),
     };
     match validate_write_snapshot_fresh(context, &resolved.absolute) {

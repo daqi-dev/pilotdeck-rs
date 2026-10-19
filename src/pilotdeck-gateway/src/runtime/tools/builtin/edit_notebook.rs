@@ -132,6 +132,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     let cell_type = input_string(input, "cell_type");
     let resolved = match resolve_write_path(&path, context, true, false) {
         Ok(resolved) => resolved,
+        Err(error) if error.code == "tool_execution_failed" => return Err(error),
         Err(error) => {
             return Ok(Some(vec![issue("notebook_path", error.message.clone())]));
         }
