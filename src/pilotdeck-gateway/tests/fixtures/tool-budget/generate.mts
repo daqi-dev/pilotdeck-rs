@@ -167,6 +167,13 @@ async function runCase(spec) {
         ...step.input,
       };
       const result = await runtime.applyToolResults(input);
+      if (step.expectFirstBlockType) {
+        assert.equal(
+          result.appendedMessages[0].content[0].type,
+          step.expectFirstBlockType,
+          `sampled boundary misplaced for ${spec.name}`,
+        );
+      }
       steps.push({
         input: normalize(input, scratch),
         outputJson: JSON.stringify(normalize(result, scratch)),
@@ -194,6 +201,44 @@ async function runCase(spec) {
 const longText = 'hello world '.repeat(20); // 240 UTF-8 bytes
 const tokenText = 'The quick brown fox jumps over the lazy dog. '.repeat(20);
 const tokenCount = countTokens(tokenText);
+
+// Mirror of ToolResultBudget.ts:432-458 so the fixture can place the exact
+// estimate and estimate-1 on both sides of the inline/spill boundary. The
+// real TS run below decides the actual output; `expectFirstBlockType` fails
+// generation if this replica ever drifts.
+function sampleTextForTokenEstimate(text) {
+  const budget = 6_000;
+  if (text.length <= budget * 3) return [text];
+  const middleStart = Math.max(0, Math.floor((text.length - budget) / 2));
+  return [
+    text.slice(0, budget),
+    text.slice(middleStart, middleStart + budget),
+    text.slice(-budget),
+  ];
+}
+function estimateTokens(text, byteLength) {
+  if (byteLength <= 40_000) return countTokens(text);
+  let sampledBytes = 0;
+  let sampledTokens = 0;
+  for (const sample of sampleTextForTokenEstimate(text)) {
+    sampledBytes += Buffer.byteLength(sample, 'utf8');
+    sampledTokens += countTokens(sample);
+  }
+  if (sampledBytes === 0) return 0;
+  return Math.ceil((sampledTokens / sampledBytes) * byteLength);
+}
+
+// 'ab' + '中😀' places a surrogate pair across the 6,000-unit sample cut.
+const sampledText = 'ab' + '中😀'.repeat(7_314); // 51,200 bytes / 21,944 units
+const sampledTextLarge = 'ab' + '中😀'.repeat(21_942); // 153,596 bytes / 65,828 units
+const sampledEstimate = estimateTokens(sampledText, Buffer.byteLength(sampledText, 'utf8'));
+const sampledEstimateLarge = estimateTokens(
+  sampledTextLarge,
+  Buffer.byteLength(sampledTextLarge, 'utf8'),
+);
+assert.ok(Buffer.byteLength(sampledText, 'utf8') > 40_000);
+assert.ok(Buffer.byteLength(sampledTextLarge, 'utf8') > 40_000);
+assert.ok(sampledEstimate > 0 && sampledEstimateLarge > 0);
 
 await runCase({
   name: 'within-budget',
@@ -257,6 +302,32 @@ await runCase({
   ],
 });
 
+// >40,000-byte results take the sampled token estimate. Each text is tested at
+// its exact estimate (inline, `<=`) and one below (spill, `>`), with the
+// sample cuts crossing a surrogate pair.
+for (const [suffix, value, estimate] of [
+  ['50k', sampledText, sampledEstimate],
+  ['150k', sampledTextLarge, sampledEstimateLarge],
+]) {
+  for (const [side, budget, expected] of [
+    ['inline', estimate, 'tool_result'],
+    ['spill', estimate - 1, 'tool_result_reference'],
+  ]) {
+    await runCase({
+      name: `sampled-token-${suffix}-${side}`,
+      budget: { maxResultSizeChars: 200_000, maxResultSizeTokens: budget, previewBytes: 100 },
+      steps: [
+        {
+          input: {
+            toolResultMessage: user([toolResult(`call-sampled-${suffix}`, [text(value)])]),
+          },
+          expectFirstBlockType: expected,
+        },
+      ],
+    });
+  }
+}
+
 await runCase({
   name: 'mixed-multiple',
   budget: { maxResultSizeChars: 50, maxResultSizeTokens: 1_000, previewBytes: 100 },
@@ -312,6 +383,38 @@ await runCase({
 });
 
 await runCase({
+  name: 'image-with-pages',
+  budget: { maxResultSizeChars: 8, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([
+          toolResult('call-image-pages', [
+            image('Q'.repeat(64), 'image/png', { pages: 3 }),
+          ]),
+        ]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'pdf-no-mime',
+  budget: { maxResultSizeChars: 8, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([
+          // PDF's extensionForMedia branch never reads mimeType, so an
+          // oversized PDF without one still replaces (preview says undefined).
+          toolResult('call-pdf-no-mime', [pdf('P'.repeat(64), undefined as any)]),
+        ]),
+      },
+    },
+  ],
+});
+
+await runCase({
   name: 'supplemental-media',
   budget: { maxResultSizeChars: 100, maxResultSizeTokens: 1_000 },
   steps: [
@@ -328,6 +431,38 @@ await runCase({
             toolCallId: 'call-audio',
             message: user([audio('E'.repeat(250), 'audio/wav')]),
           },
+        ],
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'supplemental-missing-toolcall-small',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([toolResult('call-main-small', [text('main result')])]),
+        supplementalMessages: [
+          // No toolCallId: TS never reads it for a small, non-media message.
+          { message: user([text('small supplemental without a call id')]) },
+        ],
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'supplemental-missing-toolcall-media',
+  budget: { maxResultSizeChars: 1, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([toolResult('call-main-media', [text('primary body')])]),
+        supplementalMessages: [
+          // Oversized media reaches scopedToolResultKey and throws there.
+          { message: user([image('I'.repeat(120), 'image/png')]) },
         ],
       },
     },
@@ -352,6 +487,34 @@ await runCase({
             message: user([{ type: 'image', source: 'base64', data: 'H'.repeat(120) }]),
           },
         ],
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'turn-id-null',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        // null (not undefined) reaches safePathPart, which calls null.trim.
+        turnId: null,
+        toolResultMessage: user([toolResult('call-null-turn', [text('inline body')])]),
+      },
+    },
+  ],
+});
+
+await runCase({
+  name: 'turn-id-null-unused',
+  budget: { maxResultSizeChars: 1_000, maxResultSizeTokens: 1_000 },
+  steps: [
+    {
+      input: {
+        turnId: null,
+        toolResultMessage: user([]),
+        supplementalMessages: [{ toolCallId: 'call-null-unused', message: user([text('kept')]) }],
       },
     },
   ],

@@ -478,7 +478,7 @@ impl DefaultContextRuntime {
             .get("toolResultMessage")
             .cloned()
             .unwrap_or(UNDEFINED.clone());
-        let turn_id = fields.get("turnId").and_then(JsValue::as_string).cloned();
+        let turn_id = fields.get("turnId");
         let input_messages = match fields.get("messages") {
             Some(JsValue::Array(messages)) => messages.clone(),
             _ => Vec::new(),
@@ -495,10 +495,7 @@ impl DefaultContextRuntime {
             // supplemental messages, so a supplemental failure keeps the
             // rewritten primary message. Promise.all still starts every
             // supplemental rewrite; their file side effects are not rolled back.
-            match budget
-                .apply_to_message(&tool_result_message, turn_id.as_ref())
-                .await
-            {
+            match budget.apply_to_message(&tool_result_message, turn_id).await {
                 Ok(value) => appended = value,
                 Err(error) => diagnostics.push(persistence_diagnostic(error.message)),
             }
@@ -506,22 +503,23 @@ impl DefaultContextRuntime {
                 let mut rewritten = Vec::with_capacity(supplemental.len());
                 let mut failure = None;
                 for item in &supplemental {
-                    let Some(tool_call_id) = item.get("toolCallId").and_then(JsValue::as_string)
-                    else {
-                        failure.get_or_insert_with(|| {
-                            "Cannot read properties of undefined (reading 'trim')".to_owned()
-                        });
-                        continue;
-                    };
+                    let tool_call_id = item.get("toolCallId").and_then(JsValue::as_string);
                     let message = item.get("message").cloned().unwrap_or(UNDEFINED.clone());
                     match budget
-                        .apply_to_supplemental_message(&message, tool_call_id, turn_id.as_ref())
+                        .apply_to_supplemental_message(&message, tool_call_id, turn_id)
                         .await
                     {
-                        Ok(replaced) => rewritten.push(object(vec![
-                            ("toolCallId", JsValue::String(tool_call_id.clone())),
-                            ("message", replaced),
-                        ])),
+                        Ok(replaced) => {
+                            let mut wrapper = JsObject::new();
+                            if let Some(tool_call_id) = tool_call_id {
+                                wrapper.insert(
+                                    "toolCallId".into(),
+                                    JsValue::String(tool_call_id.clone()),
+                                );
+                            }
+                            wrapper.insert("message".into(), replaced);
+                            rewritten.push(JsValue::Object(wrapper));
+                        }
                         Err(error) => {
                             failure.get_or_insert(error.message);
                         }
