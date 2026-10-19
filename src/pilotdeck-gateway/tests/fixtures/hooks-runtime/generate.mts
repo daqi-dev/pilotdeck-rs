@@ -200,6 +200,8 @@ async function commandCase(input: {
   timeoutMs?: number;
   abortAtMs?: number;
   hookInput?: any;
+  detachedPidFile?: string;
+  detachedAliveAfterMs?: number;
 }) {
   const maskedCommand = input.command ?? `/bin/bash '${input.script}'`;
   const command = actual(maskedCommand);
@@ -215,6 +217,23 @@ async function commandCase(input: {
   });
   if (ac && input.abortAtMs! > 0) setTimeout(() => ac.abort(), input.abortAtMs);
   const result = await running;
+  const detachedAliveAfterMs = input.detachedPidFile ? (input.detachedAliveAfterMs ?? 500) : undefined;
+  if (input.detachedPidFile) {
+    // A successful hook must leave `cmd >/dev/null 2>&1 &` running (TS
+    // commandRunner only kills the group on timeout/abort). Record the
+    // observation, then clean up the process here so the generator leaks none.
+    await new Promise(resolve => setTimeout(resolve, detachedAliveAfterMs));
+    const pid = Number(await readFile(actual(input.detachedPidFile), 'utf8'));
+    assert.ok(Number.isInteger(pid) && pid > 0, 'background process wrote a pid');
+    let alive = true;
+    try { process.kill(pid, 0); } catch { alive = false; }
+    assert.equal(alive, true, `baseline killed background pid ${pid} after hook success`);
+    process.kill(pid, 'SIGKILL');
+    for (let i = 0; i < 100; i += 1) {
+      try { process.kill(pid, 0); } catch { break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
   commandCases.push({
     name: input.name,
     command: command.split(root).join('<dir>'),
@@ -223,6 +242,9 @@ async function commandCase(input: {
     hookInput: input.hookInput ?? baseInput,
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.abortAtMs !== undefined ? { abortAtMs: input.abortAtMs } : {}),
+    ...(input.detachedPidFile
+      ? { detachedPidFile: input.detachedPidFile, detachedAliveAfterMs }
+      : {}),
     ...(input.script ? { script: input.script } : {}),
     expected: json(result),
   });
@@ -284,6 +306,11 @@ await named('sleep', `#!/bin/bash
 printf 'start\\n'
 sleep 5
 printf 'end\\n'
+`);
+await named('background', `#!/bin/bash
+sleep 30 >/dev/null 2>&1 &
+printf '%s' "$!" > bg.pid
+printf 'started\\n'
 `);
 
 await commandCase({ name: 'success-json-stdin', script: S.stdin });
@@ -348,6 +375,14 @@ await commandCase({
   name: 'shell-path-bare-name',
   command: `printf 'bare-ok\\n'`,
   env: { ...env(), PILOTDECK_SHELL_PATH: 'bash' },
+});
+// TS `commandRunner` only signals the process group on timeout/abort, so a
+// successful hook leaves its own background process running. The script writes
+// the pid to `<dir>/bg.pid`; the replay checks survival and kills it.
+await commandCase({
+  name: 'background-survives-success',
+  script: S.background,
+  detachedPidFile: '<dir>/bg.pid',
 });
 
 // ---------------------------------------------------------------- HTTP hooks
