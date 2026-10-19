@@ -674,6 +674,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -782,6 +783,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -1121,6 +1123,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -1419,6 +1422,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -1687,6 +1691,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>complex</tier>"
@@ -1885,6 +1890,7 @@
       },
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -2034,6 +2040,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "error": {
@@ -2181,6 +2188,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "hang": true
@@ -2317,6 +2325,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -2412,6 +2421,7 @@
         "p2/m2"
       ],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -2534,6 +2544,7 @@
       "multimodal": {},
       "denied": [],
       "custom": null,
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -2749,6 +2760,7 @@
         "provider": "p3",
         "model": "m3"
       },
+      "customError": null,
       "judgeScript": [
         {
           "text": "<tier>simple</tier>"
@@ -2806,6 +2818,2253 @@
         }
       ],
       "judgeRequests": []
+    },
+    {
+      "id": "sticky-expiry",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>simple</tier>"
+        },
+        {
+          "text": "<tier>complex</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        },
+        {
+          "kind": "advanceClock",
+          "ms": 3600000
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "again"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        },
+        {
+          "kind": "advanceClock",
+          "ms": 3600001
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "again"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        },
+        {
+          "clock": 3600000,
+          "judgeCalls": 1,
+          "events": []
+        },
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        },
+        {
+          "clock": 7200001,
+          "judgeCalls": 1,
+          "events": []
+        },
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 2,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nagain\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-caller-abort",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 500,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "hang": true
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true,
+          "abort": "active"
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "callerAborted": false,
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_token_saver_failed",
+              "sessionId": "s",
+              "reason": "timeout",
+              "fallbackTier": "simple",
+              "judgeProvider": "p1",
+              "judgeModel": "m1",
+              "attempts": 1,
+              "errorCode": "judge_timeout"
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-retryable-provider",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "error": {
+            "kind": "provider",
+            "code": "server_error",
+            "message": "无效token=sk-abc",
+            "retryable": true
+          }
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 3,
+          "events": [
+            {
+              "type": "pilotdeck_router_token_saver_failed",
+              "sessionId": "s",
+              "reason": "model_error",
+              "fallbackTier": "simple",
+              "judgeProvider": "p1",
+              "judgeModel": "m1",
+              "attempts": 3,
+              "errorCode": "server_error",
+              "errorMessage": "无效token=<redacted>"
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-request-error",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "error": {
+            "kind": "request",
+            "code": "invalid_request",
+            "message": "bad token=sk-xyz"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_token_saver_failed",
+              "sessionId": "s",
+              "reason": "model_error",
+              "fallbackTier": "simple",
+              "judgeProvider": "p1",
+              "judgeModel": "m1",
+              "attempts": 1,
+              "errorCode": "invalid_request",
+              "errorMessage": "bad token=<redacted>"
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-parse-error",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "empty": true
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 3,
+          "events": [
+            {
+              "type": "pilotdeck_router_token_saver_failed",
+              "sessionId": "s",
+              "reason": "parse_error",
+              "fallbackTier": "simple",
+              "judgeProvider": "p1",
+              "judgeModel": "m1",
+              "attempts": 3
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-retry-success",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "empty": true
+        },
+        {
+          "text": "<tier>complex</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 2,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "subagent-judge-sticky",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "subagent": {
+                "policy": "judge"
+              },
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>simple</tier>"
+        },
+        {
+          "text": "<tier>complex</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "again"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": false
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "again"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": false
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "again"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        },
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": true,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {
+              "subagentTagStripped": true
+            }
+          },
+          "judgeCalls": 2,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": true,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {
+                  "subagentTagStripped": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": true,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {
+              "subagentTagStripped": true
+            }
+          },
+          "judgeCalls": 2,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": true,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {
+                  "subagentTagStripped": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 2,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>.",
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nagain\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "invalidate-orchestrating",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "complex",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            },
+            "autoOrchestrate": {
+              "enabled": true,
+              "triggerTiers": [
+                "complex"
+              ],
+              "allowedTools": [
+                "agent",
+                "read_file",
+                "grep",
+                "glob",
+                "read_skill"
+              ],
+              "slimSystemPrompt": true
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>complex</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "plan a big refactor"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        },
+        {
+          "kind": "invalidate",
+          "sessionId": "s"
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "plan"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ok"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "continue"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": false,
+            "orchestrating": true,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {
+              "orchestrationActivated": {
+                "tier": "complex",
+                "continued": false
+              }
+            }
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": false,
+                "orchestrating": true,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {
+                  "orchestrationActivated": {
+                    "tier": "complex",
+                    "continued": false
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "invalidated": {
+            "previousTier": "complex",
+            "previousProvider": "p3",
+            "previousModel": "m3",
+            "orchestrating": true
+          },
+          "judgeCalls": 1,
+          "events": []
+        },
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": false,
+            "orchestrating": true,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {
+              "orchestrationActivated": {
+                "tier": "complex",
+                "continued": true
+              }
+            }
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": false,
+                "orchestrating": true,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {
+                  "orchestrationActivated": {
+                    "tier": "complex",
+                    "continued": true
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nplan a big refactor\n\"\"\"\n\nDefault tier when uncertain: complex.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "cache-aware-switched",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            },
+            "stats": {
+              "enabled": true,
+              "modelPricing": {
+                "p1/m1": {
+                  "input": 100,
+                  "output": 300,
+                  "cacheRead": 1
+                },
+                "p3/m3": {
+                  "input": 1,
+                  "output": 3,
+                  "cacheRead": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>complex</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "observeUsage",
+          "sessionId": "s",
+          "usage": {
+            "inputTokens": 100,
+            "outputTokens": 10,
+            "cacheReadTokens": 80,
+            "totalTokens": 110
+          }
+        },
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true,
+          "metadata": {
+            "previousProvider": "p1",
+            "previousModel": "m1",
+            "previousTier": "simple"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "observed": true,
+          "judgeCalls": 0,
+          "events": []
+        },
+        {
+          "decision": {
+            "provider": "p3",
+            "model": "m3",
+            "scenarioType": "default",
+            "tokenSaverTier": "complex",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {
+              "cacheAwareSwitch": {
+                "action": "switched",
+                "from": "p1/m1",
+                "to": "p3/m3",
+                "cachedCost": 0.00009999999999999999,
+                "prefillCost": 0.000001,
+                "estimatedInputTokens": 1
+              }
+            }
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p3",
+                "model": "m3",
+                "scenarioType": "default",
+                "tokenSaverTier": "complex",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {
+                  "cacheAwareSwitch": {
+                    "action": "switched",
+                    "from": "p1/m1",
+                    "to": "p3/m3",
+                    "cachedCost": 0.00009999999999999999,
+                    "prefillCost": 0.000001,
+                    "estimatedInputTokens": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\n## CRITICAL RULE — Continuation messages\nThe previous turn was classified as: **simple**.\nShort messages like \"go\", \"continue\", \"ok\", \"yes\", \"好的\", \"继续\", \"开始\", \"冲\" etc. are continuations of the previous task. They are NOT new simple requests.\nFor ANY message that is clearly a continuation or acknowledgment of the previous task, you MUST return <tier>simple</tier>.\nOnly reclassify if the user message introduces a genuinely NEW task with different complexity.\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "custom-failed",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "customRouter": {
+              "extensionId": "acme.router"
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": {
+        "provider": "p3",
+        "model": "m3"
+      },
+      "customError": "router exploded",
+      "judgeScript": [
+        {
+          "text": "<tier>simple</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "scenario",
+            "mutations": {}
+          },
+          "judgeCalls": 0,
+          "events": [
+            {
+              "type": "pilotdeck_router_custom_failed",
+              "sessionId": "s",
+              "extensionId": "acme.router",
+              "reason": "router exploded"
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "scenario",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": []
+    },
+    {
+      "id": "disabled-invalidate",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": false
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>simple</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        },
+        {
+          "kind": "invalidate",
+          "sessionId": "s"
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "scenario",
+            "mutations": {}
+          },
+          "judgeCalls": 0,
+          "events": []
+        },
+        {
+          "invalidated": {
+            "orchestrating": false
+          },
+          "judgeCalls": 0,
+          "events": []
+        }
+      ],
+      "judgeRequests": []
+    },
+    {
+      "id": "empty-description",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": ""
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "text": "<tier>simple</tier>"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true,
+          "metadata": {
+            "previousTier": ""
+          }
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
+    },
+    {
+      "id": "judge-empty-error-fields",
+      "snapshot": {
+        "config": {
+          "router": {
+            "enabled": true,
+            "scenarios": {
+              "default": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              }
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "tokenSaver": {
+              "enabled": true,
+              "judge": {
+                "id": "p1/m1",
+                "provider": "p1",
+                "model": "m1"
+              },
+              "defaultTier": "simple",
+              "tiers": {
+                "simple": {
+                  "model": {
+                    "id": "p1/m1",
+                    "provider": "p1",
+                    "model": "m1"
+                  },
+                  "description": "Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules"
+                },
+                "complex": {
+                  "model": {
+                    "id": "p3/m3",
+                    "provider": "p3",
+                    "model": "m3"
+                  },
+                  "description": "Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents"
+                }
+              },
+              "rules": [
+                "complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work",
+                "Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning",
+                "Simple file creation (1-2 files) or single code generation is medium",
+                "Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple"
+              ],
+              "judgeTimeoutMs": 15000,
+              "cacheAwareSwitching": {
+                "enabled": true,
+                "minSavingsRatio": 0
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "p1/m1": 100,
+        "p1/m2": 50,
+        "p2/m1": 100,
+        "p2/m2": 200,
+        "p3/m1": 100,
+        "p3/m3": 300
+      },
+      "multimodal": {},
+      "denied": [],
+      "custom": null,
+      "customError": null,
+      "judgeScript": [
+        {
+          "error": {
+            "kind": "provider",
+            "code": "",
+            "message": "",
+            "retryable": false
+          }
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decide",
+          "request": {
+            "provider": "p1",
+            "model": "m1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s",
+          "isMainAgent": true
+        }
+      ],
+      "expected": [
+        {
+          "decision": {
+            "provider": "p1",
+            "model": "m1",
+            "scenarioType": "default",
+            "tokenSaverTier": "simple",
+            "isSubagent": false,
+            "orchestrating": false,
+            "resolvedFrom": "tokenSaver",
+            "mutations": {}
+          },
+          "judgeCalls": 1,
+          "events": [
+            {
+              "type": "pilotdeck_router_token_saver_failed",
+              "sessionId": "s",
+              "reason": "model_error",
+              "fallbackTier": "simple",
+              "judgeProvider": "p1",
+              "judgeModel": "m1",
+              "attempts": 1
+            },
+            {
+              "type": "pilotdeck_router_decision",
+              "sessionId": "s",
+              "decision": {
+                "provider": "p1",
+                "model": "m1",
+                "scenarioType": "default",
+                "tokenSaverTier": "simple",
+                "isSubagent": false,
+                "orchestrating": false,
+                "resolvedFrom": "tokenSaver",
+                "mutations": {}
+              }
+            }
+          ]
+        }
+      ],
+      "judgeRequests": [
+        "You are a model-tier classifier for the PilotDeck router. Given the following user message, return exactly one tier wrapped in <tier>...</tier>.\n\nAvailable tiers:\n- simple: Simple greetings, confirmations, single-step Q&A, trivial file writes, remembering rules\n- complex: Needs sub-agent orchestration: parallel workstreams, delegation to specialized agents\n\nRouting rules:\n- complex is ONLY for tasks that need sub-agent orchestration or parallel delegation — do NOT use it for single-agent multi-step work\n- Multi-file operations, data analysis, and multi-step workflows without orchestration should be reasoning\n- Simple file creation (1-2 files) or single code generation is medium\n- Trivial greetings, confirmations, remembering rules, or reading one file and answering a short question is simple\n\nUser message:\n\"\"\"\nhello\n\"\"\"\n\nDefault tier when uncertain: simple.\nRespond with only <tier>NAME</tier>."
+      ]
     }
   ]
 }

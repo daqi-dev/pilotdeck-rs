@@ -4,15 +4,18 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 use pilotdeck_gateway::runtime::model::router::{
-    CustomRouter, CustomRouterRegistry, NoopCustomRouters, RouterConfig, RouterDecisionInput,
-    RouterDeps, RouterFuture, RouterInvokeError, RouterModelInvocation, RouterModelRef,
-    RouterRuntime, RouterRuntimeError,
+    AbortFlag, CustomRouter, CustomRouterRegistry, NoopCustomRouters, RouterConfig,
+    RouterDecisionInput, RouterDeps, RouterFuture, RouterInvokeError, RouterModelInvocation,
+    RouterModelRef, RouterRuntime, RouterRuntimeError,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     fs,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 const FIXTURES: &str = concat!(
@@ -282,9 +285,13 @@ impl RouterModelInvocation for FakeInvoker {
 struct FakeCustom {
     provider: JsString,
     model: JsString,
+    error: Option<String>,
 }
 impl CustomRouter for FakeCustom {
     fn decide(&self, _input: JsValue) -> RouterFuture<JsValue> {
+        if let Some(error) = self.error.clone() {
+            return Box::pin(async move { Err(RouterInvokeError::other(error)) });
+        }
         let mut decision = JsObject::new();
         decision.insert("provider".into(), JsValue::String(self.provider.clone()));
         decision.insert("model".into(), JsValue::String(self.model.clone()));
@@ -306,6 +313,7 @@ fn build_runtime(
     case: &JsValue,
     invoker: Arc<FakeInvoker>,
     events: Arc<Mutex<Vec<JsValue>>>,
+    clock: Arc<dyn Fn() -> f64 + Send + Sync>,
 ) -> RouterRuntime {
     let config = RouterConfig::from_snapshot(field(case, "snapshot"));
     let denied: Vec<String> = array(field(case, "denied")).iter().map(text).collect();
@@ -319,6 +327,9 @@ fn build_runtime(
                 .as_string()
                 .cloned()
                 .expect("custom model"),
+            error: field(case, "customError")
+                .as_string()
+                .map(|value| value.to_utf8().unwrap_or_default()),
         })))
     });
     let events_sink = events.clone();
@@ -332,7 +343,7 @@ fn build_runtime(
             model_invoker: invoker,
             custom_routers,
             events: Arc::new(move |event: JsValue| events_sink.lock().expect("events").push(event)),
-            clock: Arc::new(|| 0.0),
+            clock,
             is_model_allowed: Arc::new(move |model: &RouterModelRef| {
                 let key = format!(
                     "{}/{}",
@@ -361,7 +372,16 @@ fn metadata(step: &JsValue) -> Option<JsObject> {
 async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
     let invoker = Arc::new(FakeInvoker::from_case(case));
     let events = Arc::new(Mutex::new(Vec::new()));
-    let mut runtime = Some(build_runtime(case, invoker.clone(), events.clone()));
+    let now = Arc::new(AtomicU64::new(0));
+    let clock_now = now.clone();
+    let clock: Arc<dyn Fn() -> f64 + Send + Sync> =
+        Arc::new(move || clock_now.load(Ordering::SeqCst) as f64);
+    let mut runtime = Some(build_runtime(
+        case,
+        invoker.clone(),
+        events.clone(),
+        clock.clone(),
+    ));
     let expected = array(field(case, "expected"));
     let mut last_decision = JsValue::Undefined;
     let mut event_index = 0usize;
@@ -369,13 +389,26 @@ async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
 
     for (index, step) in array(field(case, "steps")).iter().enumerate() {
         if !shared_runtime {
-            runtime = Some(build_runtime(case, invoker.clone(), events.clone()));
+            runtime = Some(build_runtime(
+                case,
+                invoker.clone(),
+                events.clone(),
+                clock.clone(),
+            ));
         }
         let runtime = runtime.as_ref().expect("runtime");
         let start = event_index;
         let kind = text(field(step, "kind"));
         let result = match kind.as_str() {
             "decide" => {
+                let abort_mode = field(step, "abort").as_string().cloned();
+                let abort = abort_mode.as_ref().map(|mode| {
+                    let flag = AbortFlag::new();
+                    if mode.equals_str("before") {
+                        flag.abort();
+                    }
+                    flag
+                });
                 let input = RouterDecisionInput {
                     request: field(step, "request").clone(),
                     session_id: field(step, "sessionId")
@@ -383,7 +416,7 @@ async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
                         .cloned()
                         .expect("sessionId"),
                     is_main_agent: field(step, "isMainAgent").as_bool().expect("isMainAgent"),
-                    abort: None,
+                    abort: abort.clone(),
                     metadata: metadata(step),
                 };
                 match runtime.decide(&input).await {
@@ -391,14 +424,27 @@ async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
                         last_decision = decision.clone();
                         let mut object = JsObject::new();
                         object.insert("decision".into(), decision);
+                        if let Some(flag) = &abort {
+                            object.insert("callerAborted".into(), JsValue::Bool(flag.is_aborted()));
+                        }
                         JsValue::Object(object)
                     }
                     Err(error) => {
                         let mut object = JsObject::new();
                         object.insert("error".into(), error_value(&error));
+                        if let Some(flag) = &abort {
+                            object.insert("callerAborted".into(), JsValue::Bool(flag.is_aborted()));
+                        }
                         JsValue::Object(object)
                     }
                 }
+            }
+            "advanceClock" => {
+                let milliseconds = field(step, "ms").as_number().expect("ms") as u64;
+                let value = now.fetch_add(milliseconds, Ordering::SeqCst) + milliseconds;
+                let mut object = JsObject::new();
+                object.insert("clock".into(), JsValue::Number(value as f64));
+                JsValue::Object(object)
             }
             "invalidate" => {
                 let session_id = field(step, "sessionId")
@@ -510,7 +556,7 @@ async fn run_case(case: &JsValue, shared_runtime: bool) -> Result<(), String> {
 async fn real_ts_router_decisions_and_policies_replay() {
     let oracle = oracle();
     let cases = array(field(&oracle, "cases"));
-    assert!(cases.len() >= 12, "expected at least 12 router cases");
+    assert_eq!(cases.len(), 25, "expected exactly 25 router cases");
     for case in cases {
         if let Err(error) = run_case(case, true).await {
             panic!("{error}");

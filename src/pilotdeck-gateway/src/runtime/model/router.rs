@@ -21,6 +21,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 mod classify;
@@ -106,17 +107,41 @@ impl From<ModuleError> for RouterInvokeError {
 
 /// Cooperative cancellation shared with a judge port. The decision path never
 /// fabricates a provider abort reason; it only observes cancellation.
+///
+/// A judge attempt gets its own child flag so that timing the judge out never
+/// marks the caller's turn-level signal as aborted (TS keeps a separate
+/// `judgeAbortController`).
+#[derive(Debug, Default)]
+struct AbortState {
+    flag: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
 #[derive(Clone, Debug, Default)]
-pub struct AbortFlag(Arc<AtomicBool>);
+pub struct AbortFlag(Arc<AbortState>);
 impl AbortFlag {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn abort(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.0.flag.store(true, Ordering::SeqCst);
+        self.0.notify.notify_waiters();
     }
     pub fn is_aborted(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.flag.load(Ordering::SeqCst)
+    }
+    /// Resolves once the flag is aborted. Registration happens before the flag
+    /// check so a concurrent `abort()` cannot be missed.
+    pub async fn cancelled(&self) {
+        loop {
+            let notified = self.0.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_aborted() {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
@@ -208,10 +233,19 @@ impl RouterDeps {
             model_invoker,
             custom_routers: Arc::new(NoopCustomRouters),
             events: Arc::new(NoopEvents),
-            clock: Arc::new(|| 0.0),
+            // `RouterRuntime.ts` defaults to `() => new Date()` (wall clock).
+            clock: Arc::new(wall_clock),
             is_model_allowed: Arc::new(|_| true),
         }
     }
+}
+
+/// Milliseconds since the Unix epoch, matching `Date.now()`.
+pub fn wall_clock() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as f64)
+        .unwrap_or(0.0)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -748,7 +782,44 @@ impl RouterRuntime {
             result.insert("orchestrating".into(), JsValue::Bool(false));
             return JsValue::Object(result);
         }
-        let current = self.store.get(session_id, false);
+        // TS `invalidateSticky` is synchronous, so `get` + `set` cannot be
+        // interleaved by another turn. Rust needs one lock-held read/modify/write.
+        let current = self.store.update(session_id, |current| {
+            let previous_tier = current
+                .as_ref()
+                .and_then(|state| state.token_saver_tier.clone());
+            let orchestrating = current.as_ref().is_some_and(|state| state.orchestrating);
+            let preserve = orchestrating
+                && previous_tier
+                    .as_ref()
+                    .is_some_and(|tier| !tier.units().is_empty());
+            SessionRoutingState {
+                session_id: session_id.clone(),
+                is_subagent: false,
+                orchestrating,
+                token_saver_tier: if preserve {
+                    previous_tier.clone()
+                } else {
+                    None
+                },
+                sticky_provider: if preserve {
+                    current
+                        .as_ref()
+                        .and_then(|state| state.sticky_provider.clone())
+                } else {
+                    None
+                },
+                sticky_model: if preserve {
+                    current
+                        .as_ref()
+                        .and_then(|state| state.sticky_model.clone())
+                } else {
+                    None
+                },
+                last_usage: None,
+                updated_at: (self.clock)(),
+            }
+        });
         let previous_tier = current
             .as_ref()
             .and_then(|state| state.token_saver_tier.clone());
@@ -759,30 +830,6 @@ impl RouterRuntime {
             .as_ref()
             .and_then(|state| state.sticky_model.clone());
         let orchestrating = current.as_ref().is_some_and(|state| state.orchestrating);
-        let now = (self.clock)();
-        if orchestrating && previous_tier.is_some() {
-            self.store.set(SessionRoutingState {
-                session_id: session_id.clone(),
-                is_subagent: false,
-                orchestrating,
-                token_saver_tier: previous_tier.clone(),
-                sticky_provider: previous_provider.clone(),
-                sticky_model: previous_model.clone(),
-                last_usage: None,
-                updated_at: now,
-            });
-        } else {
-            self.store.set(SessionRoutingState {
-                session_id: session_id.clone(),
-                is_subagent: false,
-                orchestrating,
-                token_saver_tier: None,
-                sticky_provider: None,
-                sticky_model: None,
-                last_usage: None,
-                updated_at: now,
-            });
-        }
         let mut result = JsObject::new();
         if let Some(tier) = previous_tier {
             result.insert("previousTier".into(), JsValue::String(tier));

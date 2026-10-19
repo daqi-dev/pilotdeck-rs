@@ -62,19 +62,31 @@ pub async fn classify_and_route(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         if abort.as_ref().is_some_and(AbortFlag::is_aborted) {
-            return Err(RouterInvokeError::other("This operation was aborted"));
+            return Err(aborted_error());
         }
-        let judge_abort = abort.clone().unwrap_or_default();
-        let outcome = tokio::time::timeout(
-            Duration::from_millis(timeout_ms as u64),
-            invoker.complete(judge_request.clone(), Some(judge_abort.clone())),
-        )
-        .await;
+        // Each attempt gets its own child controller; the caller's signal is
+        // only forwarded into it (TS `judgeAbortController`).
+        let judge_abort = AbortFlag::new();
+        let request_future = invoker.complete(judge_request.clone(), Some(judge_abort.clone()));
+        let timed = tokio::time::timeout(Duration::from_millis(timeout_ms as u64), request_future);
+        let outcome = match abort.as_ref() {
+            Some(caller) => {
+                tokio::select! {
+                    biased;
+                    _ = caller.cancelled() => {
+                        judge_abort.abort();
+                        return Err(aborted_error());
+                    }
+                    outcome = timed => outcome,
+                }
+            }
+            None => timed.await,
+        };
 
         match outcome {
             Err(_) => {
-                // TS aborts the judge controller with a timeout error before
-                // falling back; mirror the observable cancellation.
+                // A judge timeout only aborts this attempt's child flag; the
+                // caller's turn-level signal must stay untouched.
                 judge_abort.abort();
                 let failure = RouterInvokeError::other("Timeout");
                 return Ok(Some(fallback(
@@ -183,6 +195,10 @@ fn fallback(
     }
 }
 
+fn aborted_error() -> RouterInvokeError {
+    RouterInvokeError::other("This operation was aborted")
+}
+
 fn describe_failure(
     error: &RouterInvokeError,
     attempts: f64,
@@ -196,11 +212,23 @@ fn describe_failure(
             message: None,
         };
     }
+    // TS only copies `code` off provider/request errors and only when truthy;
+    // a plain `Error` never carries one (`From<ModuleError>` maps to `Other`).
+    let code = match error.kind {
+        super::InvokeErrorKind::Provider | super::InvokeErrorKind::Request => {
+            error.code.clone().filter(|code| !code.units().is_empty())
+        }
+        super::InvokeErrorKind::Other => None,
+    };
+    // TS checks `message` for truthiness *before* sanitizing, so a message made
+    // only of whitespace still produces an empty `errorMessage`.
+    let message =
+        (!error.message.units().is_empty()).then(|| sanitize_failure_message(&error.message));
     TokenSaverFailure {
         reason: "model_error",
         attempts,
-        code: error.code.clone(),
-        message: Some(sanitize_failure_message(&error.message)),
+        code,
+        message,
     }
 }
 
@@ -212,31 +240,173 @@ fn should_retry_judge_failure(error: &RouterInvokeError) -> bool {
     }
 }
 
-fn sanitize_failure_message(message: &JsString) -> JsString {
-    let text = String::from_utf16_lossy(message.units());
-    let text = bearer().replace_all(&text, "$1<redacted>").into_owned();
-    let text = secret().replace_all(&text, "$1=<redacted>").into_owned();
-    let trimmed = whitespace().replace_all(text.trim(), " ").into_owned();
-    let units: Vec<u16> = trimmed.encode_utf16().take(300).collect();
-    JsString::from_utf16(units)
+/// Port of TS `sanitizeFailureMessage` over UTF-16 code units.
+///
+/// JS regexes here have no `u` flag, so `\b`/`\w` are ASCII-only, `\s` is the
+/// JS whitespace set (which includes U+FEFF and excludes U+0085), and `i`
+/// canonicalizes one code unit at a time (non-ASCII characters are not folded
+/// onto ASCII letters). Lone surrogates must survive the whole pipeline.
+pub(super) fn sanitize_failure_message(message: &JsString) -> JsString {
+    let redacted = replace_matches(
+        &replace_matches(message.units(), "<redacted>", match_bearer),
+        "=<redacted>",
+        match_secret,
+    );
+    let mut collapsed = Vec::with_capacity(redacted.len());
+    let mut index = 0;
+    while index < redacted.len() {
+        if super::is_js_whitespace(redacted[index]) {
+            while index < redacted.len() && super::is_js_whitespace(redacted[index]) {
+                index += 1;
+            }
+            collapsed.push(32);
+        } else {
+            collapsed.push(redacted[index]);
+            index += 1;
+        }
+    }
+    let trimmed = super::trim_units(&collapsed);
+    JsString::from_utf16(trimmed.iter().take(300).copied().collect())
 }
-fn bearer() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)\b(authorization\s*[:=]\s*bearer\s+|bearer\s+)[^\s,;]+")
-            .expect("bearer redaction")
-    })
+
+/// `(match_end, group1_start, group1_end)` for a replacement with one group.
+type PatternMatch = (usize, usize, usize);
+
+fn replace_matches(
+    units: &[u16],
+    replacement_suffix: &str,
+    matcher: impl Fn(&[u16], usize) -> Option<PatternMatch>,
+) -> Vec<u16> {
+    let suffix: Vec<u16> = replacement_suffix.encode_utf16().collect();
+    let mut output = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if let Some((end, group_start, group_end)) = matcher(units, index) {
+            output.extend_from_slice(&units[group_start..group_end]);
+            output.extend_from_slice(&suffix);
+            index = end;
+        } else {
+            output.push(units[index]);
+            index += 1;
+        }
+    }
+    output
 }
-fn secret() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+")
-            .expect("secret redaction")
-    })
+
+/// `/\b(authorization\s*[:=]\s*bearer\s+|bearer\s+)[^\s,;]+/gi`
+fn match_bearer(units: &[u16], start: usize) -> Option<PatternMatch> {
+    if !is_word_boundary(units, start) {
+        return None;
+    }
+    let mut after_keyword = None;
+    if matches_ascii_ci(units, start, b"authorization") {
+        let mut index = skip_js_space(units, start + "authorization".len());
+        if matches!(units.get(index), Some(58 | 61)) {
+            index = skip_js_space(units, index + 1);
+            if matches_ascii_ci(units, index, b"bearer") {
+                after_keyword = Some(index + "bearer".len());
+            }
+        }
+    }
+    let after_keyword =
+        after_keyword.or_else(|| matches_ascii_ci(units, start, b"bearer").then_some(start + 6))?;
+    let value_start = skip_js_space(units, after_keyword);
+    if value_start == after_keyword {
+        // Both alternatives require `\s+` before the value.
+        return None;
+    }
+    let end = match_value(units, value_start)?;
+    Some((end, start, value_start))
 }
-fn whitespace() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"\s+").expect("whitespace"))
+
+/// `/\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi`
+fn match_secret(units: &[u16], start: usize) -> Option<PatternMatch> {
+    if !is_word_boundary(units, start) {
+        return None;
+    }
+    let mut keyword_end = None;
+    if matches_ascii_ci(units, start, b"api") {
+        let mut index = start + 3;
+        if matches!(units.get(index), Some(45 | 95)) {
+            index += 1;
+        }
+        if matches_ascii_ci(units, index, b"key") {
+            keyword_end = Some(index + 3);
+        }
+    }
+    if keyword_end.is_none() {
+        for keyword in ["token", "secret", "password"] {
+            if matches_ascii_ci(units, start, keyword.as_bytes()) {
+                keyword_end = Some(start + keyword.len());
+                break;
+            }
+        }
+    }
+    let keyword_end = keyword_end?;
+    let mut index = skip_js_space(units, keyword_end);
+    if !matches!(units.get(index), Some(58 | 61)) {
+        return None;
+    }
+    index = skip_js_space(units, index + 1);
+    let end = match_value(units, index)?;
+    Some((end, start, keyword_end))
+}
+
+fn match_value(units: &[u16], start: usize) -> Option<usize> {
+    let mut end = start;
+    while end < units.len()
+        && !super::is_js_whitespace(units[end])
+        && units[end] != 44
+        && units[end] != 59
+    {
+        end += 1;
+    }
+    (end > start).then_some(end)
+}
+
+fn skip_js_space(units: &[u16], mut index: usize) -> usize {
+    while index < units.len() && super::is_js_whitespace(units[index]) {
+        index += 1;
+    }
+    index
+}
+
+fn is_word_boundary(units: &[u16], at: usize) -> bool {
+    let before = at > 0 && is_ascii_word(units[at - 1]);
+    let after = at < units.len() && is_ascii_word(units[at]);
+    before != after
+}
+
+fn is_ascii_word(unit: u16) -> bool {
+    matches!(unit, 48..=57 | 65..=90 | 97..=122 | 95)
+}
+
+fn matches_ascii_ci(units: &[u16], at: usize, needle: &[u8]) -> bool {
+    at + needle.len() <= units.len()
+        && needle
+            .iter()
+            .enumerate()
+            .all(|(offset, byte)| canonicalize(units[at + offset]) == canonicalize(*byte as u16))
+}
+
+/// ES `Canonicalize` without the `u` flag: one code unit, at most one code
+/// unit of uppercase, and non-ASCII characters never fold onto ASCII.
+fn canonicalize(unit: u16) -> u16 {
+    let Some(character) = char::from_u32(u32::from(unit)) else {
+        return unit; // lone surrogate
+    };
+    let mut upper = character.to_uppercase();
+    let Some(mapped) = upper.next() else {
+        return unit;
+    };
+    if upper.next().is_some() || mapped.len_utf16() != 1 {
+        return unit;
+    }
+    let mapped = mapped as u32;
+    if u32::from(unit) >= 128 && mapped < 128 {
+        return unit;
+    }
+    mapped as u16
 }
 
 fn judge_request(config: &TokenSaverConfig, prompt: JsString) -> JsValue {
@@ -350,7 +520,9 @@ pub fn generate_judge_prompt(
         units.push(45);
         units.push(32);
         units.extend_from_slice(name.units());
-        if let Some(description) = &tier.description {
+        if let Some(description) = &tier.description
+            && !description.units().is_empty()
+        {
             push_str(&mut units, ": ");
             units.extend_from_slice(description.units());
         }
@@ -368,7 +540,9 @@ pub fn generate_judge_prompt(
         }
         units.push(10);
     }
-    if let Some(previous) = previous_tier {
+    if let Some(previous) = previous_tier
+        && !previous.units().is_empty()
+    {
         push_str(
             &mut units,
             "\n## CRITICAL RULE — Continuation messages\nThe previous turn was classified as: **",

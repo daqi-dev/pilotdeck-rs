@@ -76,6 +76,7 @@ enum Step {
 struct Invoker {
     steps: Mutex<VecDeque<Step>>,
     calls: AtomicUsize,
+    last_abort: Mutex<Option<AbortFlag>>,
     capabilities: Mutex<HashMap<String, f64>>,
     multimodal: Mutex<HashMap<String, Vec<JsString>>>,
 }
@@ -84,6 +85,7 @@ impl Invoker {
         Self {
             steps: Mutex::new(steps.into()),
             calls: AtomicUsize::new(0),
+            last_abort: Mutex::new(None),
             capabilities: Mutex::new(HashMap::from([
                 ("p/s".to_string(), 100.0),
                 ("p/c".to_string(), 300.0),
@@ -94,6 +96,9 @@ impl Invoker {
     }
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+    fn last_abort(&self) -> Option<AbortFlag> {
+        self.last_abort.lock().expect("last abort").clone()
     }
 }
 impl RouterModelInvocation for Invoker {
@@ -136,8 +141,9 @@ impl RouterModelInvocation for Invoker {
     fn supports_complete(&self) -> bool {
         true
     }
-    fn complete(&self, _request: JsValue, _abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+    fn complete(&self, _request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        *self.last_abort.lock().expect("last abort") = abort;
         let step = self
             .steps
             .lock()
@@ -582,4 +588,247 @@ async fn invalidate_sticky_preserves_orchestration_tier() {
         invalidated.get("orchestrating").and_then(JsValue::as_bool),
         Some(true)
     );
+}
+
+#[test]
+fn default_clock_is_real_wall_clock() {
+    let deps = RouterDeps::new(Arc::new(Invoker::new(Vec::new())));
+    let before = wall_clock();
+    let value = (deps.clock)();
+    let after = wall_clock();
+    assert!(
+        value >= before && value <= after,
+        "default clock must be a live Date.now()-style millisecond clock: {before} <= {value} <= {after}"
+    );
+    assert!(
+        value > 1_600_000_000_000.0,
+        "default clock looks frozen at {value}"
+    );
+}
+
+fn decision_input(messages: Vec<JsValue>, session_id: &str) -> RouterDecisionInput {
+    RouterDecisionInput {
+        request: object(vec![
+            ("provider", text("p")),
+            ("model", text("s")),
+            ("messages", JsValue::Array(messages)),
+        ]),
+        session_id: session_id.into(),
+        is_main_agent: true,
+        abort: None,
+        metadata: None,
+    }
+}
+
+#[tokio::test]
+async fn router_sticky_expires_after_injected_ttl() {
+    let clock = Arc::new(AtomicU64::new(0));
+    let now = clock.clone();
+    let invoker = Arc::new(Invoker::new(vec![
+        Step::Text("<tier>simple</tier>".into()),
+        Step::Text("<tier>complex</tier>".into()),
+    ]));
+    let config = RouterConfig {
+        scenarios_default: Some(RouterModelRef::new("p".into(), "s".into())),
+        token_saver: Some(saver()),
+        ..RouterConfig::default()
+    };
+    let deps = RouterDeps {
+        clock: Arc::new(move || now.load(Ordering::SeqCst) as f64),
+        ..RouterDeps::new(invoker.clone())
+    };
+    let runtime = RouterRuntime::with_deps(config, deps).expect("runtime");
+
+    let first = runtime
+        .decide(&decision_input(vec![user_message("hi")], "s"))
+        .await
+        .expect("first decision");
+    assert_eq!(
+        first
+            .get("tokenSaverTier")
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap()),
+        Some("simple".into())
+    );
+    assert_eq!(invoker.calls(), 1);
+
+    // Exactly 1h is still live (`expiresAt < now` is strict).
+    clock.store(3_600_000, Ordering::SeqCst);
+    let sticky = runtime
+        .decide(&decision_input(
+            vec![user_message("hi"), user_message("again")],
+            "s",
+        ))
+        .await
+        .expect("sticky decision");
+    assert_eq!(invoker.calls(), 1, "1h-old sticky must still hit");
+    assert_eq!(
+        sticky
+            .get("tokenSaverTier")
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap()),
+        Some("simple".into())
+    );
+
+    // One millisecond past the TTL re-judges. The 1h sticky hit above refreshed
+    // the slot, so expire that refreshed window.
+    clock.store(7_200_001, Ordering::SeqCst);
+    let rejudged = runtime
+        .decide(&decision_input(
+            vec![user_message("hi"), user_message("again")],
+            "s",
+        ))
+        .await
+        .expect("rejudged decision");
+    assert_eq!(invoker.calls(), 2, "expired sticky must be re-judged");
+    assert_eq!(
+        rejudged
+            .get("tokenSaverTier")
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap()),
+        Some("complex".into())
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn judge_timeout_does_not_abort_the_caller() {
+    let mut config = saver();
+    config.judge_timeout_ms = 500.0;
+    let invoker = Invoker::new(vec![Step::Hang]);
+    let caller = AbortFlag::new();
+    let decision = classify_and_route(
+        &config,
+        &[user_message("hi")],
+        &invoker,
+        Some(caller.clone()),
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect("judge timeout is a fallback, not a caller abort")
+    .expect("decision");
+    assert_eq!(decision.failure_reason, Some("timeout"));
+    assert!(
+        !caller.is_aborted(),
+        "P1-1 regression: judge timeout leaked into the caller's abort flag"
+    );
+    assert!(
+        invoker
+            .last_abort()
+            .expect("judge received an abort flag")
+            .is_aborted(),
+        "the judge attempt's own controller must be aborted on timeout"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn caller_abort_is_forwarded_to_the_judge_attempt() {
+    let invoker = Arc::new(Invoker::new(vec![Step::Hang]));
+    let caller = AbortFlag::new();
+    let caller_task = caller.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        caller_task.abort();
+    });
+    let error = classify_and_route(
+        &saver(),
+        &[user_message("hi")],
+        invoker.as_ref(),
+        Some(caller.clone()),
+        None,
+        &"s".into(),
+    )
+    .await
+    .expect_err("caller abort must surface as an error");
+    assert_eq!(
+        error.message.to_utf8().unwrap_or_default(),
+        "This operation was aborted"
+    );
+    assert!(caller.is_aborted());
+    assert!(
+        invoker
+            .last_abort()
+            .expect("judge received an abort flag")
+            .is_aborted(),
+        "the caller's abort must be forwarded to the judge's child flag"
+    );
+}
+
+#[test]
+fn sanitize_failure_message_matches_js_regex_semantics() {
+    let sanitize = |value: &str| {
+        classify::sanitize_failure_message(&JsString::from(value))
+            .to_utf8()
+            .expect("sanitized output is valid UTF-8")
+    };
+    // JS `\b` is ASCII-word based even before CJK text.
+    assert_eq!(sanitize("无效token=sk-abc"), "无效token=<redacted>");
+    assert_eq!(sanitize("invalid token=sk-abc"), "invalid token=<redacted>");
+    assert_eq!(sanitize("_token=sk-abc"), "_token=sk-abc");
+    // JS `\s` includes U+FEFF and excludes U+0085.
+    assert_eq!(sanitize("x\u{FEFF}token=sk-abc"), "x token=<redacted>");
+    assert_eq!(sanitize("token\u{0085}=sk-abc"), "token\u{0085}=sk-abc");
+    assert_eq!(sanitize("\u{0085} x \u{0085}"), "\u{0085} x \u{0085}");
+    assert_eq!(
+        sanitize("\u{180E} token=sk \u{180E}"),
+        "\u{180E} token=<redacted> \u{180E}"
+    );
+    assert_eq!(sanitize("Bearer \u{FEFF} sk-secret"), "Bearer <redacted>");
+    // Non-ASCII characters never case-fold onto ASCII (ES non-unicode rule).
+    assert_eq!(
+        sanitize("pa\u{017F}\u{017F}word=sk-abc"),
+        "pa\u{017F}\u{017F}word=sk-abc"
+    );
+    assert_eq!(sanitize("to\u{212A}en=sk-abc"), "to\u{212A}en=sk-abc");
+    // `\s+` collapse happens before `trim`, and JS trim includes U+FEFF.
+    assert_eq!(
+        sanitize("\u{FEFF} token=sk \u{0085}"),
+        "token=<redacted> \u{0085}"
+    );
+    assert_eq!(
+        sanitize("API_KEY = s3cr3t; next"),
+        "API_KEY=<redacted>; next"
+    );
+    assert_eq!(
+        sanitize("authorization: bearer abc.def"),
+        "authorization: bearer <redacted>"
+    );
+    // Greedy/backtracking edges and keyword-spelling variants from Node.
+    assert_eq!(sanitize("Bearer    "), "Bearer");
+    assert_eq!(sanitize("bearer  ,x"), "bearer ,x");
+    assert_eq!(sanitize("token==x"), "token=<redacted>");
+    assert_eq!(sanitize("token: :x"), "token=<redacted>");
+    assert_eq!(sanitize("api-key: v"), "api-key=<redacted>");
+    assert_eq!(sanitize("api_key=v"), "api_key=<redacted>");
+    assert_eq!(sanitize("apikey = v"), "apikey=<redacted>");
+    assert_eq!(sanitize("API KEY=v"), "API KEY=v");
+    assert_eq!(sanitize("tokens=1"), "tokens=1");
+    assert_eq!(sanitize("secretary=1"), "secretary=1");
+    assert_eq!(sanitize("TOKEN=x"), "TOKEN=<redacted>");
+    // Greek Kappa is not ASCII `K`, so the non-unicode `i` flag cannot fold it.
+    assert_eq!(sanitize("TO\u{039A}EN=x"), "TO\u{039A}EN=x");
+    assert_eq!(sanitize("bearer\u{FEFF}x"), "bearer <redacted>");
+    assert_eq!(
+        sanitize("authorization : bearer x ;"),
+        "authorization : bearer <redacted> ;"
+    );
+    assert_eq!(
+        sanitize("xauthorization: bearer tok"),
+        "xauthorization: bearer <redacted>"
+    );
+
+    // Lone surrogates and the 300 UTF-16-code-unit slice are preserved.
+    let mut units = "bad".encode_utf16().collect::<Vec<_>>();
+    units.push(0xd800);
+    units.extend("token=sk-abc".encode_utf16());
+    let output = classify::sanitize_failure_message(&JsString::from_utf16(units));
+    let mut expected = "bad".encode_utf16().collect::<Vec<_>>();
+    expected.push(0xd800);
+    expected.extend("token=<redacted>".encode_utf16());
+    assert_eq!(output.units(), expected.as_slice());
+
+    let emoji = format!("{}😀", "x".repeat(299));
+    let output = classify::sanitize_failure_message(&JsString::from(emoji.as_str()));
+    assert_eq!(output.units().len(), 300);
+    assert_eq!(output.units()[299], 0xd83d);
 }
