@@ -592,3 +592,96 @@ async fn dropped_bundle_keeps_handling_until_disposed() {
     store.reload("watch").await.unwrap();
     assert!(lines(&log, 0).await.is_empty());
 }
+
+/// A config store whose single listener is driven by hand.
+#[derive(Default)]
+struct ManualStore(Mutex<Option<ConfigListener>>);
+impl ManualStore {
+    fn emit(&self, paths: &[JsString], classes: &[ChangeClass]) {
+        let listener = lock(&self.0).clone().expect("attached");
+        listener(paths, classes);
+    }
+}
+impl RefreshConfigStore for ManualStore {
+    fn subscribe(&self, listener: ConfigListener) -> Unsubscribe {
+        *lock(&self.0) = Some(listener);
+        Box::new(|| {})
+    }
+    fn reload(&self, _: &'static str) -> BoxFuture<ConfigReloadResult> {
+        Box::pin(async { Ok(()) })
+    }
+}
+/// A registry whose reloads settle immediately.
+struct ReadyRegistry;
+impl RefreshRegistry for ReadyRegistry {
+    fn reload(&self) -> Result<BoxFuture<RuntimeResult>, RuntimeError> {
+        Ok(Box::pin(async { Ok(()) }))
+    }
+    fn invalidate(&self, _: Option<&JsString>) {}
+}
+
+fn manual_bundle(log: &Arc<Log>, store: &Arc<ManualStore>) -> RefreshBundle {
+    let fakes = Arc::new(Fakes(Arc::clone(log)));
+    let router = Arc::clone(&fakes);
+    let bundle = RefreshBundle::new(RefreshOptions {
+        config_store: Arc::clone(store) as _,
+        registry: Arc::new(ReadyRegistry),
+        memory_maintenance: fakes.clone(),
+        router: Arc::new(move || Some(Arc::clone(&router) as Arc<dyn RefreshRouter>)),
+        project_root: "/root".into(),
+        memory_diagnostics: None,
+        sdk: None,
+        log: fakes.clone(),
+    });
+    bundle.attach();
+    bundle
+}
+
+/// #333: the bundle captured its executor at construction. Once that runtime
+/// has shut down, Tokio 1.48 drops the spawned settlement without polling it
+/// and without panicking; the refresh is then reported, not lost silently.
+#[test]
+fn settlement_on_a_stopped_executor_warns_instead_of_vanishing() {
+    let log = Arc::new(Log::default());
+    let store = Arc::new(ManualStore::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let bundle = runtime.block_on(async { manual_bundle(&log, &store) });
+    drop(runtime);
+    store.emit(&["agent.model".into()], &[ChangeClass::NextRuntime]);
+    assert_eq!(
+        log.take(),
+        strings(&[
+            &format!("{REFRESH}agent.model"),
+            "warn:[pilotdeck] Config runtime refresh lost; the runtime executor stopped before the reload settled::agent.model",
+        ])
+    );
+    bundle.dispose();
+}
+
+/// Negative control: on a live executor the same change settles normally and
+/// the guard stays silent.
+#[test]
+fn settlement_on_a_live_executor_does_not_warn() {
+    let log = Arc::new(Log::default());
+    let store = Arc::new(ManualStore::default());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let bundle = runtime.block_on(async { manual_bundle(&log, &store) });
+    store.emit(&["agent.model".into()], &[ChangeClass::NextRuntime]);
+    runtime.block_on(async {
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    });
+    assert_eq!(
+        log.take(),
+        strings(&[
+            &format!("{REFRESH}agent.model"),
+            "markAllDirty:config_changed",
+        ])
+    );
+    bundle.dispose();
+}

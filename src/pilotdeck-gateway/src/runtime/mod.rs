@@ -5,6 +5,7 @@ pub mod async_hooks;
 pub mod memory;
 pub mod model;
 pub mod permission;
+pub mod plugins;
 pub mod project;
 pub mod refresh;
 pub mod snapshot;

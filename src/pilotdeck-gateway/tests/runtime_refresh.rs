@@ -6,6 +6,8 @@
 //! the TS key order and compared byte for byte after JSON serialization.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/scratch.rs"]
+mod scratch;
 
 use pilotdeck_gateway::{
     config::{
@@ -24,18 +26,16 @@ use pilotdeck_gateway::{
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
-use std::{
-    path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+use scratch::Scratch;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 use tokio::sync::oneshot;
 
 const ORACLE: &str = include_str!("fixtures/runtime-refresh/oracle.json");
 const SCENARIOS: usize = 23;
-const STEPS: usize = 155;
+const STEPS: usize = 157;
 
 type Calls = Arc<Mutex<Vec<JsValue>>>;
 
@@ -343,22 +343,6 @@ impl RefreshLog for Fake {
     }
 }
 
-/// A scenario directory this test owns; removed on drop.
-struct Scratch(PathBuf);
-impl Scratch {
-    fn new(id: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("pdrs-runtime-refresh-{}-{id}", std::process::id()));
-        std::fs::create_dir(&path).expect("scratch directory must be new");
-        Self(path)
-    }
-}
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 async fn settle() {
     for _ in 0..50 {
         tokio::task::yield_now().await;
@@ -405,8 +389,8 @@ async fn replay(scenario: &JsValue) {
         sdk: flag("sdk").then(|| fake.clone() as _),
         log: fake.clone(),
     });
-    let scratch = flag("realStore").then(|| Scratch::new(&id));
-    let home = scratch.as_ref().map(|s| s.0.join("home"));
+    let scratch = flag("realStore").then(|| Scratch::new(&format!("runtime-refresh-{id}")));
+    let home = scratch.as_ref().map(|s| s.path().join("home"));
     if let Some(home) = &home {
         std::fs::create_dir(home).unwrap();
     }

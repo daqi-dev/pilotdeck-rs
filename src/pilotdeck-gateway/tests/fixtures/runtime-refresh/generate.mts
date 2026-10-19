@@ -210,6 +210,9 @@ add('reload-extensions', ALL, [
   { op: 'reloadExtensions', input: { projectKey: '', changedPaths: ['a'] } },
   { op: 'reloadExtensions', input: { projectKey: '/work/\ud800lone', changedPaths: [] } },
   { op: 'reloadExtensions', input: { changedPaths: ['\udfff'] } },
+  // #333: "(manual)" is chosen on the joined string, not the array length.
+  { op: 'reloadExtensions', input: { projectKey: '/work/a', changedPaths: [''] } },
+  { op: 'reloadExtensions', input: { changedPaths: ['', ''] } },
 ]);
 add('reload-extensions-without-router', { sdk: true }, [
   { op: 'reloadExtensions', input: { projectKey: '/work/a' } },

@@ -473,12 +473,23 @@ fn on_config_change(inner: &Arc<Inner>, paths: &[JsString], classes: &[ChangeCla
     // Like the baseline's closure, the pending reload keeps the bundle alive.
     let inner = Arc::clone(inner);
     let executor = inner.executor.clone();
+    // #333: a Tokio runtime that has shut down drops a spawned future without
+    // polling it (measured on 1.48: `Handle::spawn` does not panic). TS has
+    // no such state; rather than lose the refresh silently, the guard warns
+    // when the settlement never ran.
+    let lost = SettlementGuard {
+        inner: Some(Arc::clone(&inner)),
+        joined,
+    };
     executor.spawn(async move {
+        let mut lost = lost;
         // The reload future is dropped only after its settlement callbacks:
         // a registry may hold its queue position until then (see
         // [`RefreshRegistry::reload`]).
         let mut reload = reload;
-        match reload.as_mut().await {
+        let settled = reload.as_mut().await;
+        lost.inner = None;
+        match settled {
             Ok(()) => {
                 let options = &inner.options;
                 let router = (options.router)();
@@ -508,6 +519,24 @@ fn on_config_change(inner: &Arc<Inner>, paths: &[JsString], classes: &[ChangeCla
         }
         drop(reload);
     });
+}
+
+/// Warns once if a queued settlement is dropped before its reload settled
+/// (executor shut down, or the task cancelled with it).
+struct SettlementGuard {
+    inner: Option<Arc<Inner>>,
+    joined: JsString,
+}
+
+impl Drop for SettlementGuard {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            inner.options.log.warn(
+                "[pilotdeck] Config runtime refresh lost; the runtime executor stopped before the reload settled:",
+                WarnDetail::Text(&self.joined),
+            );
+        }
+    }
 }
 
 /// [`RefreshRegistry`] over the product [`ProjectRuntimeRegistry`].

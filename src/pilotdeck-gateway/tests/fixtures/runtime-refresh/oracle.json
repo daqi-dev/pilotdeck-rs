@@ -2929,6 +2929,24 @@
               "\udfff"
             ]
           }
+        },
+        {
+          "op": "reloadExtensions",
+          "input": {
+            "projectKey": "/work/a",
+            "changedPaths": [
+              ""
+            ]
+          }
+        },
+        {
+          "op": "reloadExtensions",
+          "input": {
+            "changedPaths": [
+              "",
+              ""
+            ]
+          }
         }
       ],
       "results": [
@@ -3135,6 +3153,85 @@
               "payload": {
                 "changedPaths": [
                   "\udfff"
+                ],
+                "changeClasses": [
+                  "extension-changed"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "result": {
+            "reloaded": true,
+            "changedPaths": [
+              ""
+            ]
+          },
+          "calls": [
+            {
+              "call": "getRouter"
+            },
+            {
+              "call": "log",
+              "message": "[pilotdeck] Extensions reload requested for project /work/a: (manual)"
+            },
+            {
+              "call": "registry.invalidate",
+              "args": [
+                "/work/a"
+              ]
+            },
+            {
+              "call": "router.markProjectDirty",
+              "projectKey": "/work/a",
+              "reason": "extension_changed"
+            },
+            {
+              "call": "server.broadcast",
+              "name": "config_changed",
+              "payload": {
+                "changedPaths": [
+                  ""
+                ],
+                "changeClasses": [
+                  "extension-changed"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "result": {
+            "reloaded": true,
+            "changedPaths": [
+              "",
+              ""
+            ]
+          },
+          "calls": [
+            {
+              "call": "getRouter"
+            },
+            {
+              "call": "log",
+              "message": "[pilotdeck] Extensions reload requested for all runtimes: , "
+            },
+            {
+              "call": "registry.invalidate",
+              "args": []
+            },
+            {
+              "call": "router.markAllDirty",
+              "reason": "extension_changed"
+            },
+            {
+              "call": "server.broadcast",
+              "name": "config_changed",
+              "payload": {
+                "changedPaths": [
+                  "",
+                  ""
                 ],
                 "changeClasses": [
                   "extension-changed"

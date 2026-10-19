@@ -369,7 +369,7 @@ fn load_project_reports_legacy_webui_proxy_migration_like_ts() {
 /// same as with the absolute cwd.
 #[test]
 fn load_project_anchors_relative_cwd_like_load_snapshot() {
-    let root = std::env::temp_dir().join(format!("pdrs-load-project-cwd-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("pdrs-load-project-cwd-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).expect("own temp root");
     struct Cleanup(PathBuf);
     impl Drop for Cleanup {
