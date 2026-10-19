@@ -18,7 +18,10 @@ locale。
   `registerExtensionPromptContributions`；无 contributions 的用例保持 `undefined`；
 - `compaction: {}` — 只避免构造 native compaction provider，`prepareForModel` 不读；
 - 扩展 resolver — 由用例的 commands/skills/mcp 数组驱动；
-- `InstructionDiscovery` — 真实 Node 文件系统 + 真实层级发现。
+- `InstructionDiscovery` — 真实 Node 文件系统 + 真实层级发现；
+- `abortSignal` — 带 `abort` 的步骤构造真实 `AbortController`：`before` 在调用前
+  中止，`section` / `variable` 由对应 provider 在返回前中止；其余步骤不传。
+  provider 断言它收到的 `context.abortSignal` 就是该 controller 的 signal。
 
 夹具项目树写在 `generate.mts` 并同时录进 oracle 的 `files`/`directories`（base64）
 与 `symlinks`（路径 + 相对目标），Rust 回放据此在自己的独占临时目录重建，不共享
@@ -37,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 37 个用例 / 55 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 40 个用例 / 58 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -66,17 +69,30 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   `{label} must resolve to a string`；`captureToolSchemas` 在排序 / 多 complete
   检查 / 动态 provider 之前执行（重复 tool schema 与后两类错误并存时仍报 tool
   schema 错误）；
+- contributions abort：`snapshot` 入口、`resolveText` provider 前后、变量 provider
+  前后共五处 `throwIfAborted()`。`contributions-abort-before` 在信号已中止时仍带
+  重复 tool schema 和会抛错的 provider；`contributions-abort-during-provider` 由
+  section provider 中止并返回字符串（无注册变量，排除后续 pre-check 兜底）；
+  `contributions-abort-during-variable` 先让静态 section 通过，再由变量 provider
+  中止。生成器对这三个用例捕获的异常断言 `name=AbortError`、`code=20`、
+  `message=This operation was aborted`（Node 22.22.0 的默认 DOMException 形状），
+  oracle 记录真实 `error.message`；
 - 边界输入：`customSystemPrompt: null`、`maxMessages: null`、`stepId` 0/7/null、
   `runtimeContextSurface: null` / 未知值、空 messages/tools。
 
-负控至少五处：`previewOnly` 后的真实调用必须仍产生同一 date-update（若预览提交了
+负控至少八处：`previewOnly` 后的真实调用必须仍产生同一 date-update（若预览提交了
 状态就会消失）；带 checkpoint 的 `maxMessages` 不截断（若忽略 checkpoint 会丢消息）；
 无效 UTF-8 指令文件必须保留并替换为 U+FFFD（若按错误丢弃则 layers 少一层）；
 动态 provider 抛错若仍被包装，报错文本会多出 `must resolve to a string:` 前缀；
-tool schema 捕获若被挪到最后，多错误用例会先报 multiple-complete / provider 错误。
+tool schema 捕获若被挪到最后，多错误用例会先报 multiple-complete / provider 错误；
+`contributions-abort-before` 若入口检查缺失或晚于 `captureToolSchemas`，会先报重复
+tool schema；`contributions-abort-during-provider` 若缺 `resolveText` provider 后的
+检查，会返回 `LEAK` 而不是中止；`contributions-abort-during-variable` 若缺变量
+provider 后的检查，会返回 `LATE` 而不是中止。
 
 切分点：内存附件（`MemoryAttachmentBuilder` / `MemoryResolver`，含
-`memory_provider_error` 诊断与 abort 早退）留 **A6.6-pr5b**；prompt cache plan
-（`cachePlan` / `cacheBreakpoints`）不在本夹具范围，由缓存 owner 接入。运行时上下文
-只从 user-context、prompt contributions 与 instructions 生成，`applyToolResults`
-等 operation 仍走 A6.6-pr1 的默认 unsupported。
+`memory_provider_error` 诊断与 abort 早退）留 **A6.6-pr5b**；prompt contributions
+的 abort 检查已在本夹具覆盖。prompt cache plan（`cachePlan` / `cacheBreakpoints`）
+不在本夹具范围，由缓存 owner 接入。运行时上下文只从 user-context、prompt
+contributions 与 instructions 生成，`applyToolResults` 等 operation 仍走 A6.6-pr1
+的默认 unsupported。

@@ -223,11 +223,14 @@ type Extension = {
   mcp?: any[];
   promptContributions?: { name: string; content: string }[];
 };
+type AbortMode = 'section' | 'variable';
 type DynamicText =
   | { kind: 'string'; value: string }
   /** Runtime non-string despite the TS `string` type; `resolveText` rejects it. */
   | { kind: 'non-string'; value: unknown }
-  | { kind: 'throw'; message: string };
+  | { kind: 'throw'; message: string }
+  /** Abort the step's controller only when the runner is in `when` mode. */
+  | { kind: 'abort-when'; value: string; when: AbortMode };
 type Contributions = {
   sections?: {
     name: string;
@@ -242,7 +245,7 @@ type Contributions = {
     text?: string;
     dynamic?: DynamicText;
   }[];
-  variables?: { name: string; value: string }[];
+  variables?: { name: string; value: string; abort?: boolean }[];
 };
 type Discovery = {
   projectRoot: string;
@@ -255,6 +258,11 @@ type Step = {
   input: any;
   /** Use the previous step's prepared messages as this step's input. */
   messagesFromPrevious?: boolean;
+  /**
+   * `before`: abort before `prepareForModel`; `section`/`variable`: abort from
+   * inside that provider, after it has been called.
+   */
+  abort?: 'before' | AbortMode;
 };
 type Case = {
   name: string;
@@ -839,6 +847,60 @@ const cases: Case[] = [
     ],
   },
   {
+    // TS checks `abortSignal.throwIfAborted()` at snapshot entry, before
+    // captureToolSchemas. The duplicate schemas and the throwing provider must
+    // therefore both lose to the abort.
+    name: 'contributions-abort-before',
+    setup: {
+      contributions: {
+        sections: [
+          {
+            name: 'dynamic',
+            order: 0,
+            dynamic: { kind: 'throw', message: 'provider ran after abort' },
+          },
+        ],
+      },
+    },
+    steps: [
+      {
+        clockMs: baseClock,
+        abort: 'before',
+        input: baseInput({ tools: [{ name: 'same' }, { name: 'same' }] }),
+      },
+    ],
+  },
+  {
+    // The section provider aborts and still returns a string. With no
+    // registered variables there is no later pre-check to rescue the abort, so
+    // only `resolveText`'s post-provider check can reject "LEAK".
+    name: 'contributions-abort-during-provider',
+    setup: {
+      contributions: {
+        sections: [
+          {
+            name: 'dynamic',
+            order: 0,
+            dynamic: { kind: 'abort-when', value: 'LEAK', when: 'section' },
+          },
+        ],
+      },
+    },
+    steps: [{ clockMs: baseClock, abort: 'section', input: baseInput() }],
+  },
+  {
+    // Static sections resolve, then the variable provider aborts before
+    // returning; only the variable-loop post-provider check can reject it.
+    name: 'contributions-abort-during-variable',
+    setup: {
+      contributions: {
+        sections: [{ name: 'static', order: 0, text: 'S' }],
+        variables: [{ name: 'later', value: 'LATE', abort: true }],
+      },
+    },
+    steps: [{ clockMs: baseClock, abort: 'variable', input: baseInput() }],
+  },
+  {
     name: 'date-rollover',
     steps: [
       { clockMs: Date.UTC(2026, 0, 1, 23, 59, 59), input: baseInput() },
@@ -896,7 +958,7 @@ const cases: Case[] = [
     ],
   },
 ];
-assert.equal(cases.length, 37, 'case count');
+assert.equal(cases.length, 40, 'case count');
 
 // ---------------------------------------------------------------- execute
 function substitute(value: any, root: string): any {
@@ -929,11 +991,25 @@ function resolver(extension: Extension | undefined) {
 }
 // `PromptTextProvider` is `string | ((context) => string | Promise<string>)`
 // at the type level, but a plain JS caller can return anything at runtime.
-function textProvider(spec: { text?: string; dynamic?: DynamicText }): any {
+function textProvider(
+  spec: { text?: string; dynamic?: DynamicText },
+  abortState: { controller?: AbortController; mode?: string },
+): any {
   if (!spec.dynamic) return spec.text;
   const dynamic = spec.dynamic;
-  return async () => {
+  return async (context: { abortSignal?: AbortSignal }) => {
     if (dynamic.kind === 'throw') throw new Error(dynamic.message);
+    if (dynamic.kind === 'abort-when') {
+      // `captureContext` forwards the request signal to providers; aborting the
+      // controller here proves the post-provider check observes it.
+      assert.equal(
+        context.abortSignal,
+        abortState.controller?.signal,
+        'provider receives the request AbortSignal',
+      );
+      if (abortState.mode === dynamic.when) abortState.controller!.abort();
+      return dynamic.value;
+    }
     return dynamic.value;
   };
 }
@@ -942,6 +1018,7 @@ const recordedCases: any[] = [];
 for (const spec of cases) {
   const setup = substitute(spec.setup ?? {}, output);
   let clockMs = baseClock;
+  const abortState: { controller?: AbortController; mode?: string } = {};
   let promptContributions;
   if (setup.contributions) {
     promptContributions = new PromptContributionRegistry({ name: 'fixture' });
@@ -952,7 +1029,7 @@ for (const spec of cases) {
       promptContributions.registerSection({
         name: section.name,
         order: section.order,
-        text: textProvider(section),
+        text: textProvider(section, abortState),
         complete: section.complete,
       });
     }
@@ -960,11 +1037,21 @@ for (const spec of cases) {
       promptContributions.registerRuntimeContext({
         name: context.name,
         order: context.order,
-        text: textProvider(context),
+        text: textProvider(context, abortState),
       });
     }
     for (const variable of setup.contributions.variables ?? []) {
-      promptContributions.registerVariable(variable.name, async () => variable.value);
+      promptContributions.registerVariable(variable.name, async (context: any) => {
+        if (variable.abort) {
+          assert.equal(
+            context.abortSignal,
+            abortState.controller?.signal,
+            'variable provider receives the request AbortSignal',
+          );
+          abortState.controller!.abort();
+        }
+        return variable.value;
+      });
     }
   }
   const runtime = new DefaultContextRuntime({
@@ -1003,17 +1090,32 @@ for (const spec of cases) {
       output,
     );
     const normalizedInput = normalize(input, output);
+    const controller = new AbortController();
+    abortState.controller = step.abort ? controller : undefined;
+    abortState.mode = step.abort;
+    if (step.abort === 'before') controller.abort();
+    const prepareInput = step.abort ? { ...input, abortSignal: controller.signal } : input;
     try {
-      const result = await runtime.prepareForModel(input);
+      const result = await runtime.prepareForModel(prepareInput);
       recordedSteps.push({
         clockMs,
+        ...(step.abort ? { abort: step.abort } : {}),
         input: normalizedInput,
         output: JSON.stringify(normalize(result, output)),
       });
       previousOutput = result;
     } catch (error) {
+      if (step.abort) {
+        // Pin the real shape, not only the message: the default reason is a
+        // DOMException with name=AbortError and legacy code=20.
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, 'AbortError');
+        assert.equal((error as any).code, 20);
+        assert.equal(error.message, 'This operation was aborted');
+      }
       recordedSteps.push({
         clockMs,
+        ...(step.abort ? { abort: step.abort } : {}),
         input: normalizedInput,
         error: error instanceof Error ? error.message : String(error),
       });

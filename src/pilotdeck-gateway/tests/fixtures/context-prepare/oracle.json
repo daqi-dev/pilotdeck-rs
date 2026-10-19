@@ -3002,6 +3002,161 @@
       ]
     },
     {
+      "name": "contributions-abort-before",
+      "setup": {
+        "contributions": {
+          "sections": [
+            {
+              "name": "dynamic",
+              "order": 0,
+              "dynamic": {
+                "kind": "throw",
+                "message": "provider ran after abort"
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "abort": "before",
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "same"
+              },
+              {
+                "name": "same"
+              }
+            ]
+          },
+          "error": "This operation was aborted"
+        }
+      ]
+    },
+    {
+      "name": "contributions-abort-during-provider",
+      "setup": {
+        "contributions": {
+          "sections": [
+            {
+              "name": "dynamic",
+              "order": 0,
+              "dynamic": {
+                "kind": "abort-when",
+                "value": "LEAK",
+                "when": "section"
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "abort": "section",
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "This operation was aborted"
+        }
+      ]
+    },
+    {
+      "name": "contributions-abort-during-variable",
+      "setup": {
+        "contributions": {
+          "sections": [
+            {
+              "name": "static",
+              "order": 0,
+              "text": "S"
+            }
+          ],
+          "variables": [
+            {
+              "name": "later",
+              "value": "LATE",
+              "abort": true
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "abort": "variable",
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "This operation was aborted"
+        }
+      ]
+    },
+    {
       "name": "date-rollover",
       "setup": {},
       "steps": [

@@ -13,7 +13,7 @@ use super::{
     },
 };
 use crate::host::modules::context::{ContextInput, ContextRuntime, Operation};
-use crate::host::{HostError, HostFuture, ModuleError};
+use crate::host::{Cancellation, HostError, HostFuture, ModuleError};
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
@@ -139,7 +139,11 @@ impl DefaultContextRuntime {
             .remove(&Some(session_id.clone()));
     }
 
-    async fn prepare(&self, fields: JsObject) -> Result<JsValue, HostError> {
+    async fn prepare(
+        &self,
+        fields: JsObject,
+        abort: Option<Cancellation>,
+    ) -> Result<JsValue, HostError> {
         let input = PrepareInput::parse(&fields, self.inner.runtime_context_surface)?;
         let Projection {
             messages,
@@ -171,6 +175,7 @@ impl DefaultContextRuntime {
                 permission_mode: input.permission_mode.clone(),
                 run_mode: input.run_mode.clone(),
                 additional_working_directories: input.additional_working_directories.clone(),
+                abort,
             };
             let variables = vec![
                 ("cwd".to_owned(), contribution_value(fields.get("cwd"))),
@@ -466,7 +471,15 @@ impl ContextRuntime for DefaultContextRuntime {
     }
     fn prepare_for_model(&self, input: ContextInput) -> HostFuture<JsValue> {
         let runtime = self.clone();
-        Box::pin(async move { runtime.prepare(input.fields).await })
+        // `ContextInput` carries cancellation opaquely, like the tool runtime.
+        // Adopt the host's one-shot `Cancellation`; an unrelated capability is
+        // ignored, exactly like an `AbortSignal` that is never aborted.
+        let abort = input
+            .abort_signal
+            .as_ref()
+            .and_then(|signal| signal.downcast_ref::<Cancellation>())
+            .cloned();
+        Box::pin(async move { runtime.prepare(input.fields, abort).await })
     }
 }
 
