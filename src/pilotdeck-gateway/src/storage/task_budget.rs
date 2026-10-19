@@ -281,7 +281,7 @@ impl TaskBudgetStore {
         if !absent(&ledger.total_usd) {
             if ledger.total_usd.as_number() != Some(total_usd) {
                 let fixed = match &ledger.total_usd {
-                    JsValue::Number(n) => fixed_six(*n),
+                    JsValue::Number(n) => pilotdeck_protocol::number::to_fixed_6(*n),
                     JsValue::Null => {
                         return Err(TaskBudgetError::Invalid(
                             "Cannot read properties of null (reading 'toFixed')".into(),
@@ -295,7 +295,7 @@ impl TaskBudgetStore {
                 };
                 return Err(TaskBudgetError::TotalConflict(format!(
                     "Project taskBudget.total is fixed at ${fixed}; received ${}.",
-                    fixed_six(total_usd)
+                    pilotdeck_protocol::number::to_fixed_6(total_usd)
                 )));
             }
             if ledger.project_retention_ms != retention {
@@ -577,35 +577,4 @@ fn identity(key: &JsString) -> Vec<(&'static str, JsValue)> {
         ("scope", text(TaskBudgetScope::from_json(&scope).as_str())),
         ("sessionKey", JsValue::String(session)),
     ]
-}
-// Exact fixed-point rounding of binary64, including JS's ties away from zero.
-fn fixed_six(n: f64) -> String {
-    if !n.is_finite() || n.abs() >= 1e21 {
-        return js_value::number_string(n);
-    }
-    let bits = n.abs().to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i32;
-    let mantissa =
-        u128::from(bits & ((1_u64 << 52) - 1)) | if exponent == 0 { 0 } else { 1_u128 << 52 };
-    let scaled = mantissa * 1_000_000;
-    let shift = if exponent == 0 {
-        -1074
-    } else {
-        exponent - 1023 - 52
-    };
-    let rounded = if shift >= 0 {
-        scaled << shift
-    } else if -shift >= 128 {
-        0
-    } else {
-        let right = -shift as u32;
-        (scaled >> right)
-            + u128::from((scaled & ((1_u128 << right) - 1)) >= (1_u128 << (right - 1)))
-    };
-    format!(
-        "{}{}.{:06}",
-        if n < 0.0 { "-" } else { "" },
-        rounded / 1_000_000,
-        rounded % 1_000_000
-    )
 }

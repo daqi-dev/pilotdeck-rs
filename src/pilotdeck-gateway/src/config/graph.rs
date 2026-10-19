@@ -28,6 +28,7 @@ enum Role {
     Projects,
     Tools,
     WebSearch,
+    Webui,
     Modules,
     Module,
     RunPolicy,
@@ -61,6 +62,8 @@ fn child(role: Role, key: &str) -> Role {
             "tools" => Tools,
             "modules" => Modules,
             "runPolicy" => RunPolicy,
+            // Only `webui.runtime.httpsProxy` is read (legacy proxy migration).
+            "webui" => Webui,
             "gateway" | "cron" | "proxy" => Fields,
             _ => Opaque,
         },
@@ -134,6 +137,13 @@ fn child(role: Role, key: &str) -> Role {
         Tools => {
             if key == "webSearch" {
                 WebSearch
+            } else {
+                Opaque
+            }
+        }
+        Webui => {
+            if key == "runtime" {
+                Fields
             } else {
                 Opaque
             }

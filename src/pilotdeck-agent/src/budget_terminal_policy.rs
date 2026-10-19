@@ -56,42 +56,6 @@ fn number_text(number: f64) -> PortResult<String> {
             message: "Number formatter returned undefined.".into(),
         })
 }
-/// Exact binary rational then nearest integer with ties up (ECMA262 toFixed).
-/// For |x|<1e21, x*1e6<1e27 (<2^90); significand*1e6<2^73.
-/// Those bounds make positive shifts and u128 remainder arithmetic safe.
-pub(crate) fn to_fixed_6(number: f64) -> PortResult<String> {
-    if !number.is_finite() || number.abs() >= 1e21 {
-        return number_text(number);
-    }
-    let sign = if number < 0.0 { "-" } else { "" };
-    let bits = number.abs().to_bits();
-    let biased = ((bits >> 52) & 0x7ff) as i32;
-    let fraction = bits & ((1_u64 << 52) - 1);
-    let (significand, exponent) = if biased == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1_u64 << 52), biased - 1023 - 52)
-    };
-    let scaled = u128::from(significand) * 1_000_000;
-    let integer = if exponent >= 0 {
-        scaled << exponent as u32
-    } else {
-        let shift = (-exponent) as u32;
-        if shift >= 128 {
-            0
-        } else {
-            let divisor = 1_u128 << shift;
-            let quotient = scaled / divisor;
-            let remainder = scaled % divisor;
-            quotient + u128::from(remainder >= divisor / 2)
-        }
-    };
-    Ok(format!(
-        "{sign}{}.{:06}",
-        integer / 1_000_000,
-        integer % 1_000_000
-    ))
-}
 /// Array.join nullish elements are empty. Iterative traversal avoids imposing
 /// an invented recursion limit on ordinary lossless values. Native callable
 /// methods, accessors, symbols and prototype graphs are outside JsValue.
@@ -235,8 +199,8 @@ pub(crate) fn evaluate(input: BudgetTerminalInput<'_>) -> PortResult<BudgetTermi
     })?;
     let message = format!(
         "Reached Gateway-owned {name} (${}) after spending ${}.",
-        to_fixed_6(limit)?,
-        to_fixed_6(ledger.task_spent_usd)?
+        pilotdeck_protocol::number::to_fixed_6(limit),
+        pilotdeck_protocol::number::to_fixed_6(ledger.task_spent_usd)
     );
     let mut details = JsObject::new();
     if let Some(limit) = ledger.turn_limit_usd {

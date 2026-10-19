@@ -232,18 +232,11 @@ fn put_key(o: &mut JsObject, key: JsString, value: JsValue) {
         o.insert(key, value);
     }
 }
-/// Canonical array-index key: decimal form of `0..=2^32-2` without leading
-/// zeros. `Object.keys` enumerates these first in ascending numeric order.
-fn array_index_key(key: &JsString) -> Option<u32> {
-    let text = key.to_utf8().ok()?;
-    let value: u32 = text.parse().ok()?;
-    (value != u32::MAX && value.to_string() == text).then_some(value)
-}
 /// `Object.entries` order: canonical array-index keys ascending first, then the
 /// remaining own keys in insertion order.
 fn js_entries(object: &JsObject) -> Vec<(&JsString, &JsValue)> {
     let mut entries: Vec<_> = object.entries().iter().map(|(k, v)| (k, v)).collect();
-    entries.sort_by_key(|(key, _)| array_index_key(key).map_or((1, 0), |n| (0, n)));
+    entries.sort_by_key(|(key, _)| key.array_index().map_or((1, 0), |n| (0, n)));
     entries
 }
 /// Rebuild a value with JavaScript property enumeration order. JSON encoding
@@ -2778,35 +2771,4 @@ fn sop_module(value: Option<&JsValue>, home: &Path, env: &Env) -> Option<JsValue
         put(&mut out, "frontendModule", JsValue::String(v));
     }
     Some(JsValue::Object(out))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::array_index_key;
-    use pilotdeck_protocol::JsString;
-
-    #[test]
-    fn array_index_key_matches_ecmascript_boundaries() {
-        for (key, expected) in [
-            ("0", Some(0)),
-            ("12", Some(12)),
-            ("4294967294", Some(u32::MAX - 1)),
-        ] {
-            assert_eq!(array_index_key(&JsString::from(key)), expected, "{key:?}");
-        }
-        for key in [
-            "4294967295",
-            "",
-            "01",
-            "-1",
-            "+1",
-            "1.0",
-            "1e2",
-            " 1",
-            "0x10",
-            "١",
-        ] {
-            assert_eq!(array_index_key(&JsString::from(key)), None, "{key:?}");
-        }
-    }
 }

@@ -1158,3 +1158,27 @@ async fn close_timeout_execute_timeout_drop_and_exited_leader_kill_grandchildren
         println!("HOST_GROUP_PASS {mode}: grandchild={pid}");
     }
 }
+
+/// #265-1 measurement: dropping a `TurnScope` after its captured runtime has
+/// shut down must not panic in `Drop`. Tokio's `Handle::spawn` on a shut-down
+/// runtime cancels the task instead of panicking, so cleanup is skipped
+/// (documented on `HostHandler::dispose`) rather than aborting the process.
+#[test]
+fn turn_scope_drop_after_runtime_shutdown_does_not_panic() {
+    let handler = Handler::new("ok");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let scope = runtime.block_on(async {
+        let mut scope = execution::TurnScope::new(handler.clone(), Duration::from_secs(1));
+        scope.spawn_pending_callback_for_test();
+        scope
+    });
+    drop(runtime);
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        drop(scope);
+    }));
+    assert!(dropped.is_ok(), "TurnScope::drop panicked after shutdown");
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 0);
+}

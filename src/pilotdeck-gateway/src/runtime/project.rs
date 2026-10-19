@@ -337,7 +337,24 @@ impl ProjectRuntimeRegistry {
         state: &mut RegistryState,
     ) -> (Arc<ProjectRuntime>, RuntimeResult) {
         let mut resources = ResourceBundle::default();
-        let result = self.factory.stage(root, &mut resources);
+        // A factory panic is this registry's analogue of a TS buildRuntime
+        // throw: it must take the ordinary rollback path for every group it
+        // already registered, and must not poison the registry mutex held by
+        // the caller (#301). The bundle only ever gains whole groups, so it is
+        // consistent at any unwind point.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.factory.stage(root, &mut resources)
+        }))
+        .unwrap_or_else(|payload| {
+            let detail = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".into());
+            Err(RuntimeError::new(format!(
+                "Project runtime factory panicked: {detail}"
+            )))
+        });
         let runtime = ProjectRuntime::new(
             root.to_owned(),
             resources,

@@ -208,23 +208,6 @@ pub(super) fn parse(raw: &str) -> Result<JsValue, CodecError> {
     }
 }
 
-fn index_key(key: &JsString) -> Option<u32> {
-    let units = key.units();
-    if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
-        return None;
-    }
-    let mut index = 0u32;
-    for &unit in units {
-        if !(u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
-            return None;
-        }
-        index = index
-            .checked_mul(10)?
-            .checked_add(u32::from(unit - u16::from(b'0')))?;
-    }
-    (index < u32::MAX).then_some(index)
-}
-
 fn unicode_escape(unit: u16, output: &mut String) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     output.push_str("\\u");
@@ -317,7 +300,7 @@ pub(super) fn stringify(value: &JsValue) -> Result<Option<String>, CodecError> {
                         if entry.1.is_undefined() {
                             continue;
                         }
-                        if let Some(index) = index_key(&entry.0) {
+                        if let Some(index) = entry.0.array_index() {
                             indexed.push((index, entry));
                         } else {
                             ordinary.push(entry);

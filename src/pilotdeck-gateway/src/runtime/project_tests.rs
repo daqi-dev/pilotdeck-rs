@@ -486,3 +486,92 @@ async fn reload_rejects_during_dispose_without_waiting_for_its_callers_lease() {
     drop(lease);
     bounded(dispose).await.unwrap().unwrap();
 }
+
+/// #301: a factory panic behaves like a TS buildRuntime throw. Groups it already
+/// registered are rolled back, the registry mutex stays usable, and a retry
+/// after the fault succeeds (both resolve and reload paths).
+#[tokio::test]
+async fn factory_panic_rolls_back_and_does_not_poison_registry() {
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let factory_probe = Arc::clone(&probe);
+    let panic_at = Arc::new(AtomicUsize::new(1));
+    let factory_panic_at = Arc::clone(&panic_at);
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        &scratch.0,
+        Arc::new(move |root: &Path, resources: &mut ResourceBundle| {
+            let result = factory_probe.stage(root, resources);
+            let id = factory_probe.next.load(Ordering::SeqCst);
+            if factory_panic_at.load(Ordering::SeqCst) == id {
+                panic!("injected stage panic:{id}");
+            }
+            result
+        }),
+    ));
+    let Err(error) = registry.resolve(None) else {
+        panic!("a panicking factory must fail resolve")
+    };
+    assert_eq!(
+        error.message,
+        "Project runtime factory panicked: injected stage panic:1"
+    );
+    until(|| probe.events().contains(&"dispose:1".to_owned())).await;
+    assert!(!registry.state.is_poisoned());
+    let first = registry.resolve(None).unwrap();
+    assert_eq!(id(&first), 2);
+    panic_at.store(3, Ordering::SeqCst);
+    let error = bounded(registry.reload()).await.unwrap_err();
+    assert_eq!(
+        error.message,
+        "Project runtime factory panicked: injected stage panic:3"
+    );
+    assert!(!registry.state.is_poisoned());
+    assert!(Arc::ptr_eq(&registry.resolve(None).unwrap(), &first));
+    bounded(registry.reload()).await.unwrap();
+    assert_eq!(id(&registry.resolve(None).unwrap()), 4);
+    bounded(registry.dispose()).await.unwrap();
+    let events = probe.events();
+    for id in 1..=4 {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| *event == &format!("dispose:{id}"))
+                .count(),
+            1,
+            "{events:?}"
+        );
+    }
+}
+
+/// Regenerates the oracle from the real TS registry and compares bytes,
+/// matching the sibling `*_fixtures_regenerate_identically_from_ts` tests.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn project_runtime_fixtures_regenerate_identically_from_ts() {
+    let baseline = PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project-runtime");
+    // A fresh UUID directory per run; only it is removed afterwards.
+    let scratch = Scratch::new();
+    let output = std::process::Command::new("node")
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(fixtures.join("generate.mts"))
+        .arg(&scratch.0)
+        .env("PDRS_BASELINE", &baseline)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(scratch.0.join("oracle.json")).unwrap(),
+        std::fs::read(fixtures.join("oracle.json")).unwrap(),
+        "oracle.json"
+    );
+}

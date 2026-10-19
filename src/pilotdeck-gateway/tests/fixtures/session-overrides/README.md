@@ -19,19 +19,19 @@ cargo test --locked --offline -p pilotdeck-gateway --test session_overrides
 
 生成器先断言基线 HEAD、三个源文件无工作区改动，并记录源文件哈希。同一命令连跑两次应得到逐字节相同的 `oracle.json`（无时间戳、路径或随机值）；通过同目录临时文件与 rename 原子替换，避免回放读取半截 JSON。
 
-Rust 回放始终校验固定 commit 与三个固定源码哈希；设置 `PDRS_BASELINE` 时，还会逐文件读取该目录中的实际字节，断言 SHA-256 与 `oracle.json.sourceSha256` 一致。读取失败或哈希不符直接失败，不跳过校验。六个序列各自断言**精确步数**：`ruleSet=53`、`mode=31`、`overrides=39`、`combined=54`、`identity=61`、`sharing=81`，共 319 步；空序列、截断或多出步骤都会失败。
+Rust 回放始终校验固定 commit 与三个固定源码哈希；设置 `PDRS_BASELINE` 时，还会逐文件读取该目录中的实际字节，断言 SHA-256 与 `oracle.json.sourceSha256` 一致。读取失败或哈希不符直接失败，不跳过校验。六个序列各自断言**精确步数**：`ruleSet=69`、`mode=31`、`overrides=56`、`combined=54`、`identity=69`、`sharing=81`，共 360 步；空序列、截断或多出步骤都会失败。
 
 `unattendedSessionExcludedTools` 直接记录真实 TS 模块导出的名单，Rust 另行核对 `UNATTENDED_SESSION_EXCLUDED_TOOLS` 的完整内容与顺序；这项常量正控不计入六组回放步数。
 
 ## 覆盖
 
-`ruleSet`（53 步）：未知会话 `allowRules` / `updateAskRules`；创建时保留 configured 重复项；`acquire` 时把 configured 去重合并进同一组数组；`force` 不同但 `sameRule` 四字段相同视为重复；`pattern` 不同视为新规则；显式 `pattern: undefined` / `force: undefined` 作为合法输入编码一次并参与同一 `sameRule` 比较；两个 lease 重叠、release 幂等、最后一个 release 删除无 pin 的 entry；`grant` 先于 AgentHandle 时 pin entry，`closeSession` 解除 pin 并按 retain 删除；`dispose` 清空后 lease 仍持有原数组；空字符串与孤立代理 sessionKey；非法 source/behavior 原样存储。
+`ruleSet`（69 步）：未知会话 `allowRules` / `updateAskRules`；创建时保留 configured 重复项；`acquire` 时把 configured 去重合并进同一组数组；`force` 不同但 `sameRule` 四字段相同视为重复；`pattern` 不同视为新规则；显式 `pattern: undefined` / `force: undefined` 作为合法输入编码一次并参与同一 `sameRule` 比较；两个 lease 重叠、release 幂等、最后一个 release 删除无 pin 的 entry；`grant` 先于 AgentHandle 时 pin entry，`closeSession` 解除 pin 并按 retain 删除；`dispose` 清空后 lease 仍持有原数组；空字符串与孤立代理 sessionKey；非法 source/behavior 原样存储；configured 成员为 `null` 时与缺省一样 `?? []`，已有 entry 上 `null` 合并为空操作；`pattern: null` 按 `===` 与缺省/`undefined` 区分、与另一条 `null` 重复。
 
 `mode`（31 步）：未知 key 的 `get`/`getBase`；`plan` transition 的 `baseBeforePlan ?? current ?? fallbackBase` 顺序；重复 plan 保持 base；非 plan transition 清 base；`set` 清 base；`clear`/`dispose`；非法 mode 字符串原样存储；空字符串与孤立代理 key。
 
-`overrides`（39 步）：同 key 替换而非合并；未知顶层属性保留；`null`/`undefined`/数字/字符串/数组的 object spread 语义（字符串与数组按 UTF-16 索引展开）；`get` 返回顶层副本（修改返回值或 set 的输入不改变存储）；`delete`/`deletePrefix`/`clear`；空字符串与孤立代理 key。
+`overrides`（56 步）：同 key 替换而非合并；未知顶层属性保留；`null`/`undefined`/数字/字符串/数组的 object spread 语义（字符串与数组按 UTF-16 索引展开）；`get` 返回顶层副本（修改返回值或 set 的输入不改变存储）；`delete`/`deletePrefix`/`clear`；空字符串与孤立代理 key；`deletePrefix` 边界：前缀长于 key 不删、前缀等于完整 key 时连同更长的 key 一起删、孤立代理前缀，以及空前缀删除全部条目。
 
-`identity`（61 步）：逐条钉住 `permissionRules` 的对象/数组成员身份。codex 第二轮的两条失败序列都在内：① `permissionRules: {}` → `acquire` → `grant(Read)` → `updateAsk` → `close` → `release` → `acquire`，重建后三个成员都是新数组；仅声明 `allow` 时 grant 保留、缺省 `ask` 重置；三个都声明时二者都保留；显式 `undefined` 等同缺省。② 跨 `SessionConfigOverrides` 实例 `B.set("c", A.get("a"))` 共享 A 的对象而不是 B 的首个句柄；同一个已取得视图连续两次 `set` 仍指向同一对象（中间的 grant 保留）；`delete` 后把旧视图设到新 key 仍保持身份与活数组。`sameStores` / `sameHeld` 记录 TS 的引用比较结果，Rust 侧用 `ConfiguredRuleSet::same_object` 回放。
+`identity`（69 步）：逐条钉住 `permissionRules` 的对象/数组成员身份。codex 第二轮的两条失败序列都在内：① `permissionRules: {}` → `acquire` → `grant(Read)` → `updateAsk` → `close` → `release` → `acquire`，重建后三个成员都是新数组；仅声明 `allow` 时 grant 保留、缺省 `ask` 重置；三个都声明时二者都保留；显式 `undefined` 与 `null` 都等同缺省（重建后为新数组）。② 跨 `SessionConfigOverrides` 实例 `B.set("c", A.get("a"))` 共享 A 的对象而不是 B 的首个句柄；同一个已取得视图连续两次 `set` 仍指向同一对象（中间的 grant 保留）；`delete` 后把旧视图设到新 key 仍保持身份与活数组。`sameStores` / `sameHeld` 记录 TS 的引用比较结果，Rust 侧用 `ConfiguredRuleSet::same_object` 回放。
 
 `combined`（54 步）：把 `SessionConfigOverrides` 与规则 registry 按真实 factory 的用法组合。`set` 含空 `permissionRules` 的 override → `acquire` → `grant` → override `get` 可见 → `close` → `release` → 从同一 override 重建 → 仍读到该 grant；`updateAskRules` 同时到达两个 lease 与 override 视图；`holdAllow` 在 `grant` 前取得 `allowRules` 引用、`readHeldAllow` 在 `grant` 后读取；`setFromGet` 复刻 `{ ...existing }` 的 cwd/mode 更新路径，更新后新 grant 在重建时仍可见；`dispose` 后同 key 重建、旧 lease release 不删除新 entry；部分 `permissionRules` 只暴露它声明的数组成员；显式 `undefined` 可选字段经过 override → handle → registry 后仍按缺省参与 `sameRule`。
 

@@ -167,7 +167,7 @@ fn real_ts_rule_set_registry_matches_outcomes_and_size() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "ruleSet"), "ruleSet");
-    assert_eq!(steps.len(), 53, "need the exact real TS ruleSet sequence");
+    assert_eq!(steps.len(), 69, "need the exact real TS ruleSet sequence");
 
     let registry = GatewaySessionPermissionRuleSetRegistry::new();
     let mut leases: HashMap<String, Lease> = HashMap::new();
@@ -369,7 +369,7 @@ fn real_ts_session_config_overrides_match_spread_and_state() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "overrides"), "overrides");
-    assert_eq!(steps.len(), 39, "need the exact real TS overrides sequence");
+    assert_eq!(steps.len(), 56, "need the exact real TS overrides sequence");
 
     let mut overrides = SessionConfigOverrides::new();
     let mut keys: Vec<JsString> = vec![];
@@ -665,7 +665,7 @@ fn real_ts_permission_rules_views_keep_object_identity() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "identity"), "identity");
-    assert_eq!(steps.len(), 61, "need the exact real TS identity sequence");
+    assert_eq!(steps.len(), 69, "need the exact real TS identity sequence");
 
     let mut stores: HashMap<String, SessionConfigOverrides> = HashMap::new();
     let registry = GatewaySessionPermissionRuleSetRegistry::new();

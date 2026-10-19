@@ -279,13 +279,8 @@ pub fn to_legacy_hook_input(input: &HookInput) -> JsObject {
 
 /// Object.entries enumerates canonical array-index keys before other keys.
 pub(super) fn ordered_entries(object: &JsObject) -> Vec<(&JsString, &JsValue)> {
-    fn index(key: &JsString) -> Option<u32> {
-        let s = key.to_utf8().ok()?;
-        let n: u32 = s.parse().ok()?;
-        (n != u32::MAX && n.to_string() == s).then_some(n)
-    }
     let mut entries: Vec<_> = object.entries().iter().map(|(k, v)| (k, v)).collect();
-    entries.sort_by_key(|(key, _)| index(key).map_or((1, 0), |n| (0, n)));
+    entries.sort_by_key(|(key, _)| key.array_index().map_or((1, 0), |n| (0, n)));
     entries
 }
 

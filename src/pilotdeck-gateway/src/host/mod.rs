@@ -244,8 +244,11 @@ pub trait HostHandler: Send + Sync + 'static {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject>;
     /// One handler instance belongs to one execute/turn. Called once after all
     /// callback futures have stopped, including on failure or dropped, polled
-    /// execute. Callback shutdown requires cooperative cancellation; dispose
-    /// itself is best-effort and bounded by close_timeout. Dropped executions
+    /// execute. Callback shutdown requires cooperative cancellation: callback
+    /// futures must reach an await point and must not block a worker thread
+    /// synchronously, or callback shutdown (and therefore dispose) waits for
+    /// them without bound. Dispose itself is best-effort and bounded by
+    /// close_timeout. Dropped executions
     /// schedule cleanup on the captured Tokio runtime; runtime/process shutdown
     /// cannot guarantee asynchronous cleanup. Errors do not replace a terminal.
     fn dispose(&self) -> HostFuture<()> {

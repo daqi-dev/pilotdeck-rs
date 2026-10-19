@@ -9,6 +9,7 @@ mod consumer;
 pub mod json_syntax;
 pub mod model;
 pub mod module;
+pub mod number;
 mod snapshots;
 pub mod wire;
 
@@ -38,6 +39,25 @@ impl JsString {
     }
     pub fn equals_str(&self, value: &str) -> bool {
         self.0.iter().copied().eq(value.encode_utf16())
+    }
+    /// Canonical array-index key: the decimal form of `0..=2^32-2` without a
+    /// sign or leading zeros. `Object.keys`/`JSON.stringify` enumerate these
+    /// first in ascending numeric order. Single shared implementation.
+    pub fn array_index(&self) -> Option<u32> {
+        let units = &self.0;
+        if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
+            return None;
+        }
+        let mut index = 0u32;
+        for &unit in units {
+            if !(u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
+                return None;
+            }
+            index = index
+                .checked_mul(10)?
+                .checked_add(u32::from(unit - u16::from(b'0')))?;
+        }
+        (index < u32::MAX).then_some(index)
     }
 }
 impl From<&str> for JsString {
@@ -297,5 +317,58 @@ mod prototype_tests {
             stringify_json(&value).unwrap().unwrap(),
             "{\"own\":\"value\"}"
         );
+    }
+}
+
+#[cfg(test)]
+mod array_index_tests {
+    use super::JsString;
+
+    /// The five former private copies (codec, hooks, config value/snapshot,
+    /// tool context) were either this unit scan or the UTF-8 parse below.
+    fn utf8_parse(key: &JsString) -> Option<u32> {
+        let text = key.to_utf8().ok()?;
+        let value: u32 = text.parse().ok()?;
+        (value != u32::MAX && value.to_string() == text).then_some(value)
+    }
+
+    #[test]
+    fn array_index_matches_ecmascript_boundaries_and_former_copies() {
+        let mut keys: Vec<JsString> = [
+            "0",
+            "12",
+            "4294967294",
+            "4294967295",
+            "4294967296",
+            "99999999999",
+            "",
+            "00",
+            "01",
+            "-1",
+            "+1",
+            "-0",
+            "1.0",
+            "1e2",
+            " 1",
+            "1 ",
+            "0x10",
+            "١",
+            "１",
+            "length",
+        ]
+        .into_iter()
+        .map(JsString::from)
+        .collect();
+        keys.push(JsString::from_utf16(vec![u16::from(b'1'), 0xd800]));
+        keys.push(JsString::from_utf16(vec![0xd800]));
+        for key in &keys {
+            assert_eq!(key.array_index(), utf8_parse(key), "{key:?}");
+        }
+        for (key, expected) in [("0", 0), ("12", 12), ("4294967294", u32::MAX - 1)] {
+            assert_eq!(JsString::from(key).array_index(), Some(expected), "{key}");
+        }
+        for key in ["4294967295", "", "01", "-1", "+1", "1.0", "0x10", "١"] {
+            assert_eq!(JsString::from(key).array_index(), None, "{key}");
+        }
     }
 }

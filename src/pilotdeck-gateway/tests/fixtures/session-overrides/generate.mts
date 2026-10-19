@@ -154,6 +154,7 @@ const surrogateRule = rule('\ud800', 'allow', '\ud800', { pattern: '\ud800' });
 // like omitted members. They must survive the outer encoder exactly once.
 const undefinedPatternRule = rule('user', 'allow', 'Read', { pattern: undefined });
 const undefinedForceRule = rule('project', 'deny', 'Bash', { force: undefined });
+const nullPatternRule = rule('user', 'allow', 'Read', { pattern: null });
 
 const ruleSetScenario = [
   { op: 'size' },
@@ -223,6 +224,26 @@ const ruleSetScenario = [
   { op: 'dispose' },
   { op: 'release', lease: 'L6' },
   { op: 'leaseRules', lease: 'L6' },
+  // `null` members are `?? []` like missing/undefined, and `mergeRules(target,
+  // null)` is a no-op on an existing entry (#290).
+  { op: 'acquire', lease: 'N1', key: 's7', configured: { allow: null, deny: [r3], ask: null } },
+  { op: 'grant', key: 's7', rule: r1 },
+  { op: 'leaseRules', lease: 'N1' },
+  { op: 'acquire', lease: 'N2', key: 's7', configured: { allow: null, deny: null, ask: null } },
+  { op: 'leaseRules', lease: 'N2' },
+  { op: 'release', lease: 'N1' },
+  { op: 'release', lease: 'N2' },
+  { op: 'close', key: 's7' },
+  // `pattern: null` is compared with ===, so it differs from a missing or
+  // undefined pattern but duplicates another null pattern.
+  { op: 'acquire', lease: 'N3', key: 's8', configured: { allow: [nullPatternRule] } },
+  { op: 'grant', key: 's8', rule: r1 },
+  { op: 'grant', key: 's8', rule: nullPatternRule },
+  { op: 'grant', key: 's8', rule: undefinedPatternRule },
+  { op: 'leaseRules', lease: 'N3' },
+  { op: 'release', lease: 'N3' },
+  { op: 'close', key: 's8' },
+  { op: 'size' },
 ];
 for (const step of ruleSetScenario) runRuleSet(step);
 
@@ -407,6 +428,26 @@ const overrideScenario = [
   { op: 'get', key: 'q1' },
   { op: 'get', key: '' },
   { op: 'get', key: '\ud800' },
+  // deletePrefix boundaries (#290): a prefix longer than a key, a prefix equal
+  // to a whole key (and shorter than another), a lone surrogate prefix, and
+  // the empty prefix, which every key startsWith and so clears the store.
+  { op: 'set', key: 'ab', value: { cwd: '/ab' } },
+  { op: 'set', key: 'abc', value: { cwd: '/abc' } },
+  { op: 'set', key: 'b', value: { cwd: '/b' } },
+  { op: 'set', key: '\ud800x', value: { cwd: '/surrogate-x' } },
+  { op: 'deletePrefix', prefix: 'abcd' },
+  { op: 'get', key: 'abc' },
+  { op: 'deletePrefix', prefix: 'ab' },
+  { op: 'get', key: 'ab' },
+  { op: 'get', key: 'abc' },
+  { op: 'get', key: 'b' },
+  { op: 'deletePrefix', prefix: '\ud800' },
+  { op: 'get', key: '\ud800x' },
+  { op: 'set', key: '', value: { cwd: '/empty-again' } },
+  { op: 'deletePrefix', prefix: '' },
+  { op: 'get', key: '' },
+  { op: 'get', key: 'b' },
+  { op: 'get', key: 'abc' },
 ];
 for (const step of overrideScenario) runOverride(step);
 
@@ -846,6 +887,20 @@ const identityScenario = [
   { op: 'acquire', store: 'A', key: 'e', session: 'e', lease: 'D1' },
   { op: 'grant', session: 'e', rule: read },
   { op: 'get', store: 'A', key: 'e' },
+  // `null` members are `?? []` like missing/undefined: fresh arrays (#290).
+  {
+    op: 'set',
+    store: 'M',
+    key: 'nullAllow',
+    value: { permissionRules: { allow: null, deny: null } },
+  },
+  { op: 'acquire', store: 'M', key: 'nullAllow', session: 'nullAllow', lease: 'N1' },
+  { op: 'grant', session: 'nullAllow', rule: read },
+  { op: 'close', session: 'nullAllow' },
+  { op: 'release', lease: 'N1' },
+  { op: 'acquire', store: 'M', key: 'nullAllow', session: 'nullAllow', lease: 'N2' },
+  { op: 'leaseRules', lease: 'N2' },
+  { op: 'get', store: 'M', key: 'nullAllow' },
 ];
 for (const step of identityScenario) runIdentity(step);
 

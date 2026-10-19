@@ -39,6 +39,11 @@ impl TurnScope {
             timeout,
         }
     }
+    /// Test hook: an in-flight callback that never completes.
+    #[cfg(test)]
+    pub(super) fn spawn_pending_callback_for_test(&mut self) {
+        self.callbacks.spawn(std::future::pending());
+    }
     pub(super) async fn stop_callbacks(&mut self) {
         self.callbacks.shutdown().await;
     }

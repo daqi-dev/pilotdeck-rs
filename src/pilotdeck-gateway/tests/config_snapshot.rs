@@ -98,17 +98,10 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         );
         match (&native, &result) {
             (Ok(config), Ok(snapshot)) => {
-                // Pre-existing role-limited projection gap: the native load does
-                // not materialize `webui`, so it misses the proxy migration
-                // warning that the snapshot (and TS) emit. Reading `webui` in
-                // the old path would change existing parsing behaviour, so this
-                // one case is compared without that warning.
-                let ignored = (id == "proxy-migrated").then_some("CONFIG_PROXY_MIGRATED");
                 let native_diagnostics = config
                     .diagnostics
                     .iter()
                     .map(diagnostic_signature)
-                    .filter(|signature| Some(signature.0.as_str()) != ignored)
                     .collect::<Vec<_>>();
                 let snapshot_diagnostics = match snapshot.get("diagnostics") {
                     Some(JsValue::Array(items)) => items.as_slice(),
@@ -116,7 +109,6 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
                 }
                 .iter()
                 .map(diagnostic_signature)
-                .filter(|signature| Some(signature.0.as_str()) != ignored)
                 .collect::<Vec<_>>();
                 if native_diagnostics != snapshot_diagnostics {
                     failures.push(format!(

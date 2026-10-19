@@ -24,12 +24,7 @@ pub(super) fn entries(value: &JsValue) -> Vec<(&JsString, &JsValue)> {
         return vec![];
     };
     let mut keys: Vec<_> = obj.entries().iter().map(|(k, v)| (k, v)).collect();
-    fn index(s: &JsString) -> Option<u32> {
-        let s = s.to_utf8().ok()?;
-        let n = s.parse::<u32>().ok()?;
-        (n != u32::MAX && n.to_string() == s).then_some(n)
-    }
-    keys.sort_by(|a, b| match (index(a.0), index(b.0)) {
+    keys.sort_by(|a, b| match (a.0.array_index(), b.0.array_index()) {
         (Some(a), Some(b)) => a.cmp(&b),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
