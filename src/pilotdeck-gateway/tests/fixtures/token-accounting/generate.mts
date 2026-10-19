@@ -123,6 +123,12 @@ add('prototype-responses', [
   step({ ...baseRequest, model: 'toString', maxOutputTokens: 10, speed: 'fast', tools: 'x' }),
   step({ ...baseRequest, tools: 'x' }),
 ], { providers: { p: { ...provider, protocol: 'openai-responses', url: 'https://api.openai.com/v1' } } });
+// Error messages keep the model identifier's UTF-16 units, including a lone
+// surrogate. #317 boundary 2.
+add('unicode-model-read-error', [step({ ...baseRequest, model: '\ud800' })], { providers: { p: { ...provider, models: null } } });
+add('unicode-thinking-error', [step({ ...baseRequest, model: 'm', thinking: { mode: 'high' } })], {
+  providers: { p: { ...provider, models: { m: { ...model, id: '\ud800', thinking: { state: 'enabled', format: 'provider', efforts: ['low'] } } } } },
+});
 const cases: any[] = [];
 try {
   for (const sequence of sequences) {

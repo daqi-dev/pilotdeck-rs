@@ -123,6 +123,10 @@ impl Diagnostic {
                             self.at += 1;
                         }
                         Some(34 | 47 | 92 | 98 | 102 | 110 | 114 | 116) => self.at += 1,
+                        // V8 >=256 prints "Unexpected token '<unit>'" for a
+                        // backslash before a non-ASCII unit, not "Bad escaped
+                        // character" (measured Node 22.22, JSON.parse(`"a\\Ā"`)).
+                        // json-invalid-81 in the HTTP oracle pins this.
                         Some(256..) => return Err(self.unexpected()),
                         _ => return Err(self.position("Bad escaped character in JSON")),
                     }

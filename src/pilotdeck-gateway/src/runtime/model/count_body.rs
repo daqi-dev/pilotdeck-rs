@@ -53,11 +53,17 @@ fn cache_control() -> JsValue {
 }
 
 fn reading_error(receiver: &str, request: &JsObject, key: &str) -> HostError {
-    ModuleError::new(format!(
-        "Cannot read properties of {receiver} (reading '{}')",
-        text(request.get(key).unwrap_or(&UNDEFINED))
-    ))
-    .into()
+    // TS keeps the property name's UTF-16 units, including lone surrogates, in
+    // the TypeError message. `format!` would replacement-decode them first.
+    let mut units = format!("Cannot read properties of {receiver} (reading '")
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    units.extend(
+        crate::js_value::to_string_units(request.get(key).unwrap_or(&UNDEFINED))
+            .unwrap_or_default(),
+    );
+    units.extend("')".encode_utf16());
+    ModuleError::new(JsString::from_utf16(units)).into()
 }
 
 pub(super) fn count_request(
@@ -209,7 +215,11 @@ fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsVal
         None
     };
     let fail = |message: String| -> HostError {
-        ModuleError::new(format!("{}: {message}", text(field(model, "id")))).into()
+        // `model.id` may contain lone surrogates; keep its UTF-16 units.
+        let mut units = crate::js_value::to_string_units(field(model, "id")).unwrap_or_default();
+        units.extend(": ".encode_utf16());
+        units.extend(message.encode_utf16());
+        ModuleError::new(JsString::from_utf16(units)).into()
     };
     if let Some(effort) = &effort {
         let supported = match field(settings, "efforts") {
