@@ -774,7 +774,7 @@
       }
     }
   },
-  "count": 319,
+  "count": 345,
   "settingsSources": {
     "count": 10,
     "cases": [
@@ -913,7 +913,7 @@
     ]
   },
   "settingsValidate": {
-    "count": 63,
+    "count": 66,
     "cases": [
       {
         "name": "undefined",
@@ -1054,6 +1054,59 @@
             "name": "PilotSdkSessionSettingsError",
             "code": "UNSUPPORTED_SDK_SETTING",
             "message": "settings.agent.bogus is not supported by the SDK session overlay."
+          }
+        }
+      },
+      {
+        "name": "unknown-root-integer-key",
+        "value": {
+          "5": 2,
+          "agent": {},
+          "zz": 1
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.5 is not supported; only non-secret agent model, limits, thinking, and subagent settings may be overlaid."
+          }
+        }
+      },
+      {
+        "name": "unknown-agent-integer-key",
+        "value": {
+          "agent": {
+            "7": 2,
+            "zz": 1
+          }
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.7 is not supported by the SDK session overlay."
+          }
+        }
+      },
+      {
+        "name": "unknown-thinking-integer-key",
+        "value": {
+          "agent": {
+            "thinking": {
+              "3": 2,
+              "enabled": true,
+              "zz": 1
+            }
+          }
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.thinking.3 is not supported by the SDK session overlay."
           }
         }
       },
@@ -1939,13 +1992,119 @@
       }
     ]
   },
+  "settingsEntryOrder": {
+    "count": 3,
+    "cases": [
+      {
+        "name": "unknown-root-integer-key",
+        "entries": {
+          "entries": [
+            [
+              "agent",
+              {}
+            ],
+            [
+              "zz",
+              1
+            ],
+            [
+              "5",
+              2
+            ]
+          ]
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.5 is not supported; only non-secret agent model, limits, thinking, and subagent settings may be overlaid."
+          }
+        }
+      },
+      {
+        "name": "unknown-agent-integer-key",
+        "entries": {
+          "entries": [
+            [
+              "agent",
+              {
+                "entries": [
+                  [
+                    "zz",
+                    1
+                  ],
+                  [
+                    "7",
+                    2
+                  ]
+                ]
+              }
+            ]
+          ]
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.7 is not supported by the SDK session overlay."
+          }
+        }
+      },
+      {
+        "name": "unknown-thinking-integer-key",
+        "entries": {
+          "entries": [
+            [
+              "agent",
+              {
+                "entries": [
+                  [
+                    "thinking",
+                    {
+                      "entries": [
+                        [
+                          "enabled",
+                          true
+                        ],
+                        [
+                          "zz",
+                          1
+                        ],
+                        [
+                          "3",
+                          2
+                        ]
+                      ]
+                    }
+                  ]
+                ]
+              }
+            ]
+          ]
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.thinking.3 is not supported by the SDK session overlay."
+          }
+        }
+      }
+    ]
+  },
   "settingsResolve": {
-    "count": 85,
+    "count": 92,
     "cases": [
       {
         "name": "empty",
         "dir": "resolve-0-empty",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-0-empty/project",
         "env": {
           "HOME": "<ROOT>/resolve-0-empty",
@@ -1980,6 +2139,9 @@
         "name": "host-defaults",
         "dir": "resolve-1-host-defaults",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-1-host-defaults/project",
         "env": {
           "HOME": "<ROOT>/resolve-1-host-defaults",
@@ -2018,6 +2180,9 @@
         "name": "settings-only",
         "dir": "resolve-2-settings-only",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-2-settings-only/project",
         "env": {
           "HOME": "<ROOT>/resolve-2-settings-only",
@@ -2056,6 +2221,9 @@
         "name": "enforced-only",
         "dir": "resolve-3-enforced-only",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-3-enforced-only/project",
         "env": {
           "HOME": "<ROOT>/resolve-3-enforced-only",
@@ -2099,6 +2267,9 @@
             "content": "agent: {model: project-model}\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-4-precedence-layers/project",
         "env": {
           "HOME": "<ROOT>/resolve-4-precedence-layers",
@@ -2145,6 +2316,9 @@
         "name": "subagent-merge",
         "dir": "resolve-5-subagent-merge",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-5-subagent-merge/project",
         "env": {
           "HOME": "<ROOT>/resolve-5-subagent-merge",
@@ -2199,6 +2373,9 @@
         "name": "managed-not-selected",
         "dir": "resolve-6-managed-not-selected",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-6-managed-not-selected/project",
         "env": {
           "HOME": "<ROOT>/resolve-6-managed-not-selected",
@@ -2239,6 +2416,9 @@
         "name": "managed-selected",
         "dir": "resolve-7-managed-selected",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-7-managed-selected/project",
         "env": {
           "HOME": "<ROOT>/resolve-7-managed-selected",
@@ -2285,6 +2465,9 @@
             "content": "model: {providers: {ignored: {}}}\nagent:\n  model: user-model\n  fallbackModel: user-fallback\n  maxContextTokens: 11\n  maxOutputTokens: 12\n  thinking: {enabled: true, budgetTokens: 13, extra: ignored}\n  subagents: {default: user-sub, timeoutMs: 14, maxDepth: 15, extra: ignored}\n  unknownAgentKey: ignored\nunknownRootKey: ignored\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-8-user-source-overlay/project",
         "env": {
           "HOME": "<ROOT>/resolve-8-user-source-overlay",
@@ -2342,6 +2525,9 @@
             "content": "agent: {model: local-model}\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-9-project-and-local/project",
         "env": {
           "HOME": "<ROOT>/resolve-9-project-and-local",
@@ -2379,6 +2565,9 @@
         "name": "missing-file",
         "dir": "resolve-10-missing-file",
         "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-10-missing-file/project",
         "env": {
           "HOME": "<ROOT>/resolve-10-missing-file",
@@ -2420,6 +2609,9 @@
             "content": ""
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-11-empty-yaml/project",
         "env": {
           "HOME": "<ROOT>/resolve-11-empty-yaml",
@@ -2459,6 +2651,9 @@
             "content": "null\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-12-null-root/project",
         "env": {
           "HOME": "<ROOT>/resolve-12-null-root",
@@ -2498,6 +2693,9 @@
             "content": "- a\n- b\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-13-array-root/project",
         "env": {
           "HOME": "<ROOT>/resolve-13-array-root",
@@ -2539,6 +2737,9 @@
             "content": "hello\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-14-scalar-root/project",
         "env": {
           "HOME": "<ROOT>/resolve-14-scalar-root",
@@ -2580,6 +2781,9 @@
             "content": "agent: [\n"
           }
         ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
         "projectRoot": "<ROOT>/resolve-15-invalid-yaml/project",
         "env": {
           "HOME": "<ROOT>/resolve-15-invalid-yaml",
@@ -2613,18 +2817,199 @@
         }
       },
       {
+        "name": "read-failed-directory",
+        "dir": "resolve-16-read-failed-directory",
+        "files": [],
+        "dirs": [
+          "project/.pilotdeck/pilotdeck.yaml"
+        ],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-16-read-failed-directory/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-16-read-failed-directory",
+          "PILOT_HOME": "<ROOT>/resolve-16-read-failed-directory/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": [
+          "project"
+        ],
+        "settings": {
+          "$": "undefined"
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "SDK_SETTING_SOURCE_READ_FAILED",
+            "message": "Unable to read project settings source: EISDIR: illegal operation on a directory, read"
+          }
+        }
+      },
+      {
+        "name": "read-failed-permission",
+        "dir": "resolve-17-read-failed-permission",
+        "files": [
+          {
+            "path": "project/.pilotdeck/pilotdeck.yaml",
+            "content": "agent: {model: unreadable}\n"
+          }
+        ],
+        "dirs": [],
+        "modes": [
+          {
+            "path": "project/.pilotdeck/pilotdeck.yaml",
+            "mode": 0
+          }
+        ],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-17-read-failed-permission/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-17-read-failed-permission",
+          "PILOT_HOME": "<ROOT>/resolve-17-read-failed-permission/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": [
+          "project"
+        ],
+        "settings": {
+          "$": "undefined"
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "SDK_SETTING_SOURCE_READ_FAILED",
+            "message": "Unable to read project settings source: EACCES: permission denied, open '<ROOT>/resolve-17-read-failed-permission/project/.pilotdeck/pilotdeck.yaml'"
+          }
+        }
+      },
+      {
+        "name": "missing-symlink-target",
+        "dir": "resolve-18-missing-symlink-target",
+        "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [
+          {
+            "path": "project/.pilotdeck/pilotdeck.yaml",
+            "target": "missing-target"
+          }
+        ],
+        "projectRoot": "<ROOT>/resolve-18-missing-symlink-target/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-18-missing-symlink-target",
+          "PILOT_HOME": "<ROOT>/resolve-18-missing-symlink-target/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": [
+          "project"
+        ],
+        "settings": {
+          "$": "undefined"
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": true,
+          "value": {
+            "$": "undefined"
+          }
+        }
+      },
+      {
+        "name": "yaml-tojson-alias-bomb",
+        "dir": "resolve-19-yaml-tojson-alias-bomb",
+        "files": [
+          {
+            "path": "project/.pilotdeck/pilotdeck.yaml",
+            "content": "a: &a [x,x,x,x,x,x,x,x,x,x]\nb0: &b0 [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]\nb1: &b1 [*b0,*b0,*b0,*b0,*b0,*b0,*b0,*b0,*b0,*b0]\nb2: &b2 [*b1,*b1,*b1,*b1,*b1,*b1,*b1,*b1,*b1,*b1]\nb3: &b3 [*b2,*b2,*b2,*b2,*b2,*b2,*b2,*b2,*b2,*b2]\nb4: &b4 [*b3,*b3,*b3,*b3,*b3,*b3,*b3,*b3,*b3,*b3]\nb5: &b5 [*b4,*b4,*b4,*b4,*b4,*b4,*b4,*b4,*b4,*b4]\nb6: &b6 [*b5,*b5,*b5,*b5,*b5,*b5,*b5,*b5,*b5,*b5]\nb7: &b7 [*b6,*b6,*b6,*b6,*b6,*b6,*b6,*b6,*b6,*b6]\nagent: {model: m}\n"
+          }
+        ],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-19-yaml-tojson-alias-bomb/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-19-yaml-tojson-alias-bomb",
+          "PILOT_HOME": "<ROOT>/resolve-19-yaml-tojson-alias-bomb/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": [
+          "project"
+        ],
+        "settings": {
+          "$": "undefined"
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "ReferenceError",
+            "code": {
+              "$": "undefined"
+            },
+            "message": "Excessive alias count indicates a resource exhaustion attack"
+          }
+        }
+      },
+      {
         "name": "agent-not-record",
-        "dir": "resolve-16-agent-not-record",
+        "dir": "resolve-20-agent-not-record",
         "files": [
           {
             "path": "project/.pilotdeck/pilotdeck.yaml",
             "content": "agent: [1, 2]\n"
           }
         ],
-        "projectRoot": "<ROOT>/resolve-16-agent-not-record/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-20-agent-not-record/project",
         "env": {
-          "HOME": "<ROOT>/resolve-16-agent-not-record",
-          "PILOT_HOME": "<ROOT>/resolve-16-agent-not-record/home"
+          "HOME": "<ROOT>/resolve-20-agent-not-record",
+          "PILOT_HOME": "<ROOT>/resolve-20-agent-not-record/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2655,17 +3040,20 @@
       },
       {
         "name": "source-agent-unknown-key",
-        "dir": "resolve-17-source-agent-unknown-key",
+        "dir": "resolve-21-source-agent-unknown-key",
         "files": [
           {
             "path": "project/.pilotdeck/pilotdeck.yaml",
             "content": "agent: {bogus: 1}\n"
           }
         ],
-        "projectRoot": "<ROOT>/resolve-17-source-agent-unknown-key/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-21-source-agent-unknown-key/project",
         "env": {
-          "HOME": "<ROOT>/resolve-17-source-agent-unknown-key",
-          "PILOT_HOME": "<ROOT>/resolve-17-source-agent-unknown-key/home"
+          "HOME": "<ROOT>/resolve-21-source-agent-unknown-key",
+          "PILOT_HOME": "<ROOT>/resolve-21-source-agent-unknown-key/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2694,17 +3082,20 @@
       },
       {
         "name": "source-invalid-model",
-        "dir": "resolve-18-source-invalid-model",
+        "dir": "resolve-22-source-invalid-model",
         "files": [
           {
             "path": "project/.pilotdeck/pilotdeck.yaml",
             "content": "agent: {model: \"\"}\n"
           }
         ],
-        "projectRoot": "<ROOT>/resolve-18-source-invalid-model/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-22-source-invalid-model/project",
         "env": {
-          "HOME": "<ROOT>/resolve-18-source-invalid-model",
-          "PILOT_HOME": "<ROOT>/resolve-18-source-invalid-model/home"
+          "HOME": "<ROOT>/resolve-22-source-invalid-model",
+          "PILOT_HOME": "<ROOT>/resolve-22-source-invalid-model/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2735,17 +3126,20 @@
       },
       {
         "name": "source-thinking-bad-budget",
-        "dir": "resolve-19-source-thinking-bad-budget",
+        "dir": "resolve-23-source-thinking-bad-budget",
         "files": [
           {
             "path": "project/.pilotdeck/pilotdeck.yaml",
             "content": "agent: {thinking: {enabled: true, budgetTokens: -1}}\n"
           }
         ],
-        "projectRoot": "<ROOT>/resolve-19-source-thinking-bad-budget/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-23-source-thinking-bad-budget/project",
         "env": {
-          "HOME": "<ROOT>/resolve-19-source-thinking-bad-budget",
-          "PILOT_HOME": "<ROOT>/resolve-19-source-thinking-bad-budget/home"
+          "HOME": "<ROOT>/resolve-23-source-thinking-bad-budget",
+          "PILOT_HOME": "<ROOT>/resolve-23-source-thinking-bad-budget/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2776,12 +3170,15 @@
       },
       {
         "name": "invalid-host-defaults",
-        "dir": "resolve-20-invalid-host-defaults",
+        "dir": "resolve-24-invalid-host-defaults",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-20-invalid-host-defaults/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-24-invalid-host-defaults/project",
         "env": {
-          "HOME": "<ROOT>/resolve-20-invalid-host-defaults",
-          "PILOT_HOME": "<ROOT>/resolve-20-invalid-host-defaults/home"
+          "HOME": "<ROOT>/resolve-24-invalid-host-defaults",
+          "PILOT_HOME": "<ROOT>/resolve-24-invalid-host-defaults/home"
         },
         "hostDefaults": {
           "agent": {
@@ -2814,12 +3211,15 @@
       },
       {
         "name": "invalid-host-sources",
-        "dir": "resolve-21-invalid-host-sources",
+        "dir": "resolve-25-invalid-host-sources",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-21-invalid-host-sources/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-25-invalid-host-sources/project",
         "env": {
-          "HOME": "<ROOT>/resolve-21-invalid-host-sources",
-          "PILOT_HOME": "<ROOT>/resolve-21-invalid-host-sources/home"
+          "HOME": "<ROOT>/resolve-25-invalid-host-sources",
+          "PILOT_HOME": "<ROOT>/resolve-25-invalid-host-sources/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2850,12 +3250,15 @@
       },
       {
         "name": "empty-overlay-is-none",
-        "dir": "resolve-22-empty-overlay-is-none",
+        "dir": "resolve-26-empty-overlay-is-none",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-22-empty-overlay-is-none/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-26-empty-overlay-is-none/project",
         "env": {
-          "HOME": "<ROOT>/resolve-22-empty-overlay-is-none",
-          "PILOT_HOME": "<ROOT>/resolve-22-empty-overlay-is-none/home"
+          "HOME": "<ROOT>/resolve-26-empty-overlay-is-none",
+          "PILOT_HOME": "<ROOT>/resolve-26-empty-overlay-is-none/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2884,12 +3287,15 @@
       },
       {
         "name": "normalize-null",
-        "dir": "resolve-23-normalize-null",
+        "dir": "resolve-27-normalize-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-23-normalize-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-27-normalize-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-23-normalize-null",
-          "PILOT_HOME": "<ROOT>/resolve-23-normalize-null/home"
+          "HOME": "<ROOT>/resolve-27-normalize-null",
+          "PILOT_HOME": "<ROOT>/resolve-27-normalize-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2918,12 +3324,15 @@
       },
       {
         "name": "normalize-array",
-        "dir": "resolve-24-normalize-array",
+        "dir": "resolve-28-normalize-array",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-24-normalize-array/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-28-normalize-array/project",
         "env": {
-          "HOME": "<ROOT>/resolve-24-normalize-array",
-          "PILOT_HOME": "<ROOT>/resolve-24-normalize-array/home"
+          "HOME": "<ROOT>/resolve-28-normalize-array",
+          "PILOT_HOME": "<ROOT>/resolve-28-normalize-array/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2952,12 +3361,15 @@
       },
       {
         "name": "normalize-string",
-        "dir": "resolve-25-normalize-string",
+        "dir": "resolve-29-normalize-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-25-normalize-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-29-normalize-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-25-normalize-string",
-          "PILOT_HOME": "<ROOT>/resolve-25-normalize-string/home"
+          "HOME": "<ROOT>/resolve-29-normalize-string",
+          "PILOT_HOME": "<ROOT>/resolve-29-normalize-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -2986,12 +3398,15 @@
       },
       {
         "name": "normalize-empty-object",
-        "dir": "resolve-26-normalize-empty-object",
+        "dir": "resolve-30-normalize-empty-object",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-26-normalize-empty-object/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-30-normalize-empty-object/project",
         "env": {
-          "HOME": "<ROOT>/resolve-26-normalize-empty-object",
-          "PILOT_HOME": "<ROOT>/resolve-26-normalize-empty-object/home"
+          "HOME": "<ROOT>/resolve-30-normalize-empty-object",
+          "PILOT_HOME": "<ROOT>/resolve-30-normalize-empty-object/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3018,12 +3433,15 @@
       },
       {
         "name": "normalize-agent-undefined",
-        "dir": "resolve-27-normalize-agent-undefined",
+        "dir": "resolve-31-normalize-agent-undefined",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-27-normalize-agent-undefined/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-31-normalize-agent-undefined/project",
         "env": {
-          "HOME": "<ROOT>/resolve-27-normalize-agent-undefined",
-          "PILOT_HOME": "<ROOT>/resolve-27-normalize-agent-undefined/home"
+          "HOME": "<ROOT>/resolve-31-normalize-agent-undefined",
+          "PILOT_HOME": "<ROOT>/resolve-31-normalize-agent-undefined/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3054,12 +3472,15 @@
       },
       {
         "name": "normalize-agent-null",
-        "dir": "resolve-28-normalize-agent-null",
+        "dir": "resolve-32-normalize-agent-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-28-normalize-agent-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-32-normalize-agent-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-28-normalize-agent-null",
-          "PILOT_HOME": "<ROOT>/resolve-28-normalize-agent-null/home"
+          "HOME": "<ROOT>/resolve-32-normalize-agent-null",
+          "PILOT_HOME": "<ROOT>/resolve-32-normalize-agent-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3090,12 +3511,15 @@
       },
       {
         "name": "normalize-agent-array",
-        "dir": "resolve-29-normalize-agent-array",
+        "dir": "resolve-33-normalize-agent-array",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-29-normalize-agent-array/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-33-normalize-agent-array/project",
         "env": {
-          "HOME": "<ROOT>/resolve-29-normalize-agent-array",
-          "PILOT_HOME": "<ROOT>/resolve-29-normalize-agent-array/home"
+          "HOME": "<ROOT>/resolve-33-normalize-agent-array",
+          "PILOT_HOME": "<ROOT>/resolve-33-normalize-agent-array/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3126,12 +3550,15 @@
       },
       {
         "name": "normalize-agent-empty",
-        "dir": "resolve-30-normalize-agent-empty",
+        "dir": "resolve-34-normalize-agent-empty",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-30-normalize-agent-empty/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-34-normalize-agent-empty/project",
         "env": {
-          "HOME": "<ROOT>/resolve-30-normalize-agent-empty",
-          "PILOT_HOME": "<ROOT>/resolve-30-normalize-agent-empty/home"
+          "HOME": "<ROOT>/resolve-34-normalize-agent-empty",
+          "PILOT_HOME": "<ROOT>/resolve-34-normalize-agent-empty/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3160,12 +3587,15 @@
       },
       {
         "name": "normalize-unknown-root",
-        "dir": "resolve-31-normalize-unknown-root",
+        "dir": "resolve-35-normalize-unknown-root",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-31-normalize-unknown-root/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-35-normalize-unknown-root/project",
         "env": {
-          "HOME": "<ROOT>/resolve-31-normalize-unknown-root",
-          "PILOT_HOME": "<ROOT>/resolve-31-normalize-unknown-root/home"
+          "HOME": "<ROOT>/resolve-35-normalize-unknown-root",
+          "PILOT_HOME": "<ROOT>/resolve-35-normalize-unknown-root/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3196,12 +3626,15 @@
       },
       {
         "name": "normalize-unknown-agent",
-        "dir": "resolve-32-normalize-unknown-agent",
+        "dir": "resolve-36-normalize-unknown-agent",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-32-normalize-unknown-agent/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-36-normalize-unknown-agent/project",
         "env": {
-          "HOME": "<ROOT>/resolve-32-normalize-unknown-agent",
-          "PILOT_HOME": "<ROOT>/resolve-32-normalize-unknown-agent/home"
+          "HOME": "<ROOT>/resolve-36-normalize-unknown-agent",
+          "PILOT_HOME": "<ROOT>/resolve-36-normalize-unknown-agent/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3233,13 +3666,144 @@
         }
       },
       {
-        "name": "normalize-model-null",
-        "dir": "resolve-33-normalize-model-null",
+        "name": "normalize-unknown-root-integer-key",
+        "dir": "resolve-37-normalize-unknown-root-integer-key",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-33-normalize-model-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-37-normalize-unknown-root-integer-key/project",
         "env": {
-          "HOME": "<ROOT>/resolve-33-normalize-model-null",
-          "PILOT_HOME": "<ROOT>/resolve-33-normalize-model-null/home"
+          "HOME": "<ROOT>/resolve-37-normalize-unknown-root-integer-key",
+          "PILOT_HOME": "<ROOT>/resolve-37-normalize-unknown-root-integer-key/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": {
+          "$": "undefined"
+        },
+        "settings": {
+          "5": 2,
+          "agent": {},
+          "zz": 1
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.5 is not supported; only non-secret agent model, limits, thinking, and subagent settings may be overlaid."
+          }
+        }
+      },
+      {
+        "name": "normalize-unknown-agent-integer-key",
+        "dir": "resolve-38-normalize-unknown-agent-integer-key",
+        "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-38-normalize-unknown-agent-integer-key/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-38-normalize-unknown-agent-integer-key",
+          "PILOT_HOME": "<ROOT>/resolve-38-normalize-unknown-agent-integer-key/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": {
+          "$": "undefined"
+        },
+        "settings": {
+          "agent": {
+            "7": 2,
+            "zz": 1
+          }
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.7 is not supported by the SDK session overlay."
+          }
+        }
+      },
+      {
+        "name": "normalize-unknown-thinking-integer-key",
+        "dir": "resolve-39-normalize-unknown-thinking-integer-key",
+        "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-39-normalize-unknown-thinking-integer-key/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-39-normalize-unknown-thinking-integer-key",
+          "PILOT_HOME": "<ROOT>/resolve-39-normalize-unknown-thinking-integer-key/home"
+        },
+        "hostDefaults": {
+          "$": "undefined"
+        },
+        "hostManagedSettings": {
+          "$": "undefined"
+        },
+        "hostSettingSources": {
+          "$": "undefined"
+        },
+        "settings": {
+          "agent": {
+            "thinking": {
+              "3": 2,
+              "enabled": true,
+              "zz": 1
+            }
+          }
+        },
+        "settingSources": {
+          "$": "undefined"
+        },
+        "hostEnforcedSettings": {
+          "$": "undefined"
+        },
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "PilotSdkSessionSettingsError",
+            "code": "UNSUPPORTED_SDK_SETTING",
+            "message": "settings.agent.thinking.3 is not supported by the SDK session overlay."
+          }
+        }
+      },
+      {
+        "name": "normalize-model-null",
+        "dir": "resolve-40-normalize-model-null",
+        "files": [],
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-40-normalize-model-null/project",
+        "env": {
+          "HOME": "<ROOT>/resolve-40-normalize-model-null",
+          "PILOT_HOME": "<ROOT>/resolve-40-normalize-model-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3272,12 +3836,15 @@
       },
       {
         "name": "normalize-model-string",
-        "dir": "resolve-34-normalize-model-string",
+        "dir": "resolve-41-normalize-model-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-34-normalize-model-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-41-normalize-model-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-34-normalize-model-string",
-          "PILOT_HOME": "<ROOT>/resolve-34-normalize-model-string/home"
+          "HOME": "<ROOT>/resolve-41-normalize-model-string",
+          "PILOT_HOME": "<ROOT>/resolve-41-normalize-model-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3310,12 +3877,15 @@
       },
       {
         "name": "normalize-model-whitespace",
-        "dir": "resolve-35-normalize-model-whitespace",
+        "dir": "resolve-42-normalize-model-whitespace",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-35-normalize-model-whitespace/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-42-normalize-model-whitespace/project",
         "env": {
-          "HOME": "<ROOT>/resolve-35-normalize-model-whitespace",
-          "PILOT_HOME": "<ROOT>/resolve-35-normalize-model-whitespace/home"
+          "HOME": "<ROOT>/resolve-42-normalize-model-whitespace",
+          "PILOT_HOME": "<ROOT>/resolve-42-normalize-model-whitespace/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3348,12 +3918,15 @@
       },
       {
         "name": "normalize-model-empty",
-        "dir": "resolve-36-normalize-model-empty",
+        "dir": "resolve-43-normalize-model-empty",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-36-normalize-model-empty/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-43-normalize-model-empty/project",
         "env": {
-          "HOME": "<ROOT>/resolve-36-normalize-model-empty",
-          "PILOT_HOME": "<ROOT>/resolve-36-normalize-model-empty/home"
+          "HOME": "<ROOT>/resolve-43-normalize-model-empty",
+          "PILOT_HOME": "<ROOT>/resolve-43-normalize-model-empty/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3386,12 +3959,15 @@
       },
       {
         "name": "normalize-model-spaces",
-        "dir": "resolve-37-normalize-model-spaces",
+        "dir": "resolve-44-normalize-model-spaces",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-37-normalize-model-spaces/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-44-normalize-model-spaces/project",
         "env": {
-          "HOME": "<ROOT>/resolve-37-normalize-model-spaces",
-          "PILOT_HOME": "<ROOT>/resolve-37-normalize-model-spaces/home"
+          "HOME": "<ROOT>/resolve-44-normalize-model-spaces",
+          "PILOT_HOME": "<ROOT>/resolve-44-normalize-model-spaces/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3424,12 +4000,15 @@
       },
       {
         "name": "normalize-model-number",
-        "dir": "resolve-38-normalize-model-number",
+        "dir": "resolve-45-normalize-model-number",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-38-normalize-model-number/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-45-normalize-model-number/project",
         "env": {
-          "HOME": "<ROOT>/resolve-38-normalize-model-number",
-          "PILOT_HOME": "<ROOT>/resolve-38-normalize-model-number/home"
+          "HOME": "<ROOT>/resolve-45-normalize-model-number",
+          "PILOT_HOME": "<ROOT>/resolve-45-normalize-model-number/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3462,12 +4041,15 @@
       },
       {
         "name": "normalize-model-undefined",
-        "dir": "resolve-39-normalize-model-undefined",
+        "dir": "resolve-46-normalize-model-undefined",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-39-normalize-model-undefined/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-46-normalize-model-undefined/project",
         "env": {
-          "HOME": "<ROOT>/resolve-39-normalize-model-undefined",
-          "PILOT_HOME": "<ROOT>/resolve-39-normalize-model-undefined/home"
+          "HOME": "<ROOT>/resolve-46-normalize-model-undefined",
+          "PILOT_HOME": "<ROOT>/resolve-46-normalize-model-undefined/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3500,12 +4082,15 @@
       },
       {
         "name": "normalize-fallback-null",
-        "dir": "resolve-40-normalize-fallback-null",
+        "dir": "resolve-47-normalize-fallback-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-40-normalize-fallback-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-47-normalize-fallback-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-40-normalize-fallback-null",
-          "PILOT_HOME": "<ROOT>/resolve-40-normalize-fallback-null/home"
+          "HOME": "<ROOT>/resolve-47-normalize-fallback-null",
+          "PILOT_HOME": "<ROOT>/resolve-47-normalize-fallback-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3538,12 +4123,15 @@
       },
       {
         "name": "normalize-fallback-empty",
-        "dir": "resolve-41-normalize-fallback-empty",
+        "dir": "resolve-48-normalize-fallback-empty",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-41-normalize-fallback-empty/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-48-normalize-fallback-empty/project",
         "env": {
-          "HOME": "<ROOT>/resolve-41-normalize-fallback-empty",
-          "PILOT_HOME": "<ROOT>/resolve-41-normalize-fallback-empty/home"
+          "HOME": "<ROOT>/resolve-48-normalize-fallback-empty",
+          "PILOT_HOME": "<ROOT>/resolve-48-normalize-fallback-empty/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3576,12 +4164,15 @@
       },
       {
         "name": "normalize-fallback-number",
-        "dir": "resolve-42-normalize-fallback-number",
+        "dir": "resolve-49-normalize-fallback-number",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-42-normalize-fallback-number/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-49-normalize-fallback-number/project",
         "env": {
-          "HOME": "<ROOT>/resolve-42-normalize-fallback-number",
-          "PILOT_HOME": "<ROOT>/resolve-42-normalize-fallback-number/home"
+          "HOME": "<ROOT>/resolve-49-normalize-fallback-number",
+          "PILOT_HOME": "<ROOT>/resolve-49-normalize-fallback-number/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3614,12 +4205,15 @@
       },
       {
         "name": "normalize-maxContext-ok",
-        "dir": "resolve-43-normalize-maxContext-ok",
+        "dir": "resolve-50-normalize-maxContext-ok",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-43-normalize-maxContext-ok/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-50-normalize-maxContext-ok/project",
         "env": {
-          "HOME": "<ROOT>/resolve-43-normalize-maxContext-ok",
-          "PILOT_HOME": "<ROOT>/resolve-43-normalize-maxContext-ok/home"
+          "HOME": "<ROOT>/resolve-50-normalize-maxContext-ok",
+          "PILOT_HOME": "<ROOT>/resolve-50-normalize-maxContext-ok/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3652,12 +4246,15 @@
       },
       {
         "name": "normalize-maxContext-zero",
-        "dir": "resolve-44-normalize-maxContext-zero",
+        "dir": "resolve-51-normalize-maxContext-zero",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-44-normalize-maxContext-zero/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-51-normalize-maxContext-zero/project",
         "env": {
-          "HOME": "<ROOT>/resolve-44-normalize-maxContext-zero",
-          "PILOT_HOME": "<ROOT>/resolve-44-normalize-maxContext-zero/home"
+          "HOME": "<ROOT>/resolve-51-normalize-maxContext-zero",
+          "PILOT_HOME": "<ROOT>/resolve-51-normalize-maxContext-zero/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3690,12 +4287,15 @@
       },
       {
         "name": "normalize-maxContext-negative",
-        "dir": "resolve-45-normalize-maxContext-negative",
+        "dir": "resolve-52-normalize-maxContext-negative",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-45-normalize-maxContext-negative/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-52-normalize-maxContext-negative/project",
         "env": {
-          "HOME": "<ROOT>/resolve-45-normalize-maxContext-negative",
-          "PILOT_HOME": "<ROOT>/resolve-45-normalize-maxContext-negative/home"
+          "HOME": "<ROOT>/resolve-52-normalize-maxContext-negative",
+          "PILOT_HOME": "<ROOT>/resolve-52-normalize-maxContext-negative/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3728,12 +4328,15 @@
       },
       {
         "name": "normalize-maxContext-fraction",
-        "dir": "resolve-46-normalize-maxContext-fraction",
+        "dir": "resolve-53-normalize-maxContext-fraction",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-46-normalize-maxContext-fraction/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-53-normalize-maxContext-fraction/project",
         "env": {
-          "HOME": "<ROOT>/resolve-46-normalize-maxContext-fraction",
-          "PILOT_HOME": "<ROOT>/resolve-46-normalize-maxContext-fraction/home"
+          "HOME": "<ROOT>/resolve-53-normalize-maxContext-fraction",
+          "PILOT_HOME": "<ROOT>/resolve-53-normalize-maxContext-fraction/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3766,12 +4369,15 @@
       },
       {
         "name": "normalize-maxContext-string",
-        "dir": "resolve-47-normalize-maxContext-string",
+        "dir": "resolve-54-normalize-maxContext-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-47-normalize-maxContext-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-54-normalize-maxContext-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-47-normalize-maxContext-string",
-          "PILOT_HOME": "<ROOT>/resolve-47-normalize-maxContext-string/home"
+          "HOME": "<ROOT>/resolve-54-normalize-maxContext-string",
+          "PILOT_HOME": "<ROOT>/resolve-54-normalize-maxContext-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3804,12 +4410,15 @@
       },
       {
         "name": "normalize-maxContext-null",
-        "dir": "resolve-48-normalize-maxContext-null",
+        "dir": "resolve-55-normalize-maxContext-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-48-normalize-maxContext-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-55-normalize-maxContext-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-48-normalize-maxContext-null",
-          "PILOT_HOME": "<ROOT>/resolve-48-normalize-maxContext-null/home"
+          "HOME": "<ROOT>/resolve-55-normalize-maxContext-null",
+          "PILOT_HOME": "<ROOT>/resolve-55-normalize-maxContext-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3842,12 +4451,15 @@
       },
       {
         "name": "normalize-maxContext-nan",
-        "dir": "resolve-49-normalize-maxContext-nan",
+        "dir": "resolve-56-normalize-maxContext-nan",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-49-normalize-maxContext-nan/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-56-normalize-maxContext-nan/project",
         "env": {
-          "HOME": "<ROOT>/resolve-49-normalize-maxContext-nan",
-          "PILOT_HOME": "<ROOT>/resolve-49-normalize-maxContext-nan/home"
+          "HOME": "<ROOT>/resolve-56-normalize-maxContext-nan",
+          "PILOT_HOME": "<ROOT>/resolve-56-normalize-maxContext-nan/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3882,12 +4494,15 @@
       },
       {
         "name": "normalize-maxContext-infinity",
-        "dir": "resolve-50-normalize-maxContext-infinity",
+        "dir": "resolve-57-normalize-maxContext-infinity",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-50-normalize-maxContext-infinity/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-57-normalize-maxContext-infinity/project",
         "env": {
-          "HOME": "<ROOT>/resolve-50-normalize-maxContext-infinity",
-          "PILOT_HOME": "<ROOT>/resolve-50-normalize-maxContext-infinity/home"
+          "HOME": "<ROOT>/resolve-57-normalize-maxContext-infinity",
+          "PILOT_HOME": "<ROOT>/resolve-57-normalize-maxContext-infinity/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3922,12 +4537,15 @@
       },
       {
         "name": "normalize-maxOutput-ok",
-        "dir": "resolve-51-normalize-maxOutput-ok",
+        "dir": "resolve-58-normalize-maxOutput-ok",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-51-normalize-maxOutput-ok/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-58-normalize-maxOutput-ok/project",
         "env": {
-          "HOME": "<ROOT>/resolve-51-normalize-maxOutput-ok",
-          "PILOT_HOME": "<ROOT>/resolve-51-normalize-maxOutput-ok/home"
+          "HOME": "<ROOT>/resolve-58-normalize-maxOutput-ok",
+          "PILOT_HOME": "<ROOT>/resolve-58-normalize-maxOutput-ok/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3960,12 +4578,15 @@
       },
       {
         "name": "normalize-maxOutput-zero",
-        "dir": "resolve-52-normalize-maxOutput-zero",
+        "dir": "resolve-59-normalize-maxOutput-zero",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-52-normalize-maxOutput-zero/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-59-normalize-maxOutput-zero/project",
         "env": {
-          "HOME": "<ROOT>/resolve-52-normalize-maxOutput-zero",
-          "PILOT_HOME": "<ROOT>/resolve-52-normalize-maxOutput-zero/home"
+          "HOME": "<ROOT>/resolve-59-normalize-maxOutput-zero",
+          "PILOT_HOME": "<ROOT>/resolve-59-normalize-maxOutput-zero/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -3998,12 +4619,15 @@
       },
       {
         "name": "normalize-thinking-null",
-        "dir": "resolve-53-normalize-thinking-null",
+        "dir": "resolve-60-normalize-thinking-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-53-normalize-thinking-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-60-normalize-thinking-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-53-normalize-thinking-null",
-          "PILOT_HOME": "<ROOT>/resolve-53-normalize-thinking-null/home"
+          "HOME": "<ROOT>/resolve-60-normalize-thinking-null",
+          "PILOT_HOME": "<ROOT>/resolve-60-normalize-thinking-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4036,12 +4660,15 @@
       },
       {
         "name": "normalize-thinking-missing-enabled",
-        "dir": "resolve-54-normalize-thinking-missing-enabled",
+        "dir": "resolve-61-normalize-thinking-missing-enabled",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-54-normalize-thinking-missing-enabled/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-61-normalize-thinking-missing-enabled/project",
         "env": {
-          "HOME": "<ROOT>/resolve-54-normalize-thinking-missing-enabled",
-          "PILOT_HOME": "<ROOT>/resolve-54-normalize-thinking-missing-enabled/home"
+          "HOME": "<ROOT>/resolve-61-normalize-thinking-missing-enabled",
+          "PILOT_HOME": "<ROOT>/resolve-61-normalize-thinking-missing-enabled/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4074,12 +4701,15 @@
       },
       {
         "name": "normalize-thinking-enabled-true",
-        "dir": "resolve-55-normalize-thinking-enabled-true",
+        "dir": "resolve-62-normalize-thinking-enabled-true",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-55-normalize-thinking-enabled-true/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-62-normalize-thinking-enabled-true/project",
         "env": {
-          "HOME": "<ROOT>/resolve-55-normalize-thinking-enabled-true",
-          "PILOT_HOME": "<ROOT>/resolve-55-normalize-thinking-enabled-true/home"
+          "HOME": "<ROOT>/resolve-62-normalize-thinking-enabled-true",
+          "PILOT_HOME": "<ROOT>/resolve-62-normalize-thinking-enabled-true/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4116,12 +4746,15 @@
       },
       {
         "name": "normalize-thinking-enabled-string",
-        "dir": "resolve-56-normalize-thinking-enabled-string",
+        "dir": "resolve-63-normalize-thinking-enabled-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-56-normalize-thinking-enabled-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-63-normalize-thinking-enabled-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-56-normalize-thinking-enabled-string",
-          "PILOT_HOME": "<ROOT>/resolve-56-normalize-thinking-enabled-string/home"
+          "HOME": "<ROOT>/resolve-63-normalize-thinking-enabled-string",
+          "PILOT_HOME": "<ROOT>/resolve-63-normalize-thinking-enabled-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4156,12 +4789,15 @@
       },
       {
         "name": "normalize-thinking-budget-zero",
-        "dir": "resolve-57-normalize-thinking-budget-zero",
+        "dir": "resolve-64-normalize-thinking-budget-zero",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-57-normalize-thinking-budget-zero/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-64-normalize-thinking-budget-zero/project",
         "env": {
-          "HOME": "<ROOT>/resolve-57-normalize-thinking-budget-zero",
-          "PILOT_HOME": "<ROOT>/resolve-57-normalize-thinking-budget-zero/home"
+          "HOME": "<ROOT>/resolve-64-normalize-thinking-budget-zero",
+          "PILOT_HOME": "<ROOT>/resolve-64-normalize-thinking-budget-zero/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4200,12 +4836,15 @@
       },
       {
         "name": "normalize-thinking-budget-negative",
-        "dir": "resolve-58-normalize-thinking-budget-negative",
+        "dir": "resolve-65-normalize-thinking-budget-negative",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-58-normalize-thinking-budget-negative/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-65-normalize-thinking-budget-negative/project",
         "env": {
-          "HOME": "<ROOT>/resolve-58-normalize-thinking-budget-negative",
-          "PILOT_HOME": "<ROOT>/resolve-58-normalize-thinking-budget-negative/home"
+          "HOME": "<ROOT>/resolve-65-normalize-thinking-budget-negative",
+          "PILOT_HOME": "<ROOT>/resolve-65-normalize-thinking-budget-negative/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4241,12 +4880,15 @@
       },
       {
         "name": "normalize-thinking-budget-fraction",
-        "dir": "resolve-59-normalize-thinking-budget-fraction",
+        "dir": "resolve-66-normalize-thinking-budget-fraction",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-59-normalize-thinking-budget-fraction/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-66-normalize-thinking-budget-fraction/project",
         "env": {
-          "HOME": "<ROOT>/resolve-59-normalize-thinking-budget-fraction",
-          "PILOT_HOME": "<ROOT>/resolve-59-normalize-thinking-budget-fraction/home"
+          "HOME": "<ROOT>/resolve-66-normalize-thinking-budget-fraction",
+          "PILOT_HOME": "<ROOT>/resolve-66-normalize-thinking-budget-fraction/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4282,12 +4924,15 @@
       },
       {
         "name": "normalize-thinking-budget-string",
-        "dir": "resolve-60-normalize-thinking-budget-string",
+        "dir": "resolve-67-normalize-thinking-budget-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-60-normalize-thinking-budget-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-67-normalize-thinking-budget-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-60-normalize-thinking-budget-string",
-          "PILOT_HOME": "<ROOT>/resolve-60-normalize-thinking-budget-string/home"
+          "HOME": "<ROOT>/resolve-67-normalize-thinking-budget-string",
+          "PILOT_HOME": "<ROOT>/resolve-67-normalize-thinking-budget-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4323,12 +4968,15 @@
       },
       {
         "name": "normalize-thinking-budget-null",
-        "dir": "resolve-61-normalize-thinking-budget-null",
+        "dir": "resolve-68-normalize-thinking-budget-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-61-normalize-thinking-budget-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-68-normalize-thinking-budget-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-61-normalize-thinking-budget-null",
-          "PILOT_HOME": "<ROOT>/resolve-61-normalize-thinking-budget-null/home"
+          "HOME": "<ROOT>/resolve-68-normalize-thinking-budget-null",
+          "PILOT_HOME": "<ROOT>/resolve-68-normalize-thinking-budget-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4364,12 +5012,15 @@
       },
       {
         "name": "normalize-thinking-unknown",
-        "dir": "resolve-62-normalize-thinking-unknown",
+        "dir": "resolve-69-normalize-thinking-unknown",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-62-normalize-thinking-unknown/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-69-normalize-thinking-unknown/project",
         "env": {
-          "HOME": "<ROOT>/resolve-62-normalize-thinking-unknown",
-          "PILOT_HOME": "<ROOT>/resolve-62-normalize-thinking-unknown/home"
+          "HOME": "<ROOT>/resolve-69-normalize-thinking-unknown",
+          "PILOT_HOME": "<ROOT>/resolve-69-normalize-thinking-unknown/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4405,12 +5056,15 @@
       },
       {
         "name": "normalize-subagents-null",
-        "dir": "resolve-63-normalize-subagents-null",
+        "dir": "resolve-70-normalize-subagents-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-63-normalize-subagents-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-70-normalize-subagents-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-63-normalize-subagents-null",
-          "PILOT_HOME": "<ROOT>/resolve-63-normalize-subagents-null/home"
+          "HOME": "<ROOT>/resolve-70-normalize-subagents-null",
+          "PILOT_HOME": "<ROOT>/resolve-70-normalize-subagents-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4443,12 +5097,15 @@
       },
       {
         "name": "normalize-subagents-array",
-        "dir": "resolve-64-normalize-subagents-array",
+        "dir": "resolve-71-normalize-subagents-array",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-64-normalize-subagents-array/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-71-normalize-subagents-array/project",
         "env": {
-          "HOME": "<ROOT>/resolve-64-normalize-subagents-array",
-          "PILOT_HOME": "<ROOT>/resolve-64-normalize-subagents-array/home"
+          "HOME": "<ROOT>/resolve-71-normalize-subagents-array",
+          "PILOT_HOME": "<ROOT>/resolve-71-normalize-subagents-array/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4481,12 +5138,15 @@
       },
       {
         "name": "normalize-subagents-empty",
-        "dir": "resolve-65-normalize-subagents-empty",
+        "dir": "resolve-72-normalize-subagents-empty",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-65-normalize-subagents-empty/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-72-normalize-subagents-empty/project",
         "env": {
-          "HOME": "<ROOT>/resolve-65-normalize-subagents-empty",
-          "PILOT_HOME": "<ROOT>/resolve-65-normalize-subagents-empty/home"
+          "HOME": "<ROOT>/resolve-72-normalize-subagents-empty",
+          "PILOT_HOME": "<ROOT>/resolve-72-normalize-subagents-empty/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4517,12 +5177,15 @@
       },
       {
         "name": "normalize-subagents-unknown",
-        "dir": "resolve-66-normalize-subagents-unknown",
+        "dir": "resolve-73-normalize-subagents-unknown",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-66-normalize-subagents-unknown/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-73-normalize-subagents-unknown/project",
         "env": {
-          "HOME": "<ROOT>/resolve-66-normalize-subagents-unknown",
-          "PILOT_HOME": "<ROOT>/resolve-66-normalize-subagents-unknown/home"
+          "HOME": "<ROOT>/resolve-73-normalize-subagents-unknown",
+          "PILOT_HOME": "<ROOT>/resolve-73-normalize-subagents-unknown/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4557,12 +5220,15 @@
       },
       {
         "name": "normalize-subagent-default-null",
-        "dir": "resolve-67-normalize-subagent-default-null",
+        "dir": "resolve-74-normalize-subagent-default-null",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-67-normalize-subagent-default-null/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-74-normalize-subagent-default-null/project",
         "env": {
-          "HOME": "<ROOT>/resolve-67-normalize-subagent-default-null",
-          "PILOT_HOME": "<ROOT>/resolve-67-normalize-subagent-default-null/home"
+          "HOME": "<ROOT>/resolve-74-normalize-subagent-default-null",
+          "PILOT_HOME": "<ROOT>/resolve-74-normalize-subagent-default-null/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4599,12 +5265,15 @@
       },
       {
         "name": "normalize-subagent-default-inherit",
-        "dir": "resolve-68-normalize-subagent-default-inherit",
+        "dir": "resolve-75-normalize-subagent-default-inherit",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-68-normalize-subagent-default-inherit/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-75-normalize-subagent-default-inherit/project",
         "env": {
-          "HOME": "<ROOT>/resolve-68-normalize-subagent-default-inherit",
-          "PILOT_HOME": "<ROOT>/resolve-68-normalize-subagent-default-inherit/home"
+          "HOME": "<ROOT>/resolve-75-normalize-subagent-default-inherit",
+          "PILOT_HOME": "<ROOT>/resolve-75-normalize-subagent-default-inherit/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4641,12 +5310,15 @@
       },
       {
         "name": "normalize-subagent-default-inherit-space",
-        "dir": "resolve-69-normalize-subagent-default-inherit-space",
+        "dir": "resolve-76-normalize-subagent-default-inherit-space",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-69-normalize-subagent-default-inherit-space/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-76-normalize-subagent-default-inherit-space/project",
         "env": {
-          "HOME": "<ROOT>/resolve-69-normalize-subagent-default-inherit-space",
-          "PILOT_HOME": "<ROOT>/resolve-69-normalize-subagent-default-inherit-space/home"
+          "HOME": "<ROOT>/resolve-76-normalize-subagent-default-inherit-space",
+          "PILOT_HOME": "<ROOT>/resolve-76-normalize-subagent-default-inherit-space/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4683,12 +5355,15 @@
       },
       {
         "name": "normalize-subagent-default-empty",
-        "dir": "resolve-70-normalize-subagent-default-empty",
+        "dir": "resolve-77-normalize-subagent-default-empty",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-70-normalize-subagent-default-empty/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-77-normalize-subagent-default-empty/project",
         "env": {
-          "HOME": "<ROOT>/resolve-70-normalize-subagent-default-empty",
-          "PILOT_HOME": "<ROOT>/resolve-70-normalize-subagent-default-empty/home"
+          "HOME": "<ROOT>/resolve-77-normalize-subagent-default-empty",
+          "PILOT_HOME": "<ROOT>/resolve-77-normalize-subagent-default-empty/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4723,12 +5398,15 @@
       },
       {
         "name": "normalize-subagent-default-space",
-        "dir": "resolve-71-normalize-subagent-default-space",
+        "dir": "resolve-78-normalize-subagent-default-space",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-71-normalize-subagent-default-space/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-78-normalize-subagent-default-space/project",
         "env": {
-          "HOME": "<ROOT>/resolve-71-normalize-subagent-default-space",
-          "PILOT_HOME": "<ROOT>/resolve-71-normalize-subagent-default-space/home"
+          "HOME": "<ROOT>/resolve-78-normalize-subagent-default-space",
+          "PILOT_HOME": "<ROOT>/resolve-78-normalize-subagent-default-space/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4763,12 +5441,15 @@
       },
       {
         "name": "normalize-subagent-default-string",
-        "dir": "resolve-72-normalize-subagent-default-string",
+        "dir": "resolve-79-normalize-subagent-default-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-72-normalize-subagent-default-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-79-normalize-subagent-default-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-72-normalize-subagent-default-string",
-          "PILOT_HOME": "<ROOT>/resolve-72-normalize-subagent-default-string/home"
+          "HOME": "<ROOT>/resolve-79-normalize-subagent-default-string",
+          "PILOT_HOME": "<ROOT>/resolve-79-normalize-subagent-default-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4805,12 +5486,15 @@
       },
       {
         "name": "normalize-subagent-default-number",
-        "dir": "resolve-73-normalize-subagent-default-number",
+        "dir": "resolve-80-normalize-subagent-default-number",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-73-normalize-subagent-default-number/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-80-normalize-subagent-default-number/project",
         "env": {
-          "HOME": "<ROOT>/resolve-73-normalize-subagent-default-number",
-          "PILOT_HOME": "<ROOT>/resolve-73-normalize-subagent-default-number/home"
+          "HOME": "<ROOT>/resolve-80-normalize-subagent-default-number",
+          "PILOT_HOME": "<ROOT>/resolve-80-normalize-subagent-default-number/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4845,12 +5529,15 @@
       },
       {
         "name": "normalize-subagent-timeout-ok",
-        "dir": "resolve-74-normalize-subagent-timeout-ok",
+        "dir": "resolve-81-normalize-subagent-timeout-ok",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-74-normalize-subagent-timeout-ok/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-81-normalize-subagent-timeout-ok/project",
         "env": {
-          "HOME": "<ROOT>/resolve-74-normalize-subagent-timeout-ok",
-          "PILOT_HOME": "<ROOT>/resolve-74-normalize-subagent-timeout-ok/home"
+          "HOME": "<ROOT>/resolve-81-normalize-subagent-timeout-ok",
+          "PILOT_HOME": "<ROOT>/resolve-81-normalize-subagent-timeout-ok/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4887,12 +5574,15 @@
       },
       {
         "name": "normalize-subagent-timeout-zero",
-        "dir": "resolve-75-normalize-subagent-timeout-zero",
+        "dir": "resolve-82-normalize-subagent-timeout-zero",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-75-normalize-subagent-timeout-zero/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-82-normalize-subagent-timeout-zero/project",
         "env": {
-          "HOME": "<ROOT>/resolve-75-normalize-subagent-timeout-zero",
-          "PILOT_HOME": "<ROOT>/resolve-75-normalize-subagent-timeout-zero/home"
+          "HOME": "<ROOT>/resolve-82-normalize-subagent-timeout-zero",
+          "PILOT_HOME": "<ROOT>/resolve-82-normalize-subagent-timeout-zero/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4927,12 +5617,15 @@
       },
       {
         "name": "normalize-subagent-timeout-fraction",
-        "dir": "resolve-76-normalize-subagent-timeout-fraction",
+        "dir": "resolve-83-normalize-subagent-timeout-fraction",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-76-normalize-subagent-timeout-fraction/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-83-normalize-subagent-timeout-fraction/project",
         "env": {
-          "HOME": "<ROOT>/resolve-76-normalize-subagent-timeout-fraction",
-          "PILOT_HOME": "<ROOT>/resolve-76-normalize-subagent-timeout-fraction/home"
+          "HOME": "<ROOT>/resolve-83-normalize-subagent-timeout-fraction",
+          "PILOT_HOME": "<ROOT>/resolve-83-normalize-subagent-timeout-fraction/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -4967,12 +5660,15 @@
       },
       {
         "name": "normalize-subagent-timeout-string",
-        "dir": "resolve-77-normalize-subagent-timeout-string",
+        "dir": "resolve-84-normalize-subagent-timeout-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-77-normalize-subagent-timeout-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-84-normalize-subagent-timeout-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-77-normalize-subagent-timeout-string",
-          "PILOT_HOME": "<ROOT>/resolve-77-normalize-subagent-timeout-string/home"
+          "HOME": "<ROOT>/resolve-84-normalize-subagent-timeout-string",
+          "PILOT_HOME": "<ROOT>/resolve-84-normalize-subagent-timeout-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5007,12 +5703,15 @@
       },
       {
         "name": "normalize-subagent-depth-zero",
-        "dir": "resolve-78-normalize-subagent-depth-zero",
+        "dir": "resolve-85-normalize-subagent-depth-zero",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-78-normalize-subagent-depth-zero/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-85-normalize-subagent-depth-zero/project",
         "env": {
-          "HOME": "<ROOT>/resolve-78-normalize-subagent-depth-zero",
-          "PILOT_HOME": "<ROOT>/resolve-78-normalize-subagent-depth-zero/home"
+          "HOME": "<ROOT>/resolve-85-normalize-subagent-depth-zero",
+          "PILOT_HOME": "<ROOT>/resolve-85-normalize-subagent-depth-zero/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5049,12 +5748,15 @@
       },
       {
         "name": "normalize-subagent-depth-negative",
-        "dir": "resolve-79-normalize-subagent-depth-negative",
+        "dir": "resolve-86-normalize-subagent-depth-negative",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-79-normalize-subagent-depth-negative/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-86-normalize-subagent-depth-negative/project",
         "env": {
-          "HOME": "<ROOT>/resolve-79-normalize-subagent-depth-negative",
-          "PILOT_HOME": "<ROOT>/resolve-79-normalize-subagent-depth-negative/home"
+          "HOME": "<ROOT>/resolve-86-normalize-subagent-depth-negative",
+          "PILOT_HOME": "<ROOT>/resolve-86-normalize-subagent-depth-negative/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5089,12 +5791,15 @@
       },
       {
         "name": "normalize-subagent-depth-fraction",
-        "dir": "resolve-80-normalize-subagent-depth-fraction",
+        "dir": "resolve-87-normalize-subagent-depth-fraction",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-80-normalize-subagent-depth-fraction/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-87-normalize-subagent-depth-fraction/project",
         "env": {
-          "HOME": "<ROOT>/resolve-80-normalize-subagent-depth-fraction",
-          "PILOT_HOME": "<ROOT>/resolve-80-normalize-subagent-depth-fraction/home"
+          "HOME": "<ROOT>/resolve-87-normalize-subagent-depth-fraction",
+          "PILOT_HOME": "<ROOT>/resolve-87-normalize-subagent-depth-fraction/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5129,12 +5834,15 @@
       },
       {
         "name": "normalize-subagent-depth-unsafe",
-        "dir": "resolve-81-normalize-subagent-depth-unsafe",
+        "dir": "resolve-88-normalize-subagent-depth-unsafe",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-81-normalize-subagent-depth-unsafe/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-88-normalize-subagent-depth-unsafe/project",
         "env": {
-          "HOME": "<ROOT>/resolve-81-normalize-subagent-depth-unsafe",
-          "PILOT_HOME": "<ROOT>/resolve-81-normalize-subagent-depth-unsafe/home"
+          "HOME": "<ROOT>/resolve-88-normalize-subagent-depth-unsafe",
+          "PILOT_HOME": "<ROOT>/resolve-88-normalize-subagent-depth-unsafe/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5169,12 +5877,15 @@
       },
       {
         "name": "normalize-subagent-depth-string",
-        "dir": "resolve-82-normalize-subagent-depth-string",
+        "dir": "resolve-89-normalize-subagent-depth-string",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-82-normalize-subagent-depth-string/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-89-normalize-subagent-depth-string/project",
         "env": {
-          "HOME": "<ROOT>/resolve-82-normalize-subagent-depth-string",
-          "PILOT_HOME": "<ROOT>/resolve-82-normalize-subagent-depth-string/home"
+          "HOME": "<ROOT>/resolve-89-normalize-subagent-depth-string",
+          "PILOT_HOME": "<ROOT>/resolve-89-normalize-subagent-depth-string/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5209,12 +5920,15 @@
       },
       {
         "name": "normalize-subagent-undefined-values",
-        "dir": "resolve-83-normalize-subagent-undefined-values",
+        "dir": "resolve-90-normalize-subagent-undefined-values",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-83-normalize-subagent-undefined-values/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-90-normalize-subagent-undefined-values/project",
         "env": {
-          "HOME": "<ROOT>/resolve-83-normalize-subagent-undefined-values",
-          "PILOT_HOME": "<ROOT>/resolve-83-normalize-subagent-undefined-values/home"
+          "HOME": "<ROOT>/resolve-90-normalize-subagent-undefined-values",
+          "PILOT_HOME": "<ROOT>/resolve-90-normalize-subagent-undefined-values/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5255,12 +5969,15 @@
       },
       {
         "name": "normalize-combined",
-        "dir": "resolve-84-normalize-combined",
+        "dir": "resolve-91-normalize-combined",
         "files": [],
-        "projectRoot": "<ROOT>/resolve-84-normalize-combined/project",
+        "dirs": [],
+        "modes": [],
+        "symlinks": [],
+        "projectRoot": "<ROOT>/resolve-91-normalize-combined/project",
         "env": {
-          "HOME": "<ROOT>/resolve-84-normalize-combined",
-          "PILOT_HOME": "<ROOT>/resolve-84-normalize-combined/home"
+          "HOME": "<ROOT>/resolve-91-normalize-combined",
+          "PILOT_HOME": "<ROOT>/resolve-91-normalize-combined/home"
         },
         "hostDefaults": {
           "$": "undefined"
@@ -5318,7 +6035,7 @@
     ]
   },
   "validators": {
-    "count": 105,
+    "count": 109,
     "cases": [
       {
         "kind": "managedPermissions",
@@ -6050,6 +6767,88 @@
             "name": "DialogGatewayError",
             "code": "INVALID_SDK_MANAGED_SETTINGS",
             "message": "managedModels.deny cannot contain duplicates."
+          }
+        }
+      },
+      {
+        "kind": "managedModels",
+        "name": "managedModels:feff-interior",
+        "args": [
+          {
+            "allow": [
+              "p﻿x/m"
+            ],
+            "deny": []
+          },
+          "models"
+        ],
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SDK_MANAGED_SETTINGS",
+            "message": "managedModels.allow contains an invalid selector."
+          }
+        }
+      },
+      {
+        "kind": "managedModels",
+        "name": "managedModels:nel-interior",
+        "args": [
+          {
+            "allow": [
+              "px/m"
+            ],
+            "deny": []
+          },
+          "models"
+        ],
+        "result": {
+          "ok": true,
+          "value": {
+            "$": "undefined"
+          }
+        }
+      },
+      {
+        "kind": "managedModels",
+        "name": "managedModels:nbsp-interior",
+        "args": [
+          {
+            "allow": [
+              "p x/m"
+            ],
+            "deny": []
+          },
+          "models"
+        ],
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SDK_MANAGED_SETTINGS",
+            "message": "managedModels.allow contains an invalid selector."
+          }
+        }
+      },
+      {
+        "kind": "managedModels",
+        "name": "managedModels:ideographic-space-interior",
+        "args": [
+          {
+            "allow": [
+              "p　x/m"
+            ],
+            "deny": []
+          },
+          "models"
+        ],
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_SDK_MANAGED_SETTINGS",
+            "message": "managedModels.allow contains an invalid selector."
           }
         }
       },
@@ -7504,7 +8303,7 @@
     ]
   },
   "registry": {
-    "count": 56,
+    "count": 65,
     "cases": [
       {
         "name": "set-minimal",
@@ -7536,7 +8335,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -7593,7 +8391,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -7640,7 +8437,6 @@
                 "changed": false
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -7703,7 +8499,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -7765,7 +8560,6 @@
                 "message": "managedPermissions.deny must contain non-empty strings."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -7819,7 +8613,6 @@
                 "message": "managedPermissions.deny must contain non-empty strings."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -7872,7 +8665,6 @@
                 "message": "managedPermissions.defaultMode may only force plan mode."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -7926,7 +8718,6 @@
                 "message": "managedTools.allow contains an invalid selector."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -7980,7 +8771,6 @@
                 "message": "managedModels.allow contains an invalid selector."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8029,7 +8819,6 @@
                 "message": "settingSources must be a non-empty array containing managed, user, project, and/or local."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8087,7 +8876,6 @@
                 "message": "Gateway organization policy denies the local SDK settings source."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8140,7 +8928,6 @@
                 "message": "settings.agent.maxContextTokens must be a positive integer."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8193,7 +8980,6 @@
                 "message": "settings.agent.model is not uniquely resolvable from the Gateway catalog: missing"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8251,7 +9037,6 @@
                 "message": "Gateway organization policy denies model p3/m3."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8317,7 +9102,6 @@
                 "message": "Gateway organization policy denies provider p3."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8376,7 +9160,6 @@
                 "message": "SDK managedSettings.models denies model p3/m3."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8425,7 +9208,6 @@
                 "message": "fallbackModel is not uniquely resolvable from the Gateway catalog: missing"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8479,7 +9261,6 @@
                 "message": "Gateway organization policy denies model p3/m3."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8535,7 +9316,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -8609,9 +9389,6 @@
                 "changed": true
               }
             },
-            "events": [
-              "taskBudget:{\"total\":3,\"scope\":\"project\",\"projectRetentionMs\":100}"
-            ],
             "state": {
               "configs": [
                 [
@@ -8677,7 +9454,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -8708,8 +9484,645 @@
         ]
       },
       {
+        "name": "task-budget-total-conflict",
+        "dir": "registry-20-task-budget-total-conflict",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 5,
+                  "scope": "project"
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": true,
+              "value": {
+                "changed": true
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  {
+                    "taskBudget": {
+                      "total": 5,
+                      "scope": "project"
+                    }
+                  }
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-20-task-budget-total-conflict/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          },
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 6,
+                  "scope": "project"
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "DialogGatewayError",
+                "code": "SDK_PROJECT_TASK_BUDGET_TOTAL_CONFLICT",
+                "message": "Project taskBudget.total is fixed at $5.000000; received $6.000000."
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  {
+                    "taskBudget": {
+                      "total": 5,
+                      "scope": "project"
+                    }
+                  }
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-20-task-budget-total-conflict/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "task-budget-retention-conflict",
+        "dir": "registry-21-task-budget-retention-conflict",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 5,
+                  "scope": "project",
+                  "projectRetentionMs": 100
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": true,
+              "value": {
+                "changed": true
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  {
+                    "taskBudget": {
+                      "total": 5,
+                      "scope": "project",
+                      "projectRetentionMs": 100
+                    }
+                  }
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-21-task-budget-retention-conflict/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          },
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 5,
+                  "scope": "project",
+                  "projectRetentionMs": 200
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "DialogGatewayError",
+                "code": "SDK_PROJECT_TASK_BUDGET_RETENTION_CONFLICT",
+                "message": "Project taskBudget.projectRetentionMs is fixed by the first project budget configuration."
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  {
+                    "taskBudget": {
+                      "total": 5,
+                      "scope": "project",
+                      "projectRetentionMs": 100
+                    }
+                  }
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-21-task-budget-retention-conflict/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "task-budget-abort-after-configure",
+        "dir": "registry-22-task-budget-abort-after-configure",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 5,
+                  "scope": "project",
+                  "projectRetentionMs": 100
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": "fourth",
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "Error",
+                "code": {
+                  "$": "undefined"
+                },
+                "message": "aborted-fourth"
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          },
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "taskBudget": {
+                  "total": 6,
+                  "scope": "project"
+                }
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "DialogGatewayError",
+                "code": "SDK_PROJECT_TASK_BUDGET_TOTAL_CONFLICT",
+                "message": "Project taskBudget.total is fixed at $5.000000; received $6.000000."
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-null",
+        "dir": "registry-23-config-null",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": null,
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "TypeError",
+                "code": {
+                  "$": "undefined"
+                },
+                "message": "Cannot read properties of null (reading 'managedPermissions')"
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-undefined",
+        "dir": "registry-24-config-undefined",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": {
+                "$": "undefined"
+              },
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "TypeError",
+                "code": {
+                  "$": "undefined"
+                },
+                "message": "Cannot read properties of undefined (reading 'managedPermissions')"
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-null-with-cap",
+        "dir": "registry-25-config-null-with-cap",
+        "files": [],
+        "organizationPolicy": {
+          "limits": {
+            "maxTaskBudgetUsd": 3
+          }
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": null,
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "TypeError",
+                "code": {
+                  "$": "undefined"
+                },
+                "message": "Cannot read properties of null (reading 'taskBudget')"
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-number-with-cap",
+        "dir": "registry-26-config-number-with-cap",
+        "files": [],
+        "organizationPolicy": {
+          "limits": {
+            "maxTaskBudgetUsd": 3
+          }
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": 5,
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": false,
+              "error": {
+                "name": "TypeError",
+                "code": {
+                  "$": "undefined"
+                },
+                "message": "Cannot create property 'taskBudget' on number '5'"
+              }
+            },
+            "state": {
+              "configs": [],
+              "plugins": [],
+              "projects": [],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-array",
+        "dir": "registry-27-config-array",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": [],
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": true,
+              "value": {
+                "changed": true
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  []
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-27-config-array/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "config-string",
+        "dir": "registry-28-config-string",
+        "files": [],
+        "organizationPolicy": {
+          "$": "undefined"
+        },
+        "pluginNames": [],
+        "pluginSkills": [],
+        "steps": [
+          {
+            "op": "set",
+            "input": {
+              "config": "x",
+              "projectKey": {
+                "$": "undefined"
+              },
+              "abort": {
+                "$": "undefined"
+              },
+              "sessionKey": {
+                "$": "undefined"
+              }
+            },
+            "result": {
+              "ok": true,
+              "value": {
+                "changed": true
+              }
+            },
+            "state": {
+              "configs": [
+                [
+                  "s",
+                  "x"
+                ]
+              ],
+              "plugins": [],
+              "projects": [
+                [
+                  "s",
+                  "<ROOT>/registry-28-config-string/project"
+                ]
+              ],
+              "thinking": [],
+              "overrides": [],
+              "handlers": {
+                "config": [],
+                "hook": []
+              }
+            }
+          }
+        ]
+      },
+      {
         "name": "plugins-set-and-clear",
-        "dir": "registry-20-plugins-set-and-clear",
+        "dir": "registry-29-plugins-set-and-clear",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -8730,7 +10143,7 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-20-plugins-set-and-clear/plugin-a"
+                    "path": "<ROOT>/registry-29-plugins-set-and-clear/plugin-a"
                   }
                 ],
                 "skills": [
@@ -8753,7 +10166,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -8762,7 +10174,7 @@
                     "plugins": [
                       {
                         "type": "local",
-                        "path": "<ROOT>/registry-20-plugins-set-and-clear/plugin-a"
+                        "path": "<ROOT>/registry-29-plugins-set-and-clear/plugin-a"
                       }
                     ],
                     "skills": [
@@ -8782,7 +10194,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-20-plugins-set-and-clear/project"
+                  "<ROOT>/registry-29-plugins-set-and-clear/project"
                 ]
               ],
               "thinking": [],
@@ -8817,7 +10229,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -8833,7 +10244,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-20-plugins-set-and-clear/project"
+                  "<ROOT>/registry-29-plugins-set-and-clear/project"
                 ]
               ],
               "thinking": [],
@@ -8848,7 +10259,7 @@
       },
       {
         "name": "plugin-missing",
-        "dir": "registry-21-plugin-missing",
+        "dir": "registry-30-plugin-missing",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -8863,7 +10274,7 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-21-plugin-missing/missing"
+                    "path": "<ROOT>/registry-30-plugin-missing/missing"
                   }
                 ]
               },
@@ -8882,10 +10293,9 @@
               "error": {
                 "name": "DialogGatewayError",
                 "code": "SDK_PLUGIN_NOT_FOUND",
-                "message": "Gateway-local SDK plugin path does not exist: <ROOT>/registry-21-plugin-missing/missing"
+                "message": "Gateway-local SDK plugin path does not exist: <ROOT>/registry-30-plugin-missing/missing"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8902,7 +10312,7 @@
       },
       {
         "name": "plugin-not-directory",
-        "dir": "registry-22-plugin-not-directory",
+        "dir": "registry-31-plugin-not-directory",
         "files": [
           {
             "path": "not-a-dir",
@@ -8922,7 +10332,7 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-22-plugin-not-directory/not-a-dir"
+                    "path": "<ROOT>/registry-31-plugin-not-directory/not-a-dir"
                   }
                 ]
               },
@@ -8941,10 +10351,9 @@
               "error": {
                 "name": "DialogGatewayError",
                 "code": "SDK_PLUGIN_NOT_DIRECTORY",
-                "message": "Gateway-local SDK plugin path is not a directory: <ROOT>/registry-22-plugin-not-directory/not-a-dir"
+                "message": "Gateway-local SDK plugin path is not a directory: <ROOT>/registry-31-plugin-not-directory/not-a-dir"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -8961,7 +10370,7 @@
       },
       {
         "name": "plugin-duplicate",
-        "dir": "registry-23-plugin-duplicate",
+        "dir": "registry-32-plugin-duplicate",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -8976,11 +10385,11 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-23-plugin-duplicate/plugin-a"
+                    "path": "<ROOT>/registry-32-plugin-duplicate/plugin-a"
                   },
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-23-plugin-duplicate/plugin-a/."
+                    "path": "<ROOT>/registry-32-plugin-duplicate/plugin-a/."
                   }
                 ]
               },
@@ -8999,10 +10408,9 @@
               "error": {
                 "name": "DialogGatewayError",
                 "code": "SDK_PLUGIN_DUPLICATE_PATH",
-                "message": "Gateway-local SDK plugin path is listed more than once: <ROOT>/registry-23-plugin-duplicate/plugin-a/."
+                "message": "Gateway-local SDK plugin path is listed more than once: <ROOT>/registry-32-plugin-duplicate/plugin-a/."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9019,7 +10427,7 @@
       },
       {
         "name": "plugin-name-conflict",
-        "dir": "registry-24-plugin-name-conflict",
+        "dir": "registry-33-plugin-name-conflict",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9036,7 +10444,7 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-24-plugin-name-conflict/plugin-conflict"
+                    "path": "<ROOT>/registry-33-plugin-name-conflict/plugin-conflict"
                   }
                 ]
               },
@@ -9058,7 +10466,6 @@
                 "message": "SDK plugin existing conflicts with an already discovered project plugin."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9075,7 +10482,7 @@
       },
       {
         "name": "plugin-load-failure",
-        "dir": "registry-25-plugin-load-failure",
+        "dir": "registry-34-plugin-load-failure",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9090,7 +10497,7 @@
                 "plugins": [
                   {
                     "type": "local",
-                    "path": "<ROOT>/registry-25-plugin-load-failure/plugin-fail"
+                    "path": "<ROOT>/registry-34-plugin-load-failure/plugin-fail"
                   }
                 ]
               },
@@ -9109,10 +10516,9 @@
               "error": {
                 "name": "DialogGatewayError",
                 "code": "SDK_PLUGIN_LOAD_FAILED",
-                "message": "Could not load SDK plugin <ROOT>/registry-25-plugin-load-failure/plugin-fail: boom"
+                "message": "Could not load SDK plugin <ROOT>/registry-34-plugin-load-failure/plugin-fail: boom"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9129,7 +10535,7 @@
       },
       {
         "name": "skills-ambiguous",
-        "dir": "registry-26-skills-ambiguous",
+        "dir": "registry-35-skills-ambiguous",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9170,7 +10576,6 @@
                 "message": "SDK session skill is ambiguous; use its fully-qualified name: skill"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9187,7 +10592,7 @@
       },
       {
         "name": "skills-not-found",
-        "dir": "registry-27-skills-not-found",
+        "dir": "registry-36-skills-not-found",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9221,7 +10626,6 @@
                 "message": "SDK session skill is not available in this project: missing"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9238,7 +10642,7 @@
       },
       {
         "name": "skills-all",
-        "dir": "registry-28-skills-all",
+        "dir": "registry-37-skills-all",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9268,7 +10672,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9282,7 +10685,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-28-skills-all/project"
+                  "<ROOT>/registry-37-skills-all/project"
                 ]
               ],
               "thinking": [],
@@ -9297,7 +10700,7 @@
       },
       {
         "name": "abort-before",
-        "dir": "registry-29-abort-before",
+        "dir": "registry-38-abort-before",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9327,7 +10730,6 @@
                 "message": "aborted-first"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9344,7 +10746,7 @@
       },
       {
         "name": "abort-after-validation",
-        "dir": "registry-30-abort-after-validation",
+        "dir": "registry-39-abort-after-validation",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9380,7 +10782,6 @@
                 "message": "aborted-second"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9397,7 +10798,7 @@
       },
       {
         "name": "null-undefined-missing",
-        "dir": "registry-31-null-undefined-missing",
+        "dir": "registry-40-null-undefined-missing",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9430,7 +10831,6 @@
                 "message": "settings must be an object."
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9467,7 +10867,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9483,7 +10882,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-31-null-undefined-missing/project"
+                  "<ROOT>/registry-40-null-undefined-missing/project"
                 ]
               ],
               "thinking": [],
@@ -9514,7 +10913,6 @@
                 "changed": false
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9530,7 +10928,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-31-null-undefined-missing/project"
+                  "<ROOT>/registry-40-null-undefined-missing/project"
                 ]
               ],
               "thinking": [],
@@ -9545,7 +10943,7 @@
       },
       {
         "name": "clear-state",
-        "dir": "registry-32-clear-state",
+        "dir": "registry-41-clear-state",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9578,9 +10976,6 @@
                 "changed": true
               }
             },
-            "events": [
-              "taskBudget:{\"total\":1,\"scope\":\"project\"}"
-            ],
             "state": {
               "configs": [
                 [
@@ -9597,7 +10992,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-32-clear-state/project"
+                  "<ROOT>/registry-41-clear-state/project"
                 ]
               ],
               "thinking": [],
@@ -9619,7 +11014,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9636,7 +11030,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-32-clear-state/project"
+                  "<ROOT>/registry-41-clear-state/project"
                 ]
               ],
               "thinking": [],
@@ -9660,7 +11054,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9677,7 +11070,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-32-clear-state/project"
+                  "<ROOT>/registry-41-clear-state/project"
                 ]
               ],
               "thinking": [],
@@ -9705,7 +11098,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -9722,7 +11114,7 @@
       },
       {
         "name": "ephemeral",
-        "dir": "registry-33-ephemeral",
+        "dir": "registry-42-ephemeral",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9752,7 +11144,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9766,7 +11157,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-33-ephemeral/project"
+                  "<ROOT>/registry-42-ephemeral/project"
                 ]
               ],
               "thinking": [],
@@ -9788,7 +11179,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9802,7 +11192,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-33-ephemeral/project"
+                  "<ROOT>/registry-42-ephemeral/project"
                 ]
               ],
               "thinking": [],
@@ -9817,7 +11207,7 @@
       },
       {
         "name": "assert-model-default",
-        "dir": "registry-34-assert-model-default",
+        "dir": "registry-43-assert-model-default",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9845,7 +11235,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9857,7 +11246,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-34-assert-model-default/project"
+                  "<ROOT>/registry-43-assert-model-default/project"
                 ]
               ],
               "thinking": [],
@@ -9887,7 +11276,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9899,7 +11287,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-34-assert-model-default/project"
+                  "<ROOT>/registry-43-assert-model-default/project"
                 ]
               ],
               "thinking": [],
@@ -9914,7 +11302,7 @@
       },
       {
         "name": "assert-model-session-setting",
-        "dir": "registry-35-assert-model-session-setting",
+        "dir": "registry-44-assert-model-session-setting",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -9948,7 +11336,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -9966,7 +11353,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-35-assert-model-session-setting/project"
+                  "<ROOT>/registry-44-assert-model-session-setting/project"
                 ]
               ],
               "thinking": [],
@@ -9996,7 +11383,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -10014,7 +11400,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-35-assert-model-session-setting/project"
+                  "<ROOT>/registry-44-assert-model-session-setting/project"
                 ]
               ],
               "thinking": [],
@@ -10029,7 +11415,7 @@
       },
       {
         "name": "assert-model-explicit",
-        "dir": "registry-36-assert-model-explicit",
+        "dir": "registry-45-assert-model-explicit",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10064,7 +11450,6 @@
                 "changed": true
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -10083,7 +11468,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-36-assert-model-explicit/project"
+                  "<ROOT>/registry-45-assert-model-explicit/project"
                 ]
               ],
               "thinking": [],
@@ -10116,7 +11501,6 @@
                 "message": "SDK managedSettings.models denies model p3/m3."
               }
             },
-            "events": [],
             "state": {
               "configs": [
                 [
@@ -10135,7 +11519,7 @@
               "projects": [
                 [
                   "s",
-                  "<ROOT>/registry-36-assert-model-explicit/project"
+                  "<ROOT>/registry-45-assert-model-explicit/project"
                 ]
               ],
               "thinking": [],
@@ -10150,7 +11534,7 @@
       },
       {
         "name": "assert-model-project-key",
-        "dir": "registry-37-assert-model-project-key",
+        "dir": "registry-46-assert-model-project-key",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10164,7 +11548,7 @@
               "model": {
                 "$": "undefined"
               },
-              "projectKey": "<ROOT>/registry-37-assert-model-project-key/project",
+              "projectKey": "<ROOT>/registry-46-assert-model-project-key/project",
               "sessionKey": {
                 "$": "undefined"
               }
@@ -10175,7 +11559,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10192,7 +11575,7 @@
       },
       {
         "name": "flags-empty",
-        "dir": "registry-38-flags-empty",
+        "dir": "registry-47-flags-empty",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10215,7 +11598,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10232,7 +11614,7 @@
       },
       {
         "name": "flag-effort-undefined",
-        "dir": "registry-39-flag-effort-undefined",
+        "dir": "registry-48-flag-effort-undefined",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10261,7 +11643,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10288,7 +11669,7 @@
       },
       {
         "name": "flag-effort-null",
-        "dir": "registry-40-flag-effort-null",
+        "dir": "registry-49-flag-effort-null",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10315,7 +11696,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10332,7 +11712,7 @@
       },
       {
         "name": "flag-effort-high",
-        "dir": "registry-41-flag-effort-high",
+        "dir": "registry-50-flag-effort-high",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10359,7 +11739,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10384,7 +11763,7 @@
       },
       {
         "name": "flag-permissions-null",
-        "dir": "registry-42-flag-permissions-null",
+        "dir": "registry-51-flag-permissions-null",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10411,7 +11790,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10428,7 +11806,7 @@
       },
       {
         "name": "flag-permissions-default-null",
-        "dir": "registry-43-flag-permissions-default-null",
+        "dir": "registry-52-flag-permissions-default-null",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10457,7 +11835,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10474,7 +11851,7 @@
       },
       {
         "name": "flag-permissions-default-undefined",
-        "dir": "registry-44-flag-permissions-default-undefined",
+        "dir": "registry-53-flag-permissions-default-undefined",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10505,7 +11882,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10522,7 +11898,7 @@
       },
       {
         "name": "flag-permissions-default-plan",
-        "dir": "registry-45-flag-permissions-default-plan",
+        "dir": "registry-54-flag-permissions-default-plan",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10551,7 +11927,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10575,7 +11950,7 @@
       },
       {
         "name": "flag-permissions-empty",
-        "dir": "registry-46-flag-permissions-empty",
+        "dir": "registry-55-flag-permissions-empty",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10602,7 +11977,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10619,7 +11993,7 @@
       },
       {
         "name": "flag-permissions-undefined",
-        "dir": "registry-47-flag-permissions-undefined",
+        "dir": "registry-56-flag-permissions-undefined",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10649,7 +12023,6 @@
                 "message": "Cannot read properties of undefined (reading 'defaultMode')"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10666,7 +12039,7 @@
       },
       {
         "name": "flag-both",
-        "dir": "registry-48-flag-both",
+        "dir": "registry-57-flag-both",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10697,7 +12070,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10729,7 +12101,7 @@
       },
       {
         "name": "flag-permissions-removes-existing",
-        "dir": "registry-49-flag-permissions-removes-existing",
+        "dir": "registry-58-flag-permissions-removes-existing",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10759,7 +12131,6 @@
                 "cleared": []
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10800,7 +12171,6 @@
                 ]
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10822,7 +12192,7 @@
       },
       {
         "name": "thinking-missing",
-        "dir": "registry-50-thinking-missing",
+        "dir": "registry-59-thinking-missing",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10846,7 +12216,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10863,7 +12232,7 @@
       },
       {
         "name": "thinking-null",
-        "dir": "registry-51-thinking-null",
+        "dir": "registry-60-thinking-null",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10885,7 +12254,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10907,7 +12275,7 @@
       },
       {
         "name": "thinking-object",
-        "dir": "registry-52-thinking-object",
+        "dir": "registry-61-thinking-object",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -10933,7 +12301,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10971,7 +12338,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -10988,7 +12354,7 @@
       },
       {
         "name": "handlers-register-unregister",
-        "dir": "registry-53-handlers-register-unregister",
+        "dir": "registry-62-handlers-register-unregister",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -11007,7 +12373,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11033,7 +12398,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11064,7 +12428,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11093,7 +12456,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11110,7 +12472,7 @@
       },
       {
         "name": "handlers-replace-and-stale-token",
-        "dir": "registry-54-handlers-replace-and-stale-token",
+        "dir": "registry-63-handlers-replace-and-stale-token",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -11129,7 +12491,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11155,7 +12516,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11184,7 +12544,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11213,7 +12572,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11230,7 +12588,7 @@
       },
       {
         "name": "handlers-clear",
-        "dir": "registry-55-handlers-clear",
+        "dir": "registry-64-handlers-clear",
         "files": [],
         "organizationPolicy": {
           "$": "undefined"
@@ -11249,7 +12607,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11275,7 +12632,6 @@
               "ok": true,
               "value": true
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],
@@ -11305,7 +12661,6 @@
                 "$": "undefined"
               }
             },
-            "events": [],
             "state": {
               "configs": [],
               "plugins": [],

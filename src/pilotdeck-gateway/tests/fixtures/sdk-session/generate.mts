@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -73,6 +73,10 @@ let compiled = transformSync(await readFile(join(baseline, registrySource), 'utf
   target: 'es2022',
   sourcefile: registrySource,
 }).code;
+// The baseline is an ES module; esbuild's CJS output drops strict mode, which
+// would silently ignore `config.taskBudget = ...` on a primitive. Keep the
+// harness in the same strict mode as the real module.
+compiled = `'use strict';\n${compiled}`;
 compiled += `
 module.exports.__internals = {
   validateSdkManagedPermissions,
@@ -224,6 +228,12 @@ const settingsValues: [string, any][] = [
   ['agent-empty', { agent: {} }],
   ['unknown-root', { foo: 1 }],
   ['unknown-agent', { agent: { bogus: 1 } }],
+  ['unknown-root-integer-key', { agent: {}, zz: 1, '5': 2 }],
+  ['unknown-agent-integer-key', { agent: { zz: 1, '7': 2 } }],
+  [
+    'unknown-thinking-integer-key',
+    { agent: { thinking: { enabled: true, zz: 1, '3': 2 } } },
+  ],
   ['model-null', { agent: { model: null } }],
   ['model-string', { agent: { model: 'm1' } }],
   ['model-whitespace', { agent: { model: '  m1  ' } }],
@@ -300,13 +310,77 @@ for (const [name, value] of settingsValues) {
   });
 }
 
+// ── Object.keys traversal order ─────────────────────────────────────────────
+// `encode`/`JSON.stringify` enumerate integer keys first, which would erase the
+// source insertion order Rust must reproduce. Record explicit entry pairs so
+// the replay can build the same JsObject order the SDK wire value had.
+type OrderedNode =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | { entries: [string, OrderedNode][] };
+function orderedValue(node: OrderedNode): any {
+  if (node && typeof node === 'object' && 'entries' in node) {
+    return Object.fromEntries(
+      node.entries.map(([key, value]) => [key, orderedValue(value)]),
+    );
+  }
+  return node;
+}
+const settingsEntryOrder: any[] = [];
+const entryOrderValues: [string, OrderedNode][] = [
+  ['unknown-root-integer-key', { entries: [['agent', {}], ['zz', 1], ['5', 2]] }],
+  [
+    'unknown-agent-integer-key',
+    { entries: [['agent', { entries: [['zz', 1], ['7', 2]] }]] },
+  ],
+  [
+    'unknown-thinking-integer-key',
+    {
+      entries: [
+        [
+          'agent',
+          {
+            entries: [
+              ['thinking', { entries: [['enabled', true], ['zz', 1], ['3', 2]] }],
+            ],
+          },
+        ],
+      ],
+    },
+  ],
+];
+for (const [name, node] of entryOrderValues) {
+  settingsEntryOrder.push({
+    name,
+    entries: encode(node),
+    result: capture(() => validatePilotSdkSessionSettings(orderedValue(node))),
+  });
+}
+
 // ── settings resolution ─────────────────────────────────────────────────────
 type ResolveCase = {
   name: string;
   files?: { path: string; content: string }[];
+  dirs?: string[];
+  modes?: { path: string; mode: number }[];
+  symlinks?: { path: string; target: string }[];
   env?: Record<string, string>;
   options: Record<string, any>;
 };
+/** yaml@2.9.0 throws ReferenceError while toJSON expands this alias graph. */
+function aliasBombSource(): string {
+  let source = 'a: &a [x,x,x,x,x,x,x,x,x,x]\n';
+  let previous = 'a';
+  for (let index = 0; index < 8; index += 1) {
+    const name = `b${index}`;
+    source += `${name}: &${name} [${Array<string>(10).fill(`*${previous}`).join(',')}]\n`;
+    previous = name;
+  }
+  return `${source}agent: {model: m}\n`;
+}
 const settingsResolveCases: ResolveCase[] = [
   { name: 'empty', options: {} },
   { name: 'host-defaults', options: { hostDefaults: { agent: { model: 'd' } } } },
@@ -408,6 +482,33 @@ const settingsResolveCases: ResolveCase[] = [
     options: { hostSettingSources: ['project'] },
   },
   {
+    name: 'read-failed-directory',
+    dirs: ['project/.pilotdeck/pilotdeck.yaml'],
+    options: { hostSettingSources: ['project'] },
+  },
+  {
+    name: 'read-failed-permission',
+    files: [
+      { path: 'project/.pilotdeck/pilotdeck.yaml', content: 'agent: {model: unreadable}\n' },
+    ],
+    modes: [{ path: 'project/.pilotdeck/pilotdeck.yaml', mode: 0o000 }],
+    options: { hostSettingSources: ['project'] },
+  },
+  {
+    // existsSync follows the dangling link and reports false, so TS returns
+    // undefined before readFileSync; ENOENT can only surface through a race.
+    name: 'missing-symlink-target',
+    symlinks: [{ path: 'project/.pilotdeck/pilotdeck.yaml', target: 'missing-target' }],
+    options: { hostSettingSources: ['project'] },
+  },
+  {
+    name: 'yaml-tojson-alias-bomb',
+    files: [
+      { path: 'project/.pilotdeck/pilotdeck.yaml', content: aliasBombSource() },
+    ],
+    options: { hostSettingSources: ['project'] },
+  },
+  {
     name: 'agent-not-record',
     files: [{ path: 'project/.pilotdeck/pilotdeck.yaml', content: 'agent: [1, 2]\n' }],
     options: { hostSettingSources: ['project'] },
@@ -462,8 +563,19 @@ for (const [index, testCase] of settingsResolveCases.entries()) {
   const caseDir = join(scratch, dir);
   const projectRoot = join(caseDir, 'project');
   await mkdir(projectRoot, { recursive: true });
+  for (const dir of testCase.dirs ?? []) {
+    await mkdir(join(caseDir, dir), { recursive: true });
+  }
   for (const file of testCase.files ?? []) {
     await writeCaseFile(caseDir, file.path, file.content);
+  }
+  for (const link of testCase.symlinks ?? []) {
+    const absolute = join(caseDir, link.path);
+    await mkdir(dirname(absolute), { recursive: true });
+    await symlink(link.target, absolute);
+  }
+  for (const entry of testCase.modes ?? []) {
+    await chmod(join(caseDir, entry.path), entry.mode);
   }
   const env: Record<string, string> = { HOME: caseDir, PILOT_HOME: join(caseDir, 'home') };
   for (const [key, value] of Object.entries(testCase.env ?? {})) {
@@ -473,6 +585,9 @@ for (const [index, testCase] of settingsResolveCases.entries()) {
     name: testCase.name,
     dir,
     files: encode(testCase.files ?? []),
+    dirs: encode(testCase.dirs ?? []),
+    modes: encode(testCase.modes ?? []),
+    symlinks: encode(testCase.symlinks ?? []),
     projectRoot: encode(projectRoot),
     env: encode(env),
     hostDefaults: encode(testCase.options.hostDefaults),
@@ -565,6 +680,12 @@ const modelSelectorValues: [string, any][] = [
   ['space', { allow: ['p1/ m1'], deny: [] }],
   ['empty-model', { allow: ['p1/'], deny: [] }],
   ['duplicate', { deny: ['p1/m1', ' p1/m1 '], allow: [] }],
+  // ECMAScript \s includes U+FEFF/U+00A0/U+3000 and excludes U+0085; the Rust
+  // regex Unicode class is the opposite on the first two.
+  ['feff-interior', { allow: ['p\ufeffx/m'], deny: [] }],
+  ['nel-interior', { allow: ['p\u0085x/m'], deny: [] }],
+  ['nbsp-interior', { allow: ['p\u00a0x/m'], deny: [] }],
+  ['ideographic-space-interior', { allow: ['p\u3000x/m'], deny: [] }],
 ];
 for (const [label, value] of modelSelectorValues) {
   validatorCase('managedModels', label, [value, 'models'], () =>
@@ -867,6 +988,54 @@ pushRegistryCase({
   name: 'task-budget-session',
   steps: [{ op: 'set', config: { taskBudget: { total: 9, scope: 'session' } } }],
 });
+// The real TS registry method (the generator no longer stubs it) fixes the
+// project ledger on the first call, so the second call surfaces the exact
+// conflict text; the abort case keeps the ledger write while dropping config.
+pushRegistryCase({
+  name: 'task-budget-total-conflict',
+  steps: [
+    { op: 'set', config: { taskBudget: { total: 5, scope: 'project' } } },
+    { op: 'set', config: { taskBudget: { total: 6, scope: 'project' } } },
+  ],
+});
+pushRegistryCase({
+  name: 'task-budget-retention-conflict',
+  steps: [
+    {
+      op: 'set',
+      config: { taskBudget: { total: 5, scope: 'project', projectRetentionMs: 100 } },
+    },
+    {
+      op: 'set',
+      config: { taskBudget: { total: 5, scope: 'project', projectRetentionMs: 200 } },
+    },
+  ],
+});
+pushRegistryCase({
+  name: 'task-budget-abort-after-configure',
+  steps: [
+    {
+      op: 'set',
+      config: { taskBudget: { total: 5, scope: 'project', projectRetentionMs: 100 } },
+      abort: 'fourth',
+    },
+    { op: 'set', config: { taskBudget: { total: 6, scope: 'project' } } },
+  ],
+});
+for (const [label, config, organizationPolicy] of [
+  ['config-null', null, undefined],
+  ['config-undefined', undefined, undefined],
+  ['config-null-with-cap', null, { limits: { maxTaskBudgetUsd: 3 } }],
+  ['config-number-with-cap', 5, { limits: { maxTaskBudgetUsd: 3 } }],
+  ['config-array', [], undefined],
+  ['config-string', 'x', undefined],
+] as [string, any, any][]) {
+  pushRegistryCase({
+    name: label,
+    organizationPolicy,
+    steps: [{ op: 'set', config }],
+  });
+}
 pushRegistryCase({
   name: 'plugins-set-and-clear',
   pluginNames: ['existing'],
@@ -1093,7 +1262,6 @@ function makeRegistry(options: {
   caseDir: string;
   organizationPolicy: any;
   overrides: FakeOverrides;
-  events: string[];
   runtime: any;
 }) {
   const registry = Object.create(Registry.prototype);
@@ -1119,20 +1287,12 @@ function makeRegistry(options: {
   registry.sdkTaskBudgetLedgers = new Map();
   registry.taskBudgetLedgerRecordCount = 0;
   registry.taskBudgetLedgerCompactAfterRecords = 512;
-  registry.appendTaskBudgetLedgerRecord = () => {};
   registry._sessionOverrides = options.overrides;
   registry.resolve = (key?: string) => {
     // The oracle's runtime is the only generation; both the fallback root and
     // the project key resolve to it, matching the TS cache contract.
     void key;
     return options.runtime;
-  };
-  registry.configureProjectTaskBudget = async (
-    _projectRoot: string,
-    _sessionKey: string,
-    budget: any,
-  ) => {
-    if (budget?.scope === 'project') options.events.push(`taskBudget:${JSON.stringify(budget)}`);
   };
   return registry;
 }
@@ -1141,7 +1301,7 @@ function sequencedSignal(kind: string) {
   return {
     throwIfAborted() {
       calls += 1;
-      if ((kind === 'first' && calls >= 1) || (kind === 'second' && calls >= 2)) {
+      if ((kind === 'first' && calls >= 1) || (kind === 'second' && calls >= 2) || (kind === 'third' && calls >= 3) || (kind === 'fourth' && calls >= 4)) {
         throw new Error(`aborted-${kind}`);
       }
     },
@@ -1166,7 +1326,6 @@ for (const testCase of registryCases) {
     caseDir,
     organizationPolicy: testCase.organizationPolicy,
     overrides,
-    events,
     runtime,
   });
   const configTokens: any[] = [];
@@ -1175,7 +1334,6 @@ for (const testCase of registryCases) {
   for (const step of testCase.steps) {
     let result: any;
     let input: any;
-    const before = events.length;
     if (step.op === 'set') {
       const config = structuredClone(step.config);
       input = {
@@ -1243,7 +1401,6 @@ for (const testCase of registryCases) {
       op: step.op,
       input: encode(input),
       result,
-      events: events.slice(before).filter((event) => event.startsWith('taskBudget:')),
       state: encode(registryState(registry)),
     });
   }
@@ -1265,11 +1422,13 @@ const oracle = {
   count:
     settingsSources.length +
     settingsValidate.length +
+    settingsEntryOrder.length +
     settingsResolve.length +
     validators.length +
     registrySection.length,
   settingsSources: { count: settingsSources.length, cases: settingsSources },
   settingsValidate: { count: settingsValidate.length, cases: settingsValidate },
+  settingsEntryOrder: { count: settingsEntryOrder.length, cases: settingsEntryOrder },
   settingsResolve: { count: settingsResolve.length, cases: settingsResolve },
   validators: { count: validators.length, cases: validators },
   registry: { count: registrySection.length, cases: registrySection },

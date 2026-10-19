@@ -54,6 +54,12 @@ pub(crate) fn js_trim(value: &str) -> &str {
     value.trim_matches(|c: char| matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'))
 }
 
+/// ECMAScript `\s` character-class body for `regex` builders. It includes BOM
+/// and excludes NEL; Rust's Unicode `\s` is the opposite on both. Shared by the
+/// metadata capture and SDK selector validation so the set has one definition.
+pub(crate) const SPACE: &str =
+    r"\t-\r \x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}";
+
 #[derive(Clone, Debug)]
 pub(crate) struct Stat {
     pub directory: bool,
@@ -649,11 +655,13 @@ fn captured_field(source: &str, field: &str) -> Result<Option<String>, ()> {
         "createdAt",
     ];
     // ECMAScript \s includes BOM and excludes NEL; regex Unicode \s differs.
-    const SPACE: &str = r"[\t-\r \x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]";
     static EXPRESSIONS: std::sync::LazyLock<[regex::Regex; 6]> = std::sync::LazyLock::new(|| {
         FIELDS.map(|field| {
-            regex::Regex::new(&format!(r#""{}"{SPACE}*:{SPACE}*"((?:\\.|[^"])*)""#, field))
-                .expect("fixed field regex")
+            regex::Regex::new(&format!(
+                r#""{}"[{SPACE}]*:[{SPACE}]*"((?:\\.|[^"])*)""#,
+                field
+            ))
+            .expect("fixed field regex")
         })
     });
     let expression = &EXPRESSIONS[FIELDS

@@ -141,6 +141,25 @@ impl JsObject {
     pub fn entries(&self) -> &[(JsString, JsValue)] {
         &self.entries
     }
+    /// Own property entries in ECMAScript `Object.keys` order: canonical array
+    /// indices ascending first, then the remaining keys in insertion order.
+    /// Includes keys whose value is `undefined`, unlike JSON serialization.
+    pub fn own_entries(&self) -> Vec<(&JsString, &JsValue)> {
+        let mut indexed = Vec::new();
+        let mut ordinary = Vec::new();
+        for entry in &self.entries {
+            match entry.0.array_index() {
+                Some(index) => indexed.push((index, entry)),
+                None => ordinary.push(entry),
+            }
+        }
+        indexed.sort_unstable_by_key(|(index, _)| *index);
+        indexed
+            .into_iter()
+            .map(|(_, entry)| (&entry.0, &entry.1))
+            .chain(ordinary.into_iter().map(|entry| (&entry.0, &entry.1)))
+            .collect()
+    }
 }
 impl PartialEq for JsObject {
     fn eq(&self, other: &Self) -> bool {

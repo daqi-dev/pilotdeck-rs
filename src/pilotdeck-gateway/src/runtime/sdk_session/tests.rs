@@ -5,13 +5,13 @@
 //! name, owner token, drop refuses a replaced path). No fixed temporary path
 //! is read or removed.
 
-#[path = "../../tests/common/scratch.rs"]
+#[path = "../../../tests/common/scratch.rs"]
 mod scratch;
 
 use super::*;
 use crate::{
     config::{Env, session_overrides::SessionConfigOverrides},
-    runtime::plugins::{LoadedPlugin, PluginRuntimeOptions, PluginSource},
+    runtime::plugins::{LoadedPlugin, PluginRuntime, PluginRuntimeOptions, PluginSource},
     storage::{TaskBudgetError, TaskBudgetStore},
 };
 use std::{
@@ -492,6 +492,140 @@ fn abort_signal_is_checked_before_state_changes() {
     .unwrap_err();
     assert_eq!(error.name, "AbortError");
     assert!(registry.config_entries().is_empty());
+}
+
+#[test]
+fn hook_event_enum_matches_shared_protocol_list() {
+    let shared = crate::hooks::protocol::HOOK_EVENTS;
+    assert_eq!(PilotDeckHookEvent::ALL.len(), shared.len());
+    for (index, event) in PilotDeckHookEvent::ALL.iter().enumerate() {
+        assert_eq!(event.as_str(), shared[index], "hook event {index}");
+    }
+}
+
+#[test]
+fn home_dir_falls_back_to_process_home() {
+    let mut env = Env::new();
+    env.remove("HOME");
+    let process_home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"));
+    assert_eq!(home_dir(&env), process_home);
+}
+
+#[test]
+fn read_failure_message_uses_node_errno_text() {
+    let path = Path::new("/tmp/settings.yaml");
+    // ENOENT is unreachable through TS (`existsSync` returns false first), so
+    // pin its Node text at the mapping boundary instead of the file oracle.
+    for (errno, expected) in [
+        (
+            libc::ENOENT,
+            "ENOENT: no such file or directory, open '/tmp/settings.yaml'",
+        ),
+        (
+            libc::EACCES,
+            "EACCES: permission denied, open '/tmp/settings.yaml'",
+        ),
+        (
+            libc::EISDIR,
+            "EISDIR: illegal operation on a directory, read",
+        ),
+    ] {
+        assert_eq!(
+            read_failure_message(&std::io::Error::from_raw_os_error(errno), path),
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn abort_after_project_budget_write_keeps_ledger_and_retry_conflicts() {
+    struct FourthAbort(std::cell::Cell<usize>);
+    impl SdkAbortSignal for FourthAbort {
+        fn throw_if_aborted(&self) -> Result<(), SdkSessionError> {
+            let calls = self.0.get() + 1;
+            self.0.set(calls);
+            if calls >= 4 {
+                return Err(SdkSessionError::raw("Error", "aborted-fourth"));
+            }
+            Ok(())
+        }
+    }
+
+    let scratch = scratch::Scratch::new("sdk-session-budget-abort");
+    let home = scratch.path().join("home");
+    let store = TaskBudgetStore::new(&home, None);
+    let ledger_path = store.path().to_path_buf();
+    let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: scratch.path().to_path_buf(),
+        pilot_home: home.clone(),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: HashMap::new(),
+    }));
+    let mut env = Env::new();
+    env.insert("HOME".into(), scratch.path().to_string_lossy().into_owned());
+    env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
+    let mut registry = SdkSessionRegistry::new(
+        SdkSessionOptions::new(
+            scratch.path(),
+            scratch.path(),
+            env,
+            Arc::new(FixedResolver {
+                root: scratch.path().to_path_buf(),
+                plugin_runtime: runtime,
+            }),
+        )
+        .with_plugin_loader(Arc::new(NamedLoader))
+        .with_task_budget(Arc::new(TaskBudgetStorePort::new(store)))
+        .with_clock(Arc::new(|| 0.0_f64)),
+    )
+    .with_overrides(SessionConfigOverrides::new());
+
+    let budget = |total: f64, retention: Option<f64>| {
+        let mut entries = vec![
+            ("total", JsValue::Number(total)),
+            ("scope", JsValue::String("project".into())),
+        ];
+        if let Some(retention) = retention {
+            entries.push(("projectRetentionMs", JsValue::Number(retention)));
+        }
+        js_object(vec![("taskBudget", js_object(entries))])
+    };
+    let error = registry
+        .set_session_config(
+            &"s".into(),
+            &budget(5.0, Some(100.0)),
+            None,
+            Some(&FourthAbort(std::cell::Cell::new(0))),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.name, "Error");
+    assert_eq!(error.message, "aborted-fourth");
+    assert!(
+        registry.session_config(&"s".into()).is_none(),
+        "abort after the ledger write must not store the session config"
+    );
+    assert!(registry.project_entries().is_empty());
+    let ledger = std::fs::read_to_string(&ledger_path).unwrap();
+    let lines: Vec<_> = ledger.lines().collect();
+    assert_eq!(lines.len(), 1, "the configured record is on disk");
+    assert!(lines[0].contains("\"kind\":\"configured\""));
+    assert!(lines[0].contains("\"totalUsd\":5"));
+
+    let error = registry
+        .set_session_config(&"s".into(), &budget(6.0, None), None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code(),
+        "SDK_PROJECT_TASK_BUDGET_TOTAL_CONFLICT",
+        "the ledger survives the aborted config"
+    );
+    assert!(error.message.contains("received $6.000000"));
+    assert!(registry.session_config(&"s".into()).is_none());
 }
 
 /// Minimal block-on for the one synchronous test that needs an async method.

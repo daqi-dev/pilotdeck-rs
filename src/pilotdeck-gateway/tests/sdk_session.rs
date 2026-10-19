@@ -21,17 +21,19 @@ use pilotdeck_gateway::{
             self, ModelField, ModelRef, OrganizationPolicy, OrganizationSettingsPolicy,
             ProviderPolicy, ResolvedSdkRuntime, SdkAbortSignal, SdkPluginLoader,
             SdkRuntimeResolver, SdkSessionError, SdkSessionOptions, SdkSessionRegistry,
-            SdkTaskBudget, SelectorKind, SelectorPolicy,
+            SelectorKind, SelectorPolicy, TaskBudgetStorePort,
         },
     },
-    storage::TaskBudgetError,
+    storage::TaskBudgetStore,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -112,6 +114,29 @@ fn decode_at(value: &JsValue, root: &Path, depth: usize) -> JsValue {
         }
         other => other.clone(),
     }
+}
+
+/// Rebuild the explicit `{ entries: [[key, node], ...] }` form in source order.
+/// Ordinary JSON decoding cannot preserve a pre-enumeration insertion order for
+/// integer-like keys because `encode` has already applied JS key order.
+fn ordered_value(value: &JsValue) -> JsValue {
+    let Some(JsValue::Array(entries)) = value.get("entries") else {
+        return value.clone();
+    };
+    let mut out = JsObject::new();
+    for entry in entries {
+        let JsValue::Array(pair) = entry else {
+            continue;
+        };
+        let Some(key) = pair.first().and_then(JsValue::as_string) else {
+            continue;
+        };
+        let Some(node) = pair.get(1) else {
+            continue;
+        };
+        out.insert(key.clone(), ordered_value(node));
+    }
+    JsValue::Object(out)
 }
 
 /// Encode a real value exactly like the generator's `encode`, replacing this
@@ -222,6 +247,13 @@ fn string_list(value: &JsValue) -> Vec<String> {
             .map(js_string)
             .collect(),
         _ => Vec::new(),
+    }
+}
+
+fn array_of(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        _ => &[],
     }
 }
 
@@ -375,12 +407,16 @@ async fn real_ts_sdk_session_oracle() {
 
     let settings_sources = oracle.get("settingsSources").expect("settingsSources");
     let settings_validate = oracle.get("settingsValidate").expect("settingsValidate");
+    let settings_entry_order = oracle
+        .get("settingsEntryOrder")
+        .expect("settingsEntryOrder");
     let settings_resolve = oracle.get("settingsResolve").expect("settingsResolve");
     let validators = oracle.get("validators").expect("validators");
     let registry = oracle.get("registry").expect("registry");
     for section in [
         settings_sources,
         settings_validate,
+        settings_entry_order,
         settings_resolve,
         validators,
         registry,
@@ -405,6 +441,7 @@ async fn real_ts_sdk_session_oracle() {
     let sum: usize = [
         settings_sources,
         settings_validate,
+        settings_entry_order,
         settings_resolve,
         validators,
         registry,
@@ -448,12 +485,60 @@ async fn real_ts_sdk_session_oracle() {
         );
     }
 
+    // ── settings validation in source key order ─────────────────────────
+    for case in cases(settings_entry_order) {
+        let value = ordered_value(case.get("entries").expect("entries"));
+        let actual = match sdk_session::validate_session_settings(Some(&value)) {
+            Ok(()) => undefined_ok(root),
+            Err(error) => self::error(&error, root),
+        };
+        assert_same(
+            &actual,
+            case.get("result").expect("result"),
+            &format!(
+                "settingsEntryOrder:{}",
+                case_string(case, "name").unwrap_or_default()
+            ),
+        );
+    }
+
     // ── settings resolution ─────────────────────────────────────────────
     for case in cases(settings_resolve) {
         let dir = case_string(case, "dir").expect("dir");
         let case_dir = root.join(&dir);
         std::fs::create_dir_all(&case_dir).unwrap();
+        for directory in string_list(case.get("dirs").expect("dirs")) {
+            std::fs::create_dir_all(case_dir.join(directory)).unwrap();
+        }
         write_files(&case_dir, case.get("files").expect("files"), root);
+        for link in array_of(case.get("symlinks").expect("symlinks")) {
+            let Some(path) = link.get("path").and_then(JsValue::as_string) else {
+                continue;
+            };
+            let Some(target) = link.get("target").and_then(JsValue::as_string) else {
+                continue;
+            };
+            let absolute = case_dir.join(js_string(path));
+            if let Some(parent) = absolute.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            #[cfg(unix)]
+            symlink(js_string(target), &absolute).unwrap();
+        }
+        #[cfg(unix)]
+        for entry in array_of(case.get("modes").expect("modes")) {
+            let Some(path) = entry.get("path").and_then(JsValue::as_string) else {
+                continue;
+            };
+            let Some(mode) = entry.get("mode").and_then(JsValue::as_number) else {
+                continue;
+            };
+            std::fs::set_permissions(
+                case_dir.join(js_string(path)),
+                std::fs::Permissions::from_mode(mode as u32),
+            )
+            .unwrap();
+        }
         let project_root = decode(case.get("projectRoot").expect("projectRoot"), root);
         let project_root = PathBuf::from(js_string(
             project_root.as_string().expect("projectRoot string"),
@@ -746,46 +831,6 @@ impl SdkPluginLoader for TestLoader {
     }
 }
 
-struct RecordingBudget {
-    events: Arc<Mutex<Vec<String>>>,
-}
-
-impl SdkTaskBudget for RecordingBudget {
-    fn configure_project(
-        &self,
-        _project_root: &JsString,
-        _session_key: &JsString,
-        total_usd: f64,
-        retention_ms: Option<f64>,
-        _now_ms: f64,
-    ) -> Result<(), TaskBudgetError> {
-        let number = |value: f64| {
-            stringify_json(&JsValue::Number(value))
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-        };
-        let mut budget = format!("{{\"total\":{},\"scope\":\"project\"", number(total_usd));
-        if let Some(retention) = retention_ms {
-            budget.push_str(&format!(",\"projectRetentionMs\":{}", number(retention)));
-        }
-        budget.push('}');
-        self.events
-            .lock()
-            .unwrap()
-            .push(format!("taskBudget:{budget}"));
-        Ok(())
-    }
-
-    fn clear_session(
-        &self,
-        _project_root: &JsString,
-        _session_key: &JsString,
-    ) -> Result<(), TaskBudgetError> {
-        Ok(())
-    }
-}
-
 struct SequencedSignal {
     kind: String,
     calls: AtomicUsize,
@@ -794,8 +839,10 @@ struct SequencedSignal {
 impl SdkAbortSignal for SequencedSignal {
     fn throw_if_aborted(&self) -> Result<(), SdkSessionError> {
         let calls = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        let should_throw =
-            (self.kind == "first" && calls >= 1) || (self.kind == "second" && calls >= 2);
+        let should_throw = (self.kind == "first" && calls >= 1)
+            || (self.kind == "second" && calls >= 2)
+            || (self.kind == "third" && calls >= 3)
+            || (self.kind == "fourth" && calls >= 4);
         if should_throw {
             return Err(SdkSessionError::raw(
                 "Error",
@@ -967,7 +1014,7 @@ async fn replay_registry_case(case: &JsValue, snapshot: &JsValue, root: &Path) {
         case.get("organizationPolicy").expect("organizationPolicy"),
         root,
     ));
-    let events = Arc::new(Mutex::new(Vec::new()));
+    let budget_store = TaskBudgetStore::new(case_dir.join("home"), None);
     let mut env = Env::new();
     env.insert("HOME".into(), case_dir.to_string_lossy().into_owned());
     env.insert(
@@ -986,9 +1033,7 @@ async fn replay_registry_case(case: &JsValue, snapshot: &JsValue, root: &Path) {
     )
     .with_organization_policy(policy)
     .with_plugin_loader(Arc::new(TestLoader))
-    .with_task_budget(Arc::new(RecordingBudget {
-        events: Arc::clone(&events),
-    }))
+    .with_task_budget(Arc::new(TaskBudgetStorePort::new(budget_store)))
     .with_clock(Arc::new(|| 0.0_f64));
     let mut registry =
         SdkSessionRegistry::new(options).with_overrides(SessionConfigOverrides::new());
@@ -1007,7 +1052,6 @@ async fn replay_registry_case(case: &JsValue, snapshot: &JsValue, root: &Path) {
             .and_then(JsValue::as_string)
             .cloned()
             .unwrap_or_else(|| JsString::from("s"));
-        events.lock().unwrap().clear();
         let actual = match op.as_str() {
             "set" => {
                 let config = input.get("config").expect("config").clone();
@@ -1118,19 +1162,6 @@ async fn replay_registry_case(case: &JsValue, snapshot: &JsValue, root: &Path) {
             other => panic!("unknown registry op {other}"),
         };
         assert_same(&actual, step.get("result").expect("result"), &label);
-        let actual_events = array(
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|event| text(event))
-                .collect(),
-        );
-        assert_same(
-            &actual_events,
-            step.get("events").expect("events"),
-            &format!("{label}:events"),
-        );
         assert_same(
             &encoded_state(&registry, root),
             step.get("state").expect("state"),
