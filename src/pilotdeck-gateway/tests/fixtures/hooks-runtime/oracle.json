@@ -1,0 +1,1533 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "nodeVersion": "v22.22.0",
+  "sourceSha256": {
+    "src/extension/hooks/execution/HookRuntime.ts": "1b8c7c6549b538bf5f85576f0f1638fc5f82ebd13f5a1dad8a01cf2c518a417e",
+    "src/extension/hooks/execution/CommandHookExecutor.ts": "d5867c7d45f82aaf26098b07d11801ce6522b6115f48f9098e9866284484f896",
+    "src/extension/hooks/execution/HttpHookExecutor.ts": "04de2a286ca38996d636fcc56258c6bbdef58d9bbdf9e5c6a50372bc13213bd9",
+    "src/extension/hooks/execution/CallbackHookExecutor.ts": "63e0730fe5d8222ba4e8ea21a449c16d987ee5215d5074c8a37d9ffc56f04467",
+    "src/extension/hooks/execution/PromptHookExecutor.ts": "2e3a46ad9c7e1bf30cc895fd19528dee84d26adba89668b734cffc9ec1fe0cf7",
+    "src/extension/hooks/execution/AgentHookExecutor.ts": "ac9d086c537471e33cd85606718c1874afab3321e6c78eb0e3fa368c4a029258",
+    "src/extension/hooks/execution/parseHookOutput.ts": "86ed968c0d92ef9dadaef09b82b225f201d39796bcd30b8c620e06597a1c1b21",
+    "src/extension/hooks/execution/AsyncHookRegistry.ts": "3605fd1393dc363030cc364d14c0b6f60aceefd9d8c6cdd28047a479e43a1294",
+    "src/extension/hooks/events/HookExecutionEventBus.ts": "646ec952a44fbdb5a80c046de59dd51071cf337bc09d6875db9e78e3543f0045",
+    "src/extension/hooks/protocol/events.ts": "3fde15287d6f60276d8fe48f1793773f8be580fb26831210141c09099c94ce18",
+    "src/extension/hooks/protocol/input.ts": "a9c66001df1e27e191d63a27aa912938dce91c3b6b8bf20f01b090b66977c6cc",
+    "src/extension/hooks/protocol/output.ts": "54716f955ed8220214a26bea73163cc8e2f6663a3027154a5830f29574943db7",
+    "src/extension/hooks/protocol/settings.ts": "d2710f2d0322d0f8c515a356612730d7f9722abd5972ae551fe0792cb6b03e22",
+    "src/extension/hooks/config/matchHook.ts": "10416b65f9d88a0398cde3a411bf8b404b927deed5e2a32eabcca6a913724d71",
+    "src/extension/hooks/config/matchHookCondition.ts": "acc2ad1318db794e9ad6dc511c165f233322d2260169c58517e9e9a0c61d7b96",
+    "src/lifecycle/runtime/LifecycleRuntime.ts": "90afe325048ab832c822d184f7433b80df810dfa9e3da429f861aab135df0a26",
+    "src/lifecycle/protocol/effects.ts": "ec2d45c4466071f7ab90a3f133628c44e4aa91c81213d84d753ce0c0f51ba47a",
+    "src/lifecycle/protocol/payloads.ts": "9bfbb91923effb0f14b7fcde4e1021812475f7d856cf3fd97fc7f31a30795396",
+    "src/agent/modules/lifecycle/hostLifecycleRuntime.ts": "1148620cd623d859dd5603aa66dbc5eda4c9ef5966775e005971cf65ed325fb0",
+    "src/agent/turn/TurnEnvironment.ts": "8bcaa6b026358b2e2f406f034d02f18dae4a2b8fcf0cf9d2da3ca42b37664109",
+    "src/tool/execution-world/ShellPort.ts": "b616fe4e975a902bd4822c6f176f2fa646aa41df41d0ca4c1c202aed80b727b5",
+    "src/tool/execution-world/SubprocessPort.ts": "741522f149f6e01232777fbf5bf8269bff60886c46f81457dae0b9d6c7586d74",
+    "src/tool/builtin/bash/commandRunner.ts": "22f72ae28902b28f7b13675c26a7e6863eb39be4c10949ae224e1a7d6794f4cd",
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e"
+  },
+  "scripts": {
+    "<dir>/cmd-1.sh": "#!/bin/bash\ninput=$(cat)\nprintf 'STDIN:%s\\n' \"$input\"\nprintf '{\"systemMessage\":\"hello\",\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\"}}\\n'\n",
+    "<dir>/cmd-2.sh": "#!/bin/bash\nprintf 'out\\n'\nprintf 'err\\n' >&2\nexit 2\n",
+    "<dir>/cmd-3.sh": "#!/bin/bash\nprintf 'out\\n'\nexit 1\n",
+    "<dir>/cmd-4.sh": "#!/bin/bash\nprintf 'oops\\n'\nexit 3\n",
+    "<dir>/cmd-5.sh": "#!/bin/bash\nprintf '\\377'\n",
+    "<dir>/cmd-6.sh": "#!/bin/bash\nkill -TERM $$\n",
+    "<dir>/cmd-7.sh": "#!/bin/bash\nprintf '{\"continue\":false,\"reason\":\"r\"}\\r\\n'\n",
+    "<dir>/cmd-8.sh": "#!/bin/bash\nprintf 'x\\n{bad}\\n{\"decision\":\"block\"}\\n'\n",
+    "<dir>/cmd-9.sh": "#!/bin/bash\nprintf 'start\\n'\nsleep 5\nprintf 'end\\n'\n",
+    "<dir>/cmd-10.sh": "#!/bin/bash\nprintf 'ran\\n'\n",
+    "<dir>/cmd-11.sh": "#!/bin/bash\nprintf 'start\\n'\nsleep 5\nprintf 'end\\n'\n",
+    "<dir>/cmd-12.sh": "#!/bin/bash\nprintf 'A:%s\\nB:%s\\nC:%s\\nPWD:%s\\n' \"$A\" \"$B\" \"$C\" \"$PWD\"\n",
+    "<dir>/cmd-13.sh": "#!/bin/bash\nprintf 'args:%s\\n' \"$1\"\n",
+    "<dir>/cmd-14.sh": "#!/bin/bash\nprintf '{\"async\":true,\"asyncHookId\":\"aid\",\"asyncTimeout\":2.5}\\n'\n",
+    "<dir>/cmd-15.sh": "#!/bin/bash\nprintf 'start\\n'\nsleep 5\nprintf 'end\\n'\n"
+  },
+  "parse": [
+    {
+      "name": "empty",
+      "stdout": "",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "spaces",
+      "stdout": "   \n\t ",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "plain",
+      "stdout": "hello",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "plain-crlf",
+      "stdout": "hello\r\nworld",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "first-object",
+      "stdout": "{\"a\":1}\n{\"b\":2}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"a\":1}}"
+    },
+    {
+      "name": "skips-non-json-lines",
+      "stdout": "x\n{\"good\":1}\n{bad}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"good\":1}}"
+    },
+    {
+      "name": "invalid-first-object-stops",
+      "stdout": "x\n{bad}\n{\"good\":1}",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "array",
+      "stdout": "[1,2]",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "null",
+      "stdout": "null",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "string",
+      "stdout": "\"x\"",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "number",
+      "stdout": "42",
+      "expected": "{\"type\":\"sync\"}"
+    },
+    {
+      "name": "whitespace-around-object",
+      "stdout": "  \t {\"continue\":false} \r\n",
+      "expected": "{\"type\":\"sync\",\"continue\":false,\"raw\":{\"continue\":false}}"
+    },
+    {
+      "name": "bom-before-object",
+      "stdout": "﻿{\"continue\":false}",
+      "expected": "{\"type\":\"sync\",\"continue\":false,\"raw\":{\"continue\":false}}"
+    },
+    {
+      "name": "array-object",
+      "stdout": "[]\n{\"continue\":true}",
+      "expected": "{\"type\":\"sync\",\"continue\":true,\"raw\":{\"continue\":true}}"
+    },
+    {
+      "name": "async-minimal",
+      "stdout": "{\"async\":true}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true}}"
+    },
+    {
+      "name": "async-false-sync",
+      "stdout": "{\"async\":false,\"continue\":true}",
+      "expected": "{\"type\":\"sync\",\"continue\":true,\"raw\":{\"async\":false,\"continue\":true}}"
+    },
+    {
+      "name": "async-non-boolean",
+      "stdout": "{\"async\":1}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"async\":1}}"
+    },
+    {
+      "name": "async-id",
+      "stdout": "{\"async\":true,\"asyncHookId\":\"id\"}",
+      "expected": "{\"type\":\"async\",\"invocationId\":\"id\",\"raw\":{\"async\":true,\"asyncHookId\":\"id\"}}"
+    },
+    {
+      "name": "async-id-blank",
+      "stdout": "{\"async\":true,\"asyncHookId\":\"  \"}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncHookId\":\"  \"}}"
+    },
+    {
+      "name": "async-id-untrimmed",
+      "stdout": "{\"async\":true,\"asyncHookId\":\"  id  \"}",
+      "expected": "{\"type\":\"async\",\"invocationId\":\"  id  \",\"raw\":{\"async\":true,\"asyncHookId\":\"  id  \"}}"
+    },
+    {
+      "name": "async-id-non-string",
+      "stdout": "{\"async\":true,\"asyncHookId\":5}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncHookId\":5}}"
+    },
+    {
+      "name": "async-timeout-fraction",
+      "stdout": "{\"async\":true,\"asyncTimeout\":0.001}",
+      "expected": "{\"type\":\"async\",\"timeoutMs\":1,\"raw\":{\"async\":true,\"asyncTimeout\":0.001}}"
+    },
+    {
+      "name": "async-timeout-one",
+      "stdout": "{\"async\":true,\"asyncTimeout\":1}",
+      "expected": "{\"type\":\"async\",\"timeoutMs\":1000,\"raw\":{\"async\":true,\"asyncTimeout\":1}}"
+    },
+    {
+      "name": "async-timeout-negative",
+      "stdout": "{\"async\":true,\"asyncTimeout\":-2}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncTimeout\":-2}}"
+    },
+    {
+      "name": "async-timeout-zero",
+      "stdout": "{\"async\":true,\"asyncTimeout\":0}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncTimeout\":0}}"
+    },
+    {
+      "name": "async-timeout-infinite",
+      "stdout": "{\"async\":true,\"asyncTimeout\":1e999}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncTimeout\":null}}"
+    },
+    {
+      "name": "async-timeout-string",
+      "stdout": "{\"async\":true,\"asyncTimeout\":\"3\"}",
+      "expected": "{\"type\":\"async\",\"raw\":{\"async\":true,\"asyncTimeout\":\"3\"}}"
+    },
+    {
+      "name": "sync-continue",
+      "stdout": "{\"continue\":false,\"suppressOutput\":true}",
+      "expected": "{\"type\":\"sync\",\"continue\":false,\"suppressOutput\":true,\"raw\":{\"continue\":false,\"suppressOutput\":true}}"
+    },
+    {
+      "name": "sync-non-boolean",
+      "stdout": "{\"continue\":\"false\",\"suppressOutput\":0}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"continue\":\"false\",\"suppressOutput\":0}}"
+    },
+    {
+      "name": "sync-fields",
+      "stdout": "{\"stopReason\":\"stop\",\"decision\":\"approve\",\"reason\":\"why\",\"systemMessage\":\"msg\"}",
+      "expected": "{\"type\":\"sync\",\"stopReason\":\"stop\",\"decision\":\"approve\",\"reason\":\"why\",\"systemMessage\":\"msg\",\"raw\":{\"stopReason\":\"stop\",\"decision\":\"approve\",\"reason\":\"why\",\"systemMessage\":\"msg\"}}"
+    },
+    {
+      "name": "sync-decision-other",
+      "stdout": "{\"decision\":\"deny\"}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"decision\":\"deny\"}}"
+    },
+    {
+      "name": "specific-array",
+      "stdout": "{\"hookSpecificOutput\":[]}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"hookSpecificOutput\":[]}}"
+    },
+    {
+      "name": "specific-null",
+      "stdout": "{\"hookSpecificOutput\":null}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"hookSpecificOutput\":null}}"
+    },
+    {
+      "name": "specific-no-event",
+      "stdout": "{\"hookSpecificOutput\":{\"additionalContext\":\"x\"}}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"hookSpecificOutput\":{\"additionalContext\":\"x\"}}}"
+    },
+    {
+      "name": "specific-empty-event",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"\"}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"\"}}}"
+    },
+    {
+      "name": "specific-fields",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\",\"initialUserMessage\":\"ium\",\"watchPaths\":[\"a\",1,\"b\"],\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"pdr\",\"updatedInput\":{\"x\":1},\"updatedMCPToolOutput\":null,\"retry\":true,\"worktreePath\":\"wt\"}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\",\"initialUserMessage\":\"ium\",\"watchPaths\":[\"a\",\"b\"],\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"pdr\",\"updatedInput\":{\"x\":1},\"updatedMCPToolOutput\":null,\"retry\":true,\"worktreePath\":\"wt\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\",\"initialUserMessage\":\"ium\",\"watchPaths\":[\"a\",1,\"b\"],\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"pdr\",\"updatedInput\":{\"x\":1},\"updatedMCPToolOutput\":null,\"retry\":true,\"worktreePath\":\"wt\"}}}"
+    },
+    {
+      "name": "specific-watch-all-invalid",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"watchPaths\":[1,2]}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"watchPaths\":[]},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"watchPaths\":[1,2]}}}"
+    },
+    {
+      "name": "specific-watch-empty",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"watchPaths\":[]}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"watchPaths\":[]},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"watchPaths\":[]}}}"
+    },
+    {
+      "name": "specific-permission-values",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"permissionDecision\":\"passthrough\"}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"permissionDecision\":\"passthrough\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"permissionDecision\":\"passthrough\"}}}"
+    },
+    {
+      "name": "specific-permission-invalid",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"permissionDecision\":\"maybe\"}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"permissionDecision\":\"maybe\"}}}"
+    },
+    {
+      "name": "specific-updated-input-array",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"updatedInput\":[1]}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"updatedInput\":[1]}}}"
+    },
+    {
+      "name": "specific-mcp-false",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"updatedMCPToolOutput\":false}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"updatedMCPToolOutput\":false},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"updatedMCPToolOutput\":false}}}"
+    },
+    {
+      "name": "specific-decision-allow",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"allow\",\"updatedInput\":{\"a\":1},\"updatedPermissions\":[{\"b\":2}]}}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"allow\",\"updatedInput\":{\"a\":1},\"updatedPermissions\":[{\"b\":2}]}},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"allow\",\"updatedInput\":{\"a\":1},\"updatedPermissions\":[{\"b\":2}]}}}}"
+    },
+    {
+      "name": "specific-decision-deny",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"deny\",\"message\":\"no\",\"interrupt\":true}}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"deny\",\"message\":\"no\",\"interrupt\":true}},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"deny\",\"message\":\"no\",\"interrupt\":true}}}}"
+    },
+    {
+      "name": "specific-decision-other",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"maybe\"}}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":{\"behavior\":\"maybe\"}}}}"
+    },
+    {
+      "name": "specific-decision-array",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":[]}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\"},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"decision\":[]}}}"
+    },
+    {
+      "name": "specific-retry-false",
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"retry\":false}}",
+      "expected": "{\"type\":\"sync\",\"specific\":{\"hookEventName\":\"Stop\",\"retry\":false},\"raw\":{\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"retry\":false}}}"
+    },
+    {
+      "name": "duplicate-keys",
+      "stdout": "{\"continue\":true,\"continue\":false}",
+      "expected": "{\"type\":\"sync\",\"continue\":false,\"raw\":{\"continue\":false}}"
+    },
+    {
+      "name": "integer-keys",
+      "stdout": "{\"2\":\"b\",\"1\":\"a\"}",
+      "expected": "{\"type\":\"sync\",\"raw\":{\"1\":\"a\",\"2\":\"b\"}}"
+    },
+    {
+      "name": "proto-key",
+      "stdout": "{\"__proto__\":{\"x\":1},\"continue\":true}",
+      "expected": "{\"type\":\"sync\",\"continue\":true,\"raw\":{\"__proto__\":{\"x\":1},\"continue\":true}}"
+    },
+    {
+      "name": "unicode",
+      "stdout": "{\"reason\":\"你好\\ud800\",\"continue\":false}",
+      "expected": "{\"type\":\"sync\",\"continue\":false,\"reason\":\"你好\\ud800\",\"raw\":{\"reason\":\"你好\\ud800\",\"continue\":false}}"
+    },
+    {
+      "name": "trailing-junk",
+      "stdout": "{\"continue\":false} junk",
+      "expected": "{\"type\":\"sync\"}"
+    }
+  ],
+  "command": [
+    {
+      "name": "success-json-stdin",
+      "command": "/bin/bash '<dir>/cmd-1.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-1.sh",
+      "expected": "{\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"systemMessage\":\"hello\",\"specific\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\"},\"raw\":{\"systemMessage\":\"hello\",\"hookSpecificOutput\":{\"hookEventName\":\"Stop\",\"additionalContext\":\"ctx\"}}}}"
+    },
+    {
+      "name": "exit-blocking",
+      "command": "/bin/bash '<dir>/cmd-2.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-2.sh",
+      "expected": "{\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "exit-nonblocking",
+      "command": "/bin/bash '<dir>/cmd-3.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-3.sh",
+      "expected": "{\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "exit-three",
+      "command": "/bin/bash '<dir>/cmd-4.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-4.sh",
+      "expected": "{\"stdout\":\"oops\\n\",\"stderr\":\"\",\"exitCode\":3,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "empty-command",
+      "command": "",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "expected": "{\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "missing-cwd",
+      "command": "true",
+      "cwd": "<dir>/missing",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "expected": "{\"stdout\":\"\",\"stderr\":\"spawn /bin/bash ENOENT\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "invalid-utf8-stdout",
+      "command": "/bin/bash '<dir>/cmd-5.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-5.sh",
+      "expected": "{\"stdout\":\"�\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "killed-by-signal",
+      "command": "/bin/bash '<dir>/cmd-6.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-6.sh",
+      "expected": "{\"stdout\":\"\",\"stderr\":\"\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "crlf-json",
+      "command": "/bin/bash '<dir>/cmd-7.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-7.sh",
+      "expected": "{\"stdout\":\"{\\\"continue\\\":false,\\\"reason\\\":\\\"r\\\"}\\r\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"continue\":false,\"reason\":\"r\",\"raw\":{\"continue\":false,\"reason\":\"r\"}}}"
+    },
+    {
+      "name": "invalid-json-then-valid",
+      "command": "/bin/bash '<dir>/cmd-8.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-8.sh",
+      "expected": "{\"stdout\":\"x\\n{bad}\\n{\\\"decision\\\":\\\"block\\\"}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "timeout",
+      "command": "/bin/bash '<dir>/cmd-9.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "timeoutMs": 500,
+      "script": "<dir>/cmd-9.sh",
+      "expected": "{\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"timeout\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "abort-before-start",
+      "command": "/bin/bash '<dir>/cmd-10.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "abortAtMs": 0,
+      "script": "<dir>/cmd-10.sh",
+      "expected": "{\"stdout\":\"ran\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"cancelled\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "abort-during",
+      "command": "/bin/bash '<dir>/cmd-11.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "abortAtMs": 500,
+      "script": "<dir>/cmd-11.sh",
+      "expected": "{\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"cancelled\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "env-values",
+      "command": "/bin/bash '<dir>/cmd-12.sh'",
+      "cwd": "<dir>",
+      "env": {
+        "A": "a",
+        "B": "b b",
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "script": "<dir>/cmd-12.sh",
+      "expected": "{\"stdout\":\"A:a\\nB:b b\\nC:\\nPWD:<dir>\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "shell-expansion",
+      "command": "/bin/bash '<dir>/cmd-13.sh' 'x y'",
+      "cwd": "<dir>",
+      "env": {
+        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+        "HOME": "/Users/da"
+      },
+      "hookInput": {
+        "sessionId": "session-1",
+        "transcriptPath": "",
+        "cwd": "/tmp",
+        "permissionMode": "default"
+      },
+      "expected": "{\"stdout\":\"args:x y\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+    }
+  ],
+  "http": {
+    "cases": [
+      {
+        "name": "ok-json",
+        "target": "<url>/ok",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"systemMessage\\\":\\\"hello\\\"}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"systemMessage\":\"hello\",\"raw\":{\"systemMessage\":\"hello\"}}}",
+        "request": {
+          "method": "POST",
+          "path": "/ok",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "bad-status",
+        "target": "<url>/bad",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"continue\\\":false,\\\"reason\\\":\\\"bad\\\"}\",\"stderr\":\"HTTP hook returned 400.\",\"exitCode\":1,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\",\"continue\":false,\"reason\":\"bad\",\"raw\":{\"continue\":false,\"reason\":\"bad\"}}}",
+        "request": {
+          "method": "POST",
+          "path": "/bad",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "empty-status",
+        "target": "<url>/empty",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/empty",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "invalid-utf8",
+        "target": "<url>/invalid-utf8",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"��\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/invalid-utf8",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "headers-env",
+        "target": "<url>/echo",
+        "headers": {
+          "X-A": "$TOKEN",
+          "X-B": "${TOKEN}",
+          "X-C": "$SECRET",
+          "X-D": "pre$TOKEN-post"
+        },
+        "allowedEnvVars": [
+          "TOKEN"
+        ],
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "extra": "v"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\",\\\\\\\"extra\\\\\\\":\\\\\\\"v\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"t\\\",\\\"x-b\\\":\\\"t\\\",\\\"x-c\\\":\\\"\\\",\\\"x-d\\\":\\\"pret-post\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\",\\\"extra\\\":\\\"v\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"t\",\"x-b\":\"t\",\"x-c\":\"\",\"x-d\":\"pret-post\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "t",
+            "x-b": "t",
+            "x-c": "",
+            "x-d": "pret-post"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\",\"extra\":\"v\"}"
+        }
+      },
+      {
+        "name": "server-error",
+        "target": "<url>/server-error",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"HTTP hook returned 500.\",\"exitCode\":1,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/server-error",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "invalid-url",
+        "target": "not a url",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Failed to parse URL from not a url\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "non-string-header",
+        "target": "<url>/ok",
+        "headers": {
+          "A": 1
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"value.replace is not a function\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "invalid-header-value",
+        "target": "<url>/ok",
+        "headers": {
+          "A": "bad\nvalue"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Headers.append: \\\"bad\\nvalue\\\" is an invalid header value.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "pre-aborted",
+        "target": "<url>/ok",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "abortAtMs": 0,
+        "expected": "{\"stdout\":\"\",\"stderr\":\"This operation was aborted\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "abort-during",
+        "target": "<url>/slow",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "abortAtMs": 500,
+        "expected": "{\"stdout\":\"\",\"stderr\":\"This operation was aborted\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/slow",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "refused",
+        "target": "<refused>/x",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      }
+    ]
+  },
+  "callback": {
+    "cases": [
+      {
+        "name": "register-trimmed",
+        "value": {
+          "name": "cb",
+          "generation": 1,
+          "active": true
+        }
+      },
+      {
+        "name": "execute-text",
+        "value": {
+          "stdout": "{\"continue\":false,\"reason\":\"cb\"}",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync",
+            "continue": false,
+            "reason": "cb",
+            "raw": {
+              "continue": false,
+              "reason": "cb"
+            }
+          }
+        }
+      },
+      {
+        "name": "execute-missing",
+        "value": {
+          "stdout": "",
+          "stderr": "Callback hook nope is not registered.",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        }
+      },
+      {
+        "name": "replace",
+        "value": {
+          "oldActive": false,
+          "generation": 2,
+          "active": true
+        }
+      },
+      {
+        "name": "execute-output",
+        "value": {
+          "stdout": "",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync",
+            "decision": "block",
+            "reason": "r"
+          }
+        }
+      },
+      {
+        "name": "execute-void",
+        "value": {
+          "stdout": "",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        }
+      },
+      {
+        "name": "execute-throw",
+        "value": {
+          "stdout": "",
+          "stderr": "boom",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        }
+      },
+      {
+        "name": "execute-throw-string",
+        "value": {
+          "stdout": "",
+          "stderr": "plain",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        }
+      },
+      {
+        "name": "execute-promise",
+        "value": {
+          "stdout": "{\"decision\":\"approve\"}",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync",
+            "decision": "approve",
+            "raw": {
+              "decision": "approve"
+            }
+          }
+        }
+      },
+      {
+        "name": "unregister",
+        "value": true
+      },
+      {
+        "name": "unregister-again",
+        "value": false
+      },
+      {
+        "name": "empty-name-error",
+        "value": "Callback hook name must not be empty."
+      },
+      {
+        "name": "state-active",
+        "value": "active"
+      },
+      {
+        "name": "state-disposed",
+        "value": "disposed"
+      },
+      {
+        "name": "execute-after-dispose",
+        "value": {
+          "stdout": "",
+          "stderr": "Callback hook thrower is not registered.",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        }
+      },
+      {
+        "name": "register-after-dispose-error",
+        "value": "Cannot register a callback hook; callback hook executor is disposed."
+      },
+      {
+        "name": "old-registration-after-dispose",
+        "value": {
+          "r2": false
+        }
+      },
+      {
+        "name": "void-registration-after-dispose",
+        "value": {
+          "rv": false
+        }
+      },
+      {
+        "name": "dispose-drain-state",
+        "value": "draining"
+      },
+      {
+        "name": "dispose-drain-state-after",
+        "value": "disposed"
+      },
+      {
+        "name": "dispose-drain-result",
+        "value": {
+          "stdout": "{\"decision\":\"block\"}",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync",
+            "decision": "block",
+            "raw": {
+              "decision": "block"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "runtime": {
+    "settings": {
+      "Stop": [
+        {
+          "matcher": "m",
+          "pluginName": "plug",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-1.sh'"
+            },
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-2.sh'"
+            },
+            {
+              "type": "prompt",
+              "prompt": "p $ARGUMENTS"
+            },
+            {
+              "type": "agent",
+              "prompt": "a $ARGUMENTS"
+            }
+          ]
+        },
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-3.sh'"
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Read",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-4.sh'",
+              "if": "Read(*)"
+            },
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-5.sh'",
+              "if": "Edit(*)"
+            }
+          ]
+        }
+      ]
+    },
+    "runs": [
+      {
+        "name": "mixed-order",
+        "event": "Stop",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "matchQuery": "m",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"},{\"type\":\"block\",\"reason\":\"err\\n\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[{\"code\":\"hook_blocking_error\",\"message\":\"err\\n\",\"hookName\":\"plug:command\",\"exitCode\":2}],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"Prompt hook evaluator is not configured.\",\"hookName\":\"plug:prompt\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"Agent hook runner is not configured.\",\"hookName\":\"plug:agent\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
+      },
+      {
+        "name": "no-match-query",
+        "event": "Stop",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
+      },
+      {
+        "name": "condition",
+        "event": "PreToolUse",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "toolName": "Read",
+          "toolInput": {
+            "file_path": "/x"
+          }
+        },
+        "matchQuery": "Read",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\",\"stdout\":\"oops\\n\",\"stderr\":\"\",\"exitCode\":3,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"oops\\n\",\"hookName\":\"command\",\"exitCode\":3}],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\",\"stdout\":\"oops\\n\",\"stderr\":\"\",\"exitCode\":3,\"outcome\":\"non_blocking_error\"}]"
+      },
+      {
+        "name": "condition-false",
+        "event": "PreToolUse",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "toolName": "Write",
+          "toolInput": {
+            "file_path": "/x"
+          }
+        },
+        "matchQuery": "Read",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[]"
+      },
+      {
+        "name": "observer-error",
+        "event": "Stop",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "matchQuery": "m",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"},{\"type\":\"block\",\"reason\":\"err\\n\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[{\"code\":\"hook_blocking_error\",\"message\":\"err\\n\",\"hookName\":\"plug:command\",\"exitCode\":2}],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"Prompt hook evaluator is not configured.\",\"hookName\":\"plug:prompt\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"Agent hook runner is not configured.\",\"hookName\":\"plug:agent\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
+      }
+    ],
+    "dispose": {
+      "state": "disposed",
+      "subscribeError": "Cannot subscribe to hook execution events; hook runtime is disposed.",
+      "runError": "Cannot run hooks; hook runtime is disposed."
+    },
+    "pluginRoot": {
+      "settings": {
+        "Stop": [
+          {
+            "pluginRoot": "<dir>",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "printf \"PWD:%s\\n\" \"$PWD\""
+              }
+            ]
+          }
+        ]
+      },
+      "run": {
+        "name": "plugin-root",
+        "event": "Stop",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "matchQuery": "Stop",
+        "cwd": "<dir>/does-not-exist",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"PWD:<dir>\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"PWD:<dir>\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}]"
+      }
+    },
+    "sessionEnd": {
+      "settings": {
+        "SessionEnd": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "/bin/bash '<dir>/cmd-15.sh'"
+              }
+            ]
+          }
+        ]
+      },
+      "run": {
+        "name": "session-end-timeout",
+        "event": "SessionEnd",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "matchQuery": "SessionEnd",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\",\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"timeout\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"start\\n\",\"hookName\":\"command\"}],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\",\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"timeout\"}]"
+      },
+      "elapsedAtLeast1500": true
+    },
+    "async": {
+      "settings": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "/bin/bash '<dir>/cmd-14.sh'",
+                "asyncRewake": true
+              }
+            ]
+          }
+        ]
+      },
+      "run": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"{\\\"async\\\":true,\\\"asyncHookId\\\":\\\"aid\\\",\\\"asyncTimeout\\\":2.5}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"asyncInvocationId\":\"aid\",\"asyncTimeoutMs\":2500}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[{\"id\":\"command:1\",\"generation\":1,\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "events": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"{\\\"async\\\":true,\\\"asyncHookId\\\":\\\"aid\\\",\\\"asyncTimeout\\\":2.5}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"asyncInvocationId\":\"aid\",\"asyncTimeoutMs\":2500}]",
+      "pending": "[{\"id\":\"command:1\",\"generation\":1,\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}]",
+      "collectBefore": "[]",
+      "completeInvalid": false,
+      "completeValid": true,
+      "collect": "[{\"id\":\"command:1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"{\\\"continue\\\":false,\\\"reason\\\":\\\"r\\\"}\",\"stderr\":\"\",\"output\":{\"type\":\"sync\",\"continue\":false,\"reason\":\"r\",\"raw\":{\"continue\":false,\"reason\":\"r\"}},\"rewake\":true}]",
+      "collectAgain": "[]",
+      "afterRemove": "[]",
+      "secondPending": "[{\"id\":\"command:2\",\"generation\":2,\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"startedAt\":\"2026-01-01T00:00:00.000Z\"}]",
+      "cancel": true,
+      "cancelAgain": false,
+      "afterCancel": "[]",
+      "completeAfterDispose": false,
+      "collectAfterDispose": "[]"
+    },
+    "disposeDrain": {
+      "settings": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "sleep 0.3"
+              }
+            ]
+          }
+        ]
+      },
+      "immediateState": "draining",
+      "result": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
+      "afterState": "disposed"
+    },
+    "callbackHook": {
+      "settings": {
+        "Stop": [
+          {
+            "pluginName": "plug",
+            "hooks": [
+              {
+                "type": "callback",
+                "name": "cb"
+              },
+              {
+                "type": "command",
+                "command": "/bin/bash '<dir>/cmd-1.sh'"
+              }
+            ]
+          }
+        ]
+      },
+      "run": {
+        "name": "callback-hook",
+        "event": "Stop",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "matchQuery": "Stop",
+        "cwd": "<dir>",
+        "env": {
+          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
+          "HOME": "/Users/da"
+        },
+        "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"sys\"},{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
+        "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}]"
+      }
+    }
+  },
+  "lifecycle": {
+    "settings": {
+      "Stop": [
+        {
+          "pluginName": "plug",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-1.sh'"
+            },
+            {
+              "type": "command",
+              "command": "/bin/bash '<dir>/cmd-2.sh'"
+            },
+            {
+              "type": "prompt",
+              "prompt": "p $ARGUMENTS"
+            }
+          ]
+        }
+      ]
+    },
+    "baseInput": {
+      "sessionId": "session-1",
+      "transcriptPath": "",
+      "cwd": "<dir>",
+      "permissionMode": "default"
+    },
+    "dispatch": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"},{\"type\":\"block\",\"reason\":\"err\\n\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<hook_context source=\\\"plug:command\\\">\\nctx\\n</hook_context>\"}],\"metadata\":{\"synthetic\":true,\"purpose\":\"hook_context\"}}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"<dir>\\\",\\\"permissionMode\\\":\\\"default\\\",\\\"extra\\\":\\\"v\\\",\\\"hookEventName\\\":\\\"Stop\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[{\"code\":\"hook_blocking_error\",\"message\":\"err\\n\",\"hookName\":\"plug:command\",\"exitCode\":2}],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"Prompt hook evaluator is not configured.\",\"hookName\":\"plug:prompt\"}],\"pendingAsyncHooks\":[]}",
+    "dispatchMessages": "[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<hook_context source=\\\"plug:command\\\">\\nctx\\n</hook_context>\"}],\"metadata\":{\"synthetic\":true,\"purpose\":\"hook_context\"}}]",
+    "disposedError": "Cannot run hooks; hook runtime is disposed.",
+    "nullDispatch": "{\"effects\":[],\"messages\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
+    "hostClientCases": [
+      {
+        "name": "request",
+        "request": "{\"runId\":\"run-1\",\"operationId\":\"op-1\",\"idempotencyKey\":\"idem\",\"requestId\":\"lifecycle-dispatch-uuid\",\"module\":\"lifecycle\",\"recordFailure\":true,\"payload\":{\"operation\":\"dispatch\",\"event\":\"Stop\",\"payload\":{\"x\":1}}}",
+        "result": "{\"effects\":[],\"messages\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[]}"
+      },
+      {
+        "name": "response-1",
+        "response": {
+          "ok": true,
+          "payload": {
+            "result": {
+              "effects": [
+                {
+                  "type": "system_message",
+                  "content": "sys"
+                },
+                {
+                  "type": "additional_context",
+                  "content": "ctx",
+                  "source": "plug:command"
+                }
+              ],
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<hook_context source=\"plug:command\">\nctx\n</hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "synthetic": true,
+                    "purpose": "hook_context"
+                  }
+                }
+              ],
+              "events": [
+                {
+                  "type": "started",
+                  "sessionId": "session-1",
+                  "hookName": "plug:command",
+                  "hookEvent": "Stop"
+                }
+              ],
+              "blockingErrors": [],
+              "nonBlockingErrors": [],
+              "pendingAsyncHooks": []
+            }
+          }
+        },
+        "resolved": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"sys\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"<hook_context source=\\\"plug:command\\\">\\nctx\\n</hook_context>\"}],\"metadata\":{\"synthetic\":true,\"purpose\":\"hook_context\"}}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}"
+      },
+      {
+        "name": "response-2",
+        "response": {
+          "ok": false,
+          "code": "BOOM",
+          "error": {
+            "message": "kaboom"
+          }
+        },
+        "error": "kaboom",
+        "code": "BOOM"
+      },
+      {
+        "name": "response-3",
+        "response": {
+          "ok": false,
+          "code": "NOERR"
+        },
+        "error": "NOERR",
+        "code": "NOERR"
+      },
+      {
+        "name": "response-4",
+        "response": {
+          "ok": false,
+          "code": null,
+          "error": {
+            "message": null
+          }
+        },
+        "error": "Lifecycle module failed.",
+        "code": null
+      },
+      {
+        "name": "response-5",
+        "response": {
+          "ok": true,
+          "payload": {
+            "result": {}
+          }
+        },
+        "error": "Lifecycle module response has an invalid dispatch result.",
+        "code": null
+      },
+      {
+        "name": "response-6",
+        "response": {
+          "ok": true
+        },
+        "error": "Lifecycle module response must contain a dispatch result.",
+        "code": null
+      },
+      {
+        "name": "response-7",
+        "response": {
+          "ok": true,
+          "payload": {
+            "result": {
+              "effects": [],
+              "messages": [],
+              "events": [],
+              "blockingErrors": [],
+              "nonBlockingErrors": [],
+              "pendingAsyncHooks": "x"
+            }
+          }
+        },
+        "error": "Lifecycle module response has an invalid dispatch result.",
+        "code": null
+      },
+      {
+        "name": "response-8",
+        "response": {
+          "ok": true,
+          "payload": {
+            "result": {
+              "effects": [],
+              "messages": [],
+              "events": [],
+              "blockingErrors": [],
+              "nonBlockingErrors": [],
+              "pendingAsyncHooks": []
+            }
+          }
+        },
+        "resolved": "{\"effects\":[],\"messages\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}"
+      },
+      {
+        "name": "response-9",
+        "response": {
+          "ok": true,
+          "payload": {
+            "result": {
+              "effects": [],
+              "messages": [],
+              "events": [],
+              "blockingErrors": [],
+              "nonBlockingErrors": [],
+              "pendingAsyncHooks": []
+            }
+          }
+        },
+        "resolved": "{\"effects\":[],\"messages\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}"
+      },
+      {
+        "name": "request-without-idempotency-key",
+        "request": "{\"runId\":\"run-2\",\"operationId\":\"op-2\",\"requestId\":\"lifecycle-dispatch-uuid2\",\"module\":\"lifecycle\",\"recordFailure\":true,\"payload\":{\"operation\":\"dispatch\",\"event\":\"Stop\"}}"
+      }
+    ],
+    "envCases": [
+      {
+        "name": "ascii",
+        "base": {
+          "A": "1"
+        },
+        "cwd": "<dir>",
+        "sessionId": "sess",
+        "turnId": "turn",
+        "expected": "{\"A\":\"1\",\"PILOTDECK_SESSION_ID\":\"sess\",\"PILOTDECK_TURN_ID\":\"turn\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/sess/turn\"}"
+      },
+      {
+        "name": "fullwidth",
+        "base": {
+          "A": "1"
+        },
+        "cwd": "<dir>",
+        "sessionId": "sé ss/../x",
+        "turnId": "ＡＢＣ-..",
+        "expected": "{\"A\":\"1\",\"PILOTDECK_SESSION_ID\":\"sé ss/../x\",\"PILOTDECK_TURN_ID\":\"ＡＢＣ-..\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/s-ss-..-x/ABC\"}"
+      },
+      {
+        "name": "relative",
+        "base": {
+          "A": "1"
+        },
+        "cwd": "rel/dir",
+        "sessionId": "s",
+        "turnId": "t",
+        "expected": "{\"A\":\"1\",\"PILOTDECK_SESSION_ID\":\"s\",\"PILOTDECK_TURN_ID\":\"t\",\"PILOTDECK_WORK_DIR\":\"<cwd>/rel/dir/.pilotdeck/work/s/t\"}"
+      },
+      {
+        "name": "normalized",
+        "base": {
+          "A": "1"
+        },
+        "cwd": "<dir>/sub/../.",
+        "sessionId": "s",
+        "turnId": "t",
+        "expected": "{\"A\":\"1\",\"PILOTDECK_SESSION_ID\":\"s\",\"PILOTDECK_TURN_ID\":\"t\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/s/t\"}"
+      },
+      {
+        "name": "long",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnId": "-.-",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"PILOTDECK_TURN_ID\":\"-.-\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/unknown\"}"
+      },
+      {
+        "name": "empty",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "",
+        "turnId": "",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"\",\"PILOTDECK_TURN_ID\":\"\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/unknown/unknown\"}"
+      }
+    ]
+  }
+}

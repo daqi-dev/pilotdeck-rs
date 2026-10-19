@@ -415,6 +415,32 @@ pub(crate) fn iso_date(timestamp_ms: f64) -> String {
     let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
 }
+/// `Date.prototype.toISOString()` for the current wall clock, used where the
+/// TS baseline stamps a `Date` that must cross the JSON boundary.
+pub(crate) fn iso_timestamp_now() -> String {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as f64)
+        .unwrap_or(0.0);
+    iso_timestamp(ms)
+}
+
+/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`; equivalent to `new Date(ms).toISOString()`
+/// for the representable range JS accepts.
+pub(crate) fn iso_timestamp(timestamp_ms: f64) -> String {
+    let ms = timestamp_ms as i64;
+    let days = ms.div_euclid(86_400_000);
+    let day_ms = ms.rem_euclid(86_400_000);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        day_ms / 3_600_000,
+        day_ms / 60_000 % 60,
+        day_ms / 1_000 % 60,
+        day_ms % 1_000
+    )
+}
+
 /// Howard Hinnant's civil-from-days, with day 0 = 1970-01-01.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
@@ -1164,6 +1190,16 @@ mod tests {
         assert_eq!(iso_date(0.0), "1970-01-01");
         assert_eq!(iso_date(1_749_484_800_000.0), "2025-06-09");
         assert_eq!(iso_date(-1.0), "1969-12-31");
+    }
+    #[test]
+    fn iso_timestamps_match_node_utc_milliseconds() {
+        assert_eq!(iso_timestamp(0.0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(iso_timestamp(1.0), "1970-01-01T00:00:00.001Z");
+        assert_eq!(iso_timestamp(-1.0), "1969-12-31T23:59:59.999Z");
+        assert_eq!(
+            iso_timestamp(1_749_484_800_000.0),
+            "2025-06-09T16:00:00.000Z"
+        );
     }
     #[test]
     fn default_platform_uses_node_names() {
