@@ -9,6 +9,7 @@ pub mod permission;
 pub mod plugins;
 pub mod project;
 pub mod refresh;
+pub mod sdk_session;
 pub mod snapshot;
 pub mod steer;
 pub mod tools;
