@@ -13,10 +13,12 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 配置不是手写对象：每个 case 将 YAML 写入独占临时 home，调用真实 `loadPilotConfig({configPath, env, version:1})`，把 `snapshot.config.router` 传给 `createRouterRuntime`，同一份 JSON 存进 `oracle.json` 供 Rust 用 `RouterConfig::from_snapshot` 读取。临时目录用 `mkdtemp` 创建，`finally` 只删本进程创建的那一棵。
 
-## 覆盖（25 个 case）
+## 覆盖（27 个 case）
 
 - `disabled-router`：`router.enabled=false`，决策纯透传（含 subagent 形状）。
 - `scenario-resolution`：default、`isMainAgent=false`、`<ccr-subagent-model>` 标签、显式 `metadata.explicitProvider/Model`；覆盖 `missingAgentTool` 造成的 `subagentTagStripped`。
+- `unicode-case-fold`：ES 无 `u` 的 `i` 不把非 ASCII 折到 ASCII——工具名 `taſk`（U+017F）不算 agent tool，`<ccr-ſubagent-model>` 不算标签；ASCII `task` / `<ccr-subagent-model>` 为对照，materialize 一步验证长 s 标签不被剥掉。
+- `unicode-tier-tag`：judge 连续输出 `<tier>K</tier>`（U+212A KELVIN SIGN）不能匹配 tier 正则，3 次后回退 `defaultTier=complex`；随后 ASCII `<tier>SIMPLE</tier>` 正常命中 `simple`。`k` 是真实 tier，旧 Rust 的 Unicode `(?i)` 会误判为 `k`。
 - `sticky`：第一次 judge 后，第二轮带历史命中 sticky 不再调 judge；`invalidateSticky` 后重新 judge。
 - `cache-aware`：`observeUsage` + `previousProvider/Model`，judge 目标更贵时 `cacheAwareSwitch=kept_sticky`，保留原模型与 previous tier。
 - `orchestration`：`autoOrchestrate.triggerTiers` 首次 `continued:false`，sticky 第二轮 `continued:true`。

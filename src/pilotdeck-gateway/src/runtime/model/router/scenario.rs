@@ -1,11 +1,10 @@
 //! `decideScenario.ts`, `subagentDetector.ts` and `mediaRequirements.ts`.
+use super::classify::matches_ascii_ci;
 use super::{
     RouterConfig, RouterDecisionInput, RouterModelInvocation, RouterModelRef, field, js_text,
     request_messages, trim_end_units, trim_units, truthy,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use regex::Regex;
-use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScenarioResolution {
@@ -23,21 +22,75 @@ pub struct SubagentDetection {
     pub tagged_in_user_message: bool,
 }
 
-fn subagent_tag() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(
-            r"(?is)<(?:pilotdeck|ccr)-subagent-model>(.+?)</(?:pilotdeck|ccr)-subagent-model>",
-        )
-        .expect("subagent tag regex")
+const SUBAGENT_TAG_SUFFIX: &[u8] = b"-subagent-model>";
+const SUBAGENT_TAG_BRANDS: [&[u8]; 2] = [b"pilotdeck", b"ccr"];
+
+/// Match `<brand-subagent-model>` at `at`, returning the content start.
+fn open_subagent_tag_end(units: &[u16], at: usize) -> Option<usize> {
+    if units.get(at) != Some(&u16::from(b'<')) {
+        return None;
+    }
+    SUBAGENT_TAG_BRANDS.iter().find_map(|brand| {
+        let content_start = at + 1 + brand.len() + SUBAGENT_TAG_SUFFIX.len();
+        (matches_ascii_ci(units, at + 1, brand)
+            && matches_ascii_ci(units, at + 1 + brand.len(), SUBAGENT_TAG_SUFFIX))
+        .then_some(content_start)
     })
 }
-fn agent_tool() -> &'static Regex {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN.get_or_init(|| {
-        Regex::new(r"(?i)^(?:agent|task|launch[_-]?agent|spawn[_-]?agent)$")
-            .expect("agent tool regex")
+
+/// Match `</brand-subagent-model>` at `at`, returning the match end.
+fn close_subagent_tag_end(units: &[u16], at: usize) -> Option<usize> {
+    if !matches_ascii_ci(units, at, b"</") {
+        return None;
+    }
+    SUBAGENT_TAG_BRANDS.iter().find_map(|brand| {
+        let end = at + 2 + brand.len() + SUBAGENT_TAG_SUFFIX.len();
+        (matches_ascii_ci(units, at + 2, brand)
+            && matches_ascii_ci(units, at + 2 + brand.len(), SUBAGENT_TAG_SUFFIX))
+        .then_some(end)
     })
+}
+
+/// `/<(?:pilotdeck|ccr)-subagent-model>([\s\S]+?)<\/(?:pilotdeck|ccr)-subagent-model>/i`
+/// over UTF-16 code units. TS has no `u` flag, so `i` cannot fold U+017F onto
+/// ASCII `s` (the old Rust `(?i)` did); `[\s\S]+?` is any code unit and lazy.
+fn find_subagent_tag(units: &[u16], from: usize) -> Option<(usize, usize, usize, usize)> {
+    for start in from..units.len() {
+        if units[start] != u16::from(b'<') {
+            continue;
+        }
+        let Some(content_start) = open_subagent_tag_end(units, start) else {
+            continue;
+        };
+        let mut content_end = content_start + 1;
+        while content_end < units.len() {
+            if let Some(end) = close_subagent_tag_end(units, content_end) {
+                return Some((start, end, content_start, content_end));
+            }
+            content_end += 1;
+        }
+    }
+    None
+}
+
+/// `/^(?:agent|task|launch[_-]?agent|spawn[_-]?agent)$/i` over UTF-16 units.
+fn is_agent_tool_name(units: &[u16]) -> bool {
+    if units.len() == 5 && matches_ascii_ci(units, 0, b"agent") {
+        return true;
+    }
+    if units.len() == 4 && matches_ascii_ci(units, 0, b"task") {
+        return true;
+    }
+    [b"launch".as_slice(), b"spawn".as_slice()]
+        .iter()
+        .any(|prefix| {
+            matches_ascii_ci(units, 0, prefix)
+                && ((units.len() == prefix.len() + 5
+                    && matches_ascii_ci(units, prefix.len(), b"agent"))
+                    || (units.len() == prefix.len() + 6
+                        && matches!(units[prefix.len()], 45 | 95)
+                        && matches_ascii_ci(units, prefix.len() + 1, b"agent")))
+        })
 }
 
 pub fn decide_scenario(input: &RouterDecisionInput, config: &RouterConfig) -> ScenarioResolution {
@@ -115,12 +168,10 @@ pub fn detect_subagent(
             let Some(text) = js_text(field(block, "text")) else {
                 continue;
             };
-            let lossy = utf16_lossy(text);
-            if let Some(captures) = subagent_tag().captures(&lossy) {
-                if let Some(hint) = captures.get(1) {
-                    let units = capture_units(text.units(), &lossy, hint.start(), hint.end());
-                    model_hint = Some(JsString::from_utf16(trim_units(&units).to_vec()));
-                }
+            if let Some((_, _, start, end)) = find_subagent_tag(text.units(), 0) {
+                model_hint = Some(JsString::from_utf16(
+                    trim_units(&text.units()[start..end]).to_vec(),
+                ));
                 tagged_in_user_message = true;
             }
         }
@@ -128,8 +179,7 @@ pub fn detect_subagent(
 
     let missing_agent_tool = match tools {
         JsValue::Array(items) => !items.iter().any(|tool| {
-            js_text(field(tool, "name"))
-                .is_some_and(|name| agent_tool().is_match(&utf16_lossy(name)))
+            js_text(field(tool, "name")).is_some_and(|name| is_agent_tool_name(name.units()))
         }),
         _ => false,
     };
@@ -198,26 +248,13 @@ fn utf16_lossy(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
 }
 
-/// Map a byte range in the lossy UTF-8 view back to UTF-16 units. Every
-/// unpaired surrogate becomes one U+FFFD (one unit), so unit indices stay
-/// aligned while unrelated surrogates are preserved.
-fn capture_units(units: &[u16], lossy: &str, start: usize, end: usize) -> Vec<u16> {
-    let start = lossy[..start].encode_utf16().count();
-    let end = lossy[..end].encode_utf16().count();
-    units[start.min(units.len())..end.min(units.len())].to_vec()
-}
-
 /// One `String.prototype.replace(tagRegex, "")` over UTF-16 units.
 fn strip_tag_units(units: &[u16]) -> Vec<u16> {
-    let text = JsString::from_utf16(units.to_vec());
-    let lossy = utf16_lossy(&text);
-    let Some(found) = subagent_tag().find(&lossy) else {
+    let Some((start, end, _, _)) = find_subagent_tag(units, 0) else {
         return units.to_vec();
     };
-    let start = lossy[..found.start()].encode_utf16().count();
-    let end = lossy[..found.end()].encode_utf16().count();
-    let mut out = units[..start.min(units.len())].to_vec();
-    out.extend_from_slice(&units[end.min(units.len())..]);
+    let mut out = units[..start].to_vec();
+    out.extend_from_slice(&units[end..]);
     out
 }
 
