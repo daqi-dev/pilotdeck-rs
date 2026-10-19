@@ -20,9 +20,28 @@
 
 本候选没有承诺所有metadata访问安全：registry目录枚举名称、stat元数据、项目根选择仍沿用现有语义；不会把内容安全9探针泛化为整条metadata安全。#134待批准范围包括指定transcript/artifact静态外链、canonical后leaf/ancestor/root替换，以及`.cwd`静态外链/检查后替换。artifact错误归并、普通自然errno、孤立UTF16宿主边界分别按上述原件说明。
 
+`project-key-identity.json` 是独立新增的 4 条真实 Node WS 原件，由
+`tests/record_native_archive_project_key.mts` 在全新隔离 scratch 生成，不改历史
+`cases.json`。它覆盖三个 `native_archive_*` method 共用的
+`projectRegistry.ts:41-59` seam：
+
+- `project-folded-unknown`：`/fixture/project-\ud800/../missing`。`path.resolve`
+  是纯词法折叠，`..` 把含代理项的段弹掉后仍未注册；`Unknown projectKey: ${projectKey}`
+  保留调用方的原始 units。lossy `String.from_utf16_lossy` 会把文案写成
+  `/fixture/missing` 的 U+FFFD 拼写，故这条是文案负控。
+- `project-folded-registered`：同一折叠得到 `/fixture/project`（fixture 的 cwd），
+  命中已注册项目并成功回包；正控证明折叠确实发生在 registry 比较之前。
+- `project-folded-unknown-relative`：相对式 `project-\ud800/../missing`，由
+  `path.resolve` 对进程 cwd 折叠；文案仍保留相对拼写的原始 units。
+- `project-literal-fffd-unknown`：字面 U+FFFD 与代理项是不同身份；未注册时
+  文案保留字面字符而不是替换成代理项。
+
+文件快照把生成时的 scratch 根替换为 `/fixture` 并重算字节长度，因此两次生成
+逐字节一致（SHA-256 `50ea9249e7d0a17ddd679e75e9a1fc9d7bd9990571302a4b3a1a95a21526fd22`）。
+
 ## 复现
 
-仓库提供 `tests/record_native_archive.mts`、`record_archive_host.mts`、`record_archive_io.mts`、`record_archive_security.mts`、`record_archive_markers.mts`。每个接收三个绝对参数：只读基线目录、**不存在**的输出文件、预建的独立scratch目录。要求 Node v22.22.0、基线HEAD精确cc7c4e6、HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_DATA_HOME/TMPDIR/PILOT_HOME各自目录都位于scratch内部，五个 browser/polling guard 均设1。通过 `node --import <主仓>/scripts/gateway-parity/watcher.mjs --import <基线>/node_modules/tsx/dist/loader.mjs <录制器> <基线> <新输出> <scratch>` 执行，无监听或真实模型调用。输出成功不代表授权通过；安全录制器是在确认原版漏洞。
+仓库提供 `tests/record_native_archive.mts`、`record_native_archive_project_key.mts`、`record_archive_host.mts`、`record_archive_io.mts`、`record_archive_security.mts`、`record_archive_markers.mts`。每个接收三个绝对参数：只读基线目录、**不存在**的输出文件、预建的独立scratch目录。要求 Node v22.22.0、基线HEAD精确cc7c4e6、HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_DATA_HOME/TMPDIR/PILOT_HOME各自目录都位于scratch内部，五个 browser/polling guard 均设1。通过 `node --import <主仓>/scripts/gateway-parity/watcher.mjs --import <基线>/node_modules/tsx/dist/loader.mjs <录制器> <基线> <新输出> <scratch>` 执行，无监听或真实模型调用。输出成功不代表授权通过；安全录制器是在确认原版漏洞。
 
 Rust 使用原已安装工具链绝对 cargo/rustc/rustdoc、原HOME/cache、AUTO_INSTALL=0、四wrapper环境变量明确置空、独立target、jobs2及`--locked --offline`。测试命令：`cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib archive --locked --offline -- --nocapture`。不将 Node 隔离HOME传给Cargo，不启动rustup代理，不下载工具链。
 

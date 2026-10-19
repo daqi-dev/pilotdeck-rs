@@ -650,6 +650,135 @@
       "forward": false
     },
     {
+      "id": "project-key-folded-unknown",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"project-key-folded-unknown\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project-\\ud800/../missing\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-key-folded-unknown\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /fixture/project-\\ud800/../missing\"}}",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ],
+            [
+              "project-�",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg=="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "registered",
+              true
+            ],
+            [
+              "registered-fffd",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 17,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/home/projects/registered-fffd": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered-fffd/.cwd": {
+          "directory": false,
+          "size": 21,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdC3vv70K"
+        },
+        "/fixture/home/projects/registered-fffd/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project-�": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 0,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false
+    },
+    {
       "id": "project-key-folded-surviving-lone-surrogate",
       "home": "/fixture/home",
       "cwd": "/fixture",

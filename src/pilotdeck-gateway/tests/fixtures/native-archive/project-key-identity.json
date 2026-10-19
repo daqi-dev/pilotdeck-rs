@@ -1,0 +1,123 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "gateway/dialog/projectRegistry.ts": "adab87e1783dc39f017e7d6b9bbd9aaa286b60235ad622709752499443e794fb",
+    "session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead"
+  },
+  "home": "/fixture/pilot",
+  "cwd": "/fixture/project",
+  "files": {
+    "/fixture/pilot": {
+      "directory": true,
+      "size": 192,
+      "entries": [
+        [
+          ".legacy-bundled-skills-migrated-v1",
+          false
+        ],
+        [
+          "pilotdeck.yaml",
+          false
+        ],
+        [
+          "projects",
+          true
+        ],
+        [
+          "router",
+          true
+        ]
+      ]
+    },
+    "/fixture/pilot/.legacy-bundled-skills-migrated-v1": {
+      "directory": false,
+      "size": 10,
+      "base64": "Y29tcGxldGVkCg=="
+    },
+    "/fixture/pilot/pilotdeck.yaml": {
+      "directory": false,
+      "size": 355,
+      "base64": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiB0ZXN0L21vZGVsLCBtYXhDb250ZXh0VG9rZW5zOiA2NTUzNiwgbWF4T3V0cHV0VG9rZW5zOiA4MTkyfQptb2RlbDoKICBwcm92aWRlcnM6CiAgICB0ZXN0OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLnRlc3QvdjEKICAgICAgYXBpS2V5OiBmaXh0dXJlLWtleQogICAgICBtb2RlbHM6IHttb2RlbDoge319CmV4dGVuc2lvbjoKICBidWlsdGluUGx1Z2luc0VuYWJsZWQ6IHt3aW5kb3dzLXNraWxsczogZmFsc2UsIGJyb3dzZXItdXNlOiBmYWxzZSwgZnVuYXNyOiBmYWxzZX0KdGVsZW1ldHJ5OiB7ZW5hYmxlZDogZmFsc2V9Cg=="
+    },
+    "/fixture/pilot/projects": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "registered",
+          true
+        ]
+      ]
+    },
+    "/fixture/pilot/projects/registered": {
+      "directory": true,
+      "size": 128,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ],
+        [
+          "chats",
+          true
+        ]
+      ]
+    },
+    "/fixture/pilot/projects/registered/.cwd": {
+      "directory": false,
+      "size": 17,
+      "base64": "L2ZpeHR1cmUvcHJvamVjdAo="
+    },
+    "/fixture/pilot/projects/registered/chats": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "fixture.jsonl",
+          false
+        ]
+      ]
+    },
+    "/fixture/pilot/projects/registered/chats/fixture.jsonl": {
+      "directory": false,
+      "size": 128,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImZpeHR1cmUiLCJ0dXJuSWQiOiIiLCJzZXF1ZW5jZSI6MCwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNVQwMDowMDowMFoiLCJwYXlsb2FkIjp7InRleHQiOiJoZWxsbyJ9fQo="
+    },
+    "/fixture/pilot/router": {
+      "directory": true,
+      "size": 64,
+      "entries": []
+    },
+    "/fixture/project": {
+      "directory": true,
+      "size": 64,
+      "entries": []
+    }
+  },
+  "cases": [
+    {
+      "id": "project-folded-unknown",
+      "request": "{\"type\":\"request\",\"id\":\"project-folded-unknown\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/fixture/project-\\ud800/../missing\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-folded-unknown\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /fixture/project-\\ud800/../missing\"}}"
+    },
+    {
+      "id": "project-folded-registered",
+      "request": "{\"type\":\"request\",\"id\":\"project-folded-registered\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/fixture/project-\\ud800/../project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-folded-registered\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"fixture\",\"entryCount\":1,\"firstSequence\":0,\"lastSequence\":0,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "project-folded-unknown-relative",
+      "request": "{\"type\":\"request\",\"id\":\"project-folded-unknown-relative\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"project-\\ud800/../missing\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-folded-unknown-relative\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: project-\\ud800/../missing\"}}"
+    },
+    {
+      "id": "project-literal-fffd-unknown",
+      "request": "{\"type\":\"request\",\"id\":\"project-literal-fffd-unknown\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/fixture/project-�\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-literal-fffd-unknown\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /fixture/project-�\"}}"
+    }
+  ]
+}

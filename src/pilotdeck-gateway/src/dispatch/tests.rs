@@ -191,6 +191,34 @@ fn describe_project_folds_lone_surrogate_segments_before_identity() {
             "{key} survives normalization and must not alias the registered project"
         );
     }
+    // Folded away, but the normalized key is still unregistered. The summary
+    // must not alias a registered project, and its wire fields keep the raw
+    // units so the surrogate cannot turn into literal U+FFFD.
+    for key in [
+        "/fixture/project-\\ud800/../missing",
+        "project-\\ud800/../missing",
+    ] {
+        let raw = format!(
+            r#"{{"type":"request","id":"x","method":"describe_project","params":{{"projectKey":"{key}"}}}}"#
+        );
+        let bytes = response(&raw, &metadata);
+        let response = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        let summary = response.get("result").unwrap();
+        assert!(
+            summary.get("createdAt").is_none(),
+            "{key} resolves to an unregistered project"
+        );
+        let expected = parse_json(&format!("\"{key}\"")).unwrap();
+        assert_eq!(
+            summary
+                .get("projectKey")
+                .and_then(JsValue::as_string)
+                .unwrap()
+                .units(),
+            expected.as_string().unwrap().units(),
+            "{key} must keep its raw wire units"
+        );
+    }
 }
 
 #[test]
