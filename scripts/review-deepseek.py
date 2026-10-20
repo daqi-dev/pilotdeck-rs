@@ -7,7 +7,7 @@
 
 用法：
   python3 -I scripts/review-deepseek.py --prompt _tmp/<日期>-<名>/task.md [--input X.patch ...] --out _tmp/<日期>-<名>/out-deepseek.md
-  --model deepseek-flash（默认）| deepseek-v4-pro · --force 允许覆盖已存在的 --out
+  --model deepseek-v4.1-flash-mb（默认）· --force 允许覆盖已存在的 --out
 退出码：0 有非空完整回复 · 1 API/网络/响应异常（不写 --out）· 2 参数/前置错误
 """
 from __future__ import annotations
@@ -27,7 +27,10 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-API = "https://api.deepseek.com/chat/completions"
+API = "https://llm-center.modelbest.co/v1/messages"  # Anthropic Messages 协议（x-api-key + anthropic-version）
+DEFAULT_MODEL = "deepseek-v4.1-flash-mb"
+DEFAULT_MAX_TOKENS = 16384  # Messages 协议必填 max_tokens；--max-tokens 可覆盖
+THINKING_BUDGET = 8192  # --thinking enabled 时的 budget_tokens（须小于 max_tokens）
 MAX_INPUT_BYTES = 2 * 1024 * 1024    # 任务书 + 材料合计；超限失败，不静默截断
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 KEY_RE = re.compile(r"[A-Za-z0-9._\-]+")
@@ -153,8 +156,9 @@ def build_body(a: argparse.Namespace) -> bytes:
         "model": a.model,
         "messages": [{"role": "user", "content": "".join(parts)}],
         "stream": False,
-        **({"max_tokens": a.max_tokens} if a.max_tokens is not None else {}),
-        "thinking": {"type": a.thinking},
+        "max_tokens": a.max_tokens if a.max_tokens is not None else DEFAULT_MAX_TOKENS,
+        "thinking": {"type": "disabled"} if a.thinking == "disabled"
+                    else {"type": "enabled", "budget_tokens": min(THINKING_BUDGET, (a.max_tokens or DEFAULT_MAX_TOKENS) - 1)},
     }, ensure_ascii=False).encode()
 
 
@@ -177,7 +181,7 @@ def _deadline(*_):
 
 def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
     req = urllib.request.Request(a.api, data=body, headers={
-        "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        "x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
     # 墙钟总时限覆盖整个请求：连接、响应头、chunked 正文、错误正文；socket 超时只管单次操作
     previous = signal.signal(signal.SIGALRM, _deadline)
     signal.setitimer(signal.ITIMER_REAL, a.timeout)
@@ -211,27 +215,21 @@ def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
 
 
 def extract_text(resp: dict, thinking: str = "disabled") -> str:
-    choices = resp.get("choices")
-    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise Fail(1, f"响应无 choices：{json.dumps(resp, ensure_ascii=False)[:65536]}")
-    choice = choices[0]
-    msg = choice.get("message")
-    text = msg.get("content") if isinstance(msg, dict) else None
-    if not isinstance(text, str) or not text.strip():
+    blocks = resp.get("content")
+    if not isinstance(blocks, list) or not blocks:
+        raise Fail(1, f"响应无 content：{json.dumps(resp, ensure_ascii=False)[:65536]}")
+    stop = resp.get("stop_reason")
+    text = "".join(b.get("text") for b in blocks
+                   if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str))
+    if not text.strip():
+        has_thinking = any(isinstance(b, dict) and b.get("type") == "thinking" for b in blocks)
         usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
-        details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
-        head = f"空回复（finish_reason={choice.get('finish_reason')}，completion_tokens={usage.get('completion_tokens')}，" \
-               f"其中 reasoning_tokens={details.get('reasoning_tokens')}）"
-        reasoning = details.get("reasoning_tokens") if isinstance(details.get("reasoning_tokens"), int) else 0
-        if thinking == "disabled" and reasoning > 0:
-            raise Fail(1, head + "：已请求关思考仍有推理 token，thinking 字段可能被该模型忽略；换已实测支持该字段的 deepseek-flash，或调大 --max-tokens")
-        # 只有「撞上限 + 推理占满输出」这组证据成立时才下「思考耗尽」的判断，其余给中性诊断
-        if thinking == "enabled" and choice.get("finish_reason") == "length" and reasoning > 0 \
-                and reasoning == usage.get("completion_tokens"):
-            raise Fail(1, head + "：思考耗尽输出额度，用 --thinking disabled")
+        head = f"空回复（stop_reason={stop}，output_tokens={usage.get('output_tokens')}，含 thinking 块={has_thinking}）"
+        if has_thinking and stop == "max_tokens":
+            raise Fail(1, head + "：思考占满输出额度，调大 --max-tokens" + ("，或用 --thinking disabled" if thinking == "enabled" else ""))
         raise Fail(1, head)
-    if choice.get("finish_reason") not in (None, "stop"):
-        raise Fail(1, f"回复未完成（finish_reason={choice.get('finish_reason')}），不当作评审结论")
+    if stop not in (None, "end_turn", "stop_sequence"):
+        raise Fail(1, f"回复未完成（stop_reason={stop}），不当作评审结论")
     return text
 
 
@@ -273,11 +271,11 @@ def success_line(resp: dict, out: Path, key: str) -> str:
     """发布前构造成功日志：token 数只认整数，model 只认可编码字符串，整行不得含密钥。"""
     usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
     counts = {k: v if isinstance(v, int) and not isinstance(v, bool) else None
-              for k, v in ((k, usage.get(k)) for k in ("prompt_tokens", "completion_tokens"))}
+              for k, v in ((k, usage.get(k)) for k in ("input_tokens", "output_tokens"))}
     model = resp.get("model")
     model = model.encode("utf-8", "backslashreplace").decode("ascii", "backslashreplace") if isinstance(model, str) else None
-    line = (f"review-deepseek: model={model} prompt_tokens={counts['prompt_tokens']} "
-            f"completion_tokens={counts['completion_tokens']} → {out}")
+    line = (f"review-deepseek: model={model} prompt_tokens={counts['input_tokens']} "
+            f"completion_tokens={counts['output_tokens']} → {out}")
     if key in line:
         raise Fail(1, "响应元数据回显了密钥，拒绝落盘")
     return line
@@ -293,12 +291,11 @@ def main() -> int:
     ap.add_argument("--input", action="append", default=[], type=Path, help="附带材料（diff、源码），可重复")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
-    ap.add_argument("--model", default="deepseek-flash")
-    ap.add_argument("--max-tokens", type=int, help="输出上限；不给就用 API 默认值（截断时按失败退出）")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--max-tokens", type=int, help=f"输出上限；不给用 {DEFAULT_MAX_TOKENS}（Messages 协议必填；截断时按失败退出）")
     ap.add_argument("--thinking", choices=["disabled", "enabled"], default="disabled",
                     help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
-                         "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论。已实测适用 deepseek-flash；"
-                         "其它模型若不认该字段，空回复报错会提示「可能被忽略」")
+                         "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论。enabled 时 budget_tokens 取 8192 与 max_tokens-1 的较小者")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()

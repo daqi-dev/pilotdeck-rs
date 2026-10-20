@@ -43,8 +43,10 @@ ROLES = {
     "simplify": "review-role-simplify.md",
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
-ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
-DEFAULT_MODEL = {"zai": "glm-5.3", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
+ZAI_BASE_URL = "https://llm-center.modelbest.co"  # Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
+# 网关在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
+RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3"}
+DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
 
 
 def env_candidates() -> list[Path]:
@@ -209,7 +211,7 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
     # 防静默换模型：init 只是本地选择值，还要核后端每条响应的 model 与 modelUsage（审的不是声明的那家，结论不计）
     resp = result.get("resp_models") or set()
     usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
-    if model and (result.get("init_model") != model or resp != {model} or not usage or usage != {model}):
+    if model and (result.get("init_model") != model or resp != {RESP_MODEL_ALIAS.get(model, model)} or not usage or usage != {model}):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     rec["cost_usd"] = result.get("total_cost_usd")
@@ -233,7 +235,7 @@ def main() -> int:
     ap.add_argument("--roles", default=",".join(ROLES), help="逗号分隔，默认四个全跑")
     ap.add_argument("--runner", choices=["zai", "anthropic"], default="zai",
                     help="zai=GLM（默认，经智谱 Anthropic 兼容接口）；anthropic=Claude 模型")
-    ap.add_argument("--model", default=None, help="默认 zai→glm-5.3，anthropic→claude-sonnet-5-5")
+    ap.add_argument("--model", default=None, help="默认 zai→glm-5.3-mb，anthropic→claude-sonnet-5-5")
     ap.add_argument("--timeout", type=int, default=600, help="每角色秒数；实测 sonnet ~3min、opus ~6min")
     ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd（按 Anthropic 价目估算，zai 通道仅作上限）")
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")

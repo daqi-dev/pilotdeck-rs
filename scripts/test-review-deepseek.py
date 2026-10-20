@@ -88,9 +88,11 @@ class Sink(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def ok_body(content, finish="stop", model="fake", usage=None):
-    return json.dumps({"model": model, "choices": [{"message": {"content": content}, "finish_reason": finish}],
-                       "usage": usage}).encode()
+def ok_body(content, finish="end_turn", model="fake", usage=None, thinking=False):
+    blocks = ([{"type": "thinking", "thinking": "..."}] if thinking else []) + \
+             ([{"type": "text", "text": content}] if content is not None else [])
+    return json.dumps({"model": model, "type": "message", "role": "assistant", "content": blocks,
+                       "stop_reason": finish, "usage": usage}).encode()
 
 
 def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT):
@@ -151,8 +153,8 @@ def main() -> int:
     case("正常回复", (200, ok_body("结论 VERDICT: P0=0")), 0, expect_out="结论 VERDICT: P0=0")
     case("空回复", (200, ok_body("  ")), 1)
     case("content=null", (200, ok_body(None)), 1)
-    case("截断 finish=length", (200, ok_body("半截", "length")), 1)
-    case("choices 为空", (200, b'{"choices": []}'), 1)
+    case("截断 stop_reason=max_tokens", (200, ok_body("半截", "max_tokens")), 1)
+    case("content 为空", (200, b'{"content": []}'), 1)
     case("200 返回 HTML", (200, b"<html>portal</html>"), 1)
     case("HTTP 402", (402, b'{"error": "Insufficient Balance"}'), 1)
     case("HTTP 错误正文回显密钥", (401, f"bad key {FAKE_KEY}".encode()), 1)
@@ -164,8 +166,8 @@ def main() -> int:
     case("--out 是目录", (200, ok_body("x")), 2, "--out", ".")
     case("--out 父路径是普通文件", (200, ok_body("x")), 2, "--out", "task.md/x.md")
     case("model 回显密钥", (200, ok_body("OK", model=FAKE_KEY)), 1)
-    case("usage 回显密钥", (200, ok_body("OK", usage={"prompt_tokens": FAKE_KEY})), 0, expect_out="OK")
-    case("model 含孤立代理", (200, b'{"model": "\\ud800", "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}]}'),
+    case("usage 回显密钥", (200, ok_body("OK", usage={"input_tokens": FAKE_KEY})), 0, expect_out="OK")
+    case("model 含孤立代理", (200, b'{"model": "\\ud800", "content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn"}'),
          0, expect_out="OK")
     case("响应超 16 MiB", (200, b" " * (16 * 1024 * 1024 + 1)), 1, expect_msg="响应超过")
     case("--out 指向 .env（--force）", (200, ok_body("x")), 2, "--out", ".env.local", "--force",
@@ -223,28 +225,26 @@ def main() -> int:
     fails += not ok
     case("--max-tokens 透传", (200, ok_body("x")), 0, "--max-tokens", "8192")
     ok = json.loads(Fake.last_body).get("max_tokens") == 8192
-    case("不给 --max-tokens 不发该字段", (200, ok_body("x")), 0)
+    case("不给 --max-tokens 用默认值", (200, ok_body("x")), 0)
+    ok = ok and json.loads(Fake.last_body).get("max_tokens") == 16384
     for bad in ("0", "-1"):
         case(f"--max-tokens {bad} 拒绝", (200, ok_body("x")), 2, "--max-tokens", bad, expect_msg="正整数")
-    ok = ok and "max_tokens" not in json.loads(Fake.last_body)
     print(f"{'PASS' if ok else 'FAIL'} max_tokens 请求体")
     fails += not ok
     case("默认关思考", (200, ok_body("x")), 0)
     ok = json.loads(Fake.last_body).get("thinking") == {"type": "disabled"}
     case("--thinking enabled 透传", (200, ok_body("x")), 0, "--thinking", "enabled")
-    ok = ok and json.loads(Fake.last_body).get("thinking") == {"type": "enabled"}
+    ok = ok and json.loads(Fake.last_body).get("thinking") == {"type": "enabled", "budget_tokens": 8192}
     print(f"{'PASS' if ok else 'FAIL'} thinking 请求体")
     fails += not ok
-    burnt = {"completion_tokens": 16, "completion_tokens_details": {"reasoning_tokens": 16}}
-    case("关思考仍有推理 token → 提示字段可能被忽略", (200, ok_body("", finish="length", usage=burnt)), 1,
-         expect_msg="可能被该模型忽略")
-    case("开思考耗尽 → 提示关思考", (200, ok_body("", finish="length", usage=burnt)), 1, "--thinking", "enabled",
+    burnt = {"output_tokens": 16}
+    case("只有 thinking 块且 max_tokens → 调大额度", (200, ok_body(None, finish="max_tokens", usage=burnt, thinking=True)), 1,
+         expect_msg="思考占满输出额度", not_msg=("用 --thinking disabled",))
+    case("开思考耗尽 → 提示关思考", (200, ok_body(None, finish="max_tokens", usage=burnt, thinking=True)), 1, "--thinking", "enabled",
          expect_msg="用 --thinking disabled")
-    zero = {"completion_tokens": 0, "completion_tokens_details": {"reasoning_tokens": 0}}
-    for name, body in [("开思考、stop、零推理", ok_body("", finish="stop", usage=zero)),
-                       ("开思考、缺 usage", ok_body("", finish="length", usage=None))]:
-        case(f"{name} → 中性空回复诊断", (200, body), 1, "--thinking", "enabled", expect_msg="空回复",
-             not_msg=("思考耗尽", "可能被该模型忽略"))
+    case("只有 thinking 块、end_turn → 中性空回复诊断", (200, ok_body(None, usage=burnt, thinking=True)), 1,
+         expect_msg="空回复", not_msg=("思考占满",))
+    case("thinking 块之后的 text 块正常取出", (200, ok_body("结论", thinking=True)), 0, expect_out="结论")
     ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
     print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok

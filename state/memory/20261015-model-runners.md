@@ -6,6 +6,8 @@ type: feedback
 
 # 本机评审入口：2026-10-15 经验
 
+**2026-10-20 两家都改走 llm-center（用户指定，优先于下文所有旧 URL/模型名）**：网关 `https://llm-center.modelbest.co`，Anthropic Messages 协议（`POST /v1/messages`，头 `x-api-key` + `anthropic-version: 2023-06-01`），密钥仍是 `.env.local` 的 `ZAI_API_KEY` / `DEEPSEEK_API_KEY`。GLM 模型 `glm-5.3-mb`：`run-review-roles.py` 把 `ANTHROPIC_BASE_URL` 设为**主机根**（Claude Code 自己拼 `/v1/messages`，带 `/v1/messages` 会拼成双路径 404）；网关在响应体里回显展示名 `GLM-5.3`、`modelUsage` 却是请求名，守卫用 `RESP_MODEL_ALIAS` 只放行这一对。DeepSeek 模型 `deepseek-v4.1-flash-mb`：`review-deepseek.py` 已从 OpenAI chat 改成 Messages（`max_tokens` 必填，默认 16384；`--thinking enabled` 发 `budget_tokens`）。实测原件 `_tmp/20261020-llm-center-smoke/`。另：旧文写的 `ANTHROPIC_AUTH_TOKEN` 不准，代码实际设的是 `ANTHROPIC_API_KEY`。
+
 **2026-10-18 人定模型分工（经守护会话转达，正本见 `state/decisions-20261017.md`「卡 · 模型分工」）**：评审默认 GLM + DeepSeek，只有难单（并发、协议、冻结装置、安全边界）才请 Claude 审；实现由 codex / GLM / DeepSeek 轮换，难单优先 codex 或 Claude；谁写谁不审，必须两家非作者。GLM、DeepSeek 先各试一张小单，看质量再定是否常态化。
 
 **2026-10-17 GLM 走 Claude Code（首选）**：`claude -p` 设 `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`、`ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY`（`.env.local`）、`--model glm-5.3` 即跑 GLM，init 报 `model=glm-5.3`、工具白名单照常在执行层生效（实测原件 `_tmp/20261017-review-roles-glm/`）。`scripts/run-review-roles.py` 默认就走它（`--runner zai`）。比 opencode 好在只读可证明；opencode 只剩人工对话用途。GLM 开几个角度都只算**一个谱系**，双谱系评审仍需另一家非作者。
