@@ -1,0 +1,166 @@
+//! Node timer normalization and fetch event ordering shared by web, MCP and providers.
+use std::{future::Future, pin::Pin, task::Poll, time::Duration};
+use tokio::time::Instant;
+
+/// The delay Node's `setTimeout` actually arms for a requested millisecond
+/// value: values inside `[1, 2^31-1]` are truncated to integer milliseconds;
+/// everything else — `NaN`, `±Infinity`, values below 1 and values
+/// above `2^31-1` — becomes 1 ms (the `TimeoutOverflowWarning` path).
+/// Node validates the original value before `insert()` truncates it, so
+/// `2147483647.5` becomes 1, not `2147483647`. `_idleTimeout` alone still
+/// contains the fraction and does not describe the scheduled timer list.
+///
+/// Both `networkFetch`'s per-attempt timer and the providers' outer abort
+/// timer go through this, so an overflowing `timeoutMs` never reaches
+/// `Duration::from_secs_f64`, which panics on non-finite or overflowing
+/// input.
+pub fn node_timer_delay_ms(ms: f64) -> f64 {
+    if ms.is_finite() && (1.0..=i32::MAX as f64).contains(&ms) {
+        ms.trunc()
+    } else {
+        1.0
+    }
+}
+
+/// [`node_timer_delay_ms`] as a `Duration` for `tokio::time`.
+pub fn node_timer_duration(ms: f64) -> Duration {
+    Duration::from_millis(node_timer_delay_ms(ms) as u64)
+}
+
+/// An exchange with an observable completion source. A timer-backed transport
+/// must use `after`, rather than hide a sleep in an opaque future: consumers
+/// racing an abort timer need both deadlines when the executor resumes late.
+/// Ordinary I/O is dispatched when polled; an already fulfilled exchange is a
+/// microtask (`ready`). Dropping any variant also drops its body/connection.
+pub struct ExchangeFuture<T> {
+    future: Pin<Box<dyn Future<Output = T> + Send>>,
+    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+    microtask: bool,
+}
+
+impl<T: Send + 'static> ExchangeFuture<T> {
+    /// Socket I/O, without an application-level delayed completion.
+    pub fn io(future: impl Future<Output = T> + Send + 'static) -> Self {
+        Self {
+            future: Box::pin(future),
+            timer: None,
+            microtask: false,
+        }
+    }
+
+    pub fn ready(result: T) -> Self {
+        Self::microtask(std::future::ready(result))
+    }
+
+    /// A promise continuation dispatched before the next timer callback.
+    /// This must not hide a timer or socket wait; those have separate event
+    /// sources. It may yield while its queued continuation is being delivered.
+    pub fn microtask(future: impl Future<Output = T> + Send + 'static) -> Self {
+        Self {
+            future: Box::pin(future),
+            timer: None,
+            microtask: true,
+        }
+    }
+
+    /// A timer callback that settles the exchange. Keep the timer here so
+    /// callers can order it against their own timers, including overdue ones.
+    pub fn after(delay: Duration, result: T) -> Self {
+        Self {
+            future: Box::pin(std::future::ready(result)),
+            timer: Some(Box::pin(tokio::time::sleep(delay))),
+            microtask: false,
+        }
+    }
+
+    pub fn scheduled_at(&self) -> Option<tokio::time::Instant> {
+        self.timer.as_ref().map(|timer| timer.deadline())
+    }
+
+    pub fn is_microtask(&self) -> bool {
+        self.microtask
+    }
+}
+
+impl<T> Future for ExchangeFuture<T> {
+    type Output = T;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if let Some(timer) = &mut self.timer {
+            std::task::ready!(timer.as_mut().poll(cx));
+        }
+        self.future.as_mut().poll(cx)
+    }
+}
+
+pub(crate) enum Exchange<T> {
+    Response(T, bool),
+    Aborted,
+    Timeout,
+}
+
+/// Dispatch pending events as Node does: synchronous parent aborts are already
+/// delivered; timestamped parent events follow earlier response/timeout timers.
+/// The timeout was registered before the response, and the parent event after
+/// both, which also determines ties. A queued promise continuation runs before
+/// timers. Socket readiness is polled after due timers in this dispatcher;
+/// transports must distinguish it from a queued continuation.
+/// `ExchangeFuture::after` makes a delayed response's deadline observable.
+pub(crate) async fn exchange<T: Send + 'static>(
+    mut send: ExchangeFuture<T>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    deadline: Option<Instant>,
+) -> Exchange<T> {
+    let mut abort = Box::pin(abort);
+    let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
+    let mut initial = true;
+    std::future::poll_fn(|cx| {
+        // A fulfilled promise's queued continuation cannot be rejected by a
+        // later abort, even a synchronous one. `microtask` must not hide an
+        // undispatched socket/timer: those still lose to synchronous abort.
+        if send.is_microtask() {
+            let result = std::task::ready!(Pin::new(&mut send).poll(cx));
+            return Poll::Ready(Exchange::Response(
+                result,
+                abort.as_mut().poll(cx).is_ready(),
+            ));
+        }
+        let aborted = abort.as_mut().poll(cx).is_ready();
+        let parent_at = aborted.then(&parent_event_at).flatten();
+        if aborted && parent_at.is_none() {
+            return Poll::Ready(Exchange::Aborted);
+        }
+        let response_before_timeout = match (send.scheduled_at(), deadline) {
+            (Some(response_at), Some(abort_at)) => response_at < abort_at,
+            (None, Some(_)) => initial || send.is_microtask(),
+            (_, None) => true,
+        };
+        let response_before_parent = parent_at.is_none_or(|at| {
+            send.scheduled_at()
+                .map_or_else(|| send.is_microtask(), |response_at| response_at <= at)
+        });
+        let response_first = response_before_timeout && response_before_parent;
+        initial = false;
+        if response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+            return Poll::Ready(Exchange::Response(result, aborted));
+        }
+        if parent_at.is_none_or(|at| deadline.is_some_and(|deadline| deadline <= at))
+            && let Some(timer) = &mut timer
+            && timer.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Exchange::Timeout);
+        }
+        if aborted {
+            return Poll::Ready(Exchange::Aborted);
+        }
+        if !response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+            return Poll::Ready(Exchange::Response(result, false));
+        }
+        Poll::Pending
+    })
+    .await
+}

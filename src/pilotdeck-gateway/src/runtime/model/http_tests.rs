@@ -1,4 +1,90 @@
 use super::*;
+use std::{future::Future, pin::Pin};
+
+struct PendingBody;
+impl hyper::body::Body for PendingBody {
+    type Data = Bytes;
+    type Error = BodyFailure;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
+        std::task::Poll::Pending
+    }
+}
+
+async fn poll_pending<F: Future>(mut future: Pin<&mut F>) {
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+/// Actual TS provider: Infinity is accepted as a positive config value but
+/// setTimeout arms 1ms, preserving "Infinityms" in the idle error message.
+/// Compare normalized timers before choosing idle versus undici body timeout.
+#[tokio::test(start_paused = true)]
+async fn provider_idle_timeout_uses_node_timer_delay() {
+    for (idle, elapsed) in [(f64::INFINITY, 1), (60.9, 60), (61.1, 61)] {
+        let mut retry = JsObject::new();
+        retry.insert("streamIdleTimeoutMs".into(), JsValue::Number(idle));
+        let mut provider = JsObject::new();
+        provider.insert("retry".into(), JsValue::Object(retry));
+        let provider = JsValue::Object(provider);
+        let options = StreamOptions::default();
+        let configured = idle_timeout_ms(&provider, &options);
+        assert_eq!(configured, idle);
+        let mut body = PendingBody.boxed();
+        let mut read = Box::pin(read_frame(&mut body, configured, &options));
+        poll_pending(read.as_mut()).await;
+        if elapsed > 1 {
+            tokio::time::advance(Duration::from_millis(elapsed - 1)).await;
+            poll_pending(read.as_mut()).await;
+        }
+        tokio::time::advance(Duration::from_millis(1)).await;
+        // Do not await here: start_paused would auto-advance to a mistakenly
+        // longer timer, concealing fractional rounding / Infinity regressions.
+        let error = std::future::poll_fn(|cx| {
+            let std::task::Poll::Ready(result) = read.as_mut().poll(cx) else {
+                panic!("idle timeout was not ready at {elapsed}ms");
+            };
+            std::task::Poll::Ready(result.unwrap_err())
+        })
+        .await;
+        assert_eq!(error.name(), JsString::from("StreamIdleTimeoutError"));
+        assert_eq!(
+            error.message_text(),
+            format!(
+                "Stream idle timeout: no data received for {}ms",
+                crate::js_value::number_string(idle)
+            )
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_finite_idle_and_shorter_body_are_negative_controls() {
+    let options = StreamOptions::default();
+    let mut body = PendingBody.boxed();
+    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options));
+    poll_pending(read.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(1)).await;
+    poll_pending(read.as_mut()).await;
+    drop(read);
+
+    let options = StreamOptions {
+        body_timeout_ms: 10.0,
+        ..StreamOptions::default()
+    };
+    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options));
+    poll_pending(read.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(10)).await;
+    let error = read.await.unwrap_err();
+    assert_eq!(error.name(), JsString::from("TypeError"));
+    assert_eq!(error.message_text(), "terminated");
+}
 
 #[test]
 fn request_started_matches_all_protocol_oracles() {

@@ -48,8 +48,6 @@ use tokio::{
 /// `DEFAULT_INHERITED_ENV_VARS` (non-Windows).
 const DEFAULT_INHERITED_ENV_VARS: [&str; 6] = ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"];
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
-/// `TIMEOUT_MAX` of Node timers.
-const NODE_TIMEOUT_MAX: f64 = 2_147_483_647.0;
 
 pub(super) type Reply = Result<JsValue, McpClientError>;
 
@@ -59,12 +57,7 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// A Node `setTimeout` delay: out-of-range or `NaN` becomes 1 ms.
 pub(crate) fn node_delay(ms: f64) -> Duration {
-    let ms = if (1.0..=NODE_TIMEOUT_MAX).contains(&ms) {
-        ms
-    } else {
-        1.0
-    };
-    Duration::from_secs_f64(ms / 1000.0)
+    crate::runtime::network::node_timer_duration(ms)
 }
 
 /// What the stdio transport does in the depth-1 turn after a pending request
@@ -604,6 +597,14 @@ mod tests {
         assert_eq!(node_delay(-5.0), Duration::from_millis(1));
         assert_eq!(node_delay(2_147_483_648.0), Duration::from_millis(1));
         assert_eq!(node_delay(300.0), Duration::from_millis(300));
+        assert_eq!(node_delay(60.9), Duration::from_millis(60));
+        assert_eq!(node_delay(61.1), Duration::from_millis(61));
+        assert_eq!(node_delay(f64::INFINITY), Duration::from_millis(1));
+        assert_eq!(node_delay(2_147_483_647.5), Duration::from_millis(1));
+        assert_eq!(
+            node_delay(2_147_483_647.0),
+            Duration::from_millis(2_147_483_647)
+        );
     }
 
     #[test]

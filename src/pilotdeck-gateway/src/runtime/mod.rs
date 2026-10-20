@@ -8,6 +8,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod memory;
 pub mod model;
+pub mod network;
 pub mod permission;
 pub mod plugins;
 pub mod project;
