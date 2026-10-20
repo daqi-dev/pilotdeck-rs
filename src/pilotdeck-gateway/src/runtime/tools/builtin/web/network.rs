@@ -73,9 +73,20 @@ pub struct HttpResponse {
     /// repeated names with `, `).
     pub headers: Vec<(String, String)>,
     pub body: ModelBody,
+    /// The selected response's microtask continuation precedes a delivered
+    /// later cancellation. This privilege ends at the first pending body read.
+    body_before_abort: bool,
 }
 
 impl HttpResponse {
+    pub async fn read_body(
+        &mut self,
+        cap: usize,
+        parent: Option<&ToolRunContext>,
+    ) -> Result<Vec<u8>, BodyError> {
+        let body_before_abort = std::mem::take(&mut self.body_before_abort);
+        read_body_inner(&mut self.body, cap, parent, body_before_abort).await
+    }
     pub fn ok(&self) -> bool {
         (200..300).contains(&self.status)
     }
@@ -115,13 +126,32 @@ pub async fn read_body(
     cap: usize,
     parent: Option<&ToolRunContext>,
 ) -> Result<Vec<u8>, BodyError> {
+    read_body_inner(body, cap, parent, false).await
+}
+
+async fn read_body_inner(
+    body: &mut ModelBody,
+    cap: usize,
+    parent: Option<&ToolRunContext>,
+    mut body_before_abort: bool,
+) -> Result<Vec<u8>, BodyError> {
     let mut out = Vec::new();
     loop {
-        let next = tokio::select! {
-            biased;
-            () = parent_aborted(parent) => return Err(BodyError::Aborted),
-            next = tokio::time::timeout(BODY_TIMEOUT, body.frame()) => next,
-        };
+        let mut frame = Box::pin(tokio::time::timeout(BODY_TIMEOUT, body.frame()));
+        let mut abort = Box::pin(parent_aborted(parent));
+        let next = std::future::poll_fn(|cx| {
+            if body_before_abort {
+                if let Poll::Ready(next) = frame.as_mut().poll(cx) {
+                    return Poll::Ready(Ok(next));
+                }
+                body_before_abort = false;
+            }
+            if abort.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(Err(BodyError::Aborted));
+            }
+            frame.as_mut().poll(cx).map(Ok)
+        })
+        .await?;
         match next {
             Err(_) | Ok(Some(Err(_))) => return Err(BodyError::Terminated),
             Ok(None) => return Ok(out),
@@ -307,33 +337,66 @@ fn timeout_error(timeout_ms: f64) -> NetworkFetchError {
 async fn delay(
     ms: f64,
     options: &FetchOptions<'_>,
-    outer_deadline: Option<Instant>,
-) -> Result<(), NetworkFetchError> {
+    outer_deadline: Option<OuterDeadline>,
+    continuation_before_abort: bool,
+) -> Result<bool, NetworkFetchError> {
     let parent = options.parent;
-    if parent.is_some_and(ToolRunContext::is_aborted) {
+    if !continuation_before_abort && parent.is_some_and(ToolRunContext::is_aborted) {
         return Err(abort_error("Network retry aborted."));
     }
     let retry_at = Instant::now() + node_timer_duration(ms);
-    let outer_first = outer_deadline.is_some_and(|deadline| deadline <= retry_at);
-    let next = outer_deadline.map_or(retry_at, |deadline| deadline.min(retry_at));
-    tokio::select! {
-        biased;
-        () = parent_aborted(parent) => Err(abort_error("Network retry aborted.")),
-        () = tokio::time::sleep_until(next) => {
-            if outer_first { Err(timeout_error(options.timeout_ms)) } else { Ok(()) }
+    let outer_first = outer_deadline.filter(|deadline| deadline.at <= retry_at);
+    let next = outer_deadline.map_or(retry_at, |deadline| deadline.at.min(retry_at));
+    let mut abort = Box::pin(parent_aborted(parent));
+    let mut timer = Box::pin(tokio::time::sleep_until(next));
+    std::future::poll_fn(|cx| {
+        let aborted = abort.as_mut().poll(cx).is_ready();
+        let timer_first = !aborted
+            || parent
+                .and_then(ToolRunContext::abort_event_at)
+                .is_some_and(|at| next <= at);
+        if timer_first && timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(if let Some(outer) = outer_first {
+                Err(outer.error(options.timeout_ms))
+            } else {
+                Ok(aborted)
+            });
         }
-    }
+        if aborted {
+            return Poll::Ready(Err(abort_error("Network retry aborted.")));
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 enum Exchange {
-    Response(Result<hyper::Response<ModelBody>, TransportFailure>),
+    Response(Result<hyper::Response<ModelBody>, TransportFailure>, bool),
     Aborted,
     Timeout,
 }
 
+#[derive(Clone, Copy)]
+struct OuterDeadline {
+    at: Instant,
+    /// urlFetcher's hop timer aborts networkFetch's parent controller.
+    parent: bool,
+}
+
+impl OuterDeadline {
+    fn error(self, timeout_ms: f64) -> NetworkFetchError {
+        if self.parent {
+            abort_error("Network request aborted by parent signal.")
+        } else {
+            timeout_error(timeout_ms)
+        }
+    }
+}
+
 /// Dispatch pending events as Node does: synchronous parent aborts are already
-/// delivered; timers are ordered by deadline, with the abort registered first
-/// winning ties. A fulfilled fetch or queued promise continuation runs before
+/// delivered; timestamped parent events follow earlier response/timeout timers.
+/// The timeout was registered before the response, and the parent event after
+/// both, which also determines ties. A queued promise continuation runs before
 /// timers. Socket readiness is polled after due timers in this dispatcher;
 /// transports must distinguish it from a queued continuation.
 /// `TransportFuture::after` makes a delayed response's deadline observable.
@@ -346,25 +409,38 @@ async fn exchange(
     let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
     let mut initial = true;
     std::future::poll_fn(|cx| {
-        if abort.as_mut().poll(cx).is_ready() {
+        let aborted = abort.as_mut().poll(cx).is_ready();
+        let parent_at = aborted
+            .then(|| parent.and_then(ToolRunContext::abort_event_at))
+            .flatten();
+        if aborted && parent_at.is_none() {
             return Poll::Ready(Exchange::Aborted);
         }
-        let response_first = match (send.scheduled_at(), deadline) {
+        let response_before_timeout = match (send.scheduled_at(), deadline) {
             (Some(response_at), Some(abort_at)) => response_at < abort_at,
             (None, Some(_)) => initial || send.is_microtask(),
             (_, None) => true,
         };
+        let response_before_parent = parent_at.is_none_or(|at| {
+            send.scheduled_at()
+                .map_or_else(|| send.is_microtask(), |response_at| response_at <= at)
+        });
+        let response_first = response_before_timeout && response_before_parent;
         initial = false;
         if response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
-            return Poll::Ready(Exchange::Response(result));
+            return Poll::Ready(Exchange::Response(result, aborted));
         }
-        if let Some(timer) = &mut timer
+        if parent_at.is_none_or(|at| deadline.is_some_and(|deadline| deadline <= at))
+            && let Some(timer) = &mut timer
             && timer.as_mut().poll(cx).is_ready()
         {
             return Poll::Ready(Exchange::Timeout);
         }
+        if aborted {
+            return Poll::Ready(Exchange::Aborted);
+        }
         if !response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
-            return Poll::Ready(Exchange::Response(result));
+            return Poll::Ready(Exchange::Response(result, false));
         }
         Poll::Pending
     })
@@ -389,22 +465,53 @@ pub(super) async fn network_fetch_until(
     options: &FetchOptions<'_>,
     deadline: Instant,
 ) -> Result<HttpResponse, NetworkFetchError> {
-    network_fetch_inner(transport, request, options, Some(deadline)).await
+    network_fetch_inner(
+        transport,
+        request,
+        options,
+        Some(OuterDeadline {
+            at: deadline,
+            parent: false,
+        }),
+    )
+    .await
+}
+
+/// urlFetcher's surrounding hop timer is a parent abort, not a local timeout.
+pub(super) async fn network_fetch_with_parent_deadline(
+    transport: &dyn ModelHttpTransport,
+    request: &HttpRequest,
+    options: &FetchOptions<'_>,
+    deadline: Instant,
+) -> Result<HttpResponse, NetworkFetchError> {
+    network_fetch_inner(
+        transport,
+        request,
+        options,
+        Some(OuterDeadline {
+            at: deadline,
+            parent: true,
+        }),
+    )
+    .await
 }
 
 async fn network_fetch_inner(
     transport: &dyn ModelHttpTransport,
     request: &HttpRequest,
     options: &FetchOptions<'_>,
-    outer_deadline: Option<Instant>,
+    outer_deadline: Option<OuterDeadline>,
 ) -> Result<HttpResponse, NetworkFetchError> {
     let retry = options.retry;
     let method = request.method.to_ascii_uppercase();
     let can_retry_method =
         matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") || retry.retry_on_post;
     let mut attempt = 0;
+    let mut continuation_before_abort = false;
     loop {
-        let outcome = if options.parent.is_some_and(ToolRunContext::is_aborted) {
+        let outcome = if !continuation_before_abort
+            && options.parent.is_some_and(ToolRunContext::is_aborted)
+        {
             Err(abort_error("Network request aborted by parent signal."))
         } else {
             let built = build(request);
@@ -414,32 +521,44 @@ async fn network_fetch_inner(
                     // Only the per-attempt timer is gated on `timeoutMs > 0`.
                     let attempt_deadline = (options.timeout_ms > 0.0)
                         .then(|| Instant::now() + node_timer_duration(options.timeout_ms));
-                    let deadline = match (outer_deadline, attempt_deadline) {
+                    let deadline = match (outer_deadline.map(|outer| outer.at), attempt_deadline) {
                         (Some(outer), Some(attempt)) => Some(outer.min(attempt)),
                         (outer, attempt) => outer.or(attempt),
                     };
                     match exchange(transport.send(built), options.parent, deadline).await {
-                        Exchange::Response(Ok(response)) => Ok(response),
-                        Exchange::Response(Err(TransportFailure {
-                            cause_code,
-                            message,
-                        })) => Err(NetworkFetchError::classify(&message, cause_code)),
+                        Exchange::Response(Ok(response), body_before_abort) => {
+                            continuation_before_abort = body_before_abort;
+                            Ok((response, body_before_abort))
+                        }
+                        Exchange::Response(
+                            Err(TransportFailure {
+                                cause_code,
+                                message,
+                            }),
+                            before_abort,
+                        ) => {
+                            continuation_before_abort = before_abort;
+                            Err(NetworkFetchError::classify(&message, cause_code))
+                        }
                         Exchange::Aborted => {
                             Err(abort_error("Network request aborted by parent signal."))
                         }
                         Exchange::Timeout => {
-                            let error = timeout_error(options.timeout_ms);
-                            if outer_deadline.is_some() && deadline == outer_deadline {
-                                return Err(error);
+                            continuation_before_abort =
+                                options.parent.is_some_and(ToolRunContext::is_aborted);
+                            if let Some(outer) = outer_deadline
+                                && deadline == Some(outer.at)
+                            {
+                                return Err(outer.error(options.timeout_ms));
                             }
-                            Err(error)
+                            Err(timeout_error(options.timeout_ms))
                         }
                     }
                 }
             }
         };
         match outcome {
-            Ok(response) => {
+            Ok((response, body_before_abort)) => {
                 let status = response.status().as_u16();
                 if can_retry_method
                     && attempt < retry.max_retries
@@ -457,10 +576,11 @@ async fn network_fetch_inner(
                         (!values.is_empty()).then(|| values.join(", "))
                     };
                     drop(response);
-                    delay(
+                    continuation_before_abort = delay(
                         retry_delay(attempt, &retry, retry_after.as_deref(), &options.random),
                         options,
                         outer_deadline,
+                        continuation_before_abort,
                     )
                     .await?;
                     attempt += 1;
@@ -473,6 +593,7 @@ async fn network_fetch_inner(
                     status_text,
                     headers,
                     body: response.into_body(),
+                    body_before_abort,
                 });
             }
             Err(error) => {
@@ -480,10 +601,11 @@ async fn network_fetch_inner(
                 if !can_retry_method || attempt >= retry.max_retries || !retryable {
                     return Err(error);
                 }
-                delay(
+                continuation_before_abort = delay(
                     retry_delay(attempt, &retry, None, &options.random),
                     options,
                     outer_deadline,
+                    continuation_before_abort,
                 )
                 .await?;
                 attempt += 1;

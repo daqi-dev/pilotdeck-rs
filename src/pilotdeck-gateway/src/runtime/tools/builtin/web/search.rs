@@ -15,7 +15,7 @@ use super::{
     ask_permission,
     network::{
         BodyError, FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions,
-        node_timer_duration, read_body,
+        node_timer_duration,
     },
 };
 use crate::{
@@ -658,12 +658,9 @@ async fn response_text(
     response: &mut HttpResponse,
     context: &ToolRunContext,
 ) -> Result<String, BodyError> {
-    let body = read_body(
-        &mut response.body,
-        crate::runtime::model::MAX_STRING_LENGTH,
-        Some(context),
-    )
-    .await?;
+    let body = response
+        .read_body(crate::runtime::model::MAX_STRING_LENGTH, Some(context))
+        .await?;
     let text = String::from_utf8_lossy(&body).into_owned();
     Ok(text
         .strip_prefix('\u{FEFF}')
@@ -725,8 +722,9 @@ async fn send(
         .await
     {
         Ok(response) => Ok(response),
-        // `isLocalTimeout`: a parent abort is never a timeout.
-        Err(error) if error.code == "network_timeout" && !context.is_aborted() => Err(None),
+        // exchange already selected the event: a later parent cancellation
+        // must not relabel an earlier local timeout.
+        Err(error) if error.code == "network_timeout" => Err(None),
         Err(error) => Err(Some(error)),
     }
 }
