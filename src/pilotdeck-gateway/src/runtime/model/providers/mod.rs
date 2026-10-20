@@ -2,11 +2,11 @@
 //! `buildModelRequest.ts`, `normalizeStreamEvent.ts`, `providerEndpoint.ts`
 //! (chat endpoints), `sanitizeProviderBody.ts` and `buildProviderHeaders`.
 //!
-//! The Anthropic (A6.4-pr5), OpenAI chat-completions (A6.4-pr6) and OpenAI
-//! Responses (A6.4-pr7) protocols are ported. Google arrives in A6.4-pr8;
-//! until then it is rejected before any HTTP exchange with a
-//! `ModelRequestError("protocol_not_ported")`.
+//! Anthropic, OpenAI chat-completions, OpenAI Responses and Google requests
+//! share validation and thinking plans. Google streams use their SDK-specific
+//! attempt loop in `http.rs`; the other protocols use `StreamState` below.
 pub(crate) mod anthropic;
+pub(crate) mod google;
 pub(crate) mod openai;
 pub(crate) mod openai_responses;
 pub(crate) mod thinking;
@@ -325,13 +325,7 @@ pub(crate) fn build_model_request(
         return openai_responses::build_request(request, model, provider);
     }
     if is(field(provider, "protocol"), "google") {
-        return Err(request_error(
-            "protocol_not_ported",
-            message(&[
-                ("Provider protocol ", Some(field(provider, "protocol"))),
-                (" is not ported yet.", None),
-            ]),
-        ));
+        return google::build_request(request, model);
     }
     // `buildModelRequest` falls through to the OpenAI request builder.
     openai::build_request(request, model, provider)

@@ -1,5 +1,5 @@
 //! Provider streaming HTTP layer. Ported from PilotDeck `cc7c4e65`
-//! `src/model/streaming/streamModel.ts` (non-Google `streamModel` path),
+//! `src/model/streaming/streamModel.ts` (HTTP and Google SDK paths),
 //! `StreamingCheckpoint.ts`, `continuationRequest.ts`, `requestFingerprint.ts`,
 //! `policy/RetryPolicy.ts` and the provider-facing half of `network/fetch.ts`.
 //!
@@ -9,8 +9,8 @@
 //! Events are delivered to a sink in order; an `Err` is what TS throws.
 //!
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
-//! (#360-1). Not ported here: the Google SDK path (pr8), invocation audit
-//! staging (`options.invocation`, A6.4-pr10), `PILOTDECK_DUMP_REQUEST` and the
+//! (#360-1), including the Google SDK transport. Not ported here: invocation
+//! audit staging (`options.invocation`, A6.4-pr10), `PILOTDECK_DUMP_REQUEST` and the
 //! proxy/global dispatcher.
 #![allow(clippy::result_large_err)]
 
@@ -1013,6 +1013,302 @@ fn sse_error(error: sse::SseError) -> ModelStreamError {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Google protocol (`streamGoogleProviderRequest` in streamModel.ts)
+
+/// `sendGoogleCompleteRequest`/`generateContentStream` transport for the SDK:
+/// one URL, SDK headers, SDK `extraBody` deep merge. Transport failures are
+/// plain `TypeError: fetch failed` (the SDK uses bare fetch, not networkFetch).
+async fn send_google_request(
+    transport: &dyn ModelHttpTransport,
+    provider: &JsValue,
+    model: &JsValue,
+    body: &JsValue,
+    options: &StreamOptions,
+) -> Result<Response<ModelBody>, ModelStreamError> {
+    let timeout_ms = idle_timeout_ms(provider, options);
+    let final_body = providers::google::final_body(body, provider);
+    let headers = providers::google::headers(provider);
+    let encoded = crate::js_value::json_stringify(&final_body)
+        .map_err(|_| {
+            ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
+        })?
+        .unwrap_or_default();
+    let endpoint = providers::google::endpoint(provider, model);
+    let (url, header_map) = build_http_request(&endpoint, &headers)
+        .map_err(|error| ModelStreamError::thrown("TypeError", error.message))?;
+    let exchange = crate::fetch_redirect::follow(
+        url,
+        hyper::Method::POST,
+        header_map,
+        Bytes::from(encoded),
+        || ModelStreamError::thrown("TypeError", "fetch failed"),
+        |request| async move {
+            transport
+                .send(request)
+                .await
+                .map_err(|failure| ModelStreamError::thrown("TypeError", failure.message))
+        },
+    );
+    tokio::select! {
+        result = tokio::time::timeout(duration(timeout_ms), exchange) => match result {
+            Ok(result) => result,
+            Err(_) => Err(ModelStreamError::thrown(
+                "StreamIdleTimeoutError",
+                format!(
+                    "Stream idle timeout: no data received for {}ms",
+                    crate::js_value::number_string(timeout_ms)
+                ),
+            )),
+        },
+        _ = wait_abort(&options.abort) => Err(ModelStreamError::abort()),
+    }
+}
+
+/// `throwErrorIfNotOK` + `toProviderError` for the SDK. A JSON content type is
+/// parsed like `Response.json()`; any other content type is synthesized into
+/// `{error:{message,code,status}}` before `JSON.stringify`.
+async fn google_response_error(
+    response: Response<ModelBody>,
+    options: &StreamOptions,
+    provider: &JsValue,
+) -> Result<ModelStreamError, ModelStreamError> {
+    let status = response.status().as_u16();
+    // Hyper retains non-canonical and explicitly empty statusText in this
+    // extension. An absent extension means the canonical reason phrase.
+    let status_text = response
+        .extensions()
+        .get::<hyper::ext::ReasonPhrase>()
+        .map(|reason| String::from_utf8_lossy(reason.as_bytes()).into_owned())
+        .unwrap_or_else(|| {
+            response
+                .status()
+                .canonical_reason()
+                .unwrap_or_default()
+                .to_string()
+        });
+    // The SDK uses case-sensitive `includes("application/json")` on the value.
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+        .unwrap_or_default();
+    let mut body = response.into_body();
+    let text = response_text(&mut body, options).await?;
+    let error_body = if content_type.contains("application/json") {
+        providers::google::parse_error_body(&text)?
+    } else {
+        providers::google::synthesized_error_body(&text, status, &status_text)
+    };
+    let message = providers::google::api_error_message(&error_body)?;
+    let js_error = JsError {
+        message,
+        code: None,
+        network_code: None,
+        raw: JsValue::Object(providers::google::api_error_raw(status)),
+    };
+    let canonical = normalize_model_error(
+        &provider_id(provider),
+        &"google".into(),
+        ErrorInput::Error(&js_error),
+        Some(f64::from(status)),
+    );
+    Ok(ModelStreamError::Provider(canonical))
+}
+
+/// One `streamGoogleProviderRequest` attempt: send, then consume the SDK SSE
+/// stream. Returns as soon as a `message_end` event is emitted, like the TS
+/// loop's `stream.return(...)`.
+async fn google_attempt(
+    transport: &dyn ModelHttpTransport,
+    provider: &JsValue,
+    model: &JsValue,
+    body: &JsValue,
+    options: &StreamOptions,
+    sink: &mut (dyn FnMut(StreamOutput) + Send),
+    checkpoint: &mut Checkpoint,
+) -> Result<(), ModelStreamError> {
+    let response = send_google_request(transport, provider, model, body, options).await?;
+    let status = response.status().as_u16();
+    if matches!(status, 204 | 205) {
+        // fetch exposes a null body for null-body statuses; the SDK's stream
+        // reader throws before yielding any chunk.
+        return Err(ModelStreamError::thrown("Error", "Response body is empty"));
+    }
+    if !(200..300).contains(&status) {
+        return Err(google_response_error(response, options, provider).await?);
+    }
+    let mut body = response.into_body();
+    let mut state = providers::google::StreamState::default();
+    let idle_ms = idle_timeout_ms(provider, options);
+    let mut guard = StreamGuard::new(provider, (options.clock)());
+    let mut buffer = sse::SseBuffer::with_limit(sse_limit());
+    loop {
+        throw_if_aborted(options)?;
+        let chunk = read_frame(&mut body, idle_ms, options).await?;
+        throw_if_aborted(options)?;
+        let parsed = match chunk {
+            Some(ref bytes) => buffer.push(bytes),
+            None => buffer.finish(),
+        };
+        for item in parsed {
+            let item = item.map_err(sse_error)?;
+            guard.check_duration((options.clock)())?;
+            let raw = match item {
+                sse::SseEvent::Done => continue,
+                sse::SseEvent::Data(raw) => raw,
+            };
+            for event in state.normalize(&raw)? {
+                let tag = field(&event, "type");
+                if tag.as_string().is_some_and(|tag| tag.equals_str("error")) {
+                    return Err(ModelStreamError::Provider(object_entries(field(
+                        &event, "error",
+                    ))));
+                }
+                let message_end = tag
+                    .as_string()
+                    .is_some_and(|tag| tag.equals_str("message_end"));
+                guard.observe(&event, (options.clock)())?;
+                checkpoint.on_event(&event)?;
+                sink(StreamOutput::Event(event));
+                if message_end {
+                    return Ok(());
+                }
+            }
+        }
+        if chunk.is_none() {
+            break;
+        }
+    }
+    guard.check_duration((options.clock)())?;
+    if !state.ended() {
+        return Err(ModelStreamError::thrown(
+            "IncompleteStreamError",
+            "Network stream ended before provider completion sentinel.",
+        ));
+    }
+    Ok(())
+}
+
+/// `streamGoogleProviderRequest`: request_started per attempt, SDK error
+/// canonicalization, continuation/network retries and error events.
+async fn stream_google_model(
+    transport: &dyn ModelHttpTransport,
+    request: &JsValue,
+    config: &JsValue,
+    options: &StreamOptions,
+    sink: &mut (dyn FnMut(StreamOutput) + Send),
+    provider: &JsValue,
+) -> Result<(), ModelStreamError> {
+    let mut current = request.clone();
+    let (max_retries, _) = retry_decide(provider, 0.0, None, 0.0);
+    let mut checkpoint = Checkpoint::default();
+    let mut attempt = 0.0;
+    while attempt <= max_retries {
+        throw_if_aborted(options)?;
+        let fingerprint = crate::js_value::json_stringify(&current)
+            .map_err(|_| {
+                ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
+            })?
+            .unwrap_or_default();
+        let mut started = JsObject::new();
+        started.insert("type".into(), "request_started".into());
+        started.insert("provider".into(), field(provider, "id").clone());
+        started.insert("model".into(), field(&current, "model").clone());
+        started.insert(
+            "providerBaseUrl".into(),
+            providers::normalize_provider_base_url(field(provider, "url")),
+        );
+        started.insert(
+            "requestFingerprint".into(),
+            format!("{:x}", Sha256::digest(fingerprint.as_bytes()))
+                .as_str()
+                .into(),
+        );
+        started.insert("metadata".into(), field(&current, "metadata").clone());
+        sink(StreamOutput::Event(JsValue::Object(started)));
+
+        let (_, model) = providers::validate_model_request(&current, config)?;
+        let model_id = field(&current, "model").clone();
+        let outcome = match providers::google::build_request(&current, &model) {
+            Ok(body) => {
+                google_attempt(
+                    transport,
+                    provider,
+                    &model_id,
+                    &body,
+                    options,
+                    sink,
+                    &mut checkpoint,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        let Err(error) = outcome else {
+            return Ok(());
+        };
+        if aborted(options) {
+            return Err(ModelStreamError::abort());
+        }
+        let canonical = match &error {
+            ModelStreamError::Provider(canonical) => canonical.clone(),
+            other => normalize_model_error(
+                &provider_id(provider),
+                &"google".into(),
+                ErrorInput::Error(&other.as_js_error()),
+                None,
+            ),
+        };
+        let canonical_message = canonical
+            .get("message")
+            .and_then(JsValue::as_string)
+            .map(|message| String::from_utf16_lossy(message.units()).to_lowercase())
+            .unwrap_or_default();
+        let retryable = canonical.get("retryable") == Some(&JsValue::Bool(true))
+            || is_retryable_stream_error(&error)
+            || retryable_message(&canonical_message);
+        let current_model = field(&current, "model").clone();
+        let progress =
+            |sink: &mut (dyn FnMut(StreamOutput) + Send), reason: &str, delay_ms: f64| {
+                let mut value = JsObject::new();
+                value.insert("reason".into(), reason.into());
+                value.insert("attempt".into(), JsValue::Number(attempt + 1.0));
+                value.insert("maxAttempts".into(), JsValue::Number(max_retries));
+                value.insert("delayMs".into(), JsValue::Number(js_round(delay_ms)));
+                value.insert("provider".into(), field(provider, "id").clone());
+                value.insert("model".into(), current_model.clone());
+                sink(StreamOutput::RetryProgress(JsValue::Object(value)));
+            };
+        if attempt < max_retries && retryable && checkpoint.can_continue_text() {
+            current = continuation_request(&current, &checkpoint.partial_text);
+            let (_, delay_ms) = retry_decide(provider, attempt, None, (options.random)());
+            progress(sink, "continuation", delay_ms);
+            delay(delay_ms, options).await?;
+            attempt += 1.0;
+            continue;
+        }
+        let empty = checkpoint
+            .interruption()
+            .get("phase")
+            .is_some_and(|phase| phase.as_string().is_some_and(|p| p.equals_str("empty")));
+        if attempt < max_retries && retryable && empty {
+            let (_, delay_ms) = retry_decide(provider, attempt, None, (options.random)());
+            progress(sink, "network_error", delay_ms);
+            delay(delay_ms, options).await?;
+            attempt += 1.0;
+            continue;
+        }
+        let mut canonical = canonical;
+        if retryable {
+            canonical.insert("streamInterruption".into(), checkpoint.interruption());
+        }
+        sink(StreamOutput::Event(error_event(JsValue::Object(canonical))));
+        return Ok(());
+    }
+    Ok(())
+}
+
 /// `streamModel(request, config, options)` for the HTTP protocols.
 pub async fn stream_model(
     transport: &dyn ModelHttpTransport,
@@ -1024,6 +1320,9 @@ pub async fn stream_model(
     let mut current = request.clone();
     put(&mut current, "stream", JsValue::Bool(true));
     let (provider, _) = providers::validate_model_request(&current, config)?;
+    if is(field(&provider, "protocol"), "google") {
+        return stream_google_model(transport, &current, config, options, sink, &provider).await;
+    }
     let (max_retries, _) = retry_decide(&provider, 0.0, None, 0.0);
     let mut checkpoint = Checkpoint::default();
     let mut attempt = 0.0;

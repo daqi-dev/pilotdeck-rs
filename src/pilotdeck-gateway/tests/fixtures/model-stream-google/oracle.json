@@ -1,0 +1,3938 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/errors/normalizeModelError.ts": "3ded965a305c5aef92f33f83e72b8a8cbe14cfe230677f3127ccc75d90f15f0e",
+  "src/model/errors/tokenLimitParsing.ts": "78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959",
+  "src/model/normalizeProviderBaseUrl.ts": "4c27bda64fedb25d251f667a87680f72fb23ca56e5337fd383cfe38dda7a46af",
+  "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+  "src/model/policy/index.ts": "bc84e59059667b7dda7aeb420bff8b0ca6238880dcd008fdba62f787a14c70fc",
+  "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+  "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+  "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+  "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+  "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+  "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
+  "src/model/providerEndpoint.ts": "cd3d939c85bffdfa0fc8dc68c21cc421b16bb50736986d0ddfb0871fd247780c",
+  "src/model/providers/anthropic/request.ts": "8c0b30a2e016eede29e52282a1caf846895c320615d4298eaf61e2d180cb2907",
+  "src/model/providers/anthropic/response.ts": "834768ac8a1f3143f395cd8a238e8d445539c57dbc13b8ed66717436b4fa1b24",
+  "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+  "src/model/providers/google/client.ts": "327d14c1490f818e1ce95b303ec1d05d1157afb3f3f913639a7d9d69d04ece35",
+  "src/model/providers/google/modelId.ts": "fd4c83c9ca441e9d338c2c70e3eb900e9522e7e6c8ec2ac82c19051a8808d2b4",
+  "src/model/providers/google/request.ts": "129a7d684b6e8f653c74b62bed0cec315f97f8f78a4985e1e18f72c431f5f8ef",
+  "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+  "src/model/providers/google/schema.ts": "18128ea10abc57de9ff8c46723fa912d1e5f2b52f5681ac708a535de96e623e7",
+  "src/model/providers/google/stream.ts": "7d4a8209ba268d6920dea983e8fd162a17feba9b618b8d8c7399d57a694c11ba",
+  "src/model/providers/openai-responses/request.ts": "fc38d980ec728dc4651338760a964e4804f6b15c405af8a102f3930e9285aaad",
+  "src/model/providers/openai-responses/response.ts": "143623aad10247603c7d631ccd3abdc095b67a7df85f3cc56b26d769a5d87f37",
+  "src/model/providers/openai-responses/stream.ts": "dfeaf49e020b53785220d082d29fe7082a8b7067d62fd86620c02a0f381b9c85",
+  "src/model/providers/openai/request.ts": "e38de6a30cfc9e53e853d98218d342f80649cea5b3f5f8b608b6499a3f95352d",
+  "src/model/providers/openai/response.ts": "cc87c3284caed18f5a2b2c43c661e75d7578d41b197200918c29ea78038ee802",
+  "src/model/providers/openai/schema.ts": "cbcda4de9900b85e28e9e8f83f8a679b27cd64f3962cc695468d1e72698750b4",
+  "src/model/providers/openai/stream.ts": "8110c06e89b80ea9af8def4cb04b7a454f17a0c08101b175be7febb1ac9e9898",
+  "src/model/providers/toolResultReferenceText.ts": "7a279eda547943dee2878eca1fda3a350b514a40b78a0e229b5384a681253a7d",
+  "src/model/request/buildModelRequest.ts": "bf7e8e2a0684f64c30e456bc3dd66742231171faee106a230223709f98a63999",
+  "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa",
+  "src/model/request/speedMapping.ts": "ab5cad0b0529d882cf0e8e04d3859c6ce406dcc49930204f2b04fb4f71fa839f",
+  "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+  "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+  "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+  "src/model/response/parseModelResponse.ts": "22c792123e3822c694ebd15fbe14f2af7c7c57dc7479231d7e2a0a189a58ed8e",
+  "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+  "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662",
+  "src/model/streaming/normalizeStreamEvent.ts": "e12249c29b111f7e8341fa540e2d145ddb5fbbe1b2d0ba445d07b2db24e37dd7",
+  "src/model/streaming/requestFingerprint.ts": "3b90e1a600f57158cb7e43b171cff11b680809e234a9bb491c9c210d0656cb77",
+  "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+  "src/model/thinking/registry.ts": "ad0df7187839dfbf5e39acdc93141020acde65e9dbff664638a4aada0227ad7f",
+  "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05",
+  "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+  "src/storage/invocationStorage.ts": "9d24114a71fd71177b36c05363559f3fd174d2b3b59f8dd58e31c933be6f3875"
+ },
+ "node": "v22.22.0",
+ "v8": "12.4.254.21-node.33",
+ "locale": "en-US",
+ "random": 0.5,
+ "transportHeaders": [
+  "host",
+  "connection",
+  "content-length",
+  "user-agent",
+  "accept",
+  "accept-language",
+  "sec-fetch-mode",
+  "accept-encoding",
+  "transfer-encoding",
+  "keep-alive"
+ ],
+ "request": {
+  "provider": "google-fixture",
+  "model": "gemini-3-pro",
+  "systemPrompt": "You are terse.",
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Say hi 你好"
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "prior",
+      "signature": "old-sig"
+     },
+     {
+      "type": "text",
+      "text": "Hi"
+     },
+     {
+      "type": "tool_call",
+      "id": "call 1",
+      "name": "lookup",
+      "input": {
+       "q": "prior"
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "tool_result",
+      "toolCallId": "call 1",
+      "content": [
+       {
+        "type": "text",
+        "text": "result"
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "tools": [
+   {
+    "name": "lookup",
+    "description": "Look up",
+    "inputSchema": {
+     "type": "object",
+     "properties": {
+      "q": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "q"
+     ]
+    }
+   }
+  ],
+  "toolChoice": "auto",
+  "maxOutputTokens": 256,
+  "thinking": {
+   "mode": "high"
+  },
+  "outputSchema": {
+   "name": "answer",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "answer": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "answer"
+    ]
+   }
+  }
+ },
+ "provider": {
+  "id": "google-fixture",
+  "protocol": "google",
+  "url": "$MOCK",
+  "apiKey": "  sk-fixture  ",
+  "headers": {
+   "x-fixture": "1"
+  },
+  "extraBody": {
+   "generationConfig": {
+    "topP": 0.5
+   }
+  },
+  "retry": {
+   "baseDelayMs": 2,
+   "maxDelayMs": 30,
+   "streamMaxRetries": 2
+  },
+  "models": {
+   "gemini-3-pro": {
+    "id": "gemini-3-pro",
+    "thinking": {
+     "state": "enabled",
+     "efforts": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "format": "provider"
+    },
+    "capabilities": {
+     "supportsStreaming": true,
+     "supportsSystemPrompt": true,
+     "supportsToolUse": true,
+     "maxOutputTokens": 32768
+    },
+    "multimodal": {
+     "input": [
+      "text",
+      "image",
+      "audio",
+      "pdf"
+     ]
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "text",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"responseId\":\"resp 1/2\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":2,\"totalTokenCount\":7}}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" 世界\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":4,\"totalTokenCount\":9}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Hello"
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp 1/2",
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 5,
+       "outputTokens": 2,
+       "totalTokens": 7
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Hello"
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp 1/2",
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Hello",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Hello"
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp 1/2",
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 5,
+       "outputTokens": 4,
+       "totalTokens": 9
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": " 世界"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ],
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 4,
+        "totalTokenCount": 9
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " 世界",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": " 世界"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ],
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 4,
+        "totalTokenCount": 9
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": " 世界"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ],
+       "usageMetadata": {
+        "promptTokenCount": 5,
+        "candidatesTokenCount": 4,
+        "totalTokenCount": 9
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "multimodal-contents",
+   "target": "mock",
+   "request": {
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "look"
+       },
+       {
+        "type": "image",
+        "source": "base64",
+        "data": "QUJD",
+        "mimeType": "image/png"
+       },
+       {
+        "type": "image",
+        "source": "url",
+        "data": "https://example.invalid/a.png",
+        "mimeType": "image/png"
+       },
+       {
+        "type": "pdf",
+        "source": "base64",
+        "data": "UERG",
+        "mimeType": "application/pdf",
+        "bytes": 3,
+        "pages": 1
+       },
+       {
+        "type": "audio",
+        "source": "url",
+        "data": "https://example.invalid/a.ogg",
+        "mimeType": "audio/ogg"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "call 1",
+        "name": "lookup",
+        "input": {
+         "q": "prior",
+         "n": 1
+        }
+       },
+       {
+        "type": "text",
+        "text": "calling"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "call 1",
+        "content": [
+         {
+          "type": "text",
+          "text": "stdout"
+         },
+         {
+          "type": "image",
+          "source": "base64",
+          "data": "QUJD",
+          "mimeType": "image/png"
+         }
+        ]
+       },
+       {
+        "type": "tool_result",
+        "toolCallId": "call 1",
+        "isError": true,
+        "content": []
+       },
+       {
+        "type": "tool_result_reference",
+        "toolCallId": "call 1",
+        "path": "/tmp/x",
+        "originalBytes": 10,
+        "preview": "preview",
+        "hasMore": false
+       },
+       {
+        "type": "media_reference",
+        "path": "/tmp/y",
+        "originalBytes": 4,
+        "preview": "[media]",
+        "hasMore": false,
+        "mimeType": "image/png",
+        "mediaType": "image"
+       }
+      ]
+     }
+    ]
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"seen\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"look\"},{\"inlineData\":{\"data\":\"QUJD\",\"mimeType\":\"image/png\"}},{\"fileData\":{\"fileUri\":\"https://example.invalid/a.png\",\"mimeType\":\"image/png\"}},{\"inlineData\":{\"data\":\"UERG\",\"mimeType\":\"application/pdf\"}},{\"fileData\":{\"fileUri\":\"https://example.invalid/a.ogg\",\"mimeType\":\"audio/ogg\"}}],\"role\":\"user\"},{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\",\"n\":1},\"name\":\"lookup\"}},{\"text\":\"calling\"}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"stdout\\n[Image: image/png, 4 base64 characters]\"},\"parts\":[{\"inlineData\":{\"data\":\"QUJD\",\"mimeType\":\"image/png\"}}]}},{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"error\":\"Tool execution failed.\"}}},{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"preview\"}}},{\"text\":\"[media]\"}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "4d22a44a0e403fe8349a56237f66f77cd08474edffeffd69b1150710a30a0710"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "seen"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "seen",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "seen"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool-result-lone-surrogate",
+   "target": "mock",
+   "request": {
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "go"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "call 1",
+        "name": "lookup",
+        "input": {
+         "q": "x"
+        }
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "call 1",
+        "content": [
+         {
+          "type": "text",
+          "text": "r\ud800"
+         },
+         {
+          "type": "text",
+          "text": "s"
+         }
+        ]
+       },
+       {
+        "type": "tool_result_reference",
+        "toolCallId": "call 1",
+        "path": "/tmp/\ud800",
+        "originalBytes": 12,
+        "preview": "p\ud800",
+        "hasMore": true
+       }
+      ]
+     }
+    ]
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"go\"}],\"role\":\"user\"},{\"parts\":[{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"x\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"r\\ud800\\ns\"}}},{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"p\\ud800\\n\\n[Tool result preview only: original 12 bytes. Full output was saved at: /tmp/\\ud800. To inspect it, first search within the persisted result with grep({ pattern: \\\"<keyword>\\\", path: \\\"/tmp/\\ud800\\\", output_mode: \\\"content\\\", head_limit: 20 }) for relevant names, IDs, errors, URLs, dates, or candidate terms. Then read only the matching neighborhood with read_file({ file_path: \\\"/tmp/\\ud800\\\", offset: <line>, limit: 80 }) when surrounding context is needed. Avoid paging through the whole file from offset 1 unless the task truly requires a complete sequential review. If the task depends on complete lists, counts, search candidates, evidence checks, or long page content, use grep/refined searches and targeted reads on the persisted result before concluding.]\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "4ca7a4314d73bee11f9d6fdd654e6bb9fdd7e1b7d59bde9cdcbfbe0120e6a9ba"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "multi-tool-calls",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"responseId\":\"resp/one\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"a b\",\"name\":\"lookup\",\"args\":{\"q\":\"x\"}}},{\"functionCall\":{\"id\":\"a-b\",\"name\":\"lookup\",\"args\":{\"q\":\"y\"}}},{\"functionCall\":{\"name\":\"lookup\",\"args\":[1,2]}}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"a_b\",\"name\":\"lookup\",\"args\":{\"q\":\"z\"}}}]},\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "a_b",
+      "name": "lookup",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "a_b",
+      "delta": "{\"q\":\"x\"}",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "a_b",
+       "name": "lookup",
+       "input": {
+        "q": "x"
+       },
+       "raw": {
+        "candidates": [
+         {
+          "content": {
+           "role": "model",
+           "parts": [
+            {
+             "functionCall": {
+              "id": "a b",
+              "name": "lookup",
+              "args": {
+               "q": "x"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "id": "a-b",
+              "name": "lookup",
+              "args": {
+               "q": "y"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "name": "lookup",
+              "args": [
+               1,
+               2
+              ]
+             }
+            }
+           ]
+          }
+         }
+        ],
+        "responseId": "resp/one"
+       }
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "a-b",
+      "name": "lookup",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "a-b",
+      "delta": "{\"q\":\"y\"}",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "a-b",
+       "name": "lookup",
+       "input": {
+        "q": "y"
+       },
+       "raw": {
+        "candidates": [
+         {
+          "content": {
+           "role": "model",
+           "parts": [
+            {
+             "functionCall": {
+              "id": "a b",
+              "name": "lookup",
+              "args": {
+               "q": "x"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "id": "a-b",
+              "name": "lookup",
+              "args": {
+               "q": "y"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "name": "lookup",
+              "args": [
+               1,
+               2
+              ]
+             }
+            }
+           ]
+          }
+         }
+        ],
+        "responseId": "resp/one"
+       }
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_resp_one_2",
+      "name": "lookup",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_resp_one_2",
+      "delta": "{}",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_resp_one_2",
+       "name": "lookup",
+       "input": {},
+       "raw": {
+        "candidates": [
+         {
+          "content": {
+           "role": "model",
+           "parts": [
+            {
+             "functionCall": {
+              "id": "a b",
+              "name": "lookup",
+              "args": {
+               "q": "x"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "id": "a-b",
+              "name": "lookup",
+              "args": {
+               "q": "y"
+              }
+             }
+            },
+            {
+             "functionCall": {
+              "name": "lookup",
+              "args": [
+               1,
+               2
+              ]
+             }
+            }
+           ]
+          }
+         }
+        ],
+        "responseId": "resp/one"
+       }
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a b",
+             "name": "lookup",
+             "args": {
+              "q": "x"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "id": "a-b",
+             "name": "lookup",
+             "args": {
+              "q": "y"
+             }
+            }
+           },
+           {
+            "functionCall": {
+             "name": "lookup",
+             "args": [
+              1,
+              2
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ],
+       "responseId": "resp/one"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "a_b_2",
+      "name": "lookup",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a_b",
+             "name": "lookup",
+             "args": {
+              "q": "z"
+             }
+            }
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "a_b_2",
+      "delta": "{\"q\":\"z\"}",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a_b",
+             "name": "lookup",
+             "args": {
+              "q": "z"
+             }
+            }
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "a_b_2",
+       "name": "lookup",
+       "input": {
+        "q": "z"
+       },
+       "raw": {
+        "candidates": [
+         {
+          "content": {
+           "parts": [
+            {
+             "functionCall": {
+              "id": "a_b",
+              "name": "lookup",
+              "args": {
+               "q": "z"
+              }
+             }
+            }
+           ]
+          },
+          "finishReason": "STOP"
+         }
+        ]
+       }
+      },
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a_b",
+             "name": "lookup",
+             "args": {
+              "q": "z"
+             }
+            }
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "functionCall": {
+             "id": "a_b",
+             "name": "lookup",
+             "args": {
+              "q": "z"
+             }
+            }
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "thinking-delta",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Think 一下\",\"thought\":true,\"thoughtSignature\":\"sig==\"},{\"text\":\"\"},{\"text\":\"answer\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Think 一下",
+            "thought": true,
+            "thoughtSignature": "sig=="
+           },
+           {
+            "text": ""
+           },
+           {
+            "text": "answer"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "Think 一下",
+      "signature": "sig==",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Think 一下",
+            "thought": true,
+            "thoughtSignature": "sig=="
+           },
+           {
+            "text": ""
+           },
+           {
+            "text": "answer"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "answer",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Think 一下",
+            "thought": true,
+            "thoughtSignature": "sig=="
+           },
+           {
+            "text": ""
+           },
+           {
+            "text": "answer"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "Think 一下",
+            "thought": true,
+            "thoughtSignature": "sig=="
+           },
+           {
+            "text": ""
+           },
+           {
+            "text": "answer"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "usage-only",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"usageMetadata\":{\"promptTokenCount\":10,\"cachedContentTokenCount\":4,\"candidatesTokenCount\":3,\"thoughtsTokenCount\":2}}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "usageMetadata": {
+        "promptTokenCount": 10,
+        "cachedContentTokenCount": 4,
+        "candidatesTokenCount": 3,
+        "thoughtsTokenCount": 2
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 6,
+       "outputTokens": 5,
+       "cacheReadTokens": 4,
+       "totalTokens": 15
+      },
+      "raw": {
+       "usageMetadata": {
+        "promptTokenCount": 10,
+        "cachedContentTokenCount": 4,
+        "candidatesTokenCount": 3,
+        "thoughtsTokenCount": 2
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "finish-max-tokens",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"cut\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "cut"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "cut",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "cut"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "length",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "MAX_TOKENS"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "finish-safety",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]},\"finishReason\":\"SAFETY\",\"safetyRatings\":[{\"category\":\"HARM_CATEGORY_HARASSMENT\",\"probability\":\"HIGH\"}]}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "text": "partial"
+           }
+          ]
+         },
+         "finishReason": "SAFETY",
+         "safetyRatings": [
+          {
+           "category": "HARM_CATEGORY_HARASSMENT",
+           "probability": "HIGH"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "partial",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "text": "partial"
+           }
+          ]
+         },
+         "finishReason": "SAFETY",
+         "safetyRatings": [
+          {
+           "category": "HARM_CATEGORY_HARASSMENT",
+           "probability": "HIGH"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "content_filter",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "parts": [
+           {
+            "text": "partial"
+           }
+          ]
+         },
+         "finishReason": "SAFETY",
+         "safetyRatings": [
+          {
+           "category": "HARM_CATEGORY_HARASSMENT",
+           "probability": "HIGH"
+          }
+         ]
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "finish-malformed",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"MALFORMED_FUNCTION_CALL\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "MALFORMED_FUNCTION_CALL"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "tool_call",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "MALFORMED_FUNCTION_CALL"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "finish-unknown",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"FUTURE_REASON\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "FUTURE_REASON"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "unknown",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "FUTURE_REASON"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "schema-cleanup",
+   "target": "mock",
+   "request": {
+    "outputSchema": {
+     "name": "answer",
+     "schema": {
+      "$defs": {
+       "Item": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "integer"
+         },
+         "tag": {
+          "anyOf": [
+           {
+            "const": "a"
+           },
+           {
+            "const": "b"
+           }
+          ]
+         }
+        },
+        "required": [
+         "id",
+         "gone"
+        ]
+       }
+      },
+      "title": "Root",
+      "description": "root description",
+      "type": [
+       "object",
+       "null"
+      ],
+      "properties": {
+       "answer": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "minLength": 2,
+        "maxLength": 99,
+        "description": "answer",
+        "default": "x"
+       },
+       "mode": {
+        "anyOf": [
+         {
+          "const": "a"
+         },
+         {
+          "const": "b"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "item": {
+        "$ref": "#/$defs/Item"
+       },
+       "list": {
+        "type": "array",
+        "minItems": 1
+       },
+       "nested": {
+        "type": "object",
+        "properties": {
+         "bad-name": {
+          "type": "string"
+         },
+         "good_name": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       },
+       "scalar": {
+        "const": 7
+       },
+       "any": {}
+      },
+      "required": [
+       "answer",
+       "missing",
+       "bad-name",
+       "mode"
+      ],
+      "additionalProperties": false,
+      "patternProperties": {
+       "^x": {
+        "type": "string"
+       }
+      },
+      "examples": [
+       {
+        "answer": "x"
+       }
+      ],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+     }
+    },
+    "tools": [
+     {
+      "name": "lookup",
+      "description": "Look up",
+      "inputSchema": {
+       "$defs": {
+        "Item": {
+         "type": "object",
+         "properties": {
+          "id": {
+           "type": "integer"
+          },
+          "tag": {
+           "anyOf": [
+            {
+             "const": "a"
+            },
+            {
+             "const": "b"
+            }
+           ]
+          }
+         },
+         "required": [
+          "id",
+          "gone"
+         ]
+        }
+       },
+       "title": "Root",
+       "description": "root description",
+       "type": [
+        "object",
+        "null"
+       ],
+       "properties": {
+        "answer": {
+         "type": [
+          "string",
+          "null"
+         ],
+         "minLength": 2,
+         "maxLength": 99,
+         "description": "answer",
+         "default": "x"
+        },
+        "mode": {
+         "anyOf": [
+          {
+           "const": "a"
+          },
+          {
+           "const": "b"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "item": {
+         "$ref": "#/$defs/Item"
+        },
+        "list": {
+         "type": "array",
+         "minItems": 1
+        },
+        "nested": {
+         "type": "object",
+         "properties": {
+          "bad-name": {
+           "type": "string"
+          },
+          "good_name": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "scalar": {
+         "const": 7
+        },
+        "any": {}
+       },
+       "required": [
+        "answer",
+        "missing",
+        "bad-name",
+        "mode"
+       ],
+       "additionalProperties": false,
+       "patternProperties": {
+        "^x": {
+         "type": "string"
+        }
+       },
+       "examples": [
+        {
+         "answer": "x"
+        }
+       ],
+       "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+     }
+    ]
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"title\":\"Root\",\"description\":\"root description\",\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\",\"description\":\"answer\",\"default\":\"x\"},\"mode\":{\"type\":\"string\",\"enum\":[\"a\",\"b\"]},\"item\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"},\"tag\":{\"type\":\"string\",\"enum\":[\"a\",\"b\"]}},\"required\":[\"id\"]},\"list\":{\"type\":\"array\",\"items\":{}},\"nested\":{\"type\":\"object\",\"properties\":{\"good_name\":{\"type\":\"string\"}}},\"scalar\":{\"enum\":[7]},\"any\":{}},\"required\":[\"answer\",\"mode\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"title\":\"Root\",\"description\":\"root description\",\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\",\"description\":\"answer\",\"default\":\"x\"},\"mode\":{\"type\":\"string\",\"enum\":[\"a\",\"b\"]},\"item\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"},\"tag\":{\"type\":\"string\",\"enum\":[\"a\",\"b\"]}},\"required\":[\"id\"]},\"list\":{\"type\":\"array\",\"items\":{}},\"nested\":{\"type\":\"object\",\"properties\":{\"good_name\":{\"type\":\"string\"}}},\"scalar\":{\"enum\":[7]},\"any\":{}},\"required\":[\"answer\",\"mode\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "60bc9439048b42d949548250148180a3ae05f6f54b150906303e72b7c3e455d5"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "extra-body",
+   "target": "mock",
+   "provider": {
+    "extraBody": {
+     "generationConfig": {
+      "topP": 0.9,
+      "temperature": 0.3
+     },
+     "safetySettings": [
+      {
+       "category": "HARM_CATEGORY_HARASSMENT",
+       "threshold": "BLOCK_NONE"
+      }
+     ],
+     "topLevel": {
+      "a": 1
+     },
+     "temperature": 0.1
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.9},\"safetySettings\":[{\"category\":\"HARM_CATEGORY_HARASSMENT\",\"threshold\":\"BLOCK_NONE\"}],\"topLevel\":{\"a\":1}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "endpoint-v1beta",
+   "target": "mock",
+   "url": "$MOCK/v1beta",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1beta/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK/v1beta",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "endpoint-path",
+   "target": "mock",
+   "url": "$MOCK/api",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK/api",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool-choice-forced",
+   "target": "mock",
+   "request": {
+    "toolChoice": {
+     "name": "lookup"
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"allowedFunctionNames\":[\"lookup\"],\"mode\":\"ANY\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "abfbf46a467534ae67b60393a4027eb8f31f8511c7423e8f98f03cd87a7faa49"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "thinking-unsupported",
+   "target": "mock",
+   "request": {
+    "thinking": {
+     "mode": "xhigh"
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "bec425620009f1db6b25d418ce7d7d8522a88d70984729cb9ed91f1a9f020b24"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "unsupported_thinking",
+       "message": "gemini-3-pro: Reasoning effort 'xhigh' is not configured. Select Default or configure the model's supported efforts.",
+       "retryable": false,
+       "raw": {
+        "code": "unsupported_thinking",
+        "details": {
+         "provider": "google-fixture",
+         "model": "gemini-3-pro",
+         "thinkingMode": "xhigh"
+        },
+        "name": "ModelRequestError"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "error-json-401",
+   "target": "mock",
+   "request": {
+    "thinking": {
+     "mode": "default"
+    }
+   },
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"error\":{\"code\":401,\"message\":\"invalid api key\",\"status\":\"UNAUTHENTICATED\"}}"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "3684e9448342a2b71d2aa66f8af676da89bc360b63ddb9d8365511b26fa11813"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "auth_error",
+       "status": 401,
+       "message": "{\"error\":{\"code\":401,\"message\":\"invalid api key\",\"status\":\"UNAUTHENTICATED\"}}",
+       "retryable": false,
+       "raw": {
+        "name": "ApiError",
+        "status": 401
+       },
+       "userHint": "API key rejected by provider \"google-fixture\". Update the key in Settings → Model Provider or run pilotdeck setup.",
+       "settingsFix": {
+        "description": "Reconfigure API key via setup.",
+        "command": "pilotdeck setup"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "error-custom-status-text",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "status": 502,
+     "statusText": "Custom Bad",
+     "headers": {
+      "content-type": "text/plain"
+     },
+     "chunks": [
+      {
+       "text": "upstream broke"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "server_error",
+       "status": 502,
+       "message": "{\"error\":{\"message\":\"upstream broke\",\"code\":502,\"status\":\"Custom Bad\"}}",
+       "retryable": true,
+       "raw": {
+        "name": "ApiError",
+        "status": 502
+       },
+       "userHint": "Provider returned a server error. Check provider API status/logs, retry later, or switch provider/model in Settings if it repeats.",
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "error-content-type-case",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "status": 400,
+     "headers": {
+      "content-type": "Application/JSON"
+     },
+     "chunks": [
+      {
+       "text": "{\"error\":{\"code\":400,\"message\":\"upper case\",\"status\":\"INVALID_ARGUMENT\"}}"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "provider_error",
+       "status": 400,
+       "message": "{\"error\":{\"message\":\"{\\\"error\\\":{\\\"code\\\":400,\\\"message\\\":\\\"upper case\\\",\\\"status\\\":\\\"INVALID_ARGUMENT\\\"}}\",\"code\":400,\"status\":\"Bad Request\"}}",
+       "retryable": false,
+       "raw": {
+        "name": "ApiError",
+        "status": 400
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-429-retry",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 429,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"error\":{\"code\":429,\"message\":\"quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"after retry\"}]}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    },
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "google-fixture",
+      "model": "gemini-3-pro"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "after retry"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "after retry",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "after retry"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-500-html-exhausted",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 2
+    }
+   },
+   "replies": [
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    },
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    },
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "google-fixture",
+      "model": "gemini-3-pro"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 2,
+      "maxAttempts": 2,
+      "delayMs": 6,
+      "provider": "google-fixture",
+      "model": "gemini-3-pro"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "server_error",
+       "status": 500,
+       "message": "502 Bad Gateway",
+       "retryable": true,
+       "raw": {
+        "name": "ApiError",
+        "status": 500
+       },
+       "userHint": "Provider returned a server error. Check provider API status/logs, retry later, or switch provider/model in Settings if it repeats.",
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "connection-cut",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"cut\"}]}}]}\n\n"
+      }
+     ],
+     "end": "destroy"
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "cut"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "cut",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "cut"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "timeout",
+       "message": "terminated",
+       "retryable": true,
+       "raw": {},
+       "userHint": "Request timed out for provider \"google-fixture\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+       "settingsFix": {
+        "description": "Increase request timeout for this provider.",
+        "configPath": "model.providers.<id>.timeoutMs"
+       },
+       "streamInterruption": {
+        "phase": "text"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "empty-stream",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"responseId\":\"r0\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "responseId": "r0"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "provider_error",
+       "message": "Network stream ended before provider completion sentinel.",
+       "retryable": false,
+       "raw": {
+        "name": "IncompleteStreamError"
+       },
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "cancel",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"first\"}]}}]}\n\n"
+      }
+     ],
+     "end": "hold"
+    }
+   ],
+   "abortAfterTextDeltas": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}",
+     "clientClosed": true
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "first"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "first",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "first"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "AbortError",
+      "message": "This operation was aborted"
+     }
+    }
+   ]
+  },
+  {
+   "name": "request-validation",
+   "target": "mock",
+   "request": {
+    "provider": "missing-provider"
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "thrown": {
+      "name": "ModelRequestError",
+      "message": "Provider missing-provider does not exist.",
+      "code": "provider_not_found"
+     }
+    }
+   ]
+  },
+  {
+   "name": "connection-refused",
+   "target": "closed",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$CLOSED",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "google-fixture",
+       "protocol": "google",
+       "code": "timeout",
+       "message": "fetch failed",
+       "retryable": true,
+       "raw": {},
+       "userHint": "Request timed out for provider \"google-fixture\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+       "settingsFix": {
+        "description": "Increase request timeout for this provider.",
+        "configPath": "model.providers.<id>.timeoutMs"
+       },
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

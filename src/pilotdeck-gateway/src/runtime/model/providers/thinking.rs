@@ -10,6 +10,10 @@ const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// The fields of `ThinkingPlan` the ported request builders consume.
 #[derive(Debug, Default)]
 pub(crate) struct ThinkingPlan {
+    /// `None` represents the default mode; otherwise an effort or `off`.
+    pub(crate) mode: Option<JsString>,
+    pub(crate) enabled: bool,
+    pub(crate) thinking_level: Option<JsString>,
     pub(crate) body_patch: Option<JsValue>,
     pub(crate) thinking_type: Option<&'static str>,
     pub(crate) effort: Option<JsString>,
@@ -84,7 +88,15 @@ pub(crate) fn resolve(
         .then(|| EFFORTS.iter().find(|effort| is(mode, effort)).copied())
         .flatten()
         .map(JsString::from);
-    let mut plan = ThinkingPlan::default();
+    let mut plan = ThinkingPlan {
+        mode: if off {
+            Some("off".into())
+        } else {
+            effort.clone()
+        },
+        enabled: !off,
+        ..ThinkingPlan::default()
+    };
     if let Some(effort) = &effort {
         let effort_text = String::from_utf16_lossy(effort.units());
         let supported = match field(settings, "efforts") {
@@ -135,6 +147,7 @@ pub(crate) fn resolve(
                 "This parameter format only supports the server default. Choose a thinking parameter format in model settings.",
             );
         }
+        plan.enabled = false;
         return Ok(plan);
     }
     if format == "openai" {
@@ -162,6 +175,7 @@ pub(crate) fn resolve(
                     "This model requires a thinking budget; only Default is supported.",
                 );
             }
+            plan.enabled = false;
             return Ok(plan);
         }
         plan.thinking_type = Some("adaptive");
@@ -194,9 +208,10 @@ pub(crate) fn resolve(
                     "This Gemini model has no supported thinking-level adapter. Select Default.",
                 );
             }
+            plan.enabled = false;
             return Ok(plan);
         }
-        if let Some(effort) = effort.filter(|e| {
+        if let Some(effort) = effort.as_ref().filter(|e| {
             let effort_text = String::from_utf16_lossy(e.units());
             !["low", "medium", "high"].contains(&effort_text.as_str())
         }) {
@@ -208,6 +223,8 @@ pub(crate) fn resolve(
                     String::from_utf16_lossy(effort.units())
                 ),
             );
+        } else {
+            plan.thinking_level = effort;
         }
         return Ok(plan);
     }

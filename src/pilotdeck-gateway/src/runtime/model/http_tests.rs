@@ -135,19 +135,118 @@ async fn abort_before_headers_cancels_the_exchange() {
 }
 
 #[test]
-fn unported_protocols_fail_before_http() {
-    // The only protocol still behind the `protocol_not_ported` gate (pr8).
-    let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
-    let config = parse_json(
-        r#"{"providers":{"p":{"id":"p","protocol":"google","url":"http://x","apiKey":"k","headers":{},
-        "models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#,
-    )
-    .unwrap();
-    let (provider, model) = providers::validate_model_request(&request, &config).unwrap();
-    let error = providers::build_model_request(&request, &provider, &model).unwrap_err();
-    assert!(
-        matches!(error, ModelStreamError::Request { ref code, .. } if code.equals_str("protocol_not_ported"))
+fn google_protocol_dispatch_matches_the_recorded_sdk_request() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/model-stream-google/oracle.json"
+    ));
+    let merge = |base: &JsValue, overrides: &JsValue| {
+        let mut result = base.as_object().unwrap().clone();
+        if let Some(overrides) = overrides.as_object() {
+            for (key, value) in overrides.entries() {
+                result.insert(key.clone(), value.clone());
+            }
+        }
+        JsValue::Object(result)
+    };
+    let mut checked = 0;
+    let mut no_request = Vec::new();
+    for case in super::super::count_body::array(field(&oracle, "cases")) {
+        let recorded = super::super::count_body::array(field(case, "requests"));
+        if recorded.is_empty() {
+            no_request.push(header_text(field(case, "name")));
+            continue;
+        }
+        let request = merge(field(&oracle, "request"), field(case, "request"));
+        let provider = merge(field(&oracle, "provider"), field(case, "provider"));
+        let model = field(
+            field(&provider, "models"),
+            &header_text(field(&request, "model")),
+        );
+        let body = providers::build_model_request(&request, &provider, model).unwrap();
+        let body = providers::google::final_body(&body, &provider);
+        for recorded in recorded {
+            assert_eq!(
+                crate::js_value::json_stringify(&body).unwrap().unwrap(),
+                header_text(field(recorded, "body")),
+                "{}: SDK request body",
+                header_text(field(case, "name"))
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 26);
+    assert_eq!(
+        no_request,
+        [
+            "thinking-unsupported",
+            "request-validation",
+            "connection-refused"
+        ]
     );
+}
+
+/// Reuse the original TS error cases without needing a listening socket.
+/// This supplements (and does not replace) the real HTTP oracle replay.
+#[tokio::test]
+async fn google_sdk_errors_match_the_recorded_status_text_and_content_type() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/model-stream-google/oracle.json"
+    ));
+    let mut checked = 0;
+    for case in super::super::count_body::array(field(&oracle, "cases")) {
+        if ![
+            "error-json-401",
+            "error-custom-status-text",
+            "error-content-type-case",
+        ]
+        .contains(&header_text(field(case, "name")).as_str())
+        {
+            continue;
+        }
+        let reply = &super::super::count_body::array(field(case, "replies"))[0];
+        let mut response =
+            Response::builder().status(field(reply, "status").as_number().unwrap() as u16);
+        for (name, value) in field(reply, "headers").as_object().unwrap().entries() {
+            response = response.header(name.to_utf8().unwrap(), header_text(value));
+        }
+        if let Some(reason) = field(reply, "statusText").as_string() {
+            response = response
+                .extension(hyper::ext::ReasonPhrase::try_from(reason.to_utf8().unwrap()).unwrap());
+        }
+        let bytes: Vec<u8> = super::super::count_body::array(field(reply, "chunks"))
+            .iter()
+            .flat_map(|chunk| header_text(field(chunk, "text")).into_bytes())
+            .collect();
+        let body = Full::new(Bytes::from(bytes))
+            .map_err(|never| match never {})
+            .boxed();
+        let error = google_response_error(
+            response.body(body).unwrap(),
+            &StreamOptions::default(),
+            field(&oracle, "provider"),
+        )
+        .await
+        .unwrap();
+        let ModelStreamError::Provider(actual) = error else {
+            panic!("expected canonical SDK error");
+        };
+        let timeline = super::super::count_body::array(field(case, "timeline"));
+        let mut expected = field(field(timeline.last().unwrap(), "event"), "error")
+            .as_object()
+            .unwrap()
+            .clone();
+        // The outer retry loop adds this checkpoint after SDK normalization.
+        // Its full shape remains covered by the loopback timeline replay.
+        expected.insert("streamInterruption".into(), JsValue::Undefined);
+        assert_eq!(
+            crate::js_value::json_stringify(&JsValue::Object(actual)).unwrap(),
+            crate::js_value::json_stringify(&JsValue::Object(expected)).unwrap(),
+            "{}: SDK error",
+            header_text(field(case, "name"))
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 3);
 }
 
 /// Scripted transport: one response per call, body frames served in order;
@@ -431,4 +530,29 @@ fn imf_fixdate_year_edges_follow_date_parse() {
         at("Fri, 01 Jan 2015 00:00:999999999 GMT"),
         Some(1_420_070_400_000.0)
     );
+}
+
+/// Text deltas accumulate across events in `StreamingCheckpoint` with
+/// `append_js_string`: the V8 string cap is reached on the third delta.
+#[test]
+fn text_deltas_accumulate_under_the_v8_string_limit() {
+    use pilotdeck_protocol::parse_json;
+    let previous = STRING_LIMIT.with(std::cell::Cell::get);
+    STRING_LIMIT.with(|limit| limit.set(4));
+    let mut checkpoint = Checkpoint::default();
+    let mut deltas = 0;
+    for text in ["ab", "cd"] {
+        let event = parse_json(&format!(r#"{{"type":"text_delta","text":"{text}"}}"#)).unwrap();
+        checkpoint.on_event(&event).unwrap();
+        deltas += 1;
+    }
+    let event = parse_json(r#"{"type":"text_delta","text":"e"}"#).unwrap();
+    let error = checkpoint.on_event(&event).unwrap_err();
+    assert!(matches!(
+        error,
+        ModelStreamError::Thrown { ref name, ref message }
+            if name.equals_str("RangeError") && message.equals_str("Invalid string length")
+    ));
+    assert_eq!(deltas, 2);
+    STRING_LIMIT.with(|limit| limit.set(previous));
 }

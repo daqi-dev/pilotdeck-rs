@@ -210,7 +210,17 @@ fn serve(
             return; // unexpected extra request; the exact count assertion fails
         };
         let status = get(&reply, "status").as_number().unwrap_or(200.0);
-        let mut head = format!("HTTP/1.1 {status} Mock\r\n");
+        // Preserve explicit custom/empty reason phrases for SDK statusText.
+        // Omitted statusText follows Node's ServerResponse default.
+        let status_text = match get(&reply, "statusText").as_string() {
+            Some(value) => value.to_utf8().unwrap(),
+            None => hyper::StatusCode::from_u16(status as u16)
+                .ok()
+                .and_then(|status| status.canonical_reason())
+                .unwrap_or("unknown")
+                .to_string(),
+        };
+        let mut head = format!("HTTP/1.1 {status} {status_text}\r\n");
         match get(&reply, "headers").as_object() {
             Some(headers) => {
                 for (name, value) in headers.entries() {
