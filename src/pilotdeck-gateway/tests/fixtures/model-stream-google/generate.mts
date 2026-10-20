@@ -2,9 +2,9 @@
 // Real TS `streamModel` (google protocol, @google/genai SDK) against an owned
 // loopback HTTP mock. No external traffic.
 import assert from 'node:assert/strict';
-import { regressionCases, recordDeepSchemas } from './regression-cases.mts';
+import { regressionCases, recordDeepSchemas, recordPrototypeSchemas, recordPrototypeMerges } from './regression-cases.mts';
 import { execFileSync } from 'node:child_process';
-import { realpathSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { join, resolve } from 'node:path';
@@ -359,11 +359,20 @@ http.closeAllConnections?.();
 
 const { normalizeGoogleToolSchema, cleanSchemaForGoogle } = await import(pathToFileURL(join(baseline, 'src/model/providers/google/schema.ts')).href);
 const schemaCases = recordDeepSchemas(normalizeGoogleToolSchema, cleanSchemaForGoogle);
+const prototypeSchemaCases = recordPrototypeSchemas(normalizeGoogleToolSchema, cleanSchemaForGoogle);
+// The SDK helper is private. Evaluate its unchanged source in memory; never
+// write into node_modules. Full request coverage above also exercises this code.
+const sdk = readFileSync(join(baseline, 'node_modules/@google/genai/dist/node/index.mjs'), 'utf8');
+const mergeStart = sdk.indexOf('    function deepMerge(target, source) {');
+const mergeEnd = sdk.indexOf('\n    const mergedBody = deepMerge(', mergeStart);
+assert.ok(mergeStart >= 0 && mergeEnd > mergeStart, 'pinned SDK deepMerge source');
+const deepMerge = new Function(sdk.slice(mergeStart, mergeEnd) + '\nreturn deepMerge;')();
+const prototypeMergeCases = recordPrototypeMerges(deepMerge);
 const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8,
-  locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases, schemaCases,
+  locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases, schemaCases, prototypeSchemaCases, prototypeMergeCases,
 };
-assert.equal(cases.length, 28);
-assert.equal(requestCount, 28);
+assert.equal(cases.length, 29);
+assert.equal(requestCount, 29);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));

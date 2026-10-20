@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn request_started_matches_all_protocol_oracles() {
+    for (source, expected_count) in [
+        (
+            include_str!("../../../tests/fixtures/model-stream/oracle.json"),
+            30,
+        ),
+        (
+            include_str!("../../../tests/fixtures/model-stream-google/oracle.json"),
+            28,
+        ),
+        (
+            include_str!("../../../tests/fixtures/model-stream-openai/oracle.json"),
+            30,
+        ),
+        (
+            include_str!("../../../tests/fixtures/model-stream-responses/oracle.json"),
+            21,
+        ),
+    ] {
+        let oracle = crate::test_baseline::oracle(source);
+        let mut checked = 0;
+        for case in super::super::count_body::array(field(&oracle, "cases")) {
+            let expected = super::super::count_body::array(field(case, "timeline"))
+                .iter()
+                .map(|entry| field(entry, "event"))
+                .find(|event| is(field(event, "type"), "request_started"));
+            let Some(expected) = expected else { continue };
+            let merge = |base: &JsValue, overrides: &JsValue| {
+                let mut result = base.as_object().unwrap().clone();
+                if let Some(overrides) = overrides.as_object() {
+                    for (key, value) in overrides.entries() {
+                        result.insert(key.clone(), value.clone());
+                    }
+                }
+                JsValue::Object(result)
+            };
+            let mut current = merge(field(&oracle, "request"), field(case, "request"));
+            put(&mut current, "stream", JsValue::Bool(true));
+            let mut provider = merge(field(&oracle, "provider"), field(case, "provider"));
+            if !field(case, "url").is_undefined() {
+                put(&mut provider, "url", field(case, "url").clone());
+            }
+            let origin = match header_text(field(case, "target")).as_str() {
+                "closed" => "http://127.0.0.1:12346",
+                "tls-trusted" | "tls-untrusted" => "https://localhost:12347",
+                _ => "http://127.0.0.1:12345",
+            };
+            let url = header_text(field(&provider, "url")).replace("$MOCK", origin);
+            put(&mut provider, "url", url.as_str().into());
+            assert_eq!(
+                crate::js_value::json_stringify(
+                    &request_started_event(&provider, &current).unwrap()
+                )
+                .unwrap()
+                .unwrap()
+                .replace("http://127.0.0.1:12345", "$MOCK")
+                .replace("http://127.0.0.1:12346", "$CLOSED")
+                .replace("https://localhost:12347", "$TLS"),
+                crate::js_value::json_stringify(expected).unwrap().unwrap(),
+                "{}: request_started",
+                header_text(field(case, "name"))
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, expected_count, "initial request_started count");
+    }
+}
+
+#[test]
 fn retry_after_header_and_message_parsing() {
     // delta-seconds, rounded like Math.round(seconds * 1000)
     assert_eq!(
@@ -174,7 +243,7 @@ fn google_protocol_dispatch_matches_the_recorded_sdk_request() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 28);
+    assert_eq!(checked, 29);
     assert_eq!(
         no_request,
         [

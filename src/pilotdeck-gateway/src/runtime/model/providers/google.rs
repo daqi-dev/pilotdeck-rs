@@ -556,6 +556,69 @@ fn copy_schema_meta(from: &JsObject, to: &mut JsObject) {
     }
 }
 
+// Assignment to `{}` invokes Object.prototype.__proto__; object spread instead
+// defines own data properties. Keep that distinction local to the TS/SDK walks.
+fn assign_object(target: &mut JsObject, key: JsString, value: JsValue) {
+    if key.equals_str("__proto__") {
+        let mut cursor = &*target;
+        loop {
+            if cursor.contains_key("__proto__") {
+                break;
+            }
+            match cursor.prototype() {
+                None | Some(JsValue::Array(_)) => {
+                    if matches!(
+                        value,
+                        JsValue::Object(_) | JsValue::Array(_) | JsValue::Null
+                    ) {
+                        target.set_prototype(value);
+                    }
+                    return;
+                }
+                Some(JsValue::Object(parent)) => cursor = parent,
+                Some(_) => break,
+            }
+        }
+    }
+    target.insert(key, value);
+}
+
+// Move own entries, without retaining a prototype or cloning each deep subtree.
+fn copy_own_object(mut source: JsObject, assignment: bool) -> JsObject {
+    let keys: Vec<_> = source
+        .own_entries()
+        .into_iter()
+        .map(|(key, _)| key.clone())
+        .collect();
+    let mut result = value_object();
+    for key in keys {
+        let value = source
+            .insert(key.clone(), JsValue::Undefined)
+            .expect("own key");
+        if assignment {
+            assign_object(&mut result, key, value);
+        } else {
+            result.insert(key, value);
+        }
+    }
+    result
+}
+
+fn property_value(object: &JsObject, key: &JsString) -> Option<JsValue> {
+    use crate::config::changes::{Operand, object_property};
+    object_property(object, key).map(|value| match value {
+        Operand::Value(value) => value.clone(),
+        Operand::Number(value) => JsValue::Number(value),
+        Operand::ObjectPrototype => {
+            let mut prototype = value_object();
+            prototype.set_prototype(JsValue::Null);
+            JsValue::Object(prototype)
+        }
+        // Native functions have no schema fields and serialize as undefined.
+        Operand::Function(_) => JsValue::Undefined,
+    })
+}
+
 /// Heap-backed traversal: properties, local refs and single-branch unions all
 /// schedule work instead of consuming the caller's (normally 2 MiB) stack.
 fn clean_schema(schema: &JsValue) -> JsValue {
@@ -583,15 +646,20 @@ fn clean_schema(schema: &JsValue) -> JsValue {
                 let children = values.split_off(values.len() - keys.len());
                 let mut result = value_object();
                 for (key, value) in keys.into_iter().zip(children) {
-                    result.insert(key, value);
+                    assign_object(&mut result, key, value);
                 }
                 if let Some(source) = source {
-                    if result.get("type").is_some_and(|value| is(value, "array"))
-                        && result.get("items").is_none_or(JsValue::is_undefined)
+                    if result
+                        .get_property("type")
+                        .is_some_and(|value| is(value, "array"))
+                        && result
+                            .get_property("items")
+                            .is_none_or(JsValue::is_undefined)
                     {
                         result.insert("items".into(), JsValue::Object(value_object()));
                     }
-                    let required = clean_required(source.get("required"), result.get("properties"));
+                    let required =
+                        clean_required(source.get("required"), result.get_property("properties"));
                     if !required.is_empty() {
                         result.insert(
                             "required".into(),
@@ -603,6 +671,7 @@ fn clean_schema(schema: &JsValue) -> JsValue {
             }
             Work::Meta(source) => {
                 if let Some(JsValue::Object(result)) = values.last_mut() {
+                    *result = copy_own_object(std::mem::take(result), false);
                     copy_schema_meta(source, result);
                 }
             }
@@ -747,7 +816,7 @@ fn clean_required(required: Option<&JsValue>, properties: Option<&JsValue>) -> V
     required
         .iter()
         .filter_map(JsValue::as_string)
-        .filter(|key| properties.contains_key(&String::from_utf16_lossy(key.units())))
+        .filter(|key| crate::config::changes::object_property(properties, key).is_some())
         .cloned()
         .collect()
 }
@@ -943,18 +1012,32 @@ fn flatten_top_level_object_union(schema: &JsValue) -> JsValue {
         return schema.clone();
     }
     let mut merged = value_object();
+    let mut function_keys = Vec::new();
     let mut required_counts: Vec<(JsString, usize)> = Vec::new();
     for variant in &variants {
         if let Some(properties) = variant.get("properties").and_then(JsValue::as_object) {
             for (key, value) in properties.own_entries() {
-                match merged.get_key(key).cloned() {
-                    Some(existing) => {
-                        merged.insert(key.clone(), merge_property_schemas(&existing, value));
+                let function = function_keys.contains(key)
+                    || matches!(
+                        crate::config::changes::object_property(&merged, key),
+                        Some(crate::config::changes::Operand::Function(_))
+                    );
+                let value = if function && extract_enum_values(value).is_none() {
+                    // Retain a native function across later variants. Its wire
+                    // representation is undefined, but `existing ?? incoming`
+                    // must not treat that representation as a missing value.
+                    if !function_keys.contains(key) {
+                        function_keys.push(key.clone());
                     }
-                    None => {
-                        merged.insert(key.clone(), value.clone());
+                    JsValue::Undefined
+                } else {
+                    function_keys.retain(|name| name != key);
+                    match property_value(&merged, key) {
+                        Some(existing) => merge_property_schemas(&existing, value),
+                        None => value.clone(),
                     }
-                }
+                };
+                assign_object(&mut merged, key.clone(), value);
             }
         }
         if let Some(JsValue::Array(required)) = variant.get("required") {
@@ -1010,7 +1093,7 @@ pub(crate) fn normalize_google_tool_schema(schema: &JsValue) -> JsValue {
     let cleaned = clean_schema_for_google(&flattened);
     match cleaned.as_object() {
         Some(cleaned) => {
-            let mut result = cleaned.clone();
+            let mut result = copy_own_object(cleaned.clone(), false);
             if result.get("type").is_none_or(JsValue::is_undefined) {
                 result.insert("type".into(), "object".into());
             }
@@ -1165,6 +1248,10 @@ pub(crate) fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
             sanitized.insert(key.clone(), value.clone());
         }
     }
+    // SDK patchHttpOptions shallow-copies extraBody with Object.assign before
+    // deepMerge visits its own keys. A root __proto__ is consumed at that step;
+    // untouched nested payloads still retain their own __proto__ property.
+    let sanitized = copy_own_object(sanitized, true);
     if sanitized.is_empty() {
         return body.clone();
     }
@@ -1179,42 +1266,39 @@ fn deep_merge(target: JsObject, source: &JsObject) -> JsObject {
         parent_key: Option<JsString>,
     }
     let mut stack = vec![Frame {
-        output: target,
+        output: copy_own_object(target, true),
         entries: source.own_entries().into_iter(),
         parent_key: None,
     }];
     loop {
         let frame = stack.last_mut().expect("root merge frame");
         if let Some((key, source)) = frame.entries.next() {
-            if matches!(frame.output.get_key(key), Some(JsValue::Object(_)))
-                && let JsValue::Object(source) = source
+            let mut target = if matches!(frame.output.get_key(key), Some(JsValue::Object(_))) {
+                // Preserve an own key's insertion slot, moving its deep subtree.
+                frame.output.insert(key.clone(), JsValue::Undefined)
+            } else {
+                property_value(&frame.output, key)
+            };
+            if let (Some(JsValue::Object(target)), JsValue::Object(source)) = (&mut target, source)
             {
-                // Move the subtree out, leaving its insertion slot in place.
-                // Keeping a clone in every parent would use quadratic memory.
-                let mut previous = frame
-                    .output
-                    .insert(key.clone(), JsValue::Undefined)
-                    .expect("target");
-                let JsValue::Object(target) = &mut previous else {
-                    unreachable!("object checked")
-                };
-                let target = std::mem::take(target);
+                // Move an owned target; inherited targets must be cloned so the
+                // prototype remains unchanged when the merged own key is added.
                 stack.push(Frame {
-                    output: target,
+                    output: copy_own_object(std::mem::take(target), true),
                     entries: source.own_entries().into_iter(),
                     parent_key: Some(key.clone()),
                 });
             } else {
-                frame.output.insert(key.clone(), source.clone());
+                assign_object(&mut frame.output, key.clone(), source.clone());
             }
         } else {
             let finished = stack.pop().expect("completed frame");
             if let Some(key) = finished.parent_key {
-                stack
-                    .last_mut()
-                    .expect("parent")
-                    .output
-                    .insert(key, JsValue::Object(finished.output));
+                assign_object(
+                    &mut stack.last_mut().expect("parent").output,
+                    key,
+                    JsValue::Object(finished.output),
+                );
             } else {
                 return finished.output;
             }
@@ -1661,6 +1745,44 @@ mod tests {
     }
     fn text_of(value: &JsValue) -> String {
         pilotdeck_protocol::stringify_json(value).unwrap().unwrap()
+    }
+
+    #[test]
+    fn prototype_assignments_match_real_ts_and_sdk() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../../tests/fixtures/model-stream-google/oracle.json"
+        ));
+        let schemas = array(field(&oracle, "prototypeSchemaCases"));
+        assert_eq!(schemas.len(), 17);
+        for case in schemas {
+            let schema = field(case, "schema");
+            assert_eq!(
+                text_of(&clean_schema_for_google(schema)),
+                text_of(field(case, "cleaned")),
+                "{}: clean",
+                text_of(field(case, "name"))
+            );
+            assert_eq!(
+                text_of(&normalize_google_tool_schema(schema)),
+                text_of(field(case, "normalized")),
+                "{}: normalize",
+                text_of(field(case, "name"))
+            );
+        }
+        let merges = array(field(&oracle, "prototypeMergeCases"));
+        assert_eq!(merges.len(), 8);
+        for case in merges {
+            let actual = deep_merge(
+                field(case, "target").as_object().unwrap().clone(),
+                field(case, "source").as_object().unwrap(),
+            );
+            assert_eq!(
+                text_of(&JsValue::Object(actual)),
+                text_of(field(case, "expected")),
+                "{}: SDK merge",
+                text_of(field(case, "name"))
+            );
+        }
     }
 
     // Keep this probe isolated: reverting to native recursion can abort a process.

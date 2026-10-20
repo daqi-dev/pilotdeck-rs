@@ -1205,6 +1205,33 @@ async fn google_attempt(
     Ok(())
 }
 
+fn request_started_event(
+    provider: &JsValue,
+    current: &JsValue,
+) -> Result<JsValue, ModelStreamError> {
+    let fingerprint = crate::js_value::json_stringify(current)
+        .map_err(|_| {
+            ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
+        })?
+        .unwrap_or_default();
+    let mut started = JsObject::new();
+    started.insert("type".into(), "request_started".into());
+    started.insert("provider".into(), field(provider, "id").clone());
+    started.insert("model".into(), field(current, "model").clone());
+    started.insert(
+        "providerBaseUrl".into(),
+        providers::normalize_provider_base_url(field(provider, "url")),
+    );
+    started.insert(
+        "requestFingerprint".into(),
+        format!("{:x}", Sha256::digest(fingerprint.as_bytes()))
+            .as_str()
+            .into(),
+    );
+    started.insert("metadata".into(), field(current, "metadata").clone());
+    Ok(JsValue::Object(started))
+}
+
 /// `streamGoogleProviderRequest`: request_started per attempt, SDK error
 /// canonicalization, continuation/network retries and error events.
 async fn stream_google_model(
@@ -1221,27 +1248,9 @@ async fn stream_google_model(
     let mut attempt = 0.0;
     while attempt <= max_retries {
         throw_if_aborted(options)?;
-        let fingerprint = crate::js_value::json_stringify(&current)
-            .map_err(|_| {
-                ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
-            })?
-            .unwrap_or_default();
-        let mut started = JsObject::new();
-        started.insert("type".into(), "request_started".into());
-        started.insert("provider".into(), field(provider, "id").clone());
-        started.insert("model".into(), field(&current, "model").clone());
-        started.insert(
-            "providerBaseUrl".into(),
-            providers::normalize_provider_base_url(field(provider, "url")),
-        );
-        started.insert(
-            "requestFingerprint".into(),
-            format!("{:x}", Sha256::digest(fingerprint.as_bytes()))
-                .as_str()
-                .into(),
-        );
-        started.insert("metadata".into(), field(&current, "metadata").clone());
-        sink(StreamOutput::Event(JsValue::Object(started)));
+        sink(StreamOutput::Event(request_started_event(
+            provider, &current,
+        )?));
 
         let (_, model) = providers::validate_model_request(&current, config)?;
         let model_id = field(&current, "model").clone();
@@ -1343,27 +1352,9 @@ pub async fn stream_model(
     let mut attempt = 0.0;
     while attempt <= max_retries {
         throw_if_aborted(options)?;
-        let fingerprint = crate::js_value::json_stringify(&current)
-            .map_err(|_| {
-                ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
-            })?
-            .unwrap_or_default();
-        let mut started = JsObject::new();
-        started.insert("type".into(), "request_started".into());
-        started.insert("provider".into(), field(&provider, "id").clone());
-        started.insert("model".into(), field(&current, "model").clone());
-        started.insert(
-            "providerBaseUrl".into(),
-            providers::normalize_provider_base_url(field(&provider, "url")),
-        );
-        started.insert(
-            "requestFingerprint".into(),
-            format!("{:x}", Sha256::digest(fingerprint.as_bytes()))
-                .as_str()
-                .into(),
-        );
-        started.insert("metadata".into(), field(&current, "metadata").clone());
-        sink(StreamOutput::Event(JsValue::Object(started)));
+        sink(StreamOutput::Event(request_started_event(
+            &provider, &current,
+        )?));
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
 
