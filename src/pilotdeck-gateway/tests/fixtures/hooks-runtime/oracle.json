@@ -1188,6 +1188,250 @@
           },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
+      },
+      {
+        "name": "header-trim",
+        "target": "<url>/echo",
+        "headers": {
+          "X-A": "  spaced \t"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"spaced\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"spaced\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "spaced"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "spaced"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-trim-join",
+        "target": "<url>/echo",
+        "headers": {
+          "X-B": " a ",
+          "x-b": " b "
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-b\\\":\\\"a, b\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-b\":\"a, b\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-b": "a, b"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-b": [
+              "a, b"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-trim-crlf",
+        "target": "<url>/echo",
+        "headers": {
+          "X-C": "\r\nv\r\n"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-c\\\":\\\"v\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-c\":\"v\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-c": "v"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-c": [
+              "v"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-trim-empty",
+        "target": "<url>/echo",
+        "headers": {
+          "X-D": " $NOPE "
+        },
+        "allowedEnvVars": [
+          "NOPE"
+        ],
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-d\\\":\\\"\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-d\":\"\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-d": ""
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-d": [
+              ""
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-control-0x01",
+        "target": "<url>/ok",
+        "headers": {
+          "X-A": "a\u0001b"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-control-0x7f",
+        "target": "<url>/ok",
+        "headers": {
+          "X-A": "ab"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-nul",
+        "target": "<url>/ok",
+        "headers": {
+          "X-A": "a\u0000b"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Headers.append: \\\"a\\u0000b\\\" is an invalid header value.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-inner-lf",
+        "target": "<url>/ok",
+        "headers": {
+          "X-A": "a\nb"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Headers.append: \\\"a\\nb\\\" is an invalid header value.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "pre-aborted-control-0x01",
+        "target": "<url>/ok",
+        "headers": {
+          "X-A": "a\u0001b"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "abortAtMs": 0,
+        "expected": "{\"stdout\":\"\",\"stderr\":\"This operation was aborted\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      }
+    ]
+  },
+  "prompt": {
+    "cases": [
+      {
+        "name": "dollar-patterns",
+        "prompt": "pre $ARGUMENTS post $ARGUMENTS",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "extra": "$&|$`|$'|$$|$1|$<n>|$0|${x}|$"
+        },
+        "expected": "{\"stdout\":\"pre {\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\",\\\"extra\\\":\\\"$ARGUMENTS|pre | post $ARGUMENTS|$|$1|$<n>|$0|${x}|$\\\"} post $ARGUMENTS\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+      },
+      {
+        "name": "no-placeholder",
+        "prompt": "nothing here",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "extra": "$&"
+        },
+        "expected": "{\"stdout\":\"nothing here\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
+      },
+      {
+        "name": "placeholder-at-start",
+        "prompt": "$ARGUMENTS!",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default",
+          "extra": "$'$`"
+        },
+        "expected": "{\"stdout\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\",\\\"extra\\\":\\\"!\\\"}!\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\"}}"
       }
     ]
   },
