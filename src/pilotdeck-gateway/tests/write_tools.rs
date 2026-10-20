@@ -25,8 +25,8 @@ use pilotdeck_gateway::{
         },
     },
     storage::file_history::{
-        ExpectedFileState, FileHistoryOptions, FileHistoryStore, RecordedBackup, RewindOutcome,
-        SnapshotRecordedEntry, get_backup_file_name, resolve_node_path,
+        BackupFileName, ExpectedFileState, FileHistoryOptions, FileHistoryStore, RecordedBackup,
+        RewindOutcome, SnapshotRecordedEntry, get_backup_file_name, resolve_node_path,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -668,7 +668,7 @@ fn capture_history(replay: &Replay, root: &Path, outside: &Path) -> JsValue {
                         "backupFileName",
                         backup
                             .backup_file_name
-                            .as_ref()
+                            .as_name()
                             .map(|name| JsValue::from(normalize_backup_name(name).as_str()))
                             .unwrap_or(JsValue::Null),
                     ),
@@ -1626,7 +1626,7 @@ fn file_history_replay_and_conflict_round_trip() {
         tracked_file_backups: vec![(
             file.to_string_lossy().into_owned(),
             RecordedBackup {
-                backup_file_name: Some("0123456789abcdef@v1".into()),
+                backup_file_name: BackupFileName::Named("0123456789abcdef@v1".into()),
                 version: 1,
                 backup_time_ms: FIXED_MS,
                 mode: Some(0o100644),

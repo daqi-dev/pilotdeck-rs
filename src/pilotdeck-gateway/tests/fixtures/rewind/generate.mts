@@ -48,6 +48,11 @@ const sourceSha256 = sourceClosureSha256(baseline, commit, git, [
 ]);
 
 const scratch = await mkdtemp(join(realpathSync(tmpdir()), 'pdrs-rewind-'));
+// Malformed transcript entries can enumerate relative index paths ("0", "1").
+// TS resolves those against `process.cwd()`, so run from the run-owned scratch
+// tree instead of the baseline checkout: a malformed `null` backup must never
+// be able to unlink a file in the source tree.
+process.chdir(scratch);
 const FIXED_MS = Date.parse('2026-01-01T00:00:00.000Z');
 const fixedNow = () => new Date(FIXED_MS);
 const SESSION = 'session-1';
@@ -214,10 +219,16 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
 
   // Map the run-specific backup hashes to path-stable tokens before the
   // oracle is written; the Rust replay writes the blob under the same token.
+  // Only real project paths participate: malformed `trackedFileBackups`
+  // containers (string / array) enumerate relative index keys such as "0",
+  // whose literal backup name must stay observable instead of being remapped
+  // through `path.relative` against the process cwd.
+  const underRoot = (path: string) => path === root || path.startsWith(root + sep);
   const nameMap = new Map<string, string>();
   for (const entry of transcript as any[]) {
     if (entry.type !== 'file_snapshot_recorded') continue;
     for (const [path, backup] of Object.entries(entry.trackedFileBackups ?? {}) as [string, any][]) {
+      if (!underRoot(path)) continue;
       if (typeof backup?.backupFileName !== 'string') continue;
       const relativePath = relative(root, path).split(sep).join('/');
       nameMap.set(backup.backupFileName, `<backup:${relativePath}>@v${backup.version}`);
@@ -242,6 +253,11 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
     const copy = clean(entry);
     if (copy.type === 'file_snapshot_recorded') {
       for (const [path, backup] of Object.entries(copy.trackedFileBackups ?? {}) as [string, any][]) {
+        // A string container yields string values (property writes would throw
+        // in strict mode); an array's index path is not a project path. Only
+        // object-shaped backups under the project root are tokenized.
+        if (!underRoot(path)) continue;
+        if (!backup || typeof backup !== 'object') continue;
         backup.backupFileName = normalizeBackup(backup.backupFileName, path, backup.version);
       }
     }
@@ -433,8 +449,44 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
   ]);
 }
 
-assert.equal(scenarios.length, 12, 'scenario count');
-assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 18, 'call count');
+// 13. `trackedFileBackups` is a string. `Object.entries("ab")` enumerates
+//     ["0","a"],["1","b"]; replay stores relative paths "0"/"1" whose
+//     `backupFileName` is undefined. Dry run only previews 0/0, but the real
+//     rewind reaches `path.join(backupDir, undefined)` and returns Node's
+//     TypeError message as `error`.
+{
+  const run = begin('entry-tracked-backups-string');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    { messageId: 'msg-1', trackedFileBackups: 'ab' } as any,
+    'create',
+  );
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 14. `trackedFileBackups` is an array. `Object.entries` enumerates the index
+//     key "0"; the referenced blob is deliberately absent, so the real rewind
+//     reports the relative path "0" under `missing` and writes nothing.
+{
+  const run = begin('entry-tracked-backups-array');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    {
+      messageId: 'msg-1',
+      trackedFileBackups: [{ backupFileName: 'array-missing@v1', version: 1 }],
+    } as any,
+    'create',
+  );
+  await finish(run, [{ userMessageId: 'msg-1', dryRun: false }]);
+}
+
+assert.equal(scenarios.length, 14, 'scenario count');
+assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 21, 'call count');
 
 const oracle = {
   sourceCommit: commit,

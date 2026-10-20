@@ -13,8 +13,8 @@
 use crate::storage::{
     AdapterError, AsyncTranscriptAdapter, LedgerError, SessionStorageInput,
     file_history::{
-        ExpectedFileState, FileHistoryClock, FileHistoryOptions, FileHistoryStore, RecordedBackup,
-        SnapshotRecordedEntry,
+        BackupFileName, ExpectedFileState, FileHistoryClock, FileHistoryOptions, FileHistoryStore,
+        RecordedBackup, SnapshotRecordedEntry,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -179,21 +179,18 @@ fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
     // real id. `None` is that undefined, not an error.
     let message_id = string_field(entry, "messageId").map(text);
     // TS `replayFromTranscript` runs `Object.entries(entry.trackedFileBackups)`
-    // unconditionally, so an absent (or null) object throws V8's TypeError and
-    // the outer catch returns it as `error`. A present non-object value keeps
-    // the TS behaviour of enumerating no own keys here.
+    // unconditionally, so an absent/null/undefined value throws V8's TypeError
+    // and the outer catch returns it as `error`. Strings and arrays enumerate
+    // real entries (UTF-16 code units / indices); numbers and booleans yield
+    // none. See `object_entries`.
     let backups = match entry.get("trackedFileBackups") {
-        Some(JsValue::Null | JsValue::Undefined) | None => {
-            return Err("Cannot convert undefined or null to object".to_string());
-        }
-        Some(backups) => backups.as_object(),
+        Some(value) => object_entries(value)?,
+        None => return Err("Cannot convert undefined or null to object".to_string()),
     };
-    let mut tracked_file_backups = Vec::new();
-    if let Some(backups) = backups {
-        for (path, backup) in backups.own_entries() {
-            tracked_file_backups.push((text(path), recorded_backup(backup)));
-        }
-    }
+    let tracked_file_backups = backups
+        .into_iter()
+        .map(|(path, backup)| (text(&path), recorded_backup(&backup)))
+        .collect();
     let mut expected_file_states = Vec::new();
     if let Some(expected) = entry.get("expectedFileStates").and_then(JsValue::as_object) {
         for (path, state) in expected.own_entries() {
@@ -214,11 +211,50 @@ fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
     })
 }
 
+/// `Object.entries(value)` for the JSON value kinds a transcript can carry.
+/// Property order for objects is `Object.keys` order (canonical array indices
+/// ascending, then insertion order); strings enumerate one entry per UTF-16
+/// code unit; arrays enumerate their indices; numbers and booleans have no own
+/// enumerable keys. `null`/`undefined` throw the same V8 TypeError as TS.
+fn object_entries(value: &JsValue) -> Result<Vec<(JsString, JsValue)>, String> {
+    match value {
+        JsValue::Null | JsValue::Undefined => {
+            Err("Cannot convert undefined or null to object".to_string())
+        }
+        JsValue::Object(object) => Ok(object
+            .own_entries()
+            .into_iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()),
+        JsValue::Array(values) => Ok(values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (JsString::from(index.to_string()), value.clone()))
+            .collect()),
+        JsValue::String(value) => Ok(value
+            .units()
+            .iter()
+            .enumerate()
+            .map(|(index, unit)| {
+                (
+                    JsString::from(index.to_string()),
+                    JsValue::String(JsString::from_utf16(vec![*unit])),
+                )
+            })
+            .collect()),
+        JsValue::Number(_) | JsValue::Bool(_) => Ok(Vec::new()),
+    }
+}
+
 fn recorded_backup(backup: &JsValue) -> RecordedBackup {
     RecordedBackup {
+        // TS keeps `undefined` distinct from `null`: only the latter unlinks,
+        // while `path.join(dir, undefined)` throws inside `restoreBackup`.
+        // Property access on a primitive backup value is also `undefined`.
         backup_file_name: match backup.get("backupFileName") {
-            Some(JsValue::Null) | None => None,
-            Some(value) => value.as_string().map(text),
+            Some(JsValue::Null) => BackupFileName::Null,
+            Some(JsValue::String(value)) => BackupFileName::Named(text(value)),
+            Some(_) | None => BackupFileName::Undefined,
         },
         version: backup
             .get("version")

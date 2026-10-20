@@ -286,13 +286,13 @@ fn run_scenario(scenario: &JsValue) {
 fn rewind_files_replays_the_ts_oracle() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 12, "fixture scenario count");
+    assert_eq!(scenarios.len(), 14, "fixture scenario count");
     assert_eq!(
         scenarios
             .iter()
             .map(|scenario| array(field(scenario, "calls")).len())
             .sum::<usize>(),
-        18,
+        21,
         "fixture call count"
     );
     for scenario in scenarios {

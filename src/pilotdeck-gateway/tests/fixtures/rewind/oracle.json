@@ -1821,7 +1821,78 @@
           "mode": 420
         }
       ]
+    },
+    {
+      "name": "entry-tracked-backups-string",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "trackedFileBackups": "ab",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":true,\"insertions\":0,\"deletions\":0}",
+          "treeAfter": []
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received undefined\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "entry-tracked-backups-array",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "trackedFileBackups": [
+            {
+              "backupFileName": "array-missing@v1",
+              "version": 1
+            }
+          ],
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":true,\"filesChanged\":[],\"insertions\":0,\"deletions\":0,\"missing\":[\"0\"]}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
     }
   ],
-  "sha256": "547f499539933372c79f1ef0ef687658a0d2f3443d018850e8d001d34f717e22"
+  "sha256": "cc899872ae58d930d8d16972c9353fb3a0b6db97e7b9a1d1393d75a155766942"
 }

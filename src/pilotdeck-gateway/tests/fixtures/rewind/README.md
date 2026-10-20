@@ -19,8 +19,10 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次逐字节一致才更新
 正本（本次两次运行均为
-`sha256(oracle.json) = 67ad5a19c89b609cca8866ecd33ea893da1dadf2f7679b7c2a145118391e610f`）。
-场景 12 个、`rewindFilesForSdk` 调用 18 次。
+`sha256(oracle.json) = 90e7c77b2a6637f3e79cffe766d2bc49690d4782a4a394aa16015ba90b0dd212`）。
+场景 14 个、`rewindFilesForSdk` 调用 21 次。生成器在 `mkdtemp` 后
+`process.chdir(scratch)`：畸形条目枚举出的相对路径（`"0"`）按 TS 语义相对
+cwd 解析，不能让它们有机会落到基线源码树。
 
 ## 场景
 
@@ -38,6 +40,8 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 | `entry-missing-tracked-backups` | 畸形条目缺 `trackedFileBackups` → `Cannot convert undefined or null to object` |
 | `entry-missing-message-id` | 畸形条目缺 `messageId` → 按 `undefined` 回放，最终 `No snapshot for messageId msg-1` |
 | `restore-mkdir-error` | track-only 备份仍在、目标父路径被换成普通文件；dry run 正常预览 0/2，真回滚在 `mkdir '<root>/p'` 报 Node 同文 `EEXIST: ...`，不带 `(os error N)` |
+| `entry-tracked-backups-string` | `trackedFileBackups` 是字符串 `"ab"`：`Object.entries` 枚举 UTF-16 码元 `"0"`/`"1"`；dry run 预览 0/0，真回滚在 `path.join(dir, undefined)` 抛 `The "path" argument must be of type string. Received undefined` |
+| `entry-tracked-backups-array` | `trackedFileBackups` 是数组：`Object.entries` 按下标枚举；备份不存在时真回滚把相对路径 `"0"` 报进 `missing`，不写盘 |
 
 ## 归一化与为什么
 
@@ -56,8 +60,11 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
   `snapshot-missing-then-directory` 用真实 `FileHistoryStore.trackEdit` +
   `markEditCommitted`（文件缺失时）直接产生 Missing 指纹——真实写工具在写完前不会
   记录 Missing，这是该状态唯一可复现的宿主端口形态。
-- **畸形条目**：`entry-missing-*` 直接把畸形快照交给真实
-  `JsonlTranscriptWriter.recordFileHistorySnapshot`；TS 的 replay / catch 路径未修改。
+- **畸形条目**：`entry-missing-*` / `entry-tracked-backups-*` 直接把畸形快照交给
+  真实 `JsonlTranscriptWriter.recordFileHistorySnapshot`；TS 的 replay / catch
+  路径未修改。字符串容器的值是原始字符，不是备份对象，因此归一化只改写
+  “项目根内的对象形 backup”；数组下标 `"0"` 也不是项目路径，其字面备份名
+  （`array-missing@v1`）保持原样。
 - **工作树**：`treeBefore` 是首次调用前的完整文件树（相对路径 + base64 + mode），
   Rust 回放以它重建调用前状态；`treeAfter` 逐调用保存，用于证明 dry run 不落盘与
   rewind 的最终字节。
@@ -67,7 +74,16 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 - `backupStorage`（host blob 存储）未移植；与 A6.5-pr5 一致，只覆盖文件系统布局。
 - 目标 messageId 的语义与 TS 一致：`findSnapshot` 取**最后一个 messageId 完全相等**
   的快照；不是“严格早于该消息”的搜索。
-- 非 UTF-8 文件名、损坏 transcript 与其他畸形条目不在本夹具范围；本轮只覆盖
-  `trackedFileBackups` 缺失与 `messageId` 缺失两类已实测的 TS 行为。
+- 非 UTF-8 文件名、损坏 transcript 与其他畸形条目不在本夹具范围；已覆盖
+  `trackedFileBackups` 缺失、字符串、数组，`messageId` 缺失，以及
+  `backupFileName` 缺失（未定义）五类已实测的 TS 行为。
+- `backupFileName` 非字符串（数字/布尔/对象等）：TS 的 `path.join` 报错文本
+  随接收类型变化；Rust 目前统一按 `undefined` 文本处理，夹具未覆盖。
+- `trackedFileBackups` 的对象值/数组元素本身是 `null`：TS 在 replay 的
+  `backup.backupFileName` 属性访问处就抛 `Cannot read properties of null`；
+  Rust 目前把该值当作 `backupFileName: undefined`，在更晚的 `path.join`
+  报错。夹具未覆盖。
+- `expectedFileStates` 是字符串/数组时，TS 先做对象 spread 再按
+  `Object.entries` 遍历；Rust 只接受对象，暂不对齐该畸形形态。
 - 目录本身没有独立 tree 行（`walk` 只记文件）；涉及目录的场景都放一个
   `keep.txt` 子文件，确保目录存在与否可在 `treeBefore`/`treeAfter` 中逐字节观察。
