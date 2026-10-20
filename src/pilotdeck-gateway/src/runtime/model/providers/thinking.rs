@@ -349,4 +349,30 @@ mod tests {
             "high"
         );
     }
+
+    /// node probe (pr7 `r1/probe-r1.out.txt`): moonshot + kimi-k3 with an
+    /// explicit `format:"provider"` patches only `reasoning_effort`; disabled
+    /// is unsupported.
+    #[test]
+    fn always_thinking_endpoints_patch_only_the_effort() {
+        let request = parse_json(r#"{"thinking":{"mode":"high"}}"#).unwrap();
+        let provider = parse_json(r#"{"id":"moonshot","protocol":"openai"}"#).unwrap();
+        let enabled = parse_json(r#"{"id":"kimi-k3","thinking":{"state":"enabled","efforts":["high"],"format":"provider"}}"#).unwrap();
+        let plan = resolve(&request, &provider, &enabled).unwrap();
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(plan.body_patch.as_ref().unwrap())
+                .unwrap()
+                .unwrap(),
+            r#"{"reasoning_effort":"high"}"#
+        );
+        let disabled = parse_json(
+            r#"{"id":"kimi-k3","thinking":{"state":"disabled","efforts":[],"format":"provider"}}"#,
+        )
+        .unwrap();
+        let plan = resolve(&request, &provider, &disabled).unwrap();
+        assert_eq!(
+            plan.unsupported_reason.unwrap().to_utf8().unwrap(),
+            "kimi-k3: This model cannot disable thinking. Uncheck both options to use the server default."
+        );
+    }
 }

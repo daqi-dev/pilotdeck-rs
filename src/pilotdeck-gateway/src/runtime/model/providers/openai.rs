@@ -800,7 +800,8 @@ fn sum_defined(values: &[Option<f64>]) -> Option<f64> {
 }
 
 /// `normalizeOpenAIUsage(raw)`.
-fn normalize_usage(raw: &JsValue) -> Option<JsValue> {
+/// `normalizeOpenAIUsage`; also used by the Responses stream.
+pub(crate) fn normalize_usage(raw: &JsValue) -> Option<JsValue> {
     if !is_record(raw) {
         return None;
     }
@@ -1105,17 +1106,10 @@ enum ParsedArguments {
 
 /// `JSON.parse(rawArguments)`, then `JSON.parse(jsonrepair(rawArguments))`.
 fn parse_tool_arguments(raw_arguments: &JsString) -> ParsedArguments {
-    use pilotdeck_protocol::parse_json;
-    let units = raw_arguments.units();
-    if let Ok(input) = parse_json(&super::json_text(units)) {
-        return ParsedArguments::Parsed(input);
-    }
-    match crate::runtime::model::jsonrepair::jsonrepair(units) {
-        Ok(repaired) => match parse_json(&super::json_text(&repaired)) {
-            Ok(input) => ParsedArguments::Repaired(input),
-            Err(_) => ParsedArguments::Invalid,
-        },
-        Err(_) => ParsedArguments::Invalid,
+    match super::parse_tool_arguments(raw_arguments.units()) {
+        Some((input, false)) => ParsedArguments::Parsed(input),
+        Some((input, true)) => ParsedArguments::Repaired(input),
+        None => ParsedArguments::Invalid,
     }
 }
 

@@ -134,6 +134,9 @@ const specs: Spec[] = [
     chunks: [{ text: '{"type":"error","error":{"type":"api_error",' }], end: 'hold' }] },
   // 204: fetch exposes a null body -> "Missing response body." error event.
   { name: 'no-content', replies: [{ status: 204, headers: {} }] },
+  // pr7 修复轮 1: `settings.efforts.includes` — substring on a string, V8 TypeError on null.
+  { name: 'thinking-efforts-string', provider: { models: { 'claude-sonnet-4-6': { id: 'claude-sonnet-4-6', thinking: { state: 'enabled', efforts: 'xhigh', format: 'provider' }, capabilities: { supportsStreaming: true, supportsSystemPrompt: true, supportsToolUse: true, supportsSpeed: true, maxOutputTokens: 32768 }, multimodal: { input: ['text', 'image'] } } } }, replies: [short('sub')] },
+  { name: 'thinking-efforts-null', provider: { models: { 'claude-sonnet-4-6': { id: 'claude-sonnet-4-6', thinking: { state: 'enabled', efforts: null, format: 'provider' }, capabilities: { supportsStreaming: true, supportsSystemPrompt: true, supportsToolUse: true, supportsSpeed: true, maxOutputTokens: 32768 }, multimodal: { input: ['text', 'image'] } } } }, replies: [] },
 ];
 
 const request = {
@@ -297,6 +300,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, undici: JSON.parse(readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version,
   locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 25);
+assert.equal(cases.length, 27);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));

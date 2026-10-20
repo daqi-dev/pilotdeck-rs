@@ -2,12 +2,13 @@
 //! `buildModelRequest.ts`, `normalizeStreamEvent.ts`, `providerEndpoint.ts`
 //! (chat endpoints), `sanitizeProviderBody.ts` and `buildProviderHeaders`.
 //!
-//! The Anthropic (A6.4-pr5) and OpenAI chat-completions (A6.4-pr6) protocols
-//! are ported. OpenAI Responses and Google arrive in A6.4-pr7/pr8; until then
-//! they are rejected before any HTTP exchange with a
+//! The Anthropic (A6.4-pr5), OpenAI chat-completions (A6.4-pr6) and OpenAI
+//! Responses (A6.4-pr7) protocols are ported. Google arrives in A6.4-pr8;
+//! until then it is rejected before any HTTP exchange with a
 //! `ModelRequestError("protocol_not_ported")`.
 pub(crate) mod anthropic;
 pub(crate) mod openai;
+pub(crate) mod openai_responses;
 pub(crate) mod thinking;
 
 use super::count_body::{array, field, is, present, truthy};
@@ -43,6 +44,19 @@ pub(crate) fn json_text(units: &[u16]) -> String {
         }
     }
     out
+}
+
+/// `JSON.parse(text)`, else `JSON.parse(jsonrepair(text))`, as every stream
+/// normalizer parses tool-call arguments (anthropic, openai, openai-responses).
+/// The bool is `wasRepaired`; `None` when both parses fail. Callers handle
+/// their own empty-buffer default first.
+pub(crate) fn parse_tool_arguments(units: &[u16]) -> Option<(JsValue, bool)> {
+    let parse = |units: &[u16]| pilotdeck_protocol::parse_json(&json_text(units)).ok();
+    if let Some(input) = parse(units) {
+        return Some((input, false));
+    }
+    let repaired = crate::runtime::model::jsonrepair::jsonrepair(units).ok()?;
+    parse(&repaired).map(|input| (input, true))
 }
 
 fn message(parts: &[(&str, Option<&JsValue>)]) -> JsString {
@@ -307,9 +321,10 @@ pub(crate) fn build_model_request(
     if is(field(provider, "protocol"), "anthropic") {
         return anthropic::build_request(request, model, provider);
     }
-    if is(field(provider, "protocol"), "google")
-        || is(field(provider, "protocol"), "openai-responses")
-    {
+    if is(field(provider, "protocol"), "openai-responses") {
+        return openai_responses::build_request(request, model, provider);
+    }
+    if is(field(provider, "protocol"), "google") {
         return Err(request_error(
             "protocol_not_ported",
             message(&[
@@ -500,11 +515,15 @@ pub(crate) fn normalize_provider_base_url(raw: &JsValue) -> JsValue {
 pub(crate) enum StreamState {
     Anthropic(anthropic::StreamState),
     OpenAi(openai::StreamState),
+    OpenAIResponses(openai_responses::StreamState),
 }
 impl StreamState {
     pub(crate) fn new(provider: &JsValue) -> Self {
-        if is(field(provider, "protocol"), "anthropic") {
+        let protocol = field(provider, "protocol");
+        if is(protocol, "anthropic") {
             Self::Anthropic(anthropic::StreamState::default())
+        } else if is(protocol, "openai-responses") {
+            Self::OpenAIResponses(openai_responses::StreamState::default())
         } else {
             Self::OpenAi(openai::StreamState::default())
         }
@@ -516,6 +535,7 @@ impl StreamState {
         match self {
             Self::Anthropic(state) => anthropic::normalize_stream_event(raw, state),
             Self::OpenAi(state) => openai::normalize_stream_event(raw, state),
+            Self::OpenAIResponses(state) => openai_responses::normalize_stream_event(raw, state),
         }
     }
 }
