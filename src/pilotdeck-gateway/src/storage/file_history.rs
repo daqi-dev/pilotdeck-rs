@@ -42,7 +42,10 @@ pub enum ExpectedFileState {
 
 #[derive(Clone, Debug)]
 pub struct FileHistorySnapshot {
-    pub message_id: String,
+    /// `None` is the TS `messageId: undefined` replay case: the snapshot is
+    /// still pushed (so `snapshots.length` is non-zero), but no string lookup
+    /// can ever match it, exactly like `findSnapshot`'s strict equality.
+    pub message_id: Option<String>,
     pub tracked_file_backups: Vec<(String, FileHistoryBackup)>,
     pub expected_file_states: Vec<(String, ExpectedFileState)>,
     pub timestamp_ms: i64,
@@ -88,7 +91,10 @@ pub struct RecordedBackup {
 }
 #[derive(Clone, Debug)]
 pub struct SnapshotRecordedEntry {
-    pub message_id: String,
+    /// `messageId` may be absent in a corrupt transcript. TS keeps
+    /// `undefined` and the strict comparison later never matches; `None`
+    /// reproduces that instead of inventing an error.
+    pub message_id: Option<String>,
     pub tracked_file_backups: Vec<(String, RecordedBackup)>,
     pub expected_file_states: Vec<(String, ExpectedFileState)>,
     /// `timestamp ?? snapshotTimestamp ?? createdAt ?? 0`, already parsed.
@@ -122,12 +128,17 @@ impl FileHistoryOptions {
 pub enum FileHistoryError {
     Io(io::Error),
     NoSnapshot(String),
+    /// Already-rendered Node/libuv fs diagnostic. The SDK error field carries
+    /// `Error.message`, so a Rust `io::Error` Display (`...(os error N)`) must
+    /// never reach it.
+    Fs(String),
 }
 impl fmt::Display for FileHistoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::NoSnapshot(id) => write!(f, "No snapshot for messageId {id}"),
+            Self::Fs(message) => f.write_str(message),
         }
     }
 }
@@ -201,7 +212,7 @@ impl FileHistoryStore {
             None => {
                 let timestamp = self.now();
                 state.snapshots.push(FileHistorySnapshot {
-                    message_id: message_id.to_string(),
+                    message_id: Some(message_id.to_string()),
                     tracked_file_backups: Vec::new(),
                     expected_file_states: Vec::new(),
                     timestamp_ms: timestamp,
@@ -230,7 +241,9 @@ impl FileHistoryStore {
         state.snapshots[snapshot_index].set_backup(abs_path.clone(), backup);
         self.cache_mtime(&abs_path);
         let snapshot = state.snapshots[snapshot_index].clone();
-        drop(state);
+        // TS `run()` holds the mutex across `recordTranscript`; keeping the
+        // state guard here makes the sink see the committed transaction and
+        // prevents an interleaved clone from writing an older snapshot last.
         self.record_transcript(&snapshot, "update")?;
         Ok(())
     }
@@ -244,7 +257,7 @@ impl FileHistoryStore {
         let mut snapshot = match existing_index {
             Some(index) => state.snapshots[index].clone(),
             None => FileHistorySnapshot {
-                message_id: message_id.to_string(),
+                message_id: Some(message_id.to_string()),
                 tracked_file_backups: Vec::new(),
                 expected_file_states: Vec::new(),
                 timestamp_ms: self.now(),
@@ -340,7 +353,7 @@ impl FileHistoryStore {
         let expected = read_expected_file_state(&abs_path)?;
         state.snapshots[index].set_expected(abs_path, expected);
         let snapshot = state.snapshots[index].clone();
-        drop(state);
+        // Same TS `run()` lock domain as `track_edit`.
         self.record_transcript(&snapshot, "update")?;
         Ok(())
     }
@@ -351,22 +364,23 @@ impl FileHistoryStore {
             .snapshots
             .iter()
             .rev()
-            .find(|snapshot| snapshot.message_id == message_id)
+            .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?;
         find_conflict_paths(snapshot)
     }
 
     /// F8/F9 — restore every backup of the last snapshot for `messageId`.
+    /// TS wraps conflict detection and every restore in one `run()` task, so
+    /// the state guard stays alive through the filesystem work.
     pub fn rewind(&self, message_id: &str) -> FileHistoryResult<RewindOutcome> {
         let state = self.state.lock().unwrap();
         let snapshot = state
             .snapshots
             .iter()
             .rev()
-            .find(|snapshot| snapshot.message_id == message_id)
+            .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?
             .clone();
-        drop(state);
         let conflicts = find_conflict_paths(&snapshot)?;
         if !conflicts.is_empty() {
             return Ok(RewindOutcome {
@@ -399,16 +413,17 @@ impl FileHistoryStore {
     }
 
     /// F14 (slim) — aggregate line insertions/deletions vs the current disk.
+    /// Also inside the TS `run()` mutex (the snapshot must not move while the
+    /// "after" side is being read).
     pub fn get_diff_stats(&self, message_id: &str) -> FileHistoryResult<DiffStats> {
         let state = self.state.lock().unwrap();
         let snapshot = state
             .snapshots
             .iter()
             .rev()
-            .find(|snapshot| snapshot.message_id == message_id)
+            .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?
             .clone();
-        drop(state);
         let mut insertions = 0usize;
         let mut deletions = 0usize;
         let mut files_changed = 0usize;
@@ -475,7 +490,7 @@ impl FileHistoryStore {
                 expected_file_states: entry.expected_file_states.clone(),
                 timestamp_ms: entry.timestamp_ms.unwrap_or(0),
             };
-            match find_snapshot(&state.snapshots, &entry.message_id) {
+            match find_snapshot_option(&state.snapshots, entry.message_id.as_deref()) {
                 Some(index) => state.snapshots[index] = snapshot,
                 None => state.snapshots.push(snapshot),
             }
@@ -523,10 +538,11 @@ impl FileHistoryStore {
             tracked.insert(JsString::from(path.as_str()), JsValue::Object(value));
         }
         let mut entry = JsObject::new();
-        entry.insert(
-            "messageId".into(),
-            JsValue::from(snapshot.message_id.as_str()),
-        );
+        if let Some(message_id) = &snapshot.message_id {
+            // `JSON.stringify({messageId: undefined})` drops the key, so a
+            // replayed snapshot with no id is not re-emitted either.
+            entry.insert("messageId".into(), JsValue::from(message_id.as_str()));
+        }
         entry.insert("trackedFileBackups".into(), JsValue::Object(tracked));
         if !snapshot.expected_file_states.is_empty() {
             let mut expected = JsObject::new();
@@ -710,10 +726,61 @@ fn null_backup(version: u64, backup_time: i64, oversize: bool) -> BackupResult {
     }
 }
 
+#[derive(Debug)]
 enum RestoreOutcome {
     Restored,
     Deleted,
     Missing,
+}
+
+/// Node/libuv `Error.message` for one-path syscalls (`stat`, `access`,
+/// `mkdir`, `chmod`, `unlink`). Rewind returns `error.message` verbatim, so a
+/// Rust `io::Error` Display with its `(os error N)` suffix must not leak.
+fn node_fs_error(error: io::Error, syscall: &str, path: &Path) -> FileHistoryError {
+    match crate::node_io::diagnostic(&error, syscall, Some(&path.to_string_lossy())) {
+        Some((_, message)) => FileHistoryError::Fs(message),
+        // Unmeasured errno: keep a reason but drop the Rust-specific suffix.
+        None => FileHistoryError::Fs(without_os_error(&error)),
+    }
+}
+
+/// `fs.readFile` has Node's special EISDIR rendering (`..., read`, no path).
+fn node_read_error(error: io::Error, path: &str) -> FileHistoryError {
+    match crate::node_io::read_file(&error, path) {
+        Some((_, message)) => FileHistoryError::Fs(message),
+        None => FileHistoryError::Fs(without_os_error(&error)),
+    }
+}
+
+/// Two-path syscalls (`copyfile`, `rename`): `..., syscall 'from' -> 'to'`.
+fn node_two_path_error(
+    error: io::Error,
+    syscall: &str,
+    from: &Path,
+    to: &Path,
+) -> FileHistoryError {
+    let message = match crate::node_io::lookup(&error) {
+        Some((code, description)) => format!(
+            "{code}: {description}, {syscall} '{}' -> '{}'",
+            from.display(),
+            to.display()
+        ),
+        None => format!(
+            "{}, {syscall} '{}' -> '{}'",
+            without_os_error(&error),
+            from.display(),
+            to.display()
+        ),
+    };
+    FileHistoryError::Fs(message)
+}
+
+fn without_os_error(error: &io::Error) -> String {
+    let text = error.to_string();
+    match text.rfind(" (os error ") {
+        Some(index) if text.ends_with(')') => text[..index].to_string(),
+        _ => text,
+    }
 }
 
 fn restore_backup(
@@ -725,7 +792,7 @@ fn restore_backup(
         match fs::remove_file(file_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(node_fs_error(error, "unlink", Path::new(file_path))),
         }
         return Ok(RestoreOutcome::Deleted);
     };
@@ -735,47 +802,67 @@ fn restore_backup(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(RestoreOutcome::Missing);
         }
-        Err(error) => return Err(error.into()),
+        // TS probes the backup with `fs.access`.
+        Err(error) => return Err(node_fs_error(error, "access", &backup_path)),
     }
     let target = Path::new(file_path);
     let target_dir = target.parent().unwrap_or(Path::new("/"));
-    fs::create_dir_all(target_dir)?;
+    fs::create_dir_all(target_dir).map_err(|error| node_fs_error(error, "mkdir", target_dir))?;
     let base = target
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".into());
     let temporary = target_dir.join(format!(".{base}.pilotdeck-rewind-{}", uuid::Uuid::new_v4()));
     let result = (|| -> FileHistoryResult<()> {
-        fs::copy(&backup_path, &temporary)?;
+        fs::copy(&backup_path, &temporary)
+            .map_err(|error| node_two_path_error(error, "copyfile", &backup_path, &temporary))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Some(mode) = backup.mode {
-                fs::set_permissions(&temporary, fs::Permissions::from_mode(mode & 0o777))?;
+                fs::set_permissions(&temporary, fs::Permissions::from_mode(mode & 0o777))
+                    .map_err(|error| node_fs_error(error, "chmod", &temporary))?;
             }
         }
-        fs::rename(&temporary, target)?;
+        fs::rename(&temporary, target)
+            .map_err(|error| node_two_path_error(error, "rename", &temporary, target))?;
         Ok(())
     })();
     // `rename` removes the temporary name on success; a failed copy/rename must
-    // not leave a retry-visible partial artifact (F9).
-    let _ = fs::remove_file(&temporary);
-    result?;
-    Ok(RestoreOutcome::Restored)
+    // not leave a retry-visible partial artifact (F9). TS's `finally` lets a
+    // non-ENOENT cleanup error override the copy/rename error, so do the same.
+    let cleanup = fs::remove_file(&temporary);
+    match (result, cleanup) {
+        (_, Err(error)) if error.kind() != io::ErrorKind::NotFound => {
+            Err(node_fs_error(error, "unlink", &temporary))
+        }
+        (Err(error), _) => Err(error),
+        (Ok(()), _) => Ok(RestoreOutcome::Restored),
+    }
 }
 
 fn read_expected_file_state(file_path: &str) -> FileHistoryResult<ExpectedFileState> {
+    // TS runs `stat` and `readFile` concurrently and only ENOENT maps to
+    // Missing. A directory's stat succeeds but readFile raises EISDIR, so the
+    // read must happen even when the entry is not a regular file; a character
+    // device can read successfully and still be Missing (`stat.isFile()`).
     let metadata = match fs::metadata(file_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(ExpectedFileState::Missing);
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(node_fs_error(error, "stat", Path::new(file_path))),
+    };
+    let bytes = match fs::read(file_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(ExpectedFileState::Missing);
+        }
+        Err(error) => return Err(node_read_error(error, file_path)),
     };
     if !metadata.is_file() {
         return Ok(ExpectedFileState::Missing);
     }
-    let bytes = fs::read(file_path)?;
     Ok(ExpectedFileState::Present {
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         mode: Some(metadata_mode(&metadata) & 0o777),
@@ -794,9 +881,16 @@ fn find_conflict_paths(snapshot: &FileHistorySnapshot) -> FileHistoryResult<Vec<
 }
 
 fn find_snapshot(snapshots: &[FileHistorySnapshot], message_id: &str) -> Option<usize> {
+    find_snapshot_option(snapshots, Some(message_id))
+}
+
+fn find_snapshot_option(
+    snapshots: &[FileHistorySnapshot],
+    message_id: Option<&str>,
+) -> Option<usize> {
     snapshots
         .iter()
-        .rposition(|snapshot| snapshot.message_id == message_id)
+        .rposition(|snapshot| snapshot.message_id.as_deref() == message_id)
 }
 
 fn safe_read_text(path: &Path) -> FileHistoryResult<Option<String>> {
@@ -910,7 +1004,35 @@ fn metadata_mode(_metadata: &fs::Metadata) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::line_delta;
+    use super::*;
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+            mpsc::{RecvTimeoutError, channel},
+        },
+        thread,
+        time::Duration,
+    };
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("pdrs-file-history-{name}-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn line_delta_counts_duplicate_lines() {
@@ -929,5 +1051,222 @@ mod tests {
         let after = format!("{before}tail\n");
         assert_eq!(line_delta(&before, &after), (1, 0));
         assert_eq!(line_delta(&after, &before), (0, 1));
+    }
+
+    #[test]
+    fn read_expected_file_state_renders_node_eisdir_for_a_directory() {
+        let root = TempDir::new("eisdir");
+        let directory = root.path().join("a.txt");
+        fs::create_dir(&directory).unwrap();
+        let error = read_expected_file_state(directory.to_str().unwrap()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "EISDIR: illegal operation on a directory, read"
+        );
+    }
+
+    #[test]
+    fn restore_null_backup_on_a_directory_never_leaks_rust_os_error() {
+        let root = TempDir::new("unlink-dir");
+        let directory = root.path().join("a.txt");
+        fs::create_dir(&directory).unwrap();
+        let backup = FileHistoryBackup {
+            backup_file_name: None,
+            version: 1,
+            backup_time_ms: 0,
+            mode: None,
+        };
+        let error = restore_backup(root.path(), directory.to_str().unwrap(), &backup).unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains("os error"), "{message}");
+        // unlink(dir) is EPERM on macOS and EISDIR on Linux; both carry the
+        // same Node `unlink '<path>'` tail.
+        assert!(
+            message.starts_with("EPERM: operation not permitted, unlink ")
+                || message.starts_with("EISDIR: illegal operation on a directory, unlink "),
+            "{message}"
+        );
+        assert!(
+            message.ends_with(&format!("unlink '{}'", directory.display())),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn restore_mkdir_failure_uses_node_text() {
+        let root = TempDir::new("mkdir-file");
+        let parent = root.path().join("p");
+        fs::write(&parent, "not a directory").unwrap();
+        let backup_dir = root.path().join("backups");
+        fs::create_dir(&backup_dir).unwrap();
+        let backup_name = "0123456789abcdef@v1";
+        fs::write(backup_dir.join(backup_name), "old\n").unwrap();
+        let backup = FileHistoryBackup {
+            backup_file_name: Some(backup_name.into()),
+            version: 1,
+            backup_time_ms: 0,
+            mode: Some(0o644),
+        };
+        let target = parent.join("a.txt");
+        let error = restore_backup(&backup_dir, target.to_str().unwrap(), &backup).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("EEXIST: file already exists, mkdir '{}'", parent.display())
+        );
+    }
+
+    #[test]
+    fn snapshot_without_message_id_never_matches_a_lookup() {
+        let root = TempDir::new("no-message-id");
+        let store = FileHistoryStore::new(FileHistoryOptions::new(root.path().join("backups")));
+        store.replay_from_transcript(&[SnapshotRecordedEntry {
+            message_id: None,
+            tracked_file_backups: Vec::new(),
+            expected_file_states: Vec::new(),
+            timestamp_ms: Some(0),
+        }]);
+        assert_eq!(
+            store.get_conflict_paths("m1").unwrap_err().to_string(),
+            "No snapshot for messageId m1"
+        );
+    }
+
+    /// C1: TS `run()` keeps `recordTranscript` inside the mutex. A second
+    /// `trackEdit` must not reach its sink while the first sink is running.
+    #[test]
+    fn snapshot_sink_runs_inside_the_transaction_lock() {
+        let root = TempDir::new("sink-lock");
+        let first_file = root.path().join("a.txt");
+        let second_file = root.path().join("b.txt");
+        fs::write(&first_file, "a\n").unwrap();
+        fs::write(&second_file, "b\n").unwrap();
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel::<()>();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        let block_once = Arc::new(AtomicBool::new(true));
+        let store = Arc::new(FileHistoryStore::new(FileHistoryOptions {
+            backup_dir: root.path().join("backups"),
+            max_file_bytes: None,
+            max_snapshots: None,
+            now: Some(Arc::new(|| 0)),
+            on_snapshot_recorded: Some(Arc::new({
+                let block_once = block_once.clone();
+                let release_rx = release_rx.clone();
+                move |_, _| {
+                    if block_once.swap(false, Ordering::SeqCst) {
+                        entered_tx.send(()).unwrap();
+                        release_rx.lock().unwrap().recv().unwrap();
+                    }
+                    Ok(())
+                }
+            })),
+            warn: None,
+        }));
+        let first_store = store.clone();
+        let first_path = first_file.to_string_lossy().into_owned();
+        let first = thread::spawn(move || first_store.track_edit(&first_path, "m1"));
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first sink entered");
+        let (started_tx, started_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let second_store = store.clone();
+        let second_path = second_file.to_string_lossy().into_owned();
+        let second = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            second_store.track_edit(&second_path, "m1").unwrap();
+            done_tx.send(()).unwrap();
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second thread started");
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_millis(400)),
+            Err(RecvTimeoutError::Timeout),
+            "track_edit escaped the transaction lock while the sink was running"
+        );
+        release_tx.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second track_edit completed after release");
+        second.join().unwrap();
+    }
+
+    /// C2: TS `rewind()` runs conflict detection and every restore inside the
+    /// mutex. A concurrent `trackEdit` must stay blocked while a restore warning
+    /// is being delivered.
+    #[test]
+    fn rewind_restore_runs_inside_the_transaction_lock() {
+        let root = TempDir::new("rewind-lock");
+        let first_file = root.path().join("a.txt");
+        let second_file = root.path().join("b.txt");
+        fs::write(&first_file, "a\n").unwrap();
+        fs::write(&second_file, "b\n").unwrap();
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel::<()>();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        let block_once = Arc::new(AtomicBool::new(true));
+        let store = Arc::new(FileHistoryStore::new(FileHistoryOptions {
+            backup_dir: root.path().join("backups"),
+            max_file_bytes: None,
+            max_snapshots: None,
+            now: Some(Arc::new(|| 0)),
+            on_snapshot_recorded: None,
+            warn: Some(Arc::new({
+                let block_once = block_once.clone();
+                let release_rx = release_rx.clone();
+                move |_| {
+                    if block_once.swap(false, Ordering::SeqCst) {
+                        entered_tx.send(()).unwrap();
+                        release_rx.lock().unwrap().recv().unwrap();
+                    }
+                }
+            })),
+        }));
+        fs::create_dir_all(root.path().join("backups")).unwrap();
+        store.replay_from_transcript(&[SnapshotRecordedEntry {
+            message_id: Some("m1".into()),
+            tracked_file_backups: vec![(
+                first_file.to_string_lossy().into_owned(),
+                RecordedBackup {
+                    backup_file_name: Some("0123456789abcdef@v1".into()),
+                    version: 1,
+                    backup_time_ms: 0,
+                    mode: Some(0o644),
+                },
+            )],
+            expected_file_states: Vec::new(),
+            timestamp_ms: Some(0),
+        }]);
+        let first_store = store.clone();
+        let first = thread::spawn(move || first_store.rewind("m1"));
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("restore warning entered");
+        let (started_tx, started_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let second_store = store.clone();
+        let second_path = second_file.to_string_lossy().into_owned();
+        let second = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            second_store.track_edit(&second_path, "m2").unwrap();
+            done_tx.send(()).unwrap();
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second thread started");
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_millis(400)),
+            Err(RecvTimeoutError::Timeout),
+            "rewind released the transaction lock before restoring"
+        );
+        release_tx.send(()).unwrap();
+        let outcome = first.join().unwrap().unwrap();
+        assert_eq!(outcome.missing.len(), 1);
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second track_edit completed after release");
+        second.join().unwrap();
     }
 }
