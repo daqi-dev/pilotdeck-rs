@@ -27,15 +27,19 @@
 //! `properties`, `patternProperties`.
 //!
 //! Explicit gaps (they fail instead of silently passing; see the review and
-//! `_tmp/20261020-a65-pr10b/RESULT.md`): JavaScript-only regular-expression
-//! syntax in `pattern`/`patternProperties` (lookarounds, backreferences,
-//! `\u` / Unicode property escapes) is reported as unsupported when compiling;
-//! relative/remote `$ref`s that need an `$id` base are reported as
-//! unresolvable; validation nesting deeper than [`MAX_DEPTH`] is reported as
+//! `_tmp/20261020-a65-pr10b/RESULT.md`): syntax V8 rejects under `/u` is
+//! reported with V8's `Invalid regular expression: ...` text before the Rust
+//! translator runs; JavaScript-only syntax in `pattern`/`patternProperties`
+//! (lookarounds, backreferences, named groups, `\u` / Unicode property
+//! escapes) is reported as unsupported when compiling; relative/remote
+//! `$ref`s that need an `$id` base are reported as unresolvable; validation
+//! nesting deeper than [`MAX_DEPTH`] is reported as
 //! [`ValidationError::Threw`] with an explicit message. User patterns use
 //! the SDK's JavaScript `/u` character classes: `\d`/`\w` and word boundaries
 //! are ASCII, whitespace includes BOM but excludes NEL, and dot excludes
-//! all four JavaScript line terminators.
+//! all four JavaScript line terminators. The JS escapes Rust spells
+//! differently (`\0`, `\cX`, `\xHH`, `\f`/`\n`/`\r`/`\t`/`\v`, class-local
+//! `\-`) are translated instead of being refused.
 
 #[cfg(test)]
 use crate::test_baseline as baseline;
@@ -374,18 +378,17 @@ impl<'a> SchemaChecker<'a> {
             let JsValue::String(pattern) = pattern else {
                 return Err(SchemaError("pattern value must be [\"string\"]".into()));
             };
-            match js_regex(&utf8(pattern, "pattern")?) {
+            let pattern = utf8(pattern, "pattern")?;
+            match js_regex(&pattern) {
                 JsRegex::Compiled(_) => {}
                 JsRegex::JsOnly => {
                     return Err(SchemaError(format!(
-                        "unsupported JavaScript regular-expression pattern \"{}\"",
-                        String::from_utf16_lossy(pattern.units())
+                        "unsupported JavaScript regular-expression pattern \"{pattern}\""
                     )));
                 }
-                JsRegex::Invalid => {
+                JsRegex::Invalid(detail) => {
                     return Err(SchemaError(format!(
-                        "Invalid regular expression: /{}/u",
-                        String::from_utf16_lossy(pattern.units())
+                        "Invalid regular expression: /{pattern}/u: {detail}"
                     )));
                 }
             }
@@ -428,18 +431,17 @@ impl<'a> SchemaChecker<'a> {
                 ));
             };
             for (pattern, child) in patterns.entries() {
-                match js_regex(&utf8(pattern, "patternProperties")?) {
+                let pattern = utf8(pattern, "patternProperties")?;
+                match js_regex(&pattern) {
                     JsRegex::Compiled(_) => {}
                     JsRegex::JsOnly => {
                         return Err(SchemaError(format!(
-                            "unsupported JavaScript regular-expression pattern \"{}\"",
-                            String::from_utf16_lossy(pattern.units())
+                            "unsupported JavaScript regular-expression pattern \"{pattern}\""
                         )));
                     }
-                    JsRegex::Invalid => {
+                    JsRegex::Invalid(detail) => {
                         return Err(SchemaError(format!(
-                            "Invalid regular expression: /{}/u",
-                            String::from_utf16_lossy(pattern.units())
+                            "Invalid regular expression: /{pattern}/u: {detail}"
                         )));
                     }
                 }
@@ -714,21 +716,28 @@ enum JsRegex {
     Compiled(Regex),
     /// Syntax this port cannot safely translate; refused as schema patterns.
     JsOnly,
-    /// Rejected by JavaScript's `RegExp` too.
-    Invalid,
+    /// Rejected by JavaScript's `RegExp` too, with V8's reason.
+    Invalid(&'static str),
 }
 
 fn js_regex(pattern: &str) -> JsRegex {
-    if has_rust_only_syntax(pattern) {
-        return JsRegex::Invalid;
-    }
-    if has_ambiguous_class_syntax(pattern) {
+    // V8 decides validity first. Only a pattern that ECMAScript `/u` accepts
+    // is allowed to become `JsOnly`: a Rust compile failure must never turn a
+    // JavaScript-invalid pattern into a permissive "unsupported" path, and a
+    // Rust success must never turn a JavaScript-invalid pattern into a
+    // compiled validator.
+    let parsed = match parse_js_pattern(pattern) {
+        Ok(parsed) => parsed,
+        Err(error) => return JsRegex::Invalid(error.0),
+    };
+    if parsed.unsupported || has_ambiguous_class_syntax(pattern) {
         return JsRegex::JsOnly;
     }
     match Regex::new(&translate_js_regex(pattern)) {
         Ok(regex) => JsRegex::Compiled(regex),
-        Err(_) if has_js_only_syntax(pattern) => JsRegex::JsOnly,
-        Err(_) => JsRegex::Invalid,
+        // The pattern is valid ECMAScript; Rust's engine just cannot express
+        // this one. Refuse it explicitly instead of claiming it is invalid.
+        Err(_) => JsRegex::JsOnly,
     }
 }
 
@@ -783,9 +792,10 @@ fn has_ambiguous_class_syntax(pattern: &str) -> bool {
 }
 
 /// Translate the character atoms whose meanings differ between JS `/u`
-/// and Rust's Unicode regex mode. Consume escapes together: `\\w` matches
-/// a literal backslash followed by `w`, not a word character. Inside a
-/// class, dot is literal and `\b` is backspace rather than a boundary.
+/// and Rust's Unicode regex mode, plus the JS escapes Rust spells
+/// differently. Consume escapes together: `\\w` matches a literal backslash
+/// followed by `w`, not a word character. Inside a class, dot is literal and
+/// `\b` is backspace rather than a boundary.
 fn translate_js_regex(pattern: &str) -> String {
     const SPACE: &str = r"\x09-\x0d\x20\xa0\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}";
     let mut output = String::with_capacity(pattern.len());
@@ -803,6 +813,27 @@ fn translate_js_regex(pattern: &str) -> String {
                 Some('b') if in_class => output.push_str(r"\x08"),
                 Some('b') => output.push_str(r"(?-u:\b)"),
                 Some('B') if !in_class => output.push_str(r"(?-u:\B)"),
+                Some('0') => output.push_str(r"\x00"),
+                Some('c') => match chars.next() {
+                    Some(letter) => {
+                        let code = u32::from(letter) % 32;
+                        output.push_str(&format!(r"\x{{{code:02X}}}"));
+                    }
+                    None => output.push_str(r"\c"),
+                },
+                Some('f') => output.push_str(r"\x{0C}"),
+                Some('n') => output.push_str(r"\x{0A}"),
+                Some('r') => output.push_str(r"\x{0D}"),
+                Some('t') => output.push_str(r"\x{09}"),
+                Some('v') => output.push_str(r"\x{0B}"),
+                Some('x') => {
+                    let digits: String = chars.by_ref().take(2).collect();
+                    output.push_str(r"\x{");
+                    output.push_str(&digits);
+                    output.push('}');
+                }
+                Some('-') if in_class => output.push_str(r"\x{2D}"),
+                Some('/') => output.push('/'),
                 Some(escaped) => {
                     output.push('\\');
                     output.push(escaped);
@@ -824,42 +855,640 @@ fn translate_js_regex(pattern: &str) -> String {
     output
 }
 
-fn has_js_only_syntax(pattern: &str) -> bool {
-    [
-        "(?=", "(?!", "(?<", "\\1", "\\2", "\\3", "\\4", "\\5", "\\6", "\\7", "\\8", "\\9", "\\k<",
-        "\\u",
-    ]
-    .iter()
-    .any(|needle| pattern.contains(needle))
+/// Syntax-only result for one pattern. `unsupported` means ECMAScript `/u`
+/// accepts the pattern, but this port refuses to translate it (lookarounds,
+/// backreferences, named groups, Unicode/property escapes, ...).
+struct ParsedJsPattern {
+    unsupported: bool,
 }
 
-fn has_rust_only_syntax(pattern: &str) -> bool {
-    // Consume escapes, so a literal `\\A` is not mistaken for Rust's anchor.
-    // Inline flags (including combinations) and (?P<...) are not JS /u.
-    let mut chars = pattern.chars().peekable();
-    let mut in_class = false;
-    while let Some(ch) = chars.next() {
+struct JsPatternSyntaxError(&'static str);
+
+/// A recursive-descent checker for the ECMAScript `RegExp` pattern grammar
+/// under the `/u` flag. Ajv builds `new RegExp(pattern, "u")` for both
+/// `pattern` and `patternProperties` (observed in
+/// `probes/ajv-u-patterns-r3*.out`), so a pattern V8 rejects must be rejected
+/// here before Rust's more permissive regex parser sees it.
+struct JsPatternParser {
+    source: Vec<char>,
+    position: usize,
+    captures: usize,
+    names: Vec<String>,
+    named_references: Vec<String>,
+    max_backreference: u64,
+    /// A group name used a `\u` escape. Comparing it textually against
+    /// `\k<name>` would be wrong, so named-reference checks are skipped and
+    /// the pattern is refused as unsupported instead.
+    unverifiable_names: bool,
+    unsupported: bool,
+}
+
+struct ClassAtom {
+    literal: Option<u32>,
+    class_escape: bool,
+    unsupported: bool,
+}
+
+fn parse_js_pattern(pattern: &str) -> Result<ParsedJsPattern, JsPatternSyntaxError> {
+    let mut parser = JsPatternParser {
+        source: pattern.chars().collect(),
+        position: 0,
+        captures: 0,
+        names: Vec::new(),
+        named_references: Vec::new(),
+        max_backreference: 0,
+        unverifiable_names: false,
+        unsupported: false,
+    };
+    parser.parse_disjunction(None)?;
+    if parser.position != parser.source.len() {
+        return Err(JsPatternSyntaxError("Unmatched ')'"));
+    }
+    if parser.max_backreference > parser.captures as u64 {
+        return Err(JsPatternSyntaxError("Invalid escape"));
+    }
+    if !parser.unverifiable_names {
+        for reference in &parser.named_references {
+            if !parser.names.contains(reference) {
+                return Err(JsPatternSyntaxError("Invalid named capture referenced"));
+            }
+        }
+    }
+    Ok(ParsedJsPattern {
+        unsupported: parser.unsupported,
+    })
+}
+
+impl JsPatternParser {
+    fn peek(&self) -> Option<char> {
+        self.source.get(self.position).copied()
+    }
+
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.source.get(self.position + offset).copied()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.peek()?;
+        self.position += 1;
+        Some(ch)
+    }
+
+    fn parse_disjunction(&mut self, stop: Option<char>) -> Result<(), JsPatternSyntaxError> {
+        loop {
+            self.parse_alternative(stop)?;
+            if self.peek() == Some('|') {
+                self.position += 1;
+                continue;
+            }
+            break;
+        }
+        if let Some(close) = stop {
+            if self.peek() == Some(close) {
+                self.position += 1;
+                return Ok(());
+            }
+            return Err(JsPatternSyntaxError("Unterminated group"));
+        }
+        if self.position != self.source.len() {
+            return Err(JsPatternSyntaxError("Unmatched ')'"));
+        }
+        Ok(())
+    }
+
+    fn parse_alternative(&mut self, stop: Option<char>) -> Result<(), JsPatternSyntaxError> {
+        while let Some(ch) = self.peek() {
+            if ch == '|' || Some(ch) == stop {
+                return Ok(());
+            }
+            self.parse_term()?;
+        }
+        Ok(())
+    }
+
+    fn parse_term(&mut self) -> Result<(), JsPatternSyntaxError> {
+        let Some(ch) = self.peek() else {
+            return Ok(());
+        };
         match ch {
-            '\\' => match chars.next() {
-                Some('A' | 'z' | 'Z' | 'a' | 'e') => return true,
-                Some('x') if chars.peek() == Some(&'{') => return true,
-                _ => {}
-            },
-            '[' => in_class = true,
-            ']' => in_class = false,
-            '(' if !in_class
-                && chars.peek() == Some(&'?')
-                && chars
-                    .clone()
-                    .nth(1)
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '-') =>
-            {
-                return true;
+            '^' | '$' => {
+                self.position += 1;
+                self.reject_quantifier("Nothing to repeat")?;
+            }
+            '\\' if matches!(self.peek_at(1), Some('b' | 'B')) => {
+                self.position += 2;
+                self.reject_quantifier("Nothing to repeat")?;
+            }
+            '\\' => {
+                self.parse_escape_outside()?;
+                self.parse_quantifier(true)?;
+            }
+            '(' => {
+                let quantifiable = self.parse_group()?;
+                self.parse_quantifier(quantifiable)?;
+            }
+            '[' => {
+                self.parse_class()?;
+                self.parse_quantifier(true)?;
+            }
+            '.' => {
+                self.position += 1;
+                self.parse_quantifier(true)?;
+            }
+            '*' | '+' | '?' => {
+                return Err(JsPatternSyntaxError("Nothing to repeat"));
+            }
+            '{' => {
+                if self.try_quantifier()?.is_some() {
+                    return Err(JsPatternSyntaxError("Nothing to repeat"));
+                }
+                return Err(JsPatternSyntaxError("Lone quantifier brackets"));
+            }
+            ']' | '}' => return Err(JsPatternSyntaxError("Lone quantifier brackets")),
+            ')' => return Err(JsPatternSyntaxError("Unmatched ')'")),
+            _ => {
+                self.position += 1;
+                self.parse_quantifier(true)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_quantifier(&self, detail: &'static str) -> Result<(), JsPatternSyntaxError> {
+        if matches!(self.peek(), Some('*' | '+' | '?' | '{')) {
+            return Err(JsPatternSyntaxError(detail));
+        }
+        Ok(())
+    }
+
+    fn parse_quantifier(&mut self, quantifiable: bool) -> Result<(), JsPatternSyntaxError> {
+        match self.peek() {
+            Some('*' | '+' | '?') => {
+                if !quantifiable {
+                    return Err(JsPatternSyntaxError("Invalid quantifier"));
+                }
+                self.position += 1;
+                if self.peek() == Some('?') {
+                    self.position += 1;
+                }
+                self.reject_quantifier("Nothing to repeat")?;
+            }
+            Some('{') => {
+                if !quantifiable {
+                    return Err(JsPatternSyntaxError("Invalid quantifier"));
+                }
+                if self.try_quantifier()?.is_none() {
+                    return Err(JsPatternSyntaxError("Incomplete quantifier"));
+                }
+                if self.peek() == Some('?') {
+                    self.position += 1;
+                }
+                self.reject_quantifier("Nothing to repeat")?;
             }
             _ => {}
         }
+        Ok(())
     }
-    false
+
+    /// Parse `{n}`, `{n,}` or `{n,m}` at the current position. Returns `None`
+    /// (after restoring the position) when the braces are not a quantifier.
+    fn try_quantifier(&mut self) -> Result<Option<()>, JsPatternSyntaxError> {
+        let start = self.position;
+        debug_assert_eq!(self.bump(), Some('{'));
+        let Some(minimum) = self.decimal_digits() else {
+            self.position = start;
+            return Ok(None);
+        };
+        match self.peek() {
+            Some('}') => {
+                self.position += 1;
+            }
+            Some(',') => {
+                self.position += 1;
+                if self.peek() == Some('}') {
+                    self.position += 1;
+                } else {
+                    let Some(maximum) = self.decimal_digits() else {
+                        self.position = start;
+                        return Ok(None);
+                    };
+                    if self.peek() != Some('}') {
+                        self.position = start;
+                        return Ok(None);
+                    }
+                    self.position += 1;
+                    if maximum < minimum {
+                        return Err(JsPatternSyntaxError(
+                            "numbers out of order in {} quantifier",
+                        ));
+                    }
+                }
+            }
+            _ => {
+                self.position = start;
+                return Ok(None);
+            }
+        }
+        Ok(Some(()))
+    }
+
+    fn decimal_digits(&mut self) -> Option<u64> {
+        let start = self.position;
+        let mut value = 0_u64;
+        while let Some(ch) = self.peek() {
+            if !ch.is_ascii_digit() {
+                break;
+            }
+            value = value
+                .saturating_mul(10)
+                .saturating_add(u64::from(ch as u8 - b'0'));
+            self.position += 1;
+        }
+        (self.position > start).then_some(value)
+    }
+
+    fn parse_group(&mut self) -> Result<bool, JsPatternSyntaxError> {
+        debug_assert_eq!(self.peek(), Some('('));
+        self.position += 1;
+        if self.peek() != Some('?') {
+            self.captures += 1;
+            self.parse_disjunction(Some(')'))?;
+            return Ok(true);
+        }
+        self.position += 1;
+        match self.peek() {
+            Some(':') => {
+                self.position += 1;
+                self.parse_disjunction(Some(')'))?;
+                Ok(true)
+            }
+            Some('=' | '!') => {
+                self.position += 1;
+                self.unsupported = true;
+                self.parse_disjunction(Some(')'))?;
+                Ok(false)
+            }
+            Some('<') => {
+                self.position += 1;
+                match self.peek() {
+                    Some('=' | '!') => {
+                        self.position += 1;
+                        self.unsupported = true;
+                        self.parse_disjunction(Some(')'))?;
+                        Ok(false)
+                    }
+                    _ => {
+                        let name = self.parse_group_name()?;
+                        if self.names.contains(&name) {
+                            return Err(JsPatternSyntaxError("Duplicate capture group name"));
+                        }
+                        self.names.push(name);
+                        self.captures += 1;
+                        self.unsupported = true;
+                        self.parse_disjunction(Some(')'))?;
+                        Ok(true)
+                    }
+                }
+            }
+            _ => Err(JsPatternSyntaxError("Invalid group")),
+        }
+    }
+
+    fn parse_group_name(&mut self) -> Result<String, JsPatternSyntaxError> {
+        let start = self.position;
+        while let Some(ch) = self.peek() {
+            if ch == '>' {
+                break;
+            }
+            self.position += 1;
+        }
+        if self.peek() != Some('>') {
+            return Err(JsPatternSyntaxError("Invalid capture group name"));
+        }
+        let name: String = self.source[start..self.position].iter().collect();
+        self.position += 1;
+        if name.is_empty() {
+            return Err(JsPatternSyntaxError("Invalid capture group name"));
+        }
+        if name.contains('\\') {
+            self.unverifiable_names = true;
+            self.unsupported = true;
+            return Ok(name);
+        }
+        if !name.is_ascii() {
+            // Non-ASCII identifier characters: V8 accepts these, but deciding
+            // every ID_Start/ID_Continue edge here is not worth a wrong
+            // rejection vs. acceptance call. Refuse explicitly instead.
+            self.unsupported = true;
+            return Ok(name);
+        }
+        let ascii = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+        if name.chars().all(ascii) {
+            if name.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+                return Err(JsPatternSyntaxError("Invalid capture group name"));
+            }
+            return Ok(name);
+        }
+        Err(JsPatternSyntaxError("Invalid capture group name"))
+    }
+
+    fn parse_escape_outside(&mut self) -> Result<(), JsPatternSyntaxError> {
+        debug_assert_eq!(self.peek(), Some('\\'));
+        self.position += 1;
+        let Some(escaped) = self.bump() else {
+            return Err(JsPatternSyntaxError("Invalid escape"));
+        };
+        match escaped {
+            'd' | 'D' | 's' | 'S' | 'w' | 'W' => {}
+            'p' | 'P' => self.parse_property_escape(false)?,
+            'f' | 'n' | 'r' | 't' | 'v' => {}
+            'c' => {
+                self.parse_control_escape()?;
+            }
+            '0' => {
+                if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                    return Err(JsPatternSyntaxError("Invalid decimal escape"));
+                }
+            }
+            '1'..='9' => {
+                let value = self.consume_decimal_number(escaped);
+                self.max_backreference = self.max_backreference.max(value);
+                self.unsupported = true;
+            }
+            'x' => {
+                self.parse_hex_escape()?;
+            }
+            'u' => {
+                self.parse_unicode_escape()?;
+                self.unsupported = true;
+            }
+            'k' => {
+                self.parse_named_backreference()?;
+                self.unsupported = true;
+            }
+            other if is_js_syntax_character(other) || other == '/' => {}
+            _ => return Err(JsPatternSyntaxError("Invalid escape")),
+        }
+        Ok(())
+    }
+
+    fn parse_class(&mut self) -> Result<(), JsPatternSyntaxError> {
+        debug_assert_eq!(self.peek(), Some('['));
+        self.position += 1;
+        if self.peek() == Some('^') {
+            self.position += 1;
+        }
+        if self.peek() == Some(']') {
+            // `[]` and `[^]` are valid ECMAScript and match nothing/anything,
+            // but Rust's regex parser has no equivalent empty class.
+            self.position += 1;
+            self.unsupported = true;
+            return Ok(());
+        }
+        loop {
+            match self.peek() {
+                None => return Err(JsPatternSyntaxError("Unterminated character class")),
+                Some(']') => {
+                    self.position += 1;
+                    return Ok(());
+                }
+                Some(_) => {}
+            }
+            let left = self.parse_class_atom()?;
+            self.unsupported |= left.unsupported;
+            if self.peek() == Some('-') && self.peek_at(1) != Some(']') {
+                if self.peek_at(1).is_none() {
+                    return Err(JsPatternSyntaxError("Unterminated character class"));
+                }
+                self.position += 1;
+                let right = self.parse_class_atom()?;
+                self.unsupported |= right.unsupported;
+                if left.class_escape || right.class_escape {
+                    return Err(JsPatternSyntaxError("Invalid character class"));
+                }
+                let (Some(start), Some(end)) = (left.literal, right.literal) else {
+                    return Err(JsPatternSyntaxError("Invalid character class"));
+                };
+                if start > end {
+                    return Err(JsPatternSyntaxError(
+                        "Range out of order in character class",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn parse_class_atom(&mut self) -> Result<ClassAtom, JsPatternSyntaxError> {
+        let Some(ch) = self.bump() else {
+            return Err(JsPatternSyntaxError("Unterminated character class"));
+        };
+        if ch != '\\' {
+            return Ok(ClassAtom {
+                literal: Some(ch as u32),
+                class_escape: false,
+                // A raw `[` inside a class is a literal in `/u`, but Rust
+                // reads it as a nested class/set operation.
+                unsupported: ch == '[',
+            });
+        }
+        let Some(escaped) = self.bump() else {
+            return Err(JsPatternSyntaxError("Invalid escape"));
+        };
+        let atom = match escaped {
+            'b' => literal_class_atom(0x08),
+            'd' | 'D' | 's' | 'S' | 'w' | 'W' => ClassAtom {
+                literal: None,
+                class_escape: true,
+                unsupported: false,
+            },
+            'p' | 'P' => {
+                self.parse_property_escape(true)?;
+                ClassAtom {
+                    literal: None,
+                    class_escape: true,
+                    unsupported: true,
+                }
+            }
+            'f' => literal_class_atom(0x0C),
+            'n' => literal_class_atom(0x0A),
+            'r' => literal_class_atom(0x0D),
+            't' => literal_class_atom(0x09),
+            'v' => literal_class_atom(0x0B),
+            'c' => literal_class_atom(self.parse_control_escape()?),
+            '0' => {
+                if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                    return Err(JsPatternSyntaxError("Invalid decimal escape"));
+                }
+                literal_class_atom(0)
+            }
+            '1'..='9' => return Err(JsPatternSyntaxError("Invalid class escape")),
+            'x' => literal_class_atom(self.parse_hex_escape()?),
+            'u' => {
+                let code_point = self.parse_unicode_escape()?;
+                self.unsupported = true;
+                ClassAtom {
+                    literal: Some(code_point),
+                    class_escape: false,
+                    unsupported: true,
+                }
+            }
+            'k' => return Err(JsPatternSyntaxError("Invalid escape")),
+            '-' => literal_class_atom(0x2D),
+            other if is_js_syntax_character(other) || other == '/' => {
+                literal_class_atom(other as u32)
+            }
+            _ => return Err(JsPatternSyntaxError("Invalid escape")),
+        };
+        Ok(atom)
+    }
+
+    fn parse_property_escape(&mut self, in_class: bool) -> Result<(), JsPatternSyntaxError> {
+        let detail = if in_class {
+            "Invalid property name in character class"
+        } else {
+            "Invalid property name"
+        };
+        if self.peek() != Some('{') {
+            return Err(JsPatternSyntaxError(detail));
+        }
+        self.position += 1;
+        let start = self.position;
+        while let Some(ch) = self.peek() {
+            if ch == '}' {
+                break;
+            }
+            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '=' || ch == ' ') {
+                return Err(JsPatternSyntaxError(detail));
+            }
+            self.position += 1;
+        }
+        if self.position == start || self.peek() != Some('}') {
+            return Err(JsPatternSyntaxError(detail));
+        }
+        self.position += 1;
+        // Property names and aliases are a Unicode database; `\p`/`\P` are
+        // always refused for validation, even when the name itself is real.
+        self.unsupported = true;
+        Ok(())
+    }
+
+    fn parse_control_escape(&mut self) -> Result<u32, JsPatternSyntaxError> {
+        match self.bump() {
+            Some(ch) if ch.is_ascii_alphabetic() => Ok(u32::from(ch) % 32),
+            _ => Err(JsPatternSyntaxError("Invalid Unicode escape")),
+        }
+    }
+
+    fn parse_hex_escape(&mut self) -> Result<u32, JsPatternSyntaxError> {
+        let mut value = 0_u32;
+        for _ in 0..2 {
+            let Some(ch) = self.bump() else {
+                return Err(JsPatternSyntaxError("Invalid escape"));
+            };
+            let Some(digit) = ch.to_digit(16) else {
+                return Err(JsPatternSyntaxError("Invalid escape"));
+            };
+            value = value * 16 + digit;
+        }
+        Ok(value)
+    }
+
+    fn parse_unicode_escape(&mut self) -> Result<u32, JsPatternSyntaxError> {
+        if self.peek() == Some('{') {
+            self.position += 1;
+            let start = self.position;
+            let mut value = 0_u32;
+            while let Some(ch) = self.peek() {
+                if ch == '}' {
+                    break;
+                }
+                let Some(digit) = ch.to_digit(16) else {
+                    return Err(JsPatternSyntaxError("Invalid Unicode escape"));
+                };
+                value = value
+                    .checked_mul(16)
+                    .and_then(|value| value.checked_add(digit))
+                    .ok_or(JsPatternSyntaxError("Invalid Unicode escape"))?;
+                self.position += 1;
+            }
+            if self.position == start || self.peek() != Some('}') {
+                return Err(JsPatternSyntaxError("Invalid Unicode escape"));
+            }
+            self.position += 1;
+            if value > 0x10FFFF {
+                return Err(JsPatternSyntaxError("Invalid Unicode escape"));
+            }
+            return Ok(value);
+        }
+        let mut value = 0_u32;
+        for _ in 0..4 {
+            let Some(ch) = self.bump() else {
+                return Err(JsPatternSyntaxError("Invalid Unicode escape"));
+            };
+            let Some(digit) = ch.to_digit(16) else {
+                return Err(JsPatternSyntaxError("Invalid Unicode escape"));
+            };
+            value = value * 16 + digit;
+        }
+        Ok(value)
+    }
+
+    fn parse_named_backreference(&mut self) -> Result<(), JsPatternSyntaxError> {
+        if self.peek() != Some('<') {
+            return Err(JsPatternSyntaxError("Invalid escape"));
+        }
+        self.position += 1;
+        let start = self.position;
+        while let Some(ch) = self.peek() {
+            if ch == '>' {
+                break;
+            }
+            self.position += 1;
+        }
+        if self.peek() != Some('>') {
+            return Err(JsPatternSyntaxError("Invalid named capture referenced"));
+        }
+        let name: String = self.source[start..self.position].iter().collect();
+        self.position += 1;
+        if name.is_empty() {
+            return Err(JsPatternSyntaxError("Invalid named capture referenced"));
+        }
+        if name.contains('\\') || !name.is_ascii() {
+            self.unverifiable_names = true;
+            self.unsupported = true;
+        }
+        self.named_references.push(name);
+        Ok(())
+    }
+
+    fn consume_decimal_number(&mut self, first: char) -> u64 {
+        let mut value = u64::from(first as u8 - b'0');
+        while let Some(ch) = self.peek() {
+            if !ch.is_ascii_digit() {
+                break;
+            }
+            value = value
+                .saturating_mul(10)
+                .saturating_add(u64::from(ch as u8 - b'0'));
+            self.position += 1;
+        }
+        value
+    }
+}
+
+fn literal_class_atom(code_point: u32) -> ClassAtom {
+    ClassAtom {
+        literal: Some(code_point),
+        class_escape: false,
+        unsupported: false,
+    }
+}
+
+fn is_js_syntax_character(ch: char) -> bool {
+    matches!(
+        ch,
+        '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+    )
 }
 
 fn regex_matches(pattern: &JsString, text: &JsString) -> Result<bool, ValidationError> {
@@ -874,8 +1503,8 @@ fn regex_matches(pattern: &JsString, text: &JsString) -> Result<bool, Validation
         JsRegex::JsOnly => Err(ValidationError::Unsupported(format!(
             "pattern \"{pattern_text}\" uses JavaScript regular-expression syntax this port does not implement"
         ))),
-        JsRegex::Invalid => Err(ValidationError::Unsupported(format!(
-            "Invalid regular expression: /{pattern_text}/u"
+        JsRegex::Invalid(detail) => Err(ValidationError::Unsupported(format!(
+            "Invalid regular expression: /{pattern_text}/u: {detail}"
         ))),
     }
 }
@@ -1100,13 +1729,55 @@ fn uuid_valid(text: &str) -> bool {
 }
 
 fn regex_format_valid(text: &str) -> bool {
-    if text.contains("\\Z") {
+    // `ajv-formats` implements the `regex` format as `new RegExp(str)` with
+    // no `/u` flag (formats.js: `function regex(str)`), so the `/u` syntax
+    // gate above must not be applied here. Keep the permissive check: only
+    // reject the Rust-only constructs and let Rust's parser decide the rest.
+    if text.contains("\\Z") || has_rust_only_syntax(text) {
         return false;
     }
-    match js_regex(text) {
-        JsRegex::Compiled(_) | JsRegex::JsOnly => true,
-        JsRegex::Invalid => false,
+    if has_ambiguous_class_syntax(text) || Regex::new(text).is_ok() {
+        return true;
     }
+    has_js_only_syntax(text)
+}
+
+fn has_js_only_syntax(pattern: &str) -> bool {
+    [
+        "(?=", "(?!", "(?<", "\\1", "\\2", "\\3", "\\4", "\\5", "\\6", "\\7", "\\8", "\\9", "\\k<",
+        "\\u",
+    ]
+    .iter()
+    .any(|needle| pattern.contains(needle))
+}
+
+fn has_rust_only_syntax(pattern: &str) -> bool {
+    // Consume escapes, so a literal `\\A` is not mistaken for Rust's anchor.
+    // Inline flags (including combinations) and (?P<...) are not JS /u.
+    let mut chars = pattern.chars().peekable();
+    let mut in_class = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some('A' | 'z' | 'Z' | 'a' | 'e') => return true,
+                Some('x') if chars.peek() == Some(&'{') => return true,
+                _ => {}
+            },
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '(' if !in_class
+                && chars.peek() == Some(&'?')
+                && chars
+                    .clone()
+                    .nth(1)
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '-') =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_uri_host_char(c: char) -> bool {
@@ -2017,6 +2688,52 @@ mod tests {
     }
 
     #[test]
+    fn grok_r3_invalid_u_patterns_are_schema_errors() {
+        // The exact rows from Grok r3 P1-A. V8 compiles these with `/u`, so
+        // `check_schema` must reproduce V8's message before Rust's parser can
+        // accept `\-` as an escaped hyphen and `]`/`}` as literals.
+        let cases: &[(&str, &str)] = &[
+            (r"\-", "Invalid escape"),
+            (r"\_", "Invalid escape"),
+            (r"\#", "Invalid escape"),
+            (r"\&", "Invalid escape"),
+            (r"\~", "Invalid escape"),
+            (r"\@", "Invalid escape"),
+            (r"\%", "Invalid escape"),
+            (r"\ ", "Invalid escape"),
+            ("a]", "Lone quantifier brackets"),
+            ("}", "Lone quantifier brackets"),
+            ("a**", "Nothing to repeat"),
+            (r"\<a", "Invalid escape"),
+        ];
+        for (pattern, detail) in cases {
+            let mut object = JsObject::new();
+            object.insert("type".into(), JsValue::String(JsString::from("string")));
+            object.insert("pattern".into(), JsValue::String(JsString::from(*pattern)));
+            assert_eq!(
+                check_schema(&JsValue::Object(object)),
+                Err(SchemaError(format!(
+                    "Invalid regular expression: /{pattern}/u: {detail}"
+                ))),
+                "{pattern}"
+            );
+        }
+
+        let mut child = JsObject::new();
+        child.insert("type".into(), JsValue::String(JsString::from("number")));
+        let mut properties = JsObject::new();
+        properties.insert(r"\-".into(), JsValue::Object(child));
+        let mut object = JsObject::new();
+        object.insert("patternProperties".into(), JsValue::Object(properties));
+        assert_eq!(
+            check_schema(&JsValue::Object(object)),
+            Err(SchemaError(
+                r"Invalid regular expression: /\-/u: Invalid escape".into()
+            ))
+        );
+    }
+
+    #[test]
     fn unsupported_patterns_fail_instead_of_passing() {
         let schema = parse_json(r#"{"type":"string","pattern":"^(?=a)"}"#).unwrap();
         assert!(
@@ -2076,6 +2793,13 @@ mod tests {
             ("regex", "^a+$", Some(true)),
             ("regex", "[", Some(false)),
             ("regex", "(?=a)", Some(true)),
+            // ajv-formats compiles `regex` values without `/u`; these are
+            // valid there even though the same text is not a valid
+            // outputSchema `/u` pattern.
+            ("regex", "\\-", Some(true)),
+            ("regex", "a]", Some(true)),
+            ("regex", "\\<a", Some(true)),
+            ("regex", "(?i:a)", Some(false)),
             ("password", "anything", Some(true)),
             ("binary", "anything", Some(true)),
             ("int32", "3000000000", None),
@@ -2105,7 +2829,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 244);
+        assert_eq!(cases.len(), 379);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
@@ -2140,6 +2864,13 @@ mod tests {
             let schema = case.get("schema").unwrap();
             let data = case.get("data").unwrap();
             if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
+                // "Unsupported" is a port gap only for patterns V8 accepts:
+                // the schema must still be refused explicitly at compile
+                // time, never compiled into a permissive validator.
+                assert!(
+                    check_schema(schema).is_err(),
+                    "{id}: unsupported pattern was accepted by check_schema"
+                );
                 assert!(
                     matches!(validate(schema, data), Err(ValidationError::Unsupported(_))),
                     "{id}"
@@ -2156,12 +2887,23 @@ mod tests {
             }
             if let Some(prefix) = case.get("compileErrorPrefix").and_then(JsValue::as_string) {
                 let error = check_schema(schema).unwrap_err();
-                assert!(
-                    error
-                        .0
-                        .starts_with(&String::from_utf16_lossy(prefix.units())),
-                    "{id}: {error:?}"
-                );
+                let prefix = String::from_utf16_lossy(prefix.units());
+                assert!(error.0.starts_with(&prefix), "{id}: {error:?}");
+                if let Some(detail) = case.get("compileErrorDetail").and_then(JsValue::as_string) {
+                    let detail = String::from_utf16_lossy(detail.units());
+                    assert!(error.0.ends_with(&format!(": {detail}")), "{id}: {error:?}");
+                    if case.get("exactCompileError").and_then(JsValue::as_bool) == Some(true) {
+                        let actual = case
+                            .get("actualCompileError")
+                            .and_then(JsValue::as_string)
+                            .expect("exact cases record the real Ajv message");
+                        assert_eq!(
+                            error.0,
+                            String::from_utf16_lossy(actual.units()),
+                            "{id}: whole V8 message"
+                        );
+                    }
+                }
                 continue;
             }
             let expected = case

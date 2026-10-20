@@ -128,6 +128,113 @@ for (const [id, schema] of [
   ['compile/property-pattern-invalid', {patternProperties: {'[': {type: 'number'}}}],
 ]) cases.push({id, schema, data: null, compileErrorPrefix: 'Invalid regular expression'});
 
+// ECMAScript `/u` syntax rejected by V8. Ajv feeds both `pattern` and every
+// `patternProperties` key to `new RegExp(pattern, "u")`, so these must fail
+// schema compilation instead of being accepted by Rust's more permissive
+// parser. The first block is the exact set from Grok r3 P1-A; `exact` cases
+// compare the whole V8 message, not just a prefix.
+const invalidPatterns = [
+  ['grok/invalid-escape-hyphen', '\\-', 'Invalid escape', true],
+  ['grok/invalid-escape-underscore', '\\_', 'Invalid escape', true],
+  ['grok/invalid-escape-hash', '\\#', 'Invalid escape', true],
+  ['grok/invalid-escape-ampersand', '\\&', 'Invalid escape', true],
+  ['grok/invalid-escape-tilde', '\\~', 'Invalid escape', true],
+  ['grok/invalid-escape-at', '\\@', 'Invalid escape', true],
+  ['grok/invalid-escape-percent', '\\%', 'Invalid escape', true],
+  ['grok/invalid-escape-space', '\\ ', 'Invalid escape', true],
+  ['grok/lone-close-bracket', 'a]', 'Lone quantifier brackets', true],
+  ['grok/lone-close-brace', '}', 'Lone quantifier brackets', true],
+  ['grok/nothing-to-repeat', 'a**', 'Nothing to repeat', true],
+  ['grok/rust-word-boundary', '\\<a', 'Invalid escape', true],
+  ['edge/lone-close-bracket', ']', 'Lone quantifier brackets'],
+  ['edge/lone-open-brace', '{', 'Lone quantifier brackets'],
+  ['edge/nothing-to-repeat-star', '*a', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-plus', '+a', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-question', '?a', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-double-plus', 'a++', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-star-plus', 'a*+', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-double-lazy', 'a*??', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-range-double-lazy', 'a{2,3}??', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-quantified-lookahead', '(?=a)*', 'Invalid quantifier'],
+  ['edge/nothing-to-repeat-boundary', '\\b*', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-bare-exact', '{2}', 'Nothing to repeat'],
+  ['edge/nothing-to-repeat-bare-range', '{2,3}', 'Nothing to repeat'],
+  ['edge/incomplete-quantifier-open', 'a{2x}', 'Incomplete quantifier'],
+  ['edge/incomplete-quantifier-no-lower', 'a{,3}', 'Incomplete quantifier'],
+  ['edge/incomplete-quantifier-comma', 'a{2,', 'Incomplete quantifier'],
+  ['edge/incomplete-quantifier-eof', 'a{1', 'Incomplete quantifier'],
+  ['edge/incomplete-quantifier-range-eof', 'a{2,3', 'Incomplete quantifier'],
+  ['edge/incomplete-quantifier-space', 'a{2, 3}', 'Incomplete quantifier'],
+  ['edge/quantifier-reversed', 'a{2,1}', 'numbers out of order in {} quantifier'],
+  ['edge/quantifier-after-quantifier', 'a{2}{3}', 'Nothing to repeat'],
+  ['edge/invalid-decimal-escape', '\\01', 'Invalid decimal escape'],
+  ['edge/backreference-ten-missing', '\\10', 'Invalid escape'],
+  ['edge/invalid-class-escape', '[\\_]', 'Invalid escape'],
+  ['edge/invalid-class-hash', '[\\#]', 'Invalid escape'],
+  ['edge/invalid-class-space', '[\\ ]', 'Invalid escape'],
+  ['edge/invalid-class-k', '[\\k]', 'Invalid escape'],
+  ['edge/invalid-class-B', '[\\B]', 'Invalid escape'],
+  ['edge/invalid-class-decimal', '[\\1]', 'Invalid class escape'],
+  ['edge/backreference-missing', '\\1', 'Invalid escape'],
+  ['edge/backreference-too-large', '(a)(b)\\10', 'Invalid escape'],
+  ['edge/noncapturing-not-counted', '(?:a)\\1', 'Invalid escape'],
+  ['edge/named-reference-missing', '\\k<x>', 'Invalid named capture referenced'],
+  ['edge/named-reference-unknown', '(?<x>a)\\k<y>', 'Invalid named capture referenced'],
+  ['edge/group-name-digit-first', '(?<1a>x)', 'Invalid capture group name'],
+  ['edge/group-name-empty', '(?<>)', 'Invalid capture group name'],
+  ['edge/group-name-duplicate', '(?<x>a)(?<x>b)', 'Duplicate capture group name'],
+  ['edge/group-inline-flag', '(?i:a)', 'Invalid group'],
+  ['edge/group-rust-name', '(?P<x>a)', 'Invalid group'],
+  ['edge/rust-anchor', '\\A', 'Invalid escape'],
+  ['edge/rust-anchor-z', '\\z', 'Invalid escape'],
+  ['edge/rust-bell', '\\a', 'Invalid escape'],
+  ['edge/rust-escape', '\\e', 'Invalid escape'],
+  ['edge/rust-hex-brace', '\\x{41}', 'Invalid escape'],
+  ['edge/hex-short', '\\x1', 'Invalid escape'],
+  ['edge/hex-bad', '\\xG1', 'Invalid escape'],
+  ['edge/unicode-too-large', '\\u{110000}', 'Invalid Unicode escape'],
+  ['edge/control-bad', '\\c1', 'Invalid Unicode escape'],
+  ['edge/control-bracket', '\\c[', 'Invalid Unicode escape'],
+  ['edge/control-underscore', '\\c_', 'Invalid Unicode escape'],
+  ['edge/control-alone', '\\c', 'Invalid Unicode escape'],
+  ['edge/property-missing-braces', '\\p', 'Invalid property name'],
+  ['edge/class-shorthand-range-left', '[\\w-a]', 'Invalid character class'],
+  ['edge/class-shorthand-range-right', '[a-\\w]', 'Invalid character class'],
+  ['edge/class-two-shorthand-range', '[\\d-\\w]', 'Invalid character class'],
+  ['edge/class-range-to-close', '[a-\\]]', 'Range out of order in character class'],
+  ['edge/class-range-to-hyphen', '[a-\\-]', 'Range out of order in character class'],
+  ['edge/class-double-dash', '[a--b]', 'Range out of order in character class'],
+  ['edge/class-reversed-astral', '[😁-😀]', 'Range out of order in character class'],
+  ['edge/class-unterminated', '[a', 'Unterminated character class'],
+  ['edge/class-negated-unterminated', '[^a', 'Unterminated character class'],
+  ['edge/class-backslash-unterminated', '[\\]', 'Unterminated character class'],
+  ['edge/group-unterminated', '(a', 'Unterminated group'],
+  ['edge/noncapturing-unterminated', '(?:a', 'Unterminated group'],
+  ['edge/lookahead-unterminated', '(?=a', 'Unterminated group'],
+  ['edge/class-empty-then-bracket', '[]]', 'Lone quantifier brackets'],
+  ['edge/class-negated-empty-then-bracket', '[^]]', 'Lone quantifier brackets'],
+  ['edge/class-empty-then-literal', '[]a]', 'Lone quantifier brackets'],
+  ['edge/class-negated-empty-then-literal', '[^]a]', 'Lone quantifier brackets'],
+];
+for (const [name, pattern, detail, exact] of invalidPatterns) {
+  cases.push({
+    id: `invalid-pattern/${name}`,
+    schema: {type: 'string', pattern},
+    data: 'x',
+    compileErrorPrefix: 'Invalid regular expression',
+    compileErrorDetail: detail,
+    ...(exact ? {exactCompileError: true} : {}),
+  });
+}
+cases.push({
+  id: 'invalid-pattern/grok-property-pattern',
+  schema: {type: 'object', patternProperties: {'\\-': {type: 'number'}}},
+  data: {x: 1},
+  compileErrorPrefix: 'Invalid regular expression',
+  compileErrorDetail: 'Invalid escape',
+  exactCompileError: true,
+});
+
 // --- nullable and anchors --------------------------------------------------
 add('nullable/null', {type: 'string', nullable: true}, null);
 add('nullable/number', {type: 'string', nullable: true}, 5);
@@ -251,6 +358,47 @@ for (const [name, pattern, values] of [
     }, {[data]: 1});
   }
 }
+// JS /u escapes whose meaning Rust spells differently but can still express.
+for (const [id, pattern, data] of [
+  ['control-j', '\\cJ', '\n'],
+  ['control-j-lower', '\\cj', '\n'],
+  ['nul', '\\0', '\0'],
+  ['hex-latin1', '\\xFF', '\u00FF'],
+  ['class-control-j', '[\\cJ]', '\n'],
+  ['class-nul', '[\\0]', '\0'],
+  ['class-hex', '[\\x41]', 'A'],
+  ['class-escaped-hyphen', '[\\-]', '-'],
+  ['class-escaped-hyphen-then-a', '[\\-a]', '-'],
+  ['class-dash-range', '[\\--a]', '-'],
+  ['class-range-from-close', '[\\]-a]', 'a'],
+  ['class-escaped-close-bracket', '[\\]]', ']'],
+  ['class-escaped-open-bracket', '[\\[]', '['],
+  ['class-escaped-dot', '[\\.]', '.'],
+  ['class-backslash', '[\\\\]', '\\'],
+  ['quantifier-leading-zero', 'a{01}', 'aa'],
+  ['triple-range', '[a-b-c]', '-'],
+  ['class-only-dash', '[-]', '-'],
+  ['class-star', '[*]', '*'],
+  ['class-open-brace', '[{]', '{'],
+  ['class-close-brace', '[}]', '}'],
+  ['class-ampersand', '[a&b]', '&'],
+  ['class-pipe', '[a|b]', '|'],
+  ['class-caret', '[a^b]', '^'],
+  ['class-quantifier-braces', '[a{2}]', '2'],
+  ['class-negated-star', '[^*]', 'a'],
+  ['astral-range', '[😀-😁]', '😀'],
+  ['astral-single', '😀', '😀'],
+  ['empty-pattern', '', ''],
+  ['alternation-trailing', 'a|', ''],
+  ['alternation-leading', '|a', ''],
+  ['alternation-empty-group', '(a|)', ''],
+  ['empty-group', '()', ''],
+  ['noncapturing-empty', '(?:)', ''],
+  ['lazy-star', 'a*?', 'aa'],
+  ['lazy-range', 'a{2,3}?', 'aaa'],
+]) {
+  add(`escape/${id}`, {type: 'string', pattern}, data);
+}
 add('type/array-mismatch', {type: ['string', 'number']}, false);
 for (const [format, name, values] of [
   ['hostname', 'label-length', ['a'.repeat(63), 'a'.repeat(64)]],
@@ -265,18 +413,37 @@ for (const [format, name, values] of [
   values.forEach((data, index) => add(`format-edge/${format}-${name}-${index}`, {type: 'string', format}, data));
 }
 
-// Ambiguous Rust-only class operators are explicitly unsupported by the port.
-// Keep the real Ajv result as evidence, including invalid /u range syntax.
+// Ambiguous Rust-only class operators and JavaScript-only regex constructs
+// are explicitly unsupported by the port. Keep the real Ajv result as
+// evidence (including invalid /u range syntax, which is a compile error and
+// therefore lives in the invalid-pattern block above).
 for (const [id, schema, data] of [
   ['intersection-not', {not: {pattern: '[\\w&&a]'}}, 'b'],
   ['intersection-property', {patternProperties: {'[\\w&&a]': {type: 'number'}}}, {b: 'bad'}],
   ['symmetric-difference', {pattern: '[a~~b]'}, '~'],
-  ['shorthand-range', {pattern: '[\\w-a]'}, '-'],
-  ['two-shorthand-range', {pattern: '[\\d-\\w]'}, '-'],
   ['nested-class', {pattern: '[[]'}, '['],
   ['empty-class', {pattern: '[]'}, ''],
   ['negated-empty-class', {pattern: '^[^]$'}, '\n'],
-]) cases.push({id: `unsupported-class/${id}`, schema, data, portUnsupported: true});
+  ['double-dash-start', {pattern: '[--a]'}, '-'],
+  ['lookahead', {pattern: '(?=a)'}, 'a'],
+  ['lookbehind', {pattern: '(?<=a)b'}, 'ab'],
+  ['backreference', {pattern: '(a)\\1'}, 'aa'],
+  ['forward-backreference', {pattern: '\\1(a)'}, 'a'],
+  ['forward-backreference-two', {pattern: '\\2(a)(b)'}, 'b'],
+  ['backreference-two-groups', {pattern: '(a)(b)\\2'}, 'ab'],
+  ['named-group', {pattern: '(?<x>a)\\k<x>'}, 'a'],
+  ['named-forward-reference', {pattern: '\\k<x>(?<x>a)'}, 'a'],
+  ['named-group-nonascii', {pattern: '(?<é>x)'}, 'x'],
+  ['unicode-escape', {pattern: '\\u0041'}, 'A'],
+  ['unicode-brace-escape', {pattern: '\\u{1F600}'}, '😀'],
+  ['lone-surrogate-escape', {pattern: '\\uD83D'}, '\uD83D'],
+  ['surrogate-pair-escape', {pattern: '\\uD83D\\uDE00'}, '😀'],
+  ['property-escape', {pattern: '\\p{L}'}, 'a'],
+  ['property-escape-in-class', {pattern: '[\\p{L}]'}, 'a'],
+  ['property-name-not-validated', {pattern: '\\p{NotAProperty}'}, 'a'],
+  ['property-name-not-validated-in-class', {pattern: '[\\p{NotAProperty}]'}, 'a'],
+  ['huge-quantifier', {pattern: 'a{1000000000}'}, 'a'],
+]) cases.push({id: `unsupported-pattern/${id}`, schema, data, portUnsupported: true});
 add('length/astral-max-equal', {type: 'string', maxLength: 1}, '😀');
 add('length/astral-min-too-short', {type: 'string', minLength: 2}, '😀');
 add('format-edge/byte-multiline', {type: 'string', format: 'byte'}, 'aGVsbG8=\n!!');
@@ -322,6 +489,12 @@ const oracle = {
       if (entry.compileErrorPrefix) {
         if (compiled) throw error;
         assert.ok(error.message.startsWith(entry.compileErrorPrefix), `${id}: ${error.message}`);
+        if (entry.compileErrorDetail) {
+          assert.ok(
+            error.message.endsWith(`: ${entry.compileErrorDetail}`),
+            `${id}: ${error.message}`,
+          );
+        }
         return {...entry, actualCompileError: error.message};
       }
       if (error instanceof RangeError) throw error;
