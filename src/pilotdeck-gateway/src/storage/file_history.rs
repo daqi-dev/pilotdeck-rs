@@ -26,9 +26,37 @@ pub type FileHistoryClock = Arc<dyn Fn() -> i64 + Send + Sync>;
 pub type SnapshotRecorded = Arc<dyn Fn(JsObject, &str) -> FileHistoryResult<()> + Send + Sync>;
 pub type FileHistoryWarn = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// `backupFileName` after replay. The transcript is untrusted: the key can be
+/// `null` (file absent at snapshot time), absent (`undefined`), or a string.
+/// TS keeps all three in the snapshot object; `restoreBackup` only special
+/// cases `null` and passes `undefined` to `path.join`, which throws. Keeping
+/// the three states apart is required to reproduce that error instead of
+/// silently unlinking the tracked path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackupFileName {
+    Null,
+    Undefined,
+    Named(String),
+}
+impl BackupFileName {
+    pub fn as_name(&self) -> Option<&str> {
+        match self {
+            Self::Named(name) => Some(name),
+            Self::Null | Self::Undefined => None,
+        }
+    }
+    fn display(&self) -> &str {
+        match self {
+            Self::Null => "null",
+            Self::Undefined => "undefined",
+            Self::Named(name) => name,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileHistoryBackup {
-    pub backup_file_name: Option<String>,
+    pub backup_file_name: BackupFileName,
     pub version: u64,
     pub backup_time_ms: i64,
     pub mode: Option<u32>,
@@ -84,7 +112,7 @@ impl FileHistorySnapshot {
 /// Deserialized `file_snapshot_recorded` entry used by resume replay (F12).
 #[derive(Clone, Debug)]
 pub struct RecordedBackup {
-    pub backup_file_name: Option<String>,
+    pub backup_file_name: BackupFileName,
     pub version: u64,
     pub backup_time_ms: i64,
     pub mode: Option<u32>,
@@ -400,7 +428,7 @@ impl FileHistoryStore {
                     missing.push(abs_path.clone());
                     self.warn(format!(
                         "file-history: backup {} for {abs_path} is missing on disk; skipping",
-                        backup.backup_file_name.as_deref().unwrap_or("null")
+                        backup.backup_file_name.display()
                     ));
                 }
             }
@@ -428,9 +456,11 @@ impl FileHistoryStore {
         let mut deletions = 0usize;
         let mut files_changed = 0usize;
         for (abs_path, backup) in &snapshot.tracked_file_backups {
+            // TS `backup.backupFileName ? readBackupText(...) : null`: both
+            // `null` and `undefined` are falsy, so neither reads a blob.
             let before = match &backup.backup_file_name {
-                Some(name) => safe_read_text(&self.options.backup_dir.join(name))?,
-                None => None,
+                BackupFileName::Named(name) => safe_read_text(&self.options.backup_dir.join(name))?,
+                BackupFileName::Null | BackupFileName::Undefined => None,
             };
             let after = safe_read_text(Path::new(abs_path))?;
             match (before, after) {
@@ -523,8 +553,11 @@ impl FileHistoryStore {
             value.insert(
                 "backupFileName".into(),
                 match &backup.backup_file_name {
-                    Some(name) => JsValue::from(name.as_str()),
-                    None => JsValue::Null,
+                    BackupFileName::Named(name) => JsValue::from(name.as_str()),
+                    BackupFileName::Null => JsValue::Null,
+                    // `JSON.stringify({backupFileName: undefined})` drops the
+                    // key, exactly like the TS writer.
+                    BackupFileName::Undefined => JsValue::Undefined,
                 },
             );
             value.insert("version".into(), JsValue::Number(backup.version as f64));
@@ -579,18 +612,24 @@ impl FileHistoryStore {
             }
             let evicted = state.snapshots.remove(0);
             for backup in evicted.tracked_file_backups.into_iter().map(|(_, b)| b) {
-                let Some(name) = backup.backup_file_name else {
+                // TS `if (!backup.backupFileName) continue;` also skips the
+                // empty string, not just null/undefined.
+                let Some(name) = backup.backup_file_name.as_name() else {
                     continue;
                 };
+                if name.is_empty() {
+                    continue;
+                }
                 let still_referenced = state.snapshots.iter().any(|snapshot| {
-                    snapshot.tracked_file_backups.iter().any(|(_, backup)| {
-                        backup.backup_file_name.as_deref() == Some(name.as_str())
-                    })
+                    snapshot
+                        .tracked_file_backups
+                        .iter()
+                        .any(|(_, backup)| backup.backup_file_name.as_name() == Some(name))
                 });
                 if still_referenced {
                     continue;
                 }
-                if let Err(error) = fs::remove_file(self.options.backup_dir.join(&name))
+                if let Err(error) = fs::remove_file(self.options.backup_dir.join(name))
                     && error.kind() != io::ErrorKind::NotFound
                 {
                     self.warn(format!("file-history: failed to evict {name}: {error}"));
@@ -705,7 +744,7 @@ fn create_backup(
     )?;
     Ok(BackupResult {
         backup: FileHistoryBackup {
-            backup_file_name: Some(backup_file_name),
+            backup_file_name: BackupFileName::Named(backup_file_name),
             version,
             backup_time_ms: now(),
             mode: Some(metadata_mode(&metadata)),
@@ -717,7 +756,7 @@ fn create_backup(
 fn null_backup(version: u64, backup_time: i64, oversize: bool) -> BackupResult {
     BackupResult {
         backup: FileHistoryBackup {
-            backup_file_name: None,
+            backup_file_name: BackupFileName::Null,
             version,
             backup_time_ms: backup_time,
             mode: None,
@@ -783,18 +822,31 @@ fn without_os_error(error: &io::Error) -> String {
     }
 }
 
+/// Node 22 `path.join(backupDir, undefined)` error text. TS `restoreBackup`
+/// only special-cases `=== null`; an absent `backupFileName` (corrupt
+/// transcript or a string/array `trackedFileBackups` enumeration) reaches
+/// `path.join` and throws before any filesystem write.
+const PATH_JOIN_UNDEFINED: &str =
+    "The \"path\" argument must be of type string. Received undefined";
+
 fn restore_backup(
     backup_dir: &Path,
     file_path: &str,
     backup: &FileHistoryBackup,
 ) -> FileHistoryResult<RestoreOutcome> {
-    let Some(backup_file_name) = &backup.backup_file_name else {
-        match fs::remove_file(file_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(node_fs_error(error, "unlink", Path::new(file_path))),
+    let backup_file_name = match &backup.backup_file_name {
+        BackupFileName::Null => {
+            match fs::remove_file(file_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(node_fs_error(error, "unlink", Path::new(file_path))),
+            }
+            return Ok(RestoreOutcome::Deleted);
         }
-        return Ok(RestoreOutcome::Deleted);
+        BackupFileName::Undefined => {
+            return Err(FileHistoryError::Fs(PATH_JOIN_UNDEFINED.to_string()));
+        }
+        BackupFileName::Named(name) => name,
     };
     let backup_path = backup_dir.join(backup_file_name);
     match fs::metadata(&backup_path) {
@@ -1071,7 +1123,7 @@ mod tests {
         let directory = root.path().join("a.txt");
         fs::create_dir(&directory).unwrap();
         let backup = FileHistoryBackup {
-            backup_file_name: None,
+            backup_file_name: BackupFileName::Null,
             version: 1,
             backup_time_ms: 0,
             mode: None,
@@ -1102,7 +1154,7 @@ mod tests {
         let backup_name = "0123456789abcdef@v1";
         fs::write(backup_dir.join(backup_name), "old\n").unwrap();
         let backup = FileHistoryBackup {
-            backup_file_name: Some(backup_name.into()),
+            backup_file_name: BackupFileName::Named(backup_name.into()),
             version: 1,
             backup_time_ms: 0,
             mode: Some(0o644),
@@ -1230,7 +1282,7 @@ mod tests {
             tracked_file_backups: vec![(
                 first_file.to_string_lossy().into_owned(),
                 RecordedBackup {
-                    backup_file_name: Some("0123456789abcdef@v1".into()),
+                    backup_file_name: BackupFileName::Named("0123456789abcdef@v1".into()),
                     version: 1,
                     backup_time_ms: 0,
                     mode: Some(0o644),
