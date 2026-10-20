@@ -1,0 +1,3688 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/mcp/config/expandPlaceholders.ts": "77d39bce02db5435425bcf678b5184acd7164694c422b527f97309c43692cf5f",
+    "src/mcp/config/loadMcpServerConfig.ts": "aa0331ec66240089e0306558633647506aba416ff6a128f8937e823c387a582e",
+    "src/mcp/protocol/types.ts": "8176ead2cf6d407d93caf96d6b882cf959b81a6f172857dafeae188a82b4e5aa",
+    "src/mcp/runtime/sanitize.ts": "53851ed8c64e37496a98291b5f630c27b5d4231b849a8b6af939f59dc988945a",
+    "src/mcp/runtime/truncate.ts": "b28e609f9df3d7173e92c0570cd75ea1c1e82a3a796d7692f7482bd877c7651b",
+    "src/mcp/runtime/wireName.ts": "311952c3359f583082c440a6bbb99d89bffd75b03cf23b4a6190eb74ac12e630",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "sdkVersion": "1.29.0",
+  "scenarios": [
+    {
+      "id": "basic",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "zzz": "stripped",
+                        "name": "a.b",
+                        "description": "hello‮evil​",
+                        "inputSchema": {
+                          "b": 1,
+                          "type": "object",
+                          "properties": {
+                            "q": {
+                              "type": "string"
+                            }
+                          },
+                          "a": 2
+                        },
+                        "annotations": {
+                          "extra": 1,
+                          "readOnlyHint": true,
+                          "title": "T"
+                        },
+                        "_meta": {
+                          "k‍": "v﻿"
+                        }
+                      },
+                      {
+                        "name": "a b",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "long",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀tail",
+                        "inputSchema": {
+                          "type": "object",
+                          "required": [
+                            "q"
+                          ]
+                        }
+                      },
+                      {
+                        "name": "naïve/工具",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "icons": []
+                      },
+                      {
+                        "name": "structured",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "outputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "task",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "execution": {
+                          "taskSupport": "required"
+                        }
+                      }
+                    ],
+                    "nextCursor": "ignored"
+                  }
+                }
+              }
+            ],
+            "tools/call:echo": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "extra": "kept by ResultSchema, dropped by McpClient",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hi‮�",
+                        "annotations": {
+                          "priority": 0.5,
+                          "audience": [
+                            "user"
+                          ]
+                        },
+                        "zz": 1
+                      },
+                      {
+                        "mimeType": "image/png",
+                        "type": "image",
+                        "data": "QUJD",
+                        "_meta": {
+                          "m": 1
+                        }
+                      },
+                      {
+                        "type": "resource",
+                        "resource": {
+                          "uri": "file:///x",
+                          "text": "t",
+                          "blob": "QQ=="
+                        }
+                      },
+                      {
+                        "type": "resource_link",
+                        "uri": "u",
+                        "name": "n",
+                        "size": 3
+                      }
+                    ],
+                    "isError": false
+                  }
+                }
+              }
+            ],
+            "tools/call:noContent": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {}
+                }
+              }
+            ],
+            "tools/call:flagged": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [],
+                    "isError": true
+                  }
+                }
+              }
+            ],
+            "tools/call:structured": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [],
+                    "structuredContent": {
+                      "a": 1
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "idle",
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "a.b",
+              "wireName": "mcp__mock__a_b",
+              "description": "helloevil",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "b": 1,
+                "a": 2
+              },
+              "annotations": {
+                "title": "T",
+                "readOnlyHint": true
+              },
+              "meta": {
+                "k": "v"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "a b",
+              "wireName": "mcp__mock__a_b",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "long",
+              "wireName": "mcp__mock__long",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d… [truncated]",
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "q"
+                ]
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "naïve/工具",
+              "wireName": "mcp__mock__na_ve___",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "structured",
+              "wireName": "mcp__mock__structured",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "task",
+              "wireName": "mcp__mock__task",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "a.b",
+              "wireName": "mcp__mock__a_b",
+              "description": "helloevil",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "b": 1,
+                "a": 2
+              },
+              "annotations": {
+                "title": "T",
+                "readOnlyHint": true
+              },
+              "meta": {
+                "k": "v"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "a b",
+              "wireName": "mcp__mock__a_b",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "long",
+              "wireName": "mcp__mock__long",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d… [truncated]",
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "q"
+                ]
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "naïve/工具",
+              "wireName": "mcp__mock__na_ve___",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "structured",
+              "wireName": "mcp__mock__structured",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "task",
+              "wireName": "mcp__mock__task",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": "x",
+              "n": [
+                1,
+                2
+              ]
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "hi",
+                "annotations": {
+                  "audience": [
+                    "user"
+                  ],
+                  "priority": 0.5
+                }
+              },
+              {
+                "type": "image",
+                "data": "QUJD",
+                "mimeType": "image/png",
+                "_meta": {
+                  "m": 1
+                }
+              },
+              {
+                "type": "resource",
+                "resource": {
+                  "uri": "file:///x",
+                  "text": "t"
+                }
+              },
+              {
+                "name": "n",
+                "uri": "u",
+                "size": 3,
+                "type": "resource_link"
+              }
+            ],
+            "isError": false
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "noContent"
+          },
+          "ok": {
+            "content": []
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "flagged",
+            "args": null
+          },
+          "ok": {
+            "content": [],
+            "isError": true
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "structured",
+            "args": {}
+          },
+          "ok": {
+            "content": []
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "structured",
+            "args": {},
+            "timeoutMs": 5000
+          },
+          "ok": {
+            "content": []
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":\"x\",\"n\":[1,2]}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"noContent\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":3}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"flagged\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":4}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"structured\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":5}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"structured\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":6}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "call-errors",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "zzz": "stripped",
+                        "name": "a.b",
+                        "description": "hello‮evil​",
+                        "inputSchema": {
+                          "b": 1,
+                          "type": "object",
+                          "properties": {
+                            "q": {
+                              "type": "string"
+                            }
+                          },
+                          "a": 2
+                        },
+                        "annotations": {
+                          "extra": 1,
+                          "readOnlyHint": true,
+                          "title": "T"
+                        },
+                        "_meta": {
+                          "k‍": "v﻿"
+                        }
+                      },
+                      {
+                        "name": "a b",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "long",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀tail",
+                        "inputSchema": {
+                          "type": "object",
+                          "required": [
+                            "q"
+                          ]
+                        }
+                      },
+                      {
+                        "name": "naïve/工具",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "icons": []
+                      },
+                      {
+                        "name": "structured",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "outputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "task",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "execution": {
+                          "taskSupport": "required"
+                        }
+                      }
+                    ],
+                    "nextCursor": "ignored"
+                  }
+                }
+              }
+            ],
+            "tools/call:rpc": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32602,
+                    "message": "bad args",
+                    "data": {
+                      "detail": 1
+                    }
+                  }
+                }
+              }
+            ],
+            "tools/call:badBlock": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tools/call:badFlag": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [],
+                    "isError": "yes"
+                  }
+                }
+              }
+            ],
+            "tools/call:badPriority": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "x",
+                        "annotations": {
+                          "priority": -1
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tools/call:badBase64": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "image",
+                        "data": "!!!",
+                        "mimeType": "x"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tools/call:structured": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": []
+                  }
+                }
+              }
+            ],
+            "tools/call:structuredError": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [],
+                    "isError": true
+                  }
+                }
+              }
+            ],
+            "tools/call:after": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "still connected"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "callTool",
+            "name": "rpc",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): MCP error -32602: bad args"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badBlock",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"text\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"image\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"image\\\"\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"data\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"mimeType\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"audio\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"audio\\\"\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"data\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"mimeType\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        }\n      ],\n      [\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"name\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"uri\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"resource_link\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"resource_link\\\"\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"resource\"\n          ],\n          \"path\": [\n            \"type\"\n          ],\n          \"message\": \"Invalid input: expected \\\"resource\\\"\"\n        },\n        {\n          \"code\": \"invalid_union\",\n          \"errors\": [\n            [\n              {\n                \"expected\": \"object\",\n                \"code\": \"invalid_type\",\n                \"path\": [],\n                \"message\": \"Invalid input: expected object, received undefined\"\n              }\n            ],\n            [\n              {\n                \"expected\": \"object\",\n                \"code\": \"invalid_type\",\n                \"path\": [],\n                \"message\": \"Invalid input: expected object, received undefined\"\n              }\n            ]\n          ],\n          \"path\": [\n            \"resource\"\n          ],\n          \"message\": \"Invalid input\"\n        }\n      ]\n    ],\n    \"path\": [\n      \"content\",\n      0\n    ],\n    \"message\": \"Invalid input\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badFlag",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"expected\": \"boolean\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"isError\"\n    ],\n    \"message\": \"Invalid input: expected boolean, received string\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badPriority",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 0,\n    \"inclusive\": true,\n    \"path\": [\n      \"content\",\n      0,\n      \"annotations\",\n      \"priority\"\n    ],\n    \"message\": \"Too small: expected number to be >=0\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badBase64",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"code\": \"custom\",\n    \"path\": [\n      \"content\",\n      0,\n      \"data\"\n    ],\n    \"message\": \"Invalid Base64 string\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "a.b",
+              "wireName": "mcp__mock__a_b",
+              "description": "helloevil",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "b": 1,
+                "a": 2
+              },
+              "annotations": {
+                "title": "T",
+                "readOnlyHint": true
+              },
+              "meta": {
+                "k": "v"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "a b",
+              "wireName": "mcp__mock__a_b",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "long",
+              "wireName": "mcp__mock__long",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d… [truncated]",
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "q"
+                ]
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "naïve/工具",
+              "wireName": "mcp__mock__na_ve___",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "structured",
+              "wireName": "mcp__mock__structured",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "task",
+              "wireName": "mcp__mock__task",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "task",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): MCP error -32600: Tool \"task\" requires task-based execution. Use client.experimental.tasks.callToolStream() instead."
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "structured",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): MCP error -32600: Tool structured has an output schema but did not return structured content"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "structuredError",
+            "args": {}
+          },
+          "ok": {
+            "content": [],
+            "isError": true
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "after",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "still connected"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"rpc\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badBlock\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badFlag\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":3}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badPriority\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":4}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badBase64\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":5}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":6}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"structured\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":7}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"structuredError\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":8}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"after\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":9}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "list-errors",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": 1,
+                        "inputSchema": {
+                          "type": "x"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "nextCursor": 3
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": []
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"tools\",\n      0,\n      \"name\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"object\"\n    ],\n    \"path\": [\n      \"tools\",\n      0,\n      \"inputSchema\",\n      \"type\"\n    ],\n    \"message\": \"Invalid input: expected \\\"object\\\"\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"nextCursor\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"tools\"\n    ],\n    \"message\": \"Invalid input: expected array, received undefined\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "invalid-frames",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {
+        "callTimeoutMs": 1000
+      },
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "line": "not json"
+              },
+              {
+                "line": "{\"foo\":1}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"s1\",\"method\":\"elicitation/create\",\"params\":{}}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":5,\"progress\":1}}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"data\":\"x\"}}"
+              },
+              {
+                "sleep": 50
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"m\",\"version\":\"1\"}}}\r"
+              }
+            ],
+            "tools/call:split": [
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"\\ud83d\\ude00 \\ud800\"}]},\"extra\":1}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"second answer wins\"}]}}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"late duplicate\"}]}}"
+              }
+            ],
+            "tools/call:unicode": [
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"\\ud83d\\ude00 \\ud800 \\u200b\\ufffd\",\"_meta\":{\"\\u202ek\":[\"\\ufeff\"]}}]}}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[]},\"bad\":\"ÿ\"}"
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "split",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "second answer wins"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "unicode",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "😀 \ud800 ",
+                "_meta": {
+                  "k": [
+                    ""
+                  ]
+                }
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"jsonrpc\":\"2.0\",\"id\":\"s1\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":7}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"split\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"unicode\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "handshake-error",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32603,
+                    "message": "boom"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: MCP error -32603: boom"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "handshake-version",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "1999-01-01",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: Server's protocol version is not supported: 1999-01-01"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "handshake-schema",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": 1,
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "s"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"protocolVersion\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"serverInfo\",\n      \"version\"\n    ],\n    \"message\": \"Invalid input: expected string, received undefined\"\n  }\n]"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "handshake-crash",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "exit": 3
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "callTool",
+            "name": "x",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: MCP error -32000: Connection closed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "handshake-timeout",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {
+        "handshakeTimeoutMs": 300
+      },
+      "script": {
+        "procs": [
+          {}
+        ]
+      },
+      "orphan": true,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake timed out after 300ms (server=mock)"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "spawn-enoent",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "/nonexistent/pdrs-mcp-mock",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {}
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: spawn /nonexistent/pdrs-mcp-mock ENOENT"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        }
+      ],
+      "processes": []
+    },
+    {
+      "id": "call-timeout",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {
+        "callTimeoutMs": 300
+      },
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "zzz": "stripped",
+                        "name": "a.b",
+                        "description": "hello‮evil​",
+                        "inputSchema": {
+                          "b": 1,
+                          "type": "object",
+                          "properties": {
+                            "q": {
+                              "type": "string"
+                            }
+                          },
+                          "a": 2
+                        },
+                        "annotations": {
+                          "extra": 1,
+                          "readOnlyHint": true,
+                          "title": "T"
+                        },
+                        "_meta": {
+                          "k‍": "v﻿"
+                        }
+                      },
+                      {
+                        "name": "a b",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "long",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀tail",
+                        "inputSchema": {
+                          "type": "object",
+                          "required": [
+                            "q"
+                          ]
+                        }
+                      },
+                      {
+                        "name": "naïve/工具",
+                        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "icons": []
+                      },
+                      {
+                        "name": "structured",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "outputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "task",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "execution": {
+                          "taskSupport": "required"
+                        }
+                      }
+                    ],
+                    "nextCursor": "ignored"
+                  }
+                }
+              }
+            ],
+            "tools/call:slow": []
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:slow": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "fresh process"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "a.b",
+              "wireName": "mcp__mock__a_b",
+              "description": "helloevil",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "b": 1,
+                "a": 2
+              },
+              "annotations": {
+                "title": "T",
+                "readOnlyHint": true
+              },
+              "meta": {
+                "k": "v"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "a b",
+              "wireName": "mcp__mock__a_b",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "long",
+              "wireName": "mcp__mock__long",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d… [truncated]",
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "q"
+                ]
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "naïve/工具",
+              "wireName": "mcp__mock__na_ve___",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "structured",
+              "wireName": "mcp__mock__structured",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "task",
+              "wireName": "mcp__mock__task",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "slow",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_timeout",
+            "serverId": "mock",
+            "message": "MCP call timed out (server=mock): MCP error -32001: Request timed out"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "slow",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "fresh process"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"slow\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":2,\"reason\":\"McpError: MCP error -32001: Request timed out\"}}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"slow\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "timeout-message",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:x": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32000,
+                    "message": "upstream Timeout"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:x": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "respawned"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "callTool",
+            "name": "x",
+            "args": {},
+            "timeoutMs": 5000
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_timeout",
+            "serverId": "mock",
+            "message": "MCP call timed out (server=mock): MCP error -32000: upstream Timeout"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "x",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "respawned"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "server-crash",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:crash": [
+              {
+                "exit": 3
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "callTool",
+            "name": "crash",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): MCP error -32000: Connection closed"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "ready",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "crash",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Not connected"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Not connected"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "idle",
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"crash\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "session-expired",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": []
+                  }
+                }
+              }
+            ],
+            "tools/call:x": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32000,
+                    "message": "Session expired"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": []
+                  }
+                }
+              }
+            ],
+            "tools/call:x": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "after reconnect"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tools/call:y": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32000,
+                    "message": "session has EXPIRED"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:y": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32000,
+                    "message": "Session expired again"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "x",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "after reconnect"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "y",
+            "args": {}
+          },
+          "error": {
+            "name": "McpError",
+            "code": -32000,
+            "serverId": null,
+            "message": "MCP error -32000: Session expired again"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "ready",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"y\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":3}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"y\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "spawn-options",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>",
+          "--flag"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>",
+          "MOCK_FLAG": "on",
+          "PILOTDECK_SESSION_TMPDIR": "<dir>/tmp/nested"
+        },
+        "cwd": "<dir>/work",
+        "perSession": true
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "perSessionDirs"
+          },
+          "ok": [],
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [
+              "--flag",
+              "--user-data-dir=<dir>/tmp/nested/pilotdeck-mcp-mock-XXXXXX"
+            ],
+            "cwd": "work",
+            "env": {
+              "MOCK_FLAG": "on",
+              "PILOTDECK_SESSION_TMPDIR": "<dir>/tmp/nested"
+            }
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "storage-root",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>",
+          "PILOTDECK_SESSION_STORAGE_ROOT": "<dir>/root"
+        },
+        "perSession": true,
+        "callTimeoutMs": 250
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/call:slow": []
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "slow",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_timeout",
+            "serverId": "mock",
+            "message": "MCP call timed out (server=mock): MCP error -32001: Request timed out"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {
+              "PILOTDECK_SESSION_STORAGE_ROOT": "<dir>/root"
+            }
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"slow\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1,\"reason\":\"McpError: MCP error -32001: Request timed out\"}}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "close-pending",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "parallel",
+            "ops": [
+              {
+                "op": "callTool",
+                "name": "hang",
+                "args": {}
+              },
+              {
+                "op": "close",
+                "delayMs": 100
+              }
+            ]
+          },
+          "ok": [
+            {
+              "error": {
+                "name": "McpClientError",
+                "code": "mcp_call_failed",
+                "serverId": "mock",
+                "message": "MCP call failed (server=mock): MCP error -32000: Connection closed"
+              }
+            },
+            {
+              "ok": null
+            }
+          ],
+          "status": "idle"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "idle",
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"hang\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    }
+  ],
+  "pure": {
+    "sanitize": [
+      {
+        "input": "",
+        "output": ""
+      },
+      {
+        "input": "plain",
+        "output": "plain"
+      },
+      {
+        "input": "​zero‌‍‎‏ width",
+        "output": "zero width"
+      },
+      {
+        "input": "‪‫‬‭‮bidi⁦⁧⁨⁩",
+        "output": "bidi"
+      },
+      {
+        "input": "﻿bom￼�",
+        "output": "bom"
+      },
+      {
+        "input": "中文 é 😀 kept",
+        "output": "中文 é 😀 kept"
+      }
+    ],
+    "recursive": [
+      {
+        "input": {
+          "2": "n",
+          "a​": [
+            "x‮",
+            1,
+            null,
+            true,
+            {
+              "﻿b": "c�"
+            }
+          ],
+          "a": "collides",
+          "1​": "m"
+        },
+        "output": {
+          "1": "m",
+          "2": "n",
+          "a": "collides"
+        }
+      },
+      {
+        "input": [
+          "​",
+          [
+            [
+              "‌"
+            ]
+          ]
+        ],
+        "output": [
+          "",
+          [
+            [
+              ""
+            ]
+          ]
+        ]
+      },
+      {
+        "input": 42,
+        "output": 42
+      },
+      {
+        "input": null,
+        "output": null
+      }
+    ],
+    "wire": [
+      {
+        "server": "srv",
+        "tool": "tool",
+        "output": "mcp__srv__tool"
+      },
+      {
+        "server": "my server",
+        "tool": "a.b",
+        "output": "mcp__my_server__a_b"
+      },
+      {
+        "server": "my server",
+        "tool": "a b",
+        "output": "mcp__my_server__a_b"
+      },
+      {
+        "server": "srv",
+        "tool": "naïve/工具",
+        "output": "mcp__srv__na_ve___"
+      },
+      {
+        "server": "srv",
+        "tool": "😀",
+        "output": "mcp__srv____"
+      },
+      {
+        "server": "",
+        "tool": "",
+        "output": "mcp____"
+      },
+      {
+        "server": "a-b_c",
+        "tool": "d-e_f",
+        "output": "mcp__a-b_c__d-e_f"
+      }
+    ],
+    "parse": [
+      {
+        "input": "mcp__srv__tool",
+        "output": {
+          "serverId": "srv",
+          "toolName": "tool"
+        }
+      },
+      {
+        "input": "mcp__srv__a__b",
+        "output": {
+          "serverId": "srv",
+          "toolName": "a__b"
+        }
+      },
+      {
+        "input": "mcp____tool",
+        "output": null
+      },
+      {
+        "input": "mcp__srv__",
+        "output": null
+      },
+      {
+        "input": "mcp__srv",
+        "output": null
+      },
+      {
+        "input": "other__srv__tool",
+        "output": null
+      },
+      {
+        "input": "mcp___srv__tool",
+        "output": {
+          "serverId": "_srv",
+          "toolName": "tool"
+        }
+      }
+    ],
+    "truncate": [
+      {
+        "input": "",
+        "output": ""
+      },
+      {
+        "input": "short",
+        "output": "short"
+      },
+      {
+        "input": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+        "output": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      },
+      {
+        "input": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+        "output": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy… [truncated]"
+      },
+      {
+        "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀tail",
+        "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d… [truncated]"
+      }
+    ],
+    "expand": [
+      {
+        "input": "${env:PDRS_MCP_SET}",
+        "output": "value"
+      },
+      {
+        "input": "${env:PDRS_MCP_UNSET}x",
+        "output": "x"
+      },
+      {
+        "input": "${env:}",
+        "output": "${env:}"
+      },
+      {
+        "input": "${env:PDRS_MCP_SET",
+        "output": "${env:PDRS_MCP_SET"
+      },
+      {
+        "input": "a${env:PDRS_MCP_SET}b${env:PDRS_MCP_SET}c",
+        "output": "avaluebvaluec"
+      },
+      {
+        "input": "${userHome}/x",
+        "output": "/pdrs-home/x"
+      },
+      {
+        "input": "~/a",
+        "output": "/pdrs-home/a"
+      },
+      {
+        "input": "~\\a",
+        "output": "/pdrs-home\\a"
+      },
+      {
+        "input": "~",
+        "output": "/pdrs-home"
+      },
+      {
+        "input": "~a",
+        "output": "~a"
+      },
+      {
+        "input": "x~/a",
+        "output": "x~/a"
+      }
+    ],
+    "config": [
+      {
+        "id": "none",
+        "output": {
+          "servers": {},
+          "diagnostics": []
+        }
+      },
+      {
+        "id": "merge",
+        "global": {
+          "mcpServers": {
+            "2": {
+              "n": 1
+            },
+            "a": {
+              "command": "${env:PDRS_MCP_SET}"
+            },
+            "b": {
+              "url": "g"
+            }
+          }
+        },
+        "project": {
+          "mcpServers": {
+            "1": {},
+            "b": {
+              "url": "p",
+              "args": [
+                "~/x",
+                3,
+                null
+              ]
+            },
+            "c": {
+              "command": "~"
+            }
+          }
+        },
+        "output": {
+          "servers": {
+            "1": {},
+            "2": {
+              "n": 1
+            },
+            "a": {
+              "command": "value"
+            },
+            "b": {
+              "url": "p",
+              "args": [
+                "/pdrs-home/x",
+                3,
+                null
+              ]
+            },
+            "c": {
+              "command": "/pdrs-home"
+            }
+          },
+          "diagnostics": []
+        }
+      },
+      {
+        "id": "invalid-json",
+        "global": "{\"mcpServers\": ",
+        "project": {
+          "mcpServers": {
+            "a": {
+              "command": "x"
+            }
+          }
+        },
+        "output": {
+          "servers": {
+            "a": {
+              "command": "x"
+            }
+          },
+          "diagnostics": [
+            {
+              "path": "<dir>/home/mcp.json",
+              "message": "Unexpected end of JSON input"
+            }
+          ]
+        }
+      },
+      {
+        "id": "root-array",
+        "global": [],
+        "project": "null",
+        "output": {
+          "servers": {},
+          "diagnostics": [
+            {
+              "path": "<dir>/home/mcp.json",
+              "message": "MCP config root must be an object."
+            },
+            {
+              "path": "<dir>/project/.pilotdeck/mcp.json",
+              "message": "MCP config root must be an object."
+            }
+          ]
+        }
+      },
+      {
+        "id": "servers-array",
+        "global": {
+          "mcpServers": []
+        },
+        "project": {
+          "other": 1
+        },
+        "output": {
+          "servers": {},
+          "diagnostics": [
+            {
+              "path": "<dir>/home/mcp.json",
+              "message": "mcpServers must be an object."
+            }
+          ]
+        }
+      },
+      {
+        "id": "bom",
+        "project": "﻿{\"mcpServers\":{}}",
+        "output": {
+          "servers": {},
+          "diagnostics": [
+            {
+              "path": "<dir>/project/.pilotdeck/mcp.json",
+              "message": "Unexpected token '﻿', \"﻿{\"mcpServers\":{}}\" is not valid JSON"
+            }
+          ]
+        }
+      },
+      {
+        "id": "directory",
+        "globalDir": true,
+        "output": {
+          "servers": {},
+          "diagnostics": [
+            {
+              "path": "<dir>/home/mcp.json",
+              "message": "EISDIR: illegal operation on a directory, read"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

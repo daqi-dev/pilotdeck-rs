@@ -994,8 +994,8 @@ fn check_config(
     })
 }
 
-/// `expandMcpString` for the two branches that decide validation.
-fn expand_mcp_string(value: &JsString, environment: &dyn SdkMcpEnvironment) -> JsString {
+/// `expandMcpString`; shared with the MCP config loader (`protocol.rs`).
+pub(super) fn expand_mcp_string(value: &JsString, environment: &dyn SdkMcpEnvironment) -> JsString {
     let mut units = replace_env(value.units(), environment);
     let home = environment.home();
     units = replace_user_home(&units, home.units());
