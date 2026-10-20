@@ -220,7 +220,14 @@ fn run_op(client: McpClient, op: JsValue, dir: PathBuf) -> OpFuture {
                 let name = field(&op, "name").as_string().unwrap().clone();
                 let timeout_ms = field(&op, "timeoutMs").as_number();
                 let result = client
-                    .call_tool(&name, field(&op, "args"), McpCallOptions { timeout_ms })
+                    .call_tool(
+                        &name,
+                        field(&op, "args"),
+                        McpCallOptions {
+                            timeout_ms,
+                            ..McpCallOptions::default()
+                        },
+                    )
                     .await;
                 outcome(result, |result| result.to_value())
             }
@@ -588,6 +595,15 @@ fn generator_reproduces_the_committed_oracle_twice() {
 const INIT_REPLY: &str = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"m","version":"1"}}}}"#;
 
 fn race_client(dir: &Path, procs: &[String], handshake_timeout_ms: Option<f64>) -> McpClient {
+    race_client_with_session(dir, procs, handshake_timeout_ms, false)
+}
+
+fn race_client_with_session(
+    dir: &Path,
+    procs: &[String],
+    handshake_timeout_ms: Option<f64>,
+    per_session: bool,
+) -> McpClient {
     std::fs::write(
         dir.join("script.json"),
         format!(r#"{{"procs":[{}]}}"#, procs.join(",")),
@@ -599,12 +615,15 @@ fn race_client(dir: &Path, procs: &[String], handshake_timeout_ms: Option<f64>) 
             transport: McpTransportSpec::Stdio {
                 command: "node".into(),
                 args: Some(vec![mock_path()]),
-                env: Some(vec![(
-                    "MOCK_DIR".into(),
-                    dir.to_string_lossy().into_owned(),
-                )]),
+                env: Some(vec![
+                    ("MOCK_DIR".into(), dir.to_string_lossy().into_owned()),
+                    (
+                        "PILOTDECK_SESSION_TMPDIR".into(),
+                        dir.join("sessions").to_string_lossy().into_owned(),
+                    ),
+                ]),
                 cwd: None,
-                per_session: false,
+                per_session,
             },
             call_timeout_ms: None,
         },
@@ -831,6 +850,103 @@ async fn late_handshake_after_timeout_is_closed() {
     assert_eq!(read_logs(&dir).len(), 2);
 }
 
+fn logged_session_dir(dir: &Path, index: usize) -> PathBuf {
+    let logs = read_logs(dir);
+    let spawn = logs[index]
+        .iter()
+        .find(|event| {
+            field(event, "event")
+                .as_string()
+                .is_some_and(|s| s.equals_str("spawn"))
+        })
+        .unwrap();
+    array(field(spawn, "argv"), "argv")
+        .iter()
+        .find_map(|arg| {
+            arg.as_string()?
+                .to_utf8()
+                .ok()?
+                .strip_prefix("--user-data-dir=")
+                .map(PathBuf::from)
+        })
+        .expect("per-session directory argument")
+}
+
+#[tokio::test]
+async fn timed_out_handshake_keeps_its_directory_until_late_close_then_removes_it() {
+    let scratch = Scratch::new("mcp-session-retry");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client_with_session(
+        &dir,
+        &[
+            format!(r#"{{"initialize":[{{"wait_file":"old-init"}},{INIT_REPLY}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+        ],
+        Some(1000.0),
+        true,
+    );
+    assert!(
+        client
+            .start()
+            .await
+            .unwrap_err()
+            .message()
+            .contains("timed out")
+    );
+    wait_logged(&dir, 0, "spawn").await;
+    let old = logged_session_dir(&dir, 0);
+    client.start().await.unwrap();
+    let new = logged_session_dir(&dir, 1);
+    assert_ne!(old, new);
+    assert!(old.exists(), "late handshake still owns its directory");
+    assert!(new.exists());
+    open_gate(&dir, "old-init");
+    wait_logged(&dir, 0, "exit").await;
+    // The exit log precedes the close task's directory removal.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while old.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late close must remove the old directory");
+    assert!(
+        new.exists(),
+        "old cleanup must not remove the new directory"
+    );
+    client.close().await;
+    assert!(!new.exists());
+}
+
+#[tokio::test]
+async fn reconnect_removes_the_previous_per_session_directory() {
+    let scratch = Scratch::new("mcp-session-reconnect");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let expired = r#"{"send":{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"Session expired"}}}"#;
+    let reply = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"content":[]}}}"#;
+    let client = race_client_with_session(
+        &dir,
+        &[
+            format!(r#"{{"initialize":[{INIT_REPLY}],"tools/call:x":[{expired}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}],"tools/call:x":[{reply}]}}"#),
+        ],
+        None,
+        true,
+    );
+    client.start().await.unwrap();
+    let old = logged_session_dir(&dir, 0);
+    assert!(old.exists());
+    client
+        .call_tool(&"x".into(), &JsValue::Null, McpCallOptions::default())
+        .await
+        .unwrap();
+    let new = logged_session_dir(&dir, 1);
+    assert!(!old.exists(), "reconnect must not orphan the old directory");
+    assert!(new.exists());
+    client.close().await;
+    assert!(!new.exists());
+}
+
 /// Two real request timers on W1 expire on opposite sides of W2 publishing
 /// its handshake. Virtual time moves only at the explicit advance calls;
 /// file events establish that each process/request reached the right point.
@@ -904,6 +1020,7 @@ async fn double_timeout(after_ready: bool) {
                     &JsValue::Null,
                     McpCallOptions {
                         timeout_ms: Some(timeout_ms),
+                        ..McpCallOptions::default()
                     },
                 )
                 .await
