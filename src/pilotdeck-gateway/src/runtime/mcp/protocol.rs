@@ -1099,28 +1099,42 @@ pub(crate) enum Inbound {
 /// `deserializeMessage(line)`; `None` when `JSON.parse` or the schema throws
 /// (the transport reports it to `onerror` and drops the line).
 pub(crate) fn parse_inbound(line: &str) -> Option<Inbound> {
-    let raw = parse_json(line).ok()?;
-    let parsed = JSONRPC_MESSAGE.parse(&raw);
+    parse_inbound_value(&parse_json(line).ok()?).ok()
+}
+
+/// `JSONRPCMessageSchema.parse(value)`: the message or `ZodError.message`.
+pub(crate) fn parse_inbound_value(raw: &JsValue) -> Result<Inbound, String> {
+    let parsed = JSONRPC_MESSAGE.parse(raw);
     if !parsed.issues.is_empty() {
-        return None;
+        return Err(zod_message(&parsed.issues));
     }
     let message = parsed.value;
     let field = |name: &str| message.get(name).cloned();
+    let shape = || "validated JSON-RPC message lost a field".to_owned();
     if let Some(result) = field("result") {
-        return Some(Inbound::Result {
-            id: field("id")?,
+        return Ok(Inbound::Result {
+            id: field("id").ok_or_else(shape)?,
             result,
         });
     }
     if let Some(error) = field("error") {
-        return Some(Inbound::Error {
+        return Ok(Inbound::Error {
             id: field("id"),
-            code: error.get("code")?.as_number()?,
-            message: error.get("message")?.as_string()?.clone(),
+            code: error
+                .get("code")
+                .and_then(JsValue::as_number)
+                .ok_or_else(shape)?,
+            message: error
+                .get("message")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .ok_or_else(shape)?,
         });
     }
-    let method = field("method")?.as_string()?.clone();
-    Some(match field("id") {
+    let method = field("method")
+        .and_then(|method| method.as_string().cloned())
+        .ok_or_else(shape)?;
+    Ok(match field("id") {
         Some(id) => Inbound::Request { id, method },
         None => Inbound::Notification,
     })

@@ -25,8 +25,15 @@ LANG=en_US.UTF-8 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs"
 `MOCK_DIR/script.json` 对每个请求执行脚本步骤（`send` / `line` 原样行 / `sleep` /
 `exit`，无脚本即挂起），每个进程把 spawn 时的 argv、cwd、非默认继承环境变量，以及收到的
 每一帧原样字节写进 `log-<n>.jsonl`。macOS 自动注入的 `__CF_USER_TEXT_ENCODING` 不记。
+连续的输出步骤合成一次 write，所以「同一 stdout chunk 内多帧」可以稳定复现。
 
-## 语料：17 场景 / 77 步 + 7 组纯函数用例
+`--http` 模式：同一脚本起一个 127.0.0.1 明文 HTTP 服务（打印 `PORT <n>`），按
+`script.json.http` 对 POST（按 JSON-RPC method 取键）和 `GET <path>` 依次回 JSON / SSE /
+状态码，`channel` + `push` 用来在 legacy SSE 的 GET 流上回帖。每个请求的方法、路径、协议相关
+请求头和原样 body 记进 `http.jsonl`；不同连接上的到达顺序不确定，两侧都按文本排序后比较。
+端口在 oracle 里写成 `<host>`，拒绝连接的端口写成 `<refused>`。
+
+## 语料：26 场景 / 115 步 + 7 组纯函数用例
 
 | 场景 | 覆盖 |
 |---|---|
@@ -41,6 +48,12 @@ LANG=en_US.UTF-8 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs"
 | session-expired | 一次重连后重试成功；重连期间缓存失效；第二次过期错误原样抛出（McpError） |
 | spawn-options / storage-root | args/env/cwd 透传、默认环境白名单、perSession 的 `--user-data-dir` 与 close 删除、STORAGE_ROOT 跳过注入 |
 | close-pending | 在途请求遇 close → Connection closed |
+| same-chunk / same-chunk-failed-handshake | 同一 chunk 内 ping、未知请求与 initialize 结果：Method not found → initialized → ping 回复（JS 微任务深度 0/1/3）；握手失败时 stdin 先结束、ping 回复丢弃 |
+| http-json | streamable_http：JSON 响应、`mcp-session-id` 回传、`mcp-protocol-version`、自定义头、initialized 202 后的 GET（405） |
+| http-sse | POST 的 SSE 响应（注释、事件 id、retry、非 message 事件、坏 JSON、多行 data、CRLF）、SSE 内服务器 ping 的回帖、JSON 批量响应、GET 流挂起至 close |
+| http-errors | 500 握手失败后重试、意外 content-type、坏 JSON、坏 JSON-RPC、400、404「Session expired」触发一次重连 |
+| http-refused / sse-legacy-refused | 连接被拒（streamable：`fetch failed`；legacy：带 cause 的 SSE error） |
+| sse-legacy / sse-legacy-errors | legacy SSE：endpoint 事件、GET 流上的结果与 ping、POST 500；GET 500 / 跨源 endpoint / 错误 content-type / 204 |
 
 纯函数：`sanitizeUnicodeString` 6、`recursivelySanitizeUnicode` 4（含清洗后键冲突与整数键序）、
 `buildMcpToolWireName` 7、`parseMcpToolWireName` 7、`truncateMcpToolDescription` 5（含切开代理对）、

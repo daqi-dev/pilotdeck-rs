@@ -10,7 +10,8 @@
 //     src/pilotdeck-gateway/tests/fixtures/mcp-client/generate.mts \
 //     src/pilotdeck-gateway/tests/fixtures/mcp-client
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -84,6 +85,17 @@ const rpcError = (code: number, message: string, data?: unknown) => [{
   send: { jsonrpc: '2.0', id: '$id', error: data === undefined ? { code, message } : { code, message, data } },
 }];
 const text = (value: string) => ({ content: [{ type: 'text', text: value }] });
+/** JSON text for an SSE `data:` line; the mock substitutes `$ID`. */
+const sseJson = (value: unknown) => JSON.stringify(value).split('"$id"').join('$ID');
+const HTTP_INIT = {
+  jsonrpc: '2.0',
+  id: '$id',
+  result: {
+    protocolVersion: '2025-06-18',
+    capabilities: { tools: {} },
+    serverInfo: { name: 'mock-http', version: '1.0.0' },
+  },
+};
 
 type Op = Record<string, any> & { op: string };
 type Scenario = {
@@ -91,6 +103,8 @@ type Scenario = {
   spec?: Record<string, unknown>;
   options?: Record<string, unknown>;
   procs: Record<string, unknown>[];
+  /** HTTP mode: the mock serves this script over plain HTTP instead. */
+  http?: Record<string, unknown>;
   ops: Op[];
   /** A process the client never closes (TS handshake timeout leaves it to the 60s request timer). */
   orphan?: boolean;
@@ -354,11 +368,173 @@ const scenarios: Scenario[] = [
       { op: 'status' },
     ],
   },
+  // P1-2: one stdout write carries several frames; the replies follow the
+  // JS microtask depths (Method not found, then the settled request's
+  // continuation, then ping replies).
+  {
+    id: 'same-chunk',
+    procs: [{
+      initialize: [
+        { line: '{"jsonrpc":"2.0","id":"p1","method":"ping"}' },
+        { line: '{"jsonrpc":"2.0","id":"r1","method":"roots/list"}' },
+        ...INIT(),
+        { line: '{"jsonrpc":"2.0","id":"p2","method":"ping"}' },
+      ],
+      'tools/call:x': [
+        ...ok(text('same chunk')),
+        { line: '{"jsonrpc":"2.0","id":"p3","method":"ping"}' },
+        { line: '{"jsonrpc":"2.0","id":"r2","method":"sampling/createMessage"}' },
+      ],
+      'tools/call:y': ok(text('next')),
+    }],
+    ops: [
+      { op: 'start' },
+      { op: 'callTool', name: 'x', args: {} },
+      { op: 'callTool', name: 'y', args: {} },
+      { op: 'close' },
+    ],
+  },
+  {
+    id: 'same-chunk-failed-handshake',
+    procs: [
+      { initialize: [{ line: '{"jsonrpc":"2.0","id":"p1","method":"ping"}' }, ...INIT({ protocolVersion: '1999-01-01' })] },
+      { initialize: [...rpcError(-32603, 'nope'), { line: '{"jsonrpc":"2.0","id":"p2","method":"ping"}' }] },
+    ],
+    ops: [{ op: 'start' }, { op: 'start' }, { op: 'close' }],
+  },
+  // Plain HTTP transports (streamable_http and legacy sse) against the same
+  // mock in `--http` mode.
+  {
+    id: 'http-json',
+    spec: { transport: 'streamable_http', url: 'http://<host>/mcp', headers: { 'X-Api-Key': 'k' } },
+    procs: [],
+    http: {
+      initialize: [{ headers: { 'mcp-session-id': 'sess-1' }, json: HTTP_INIT }],
+      'tools/list': [{ json: { jsonrpc: '2.0', id: '$id', result: { tools: TOOLS.tools.slice(0, 2) } } }],
+      'tools/call:echo': [{ json: { jsonrpc: '2.0', id: '$id', result: text('over http') } }],
+    },
+    ops: [{ op: 'start' }, { op: 'listTools' }, { op: 'callTool', name: 'echo', args: { q: 1 } }, { op: 'close' }],
+  },
+  {
+    id: 'http-sse',
+    spec: { transport: 'streamable_http', url: 'http://<host>/mcp' },
+    procs: [],
+    http: {
+      initialize: [{ sse: [`id: e1\nevent: message\ndata: ${sseJson(HTTP_INIT)}\n\n`] }],
+      'GET /mcp': [{ sse: ['retry: 50\n\n'], hold: true }],
+      'tools/call:echo': [{
+        sse: [
+          ': comment\n\n',
+          'data: {"jsonrpc":"2.0","id":77,"method":"ping"}\n\n',
+          'data: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"x"}}\n\n',
+          'event: other\ndata: ignored\n\n',
+          'data: not json\n\n',
+          'data: {"jsonrpc":"2.0","id":$ID,\ndata: "result":{"content":[{"type":"text","text":"multi\\u200bline"}]}}\r\n\r\n',
+        ],
+      }],
+      'tools/call:batch': [{
+        json: [
+          { jsonrpc: '2.0', method: 'notifications/message', params: {} },
+          { jsonrpc: '2.0', id: '$id', result: text('batched') },
+        ],
+      }],
+    },
+    ops: [
+      { op: 'start' },
+      { op: 'callTool', name: 'echo', args: {} },
+      { op: 'callTool', name: 'batch', args: {} },
+      { op: 'close' },
+    ],
+  },
+  {
+    id: 'http-errors',
+    spec: { transport: 'streamable_http', url: 'http://<host>/mcp' },
+    options: { callTimeoutMs: 5000 },
+    procs: [],
+    http: {
+      initialize: [{ status: 500, text: 'boom' }, { json: HTTP_INIT }],
+      'tools/call:contentType': [{ headers: { 'content-type': 'text/plain' }, text: 'x' }],
+      'tools/call:badJson': [{ headers: { 'content-type': 'application/json' }, text: 'not json' }],
+      'tools/call:badMessage': [{ json: { jsonrpc: '1.0', id: '$id', result: {} } }],
+      'tools/call:rejected': [{ status: 400, text: 'bad request' }],
+      'tools/call:expired': [
+        { status: 404, text: 'Session expired' },
+        { json: { jsonrpc: '2.0', id: '$id', result: text('after reconnect') } },
+      ],
+    },
+    ops: [
+      { op: 'start' },
+      { op: 'start' },
+      { op: 'callTool', name: 'contentType', args: {} },
+      { op: 'callTool', name: 'badJson', args: {} },
+      { op: 'callTool', name: 'badMessage', args: {} },
+      { op: 'callTool', name: 'rejected', args: {} },
+      { op: 'callTool', name: 'expired', args: {} },
+      { op: 'close' },
+    ],
+  },
+  {
+    id: 'http-refused',
+    spec: { transport: 'streamable_http', url: 'http://<refused>/mcp' },
+    procs: [],
+    http: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
+    id: 'sse-legacy',
+    spec: { transport: 'sse', url: 'http://<host>/sse', headers: { 'x-api-key': 'k' } },
+    procs: [],
+    http: {
+      'GET /sse': [{ sse: [': hello\n\n', 'event: endpoint\ndata: /messages?session=abc\n\n'], channel: true }],
+      initialize: [{ status: 202, push: [`data: ${sseJson(HTTP_INIT)}\n\n`] }],
+      'tools/list': [{ status: 202, push: ['event: message\ndata: {"jsonrpc":"2.0","id":$ID,"result":{"tools":[]}}\n\n'] }],
+      'tools/call:echo': [{
+        status: 202,
+        push: [
+          'data: {"jsonrpc":"2.0","id":5,"method":"ping"}\n\n',
+          'data: {"jsonrpc":"2.0","id":$ID,"result":{"content":[{"type":"text","text":"legacy"}]}}\n\n',
+        ],
+      }],
+      'tools/call:rejected': [{ status: 500, text: 'nope' }],
+    },
+    ops: [
+      { op: 'start' },
+      { op: 'listTools' },
+      { op: 'callTool', name: 'echo', args: {} },
+      { op: 'callTool', name: 'rejected', args: {} },
+      { op: 'close' },
+    ],
+  },
+  {
+    id: 'sse-legacy-errors',
+    spec: { transport: 'sse', url: 'http://<host>/sse' },
+    procs: [],
+    http: {
+      'GET /sse': [
+        { status: 500 },
+        { sse: ['event: endpoint\ndata: http://other.example/x\n\n'], hold: true },
+        { headers: { 'content-type': 'text/plain' }, text: 'x' },
+        { status: 204 },
+      ],
+    },
+    ops: [{ op: 'start' }, { op: 'start' }, { op: 'start' }, { op: 'start' }, { op: 'close' }],
+  },
+  {
+    id: 'sse-legacy-refused',
+    spec: { transport: 'sse', url: 'http://<refused>/sse' },
+    procs: [],
+    http: {},
+    ops: [{ op: 'start' }, { op: 'close' }],
+  },
 ];
 
+/** Placeholders for the per-run HTTP endpoints, as `[text, placeholder]`. */
+let hosts: [string, string][] = [];
 function scrub(value: any, dir: string): any {
   if (typeof value === 'string') {
-    return value.split(dir).join('<dir>').replace(/(pilotdeck-mcp-[^/]*-)[A-Za-z0-9]{6}/g, '$1XXXXXX');
+    let out = value.split(dir).join('<dir>');
+    for (const [host, placeholder] of hosts) out = out.split(host).join(placeholder);
+    return out.replace(/(pilotdeck-mcp-[^/]*-)[A-Za-z0-9]{6}/g, '$1XXXXXX');
   }
   if (Array.isArray(value)) return value.map((item) => scrub(item, dir));
   if (value && typeof value === 'object') {
@@ -370,7 +546,11 @@ function scrub(value: any, dir: string): any {
 }
 
 function fill(value: any, dir: string): any {
-  if (typeof value === 'string') return value.split('<dir>').join(dir).split('<mock>').join(MOCK);
+  if (typeof value === 'string') {
+    let out = value.split('<dir>').join(dir).split('<mock>').join(MOCK);
+    for (const [host, placeholder] of hosts) out = out.split(placeholder).join(host);
+    return out;
+  }
   if (Array.isArray(value)) return value.map((item) => fill(item, dir));
   if (value && typeof value === 'object') {
     const out: Record<string, any> = {};
@@ -443,35 +623,86 @@ async function settle(dir: string, orphan: boolean) {
   throw new Error(`mock processes did not settle in ${dir}`);
 }
 
+/** A port nothing listens on: bind, read, close. */
+async function refusedPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const port = (server.address() as { port: number }).port;
+  await new Promise((done) => server.close(done));
+  return port;
+}
+
+/** Starts the mock in `--http` mode and resolves its port. */
+async function startHttpMock(dir: string) {
+  const child = spawn('node', [MOCK, '--http'], {
+    env: { ...process.env, MOCK_DIR: dir },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  const port = await new Promise<number>((done, fail) => {
+    let out = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      const match = /^PORT (\d+)\n/.exec(out);
+      if (match) done(Number(match[1]));
+    });
+    child.on('exit', () => fail(new Error('HTTP mock exited before listening')));
+  });
+  return { port, stop: () => new Promise((done) => { child.on('exit', done); child.stdin.end(); }) };
+}
+
+function readHttpLog(dir: string) {
+  const file = join(dir, 'http.jsonl');
+  if (!existsSync(file)) return [];
+  // Requests on separate connections may arrive in any order; the replay
+  // compares the sorted multiset (ids and bodies keep each one distinct).
+  return readFileSync(file, 'utf8').split('\n').filter(Boolean)
+    .map((line) => JSON.stringify(scrub(JSON.parse(line), dir))).sort().map((line) => JSON.parse(line));
+}
+
 const recorded: any[] = [];
 for (const scenario of scenarios) {
   const dir = join(runRoot, scenario.id);
   mkdirSync(join(dir, 'work'), { recursive: true });
-  writeFileSync(join(dir, 'script.json'), JSON.stringify({ procs: scenario.procs }));
-  const spec = {
-    id: 'mock',
-    transport: 'stdio',
-    command: 'node',
-    args: ['<mock>'],
-    env: { MOCK_DIR: '<dir>' },
-    ...scenario.spec,
-  };
+  writeFileSync(join(dir, 'script.json'), JSON.stringify({ procs: scenario.procs, http: scenario.http }));
+  const mock = scenario.http ? await startHttpMock(dir) : undefined;
+  hosts = mock ? [[`127.0.0.1:${mock.port}`, '<host>'], [`127.0.0.1:${await refusedPort()}`, '<refused>']] : [];
+  const spec = scenario.http
+    ? { id: 'mock', ...scenario.spec }
+    : {
+      id: 'mock',
+      transport: 'stdio',
+      command: 'node',
+      args: ['<mock>'],
+      env: { MOCK_DIR: '<dir>' },
+      ...scenario.spec,
+    };
   const client = new McpClient(fill(spec, dir), scenario.options ?? {});
   const steps: any[] = [];
   for (const op of scenario.ops) {
     steps.push({ step: op, ...(await runOp(client, op, dir)), status: client.getStatus() });
   }
-  await settle(dir, !!scenario.orphan);
+  let httpLog: any[] | undefined;
+  if (mock) {
+    // Let detached posts (ping replies, cancellations) land.
+    await sleep(300);
+    httpLog = readHttpLog(dir);
+    await mock.stop();
+  } else {
+    await settle(dir, !!scenario.orphan);
+  }
   recorded.push({
     id: scenario.id,
     spec,
     options: scenario.options ?? {},
-    script: { procs: scenario.procs },
+    script: { procs: scenario.procs, ...(scenario.http ? { http: scenario.http } : {}) },
     orphan: !!scenario.orphan,
     steps: scrub(steps, dir),
     processes: readLogs(dir),
+    ...(httpLog ? { http: httpLog } : {}),
   });
 }
+hosts = [];
 
 // Pure helpers. Strings that JSON cannot carry exactly are avoided: every case
 // round-trips through JSON.stringify unchanged.
@@ -575,8 +806,17 @@ assert.equal(scenario('session-expired').steps[3].error.name, 'McpError');
 assert.equal(scenario('spawn-enoent').steps[0].error.message, 'MCP handshake failed: spawn /nonexistent/pdrs-mcp-mock ENOENT');
 assert.equal(scenario('handshake-timeout').processes.length, 1);
 // Exact corpus size: a zero-scenario or truncated oracle must never pass.
-assert.equal(recorded.length, 17);
-assert.equal(stepCount, 77);
+// P1-2: in one stdout chunk, Method not found < initialized < ping replies.
+const sameChunk = scenario('same-chunk').processes[0].map((entry: any) => entry.line).filter(Boolean);
+assert.deepEqual(sameChunk.slice(1, 5).map((line: string) => JSON.parse(line).id ?? JSON.parse(line).method),
+  ['r1', 'notifications/initialized', 'p1', 'p2']);
+assert.equal(scenario('same-chunk-failed-handshake').processes[0].length, 4);
+assert.equal(scenario('http-json').http.length, 5);
+assert.equal(scenario('http-errors').steps[6].ok.content[0].text, 'after reconnect');
+assert.equal(scenario('sse-legacy-refused').steps[0].error.message,
+  'MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED <refused>');
+assert.equal(recorded.length, 26);
+assert.equal(stepCount, 115);
 assert.deepEqual(
   [sanitize, recursive, wire, parse, truncate, expand, config].map((cases) => cases.length),
   [6, 4, 7, 7, 5, 11, 7],
