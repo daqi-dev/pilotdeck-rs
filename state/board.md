@@ -1,14 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 12:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.7-pr4 | impl | ready | #351：Grok P1×2 已修（0edc1eb）；gate6 撞车 P1「不跟随重定向」由 Claude 子代理修（抽 count_http 重定向为共享函数）；合并前须清 #312 #289 #277（前置于本单）
+updated: 2026-10-20 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.7-pr4 | review | ready | #351：重定向 P1 已修（d682012）、前置 #312 #289 #277 已清（ac7cbfe）；gate7 + 第二家评审 Grok（排在代码分析 bot 上）；GLM 初审 0/0 已有
 - A6.5-pr6 | impl | ready | rewind_files 修复轮 1（DeepSeek）：Grok P1 EISDIR + 清 #348；闸门与 Claude 0/0
 - A6.5-pr7 | impl | ready | bash 修复轮 1（Claude）：闸门 P1 NUL panic + DeepSeek P1 darwin-only 夹具
 - A6.5-pr10a | impl | ready | MCP 客户端修复轮 1（Claude）：补明文 HTTP 传输 + 帧回复顺序 P1；闸门 0/0
 - A6.4-pr5 | impl | ready | 修复轮 1（Claude）：闸门 P1×3（SSE 无上限、错误体无超时、count 未接 TLS）+ jsonrepair 自写移植（决策卡待复核）
 - A6.4-pr6 | impl | ready | openai provider（wt-p2-sweep-4，DeepSeek，叠在 claude/a64-pr5 上）
-- p2-sweep-7 | impl | ready | 15 张过期 P2-跟进清账（wt-a6-recorder，DeepSeek）
+- p2-sweep-7 | review | ready | 15 张清账已交付（已修 8 / 修 6 / 改挂 #265），已推送 deepseek/p2-sweep-7；闸门 + Claude/Grok 评审
 - A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry + http/sse 传输；接 pr10a
 - A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7
 - A6.4-pr7 | impl | ready | openai-responses；接 A6.4-pr5 合入后放出（pr8~pr9、A6.5-pr9、A6.6-pr8 同理）
@@ -20,6 +20,18 @@ updated: 2026-10-20 12:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
+
+> ## 2026-10-20 12:40 · /loop 两小时交接（自 10:40 起）
+> **合并**：#353 A6.5-pr5（09:41，上一会话）、#355 / #356（board、TLS 人批 A、GLM 并发记忆）、#357 排队中。
+> **人定（本会话用户本人）**：TLS 依赖选 A（rustls + hyper-rustls）；GLM 并发 8~12 → 两闸门并行（`_tmp/20261018-a6-split/gate-pool.sh`）。**AI 代批待复核**：jsonrepair 自写移植、hooks 消费型回溯不设预算（decisions-20261020.md）。
+> **在途（持有人：协调者本会话；状态看 READY）**：
+> - wt-a65-pr2 #351：gate7 闸门池中；第二家评审 Grok 排队（等 sweep 评审完成）。作者谱系 = DeepSeek + Claude，**不能派 DeepSeek / Claude 评审**；GLM 已 0/0。
+> - wt-a63-pr1 A6.5-pr6：DeepSeek 修复轮 1（`_tmp/20261020-a65-pr6/fix1.status` 写 exit= 即结束）。
+> - wt-a66-pr3 A6.5-pr7、wt-a6-x0 A6.5-pr10a、wt-a64-pr11 A6.4-pr5：Claude 子代理修复轮 1，修完本地 commit 未推送。
+> - wt-p2-sweep-4 A6.4-pr6：DeepSeek 实现（叠在 claude/a64-pr5 上，pr5 合入后 rebase）。
+> - wt-a6-recorder p2-sweep-7：闸门 + Claude/Grok 评审。
+> **教训**：派评审前先核作者谱系——本轮一度把 #351 第二家评审派给 DeepSeek（原作者）和 codex（额度至 10-25），发现后撤回。「Grok Bot」会话要把代码打包到它自己的机器上分析，Mac 上还会弹确认框，评审只用已验证的「代码分析」bot。
+> **资源**：worktree 11/12；磁盘清了 6 个空闲 worktree 的 incremental，约 20 GiB（清前 92.1 GiB），cargo 槽 ≤4。**下一步**：各修复轮回来 → 推送 → 闸门 + 两家非作者评审 → 入队；A6.4-pr5 合入后放出 pr7~pr9。
 
 > ## 2026-10-20 · 11:50：/loop 第六轮，三单交付、#351 两轮修复、P2 过期清账
 > **交付**：A6.5-pr6（DeepSeek）、A6.5-pr7、A6.5-pr10a（Claude 子代理）已推送，进闸门与两家非作者评审。**GLM 并发人定 8~12**：闸门改 `gate-pool.sh` 两槽并行（memory 已更新，#355 合入）。
