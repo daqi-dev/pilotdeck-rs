@@ -14,9 +14,10 @@
 //!   the parent's session.
 //! - Node's stdio pipes are UNIX socket pairs; these are `pipe(2)` FIFOs.
 //! - The baseline's SIGKILL follow-up fires 3 s after termination even when the
-//!   result has already settled. A future cannot outlive its result without a
-//!   detached task, so a terminated run that settles before 3 s SIGKILLs the
-//!   group at settle time instead (the leader is still unreaped then).
+//!   result has already settled. That one bounded timer is the only work that
+//!   outlives a run: it holds the unreaped leader and the group guard, fires on
+//!   the baseline's schedule, then reaps. Without WNOWAIT the group is killed
+//!   at settle time instead.
 use super::super::{join, os_path};
 use crate::runtime::tools::{ToolError, ToolFuture, ToolRunContext};
 use pilotdeck_protocol::JsString;
@@ -315,10 +316,11 @@ fn inspect_string(value: &str) -> String {
         out.push(quote);
         out
     }
-    // `value.length > kMinLineWidth (16) && value.length > breakLength (128) -
-    // indentation (0) - 4`; the second bound implies the first.
+    // `value.length > kMinLineWidth (16) && value.length > breakLength (80) -
+    // indentation (0) - 4`; the second bound implies the first. The 128-unit
+    // cut below is the error message's own truncation.
     let length = value.encode_utf16().count();
-    let inspected = if length > 128 - 4 {
+    let inspected = if length > 80 - 4 {
         value
             .split_inclusive('\n')
             .map(escape)
@@ -377,11 +379,12 @@ impl Drop for GroupGuard {
     }
 }
 
-/// Resolves once the leader has exited, without reaping it.
-async fn leader_exited(group: Option<rustix::process::Pid>) {
-    let Some(group) = group else {
-        return;
-    };
+/// Resolves once the leader has exited, without reaping it. `Some(code)` is
+/// the leader's status as `child.on("close")` reports it (`None` when it was
+/// killed by a signal); the outer `None` means the status is not observable
+/// without reaping (no WNOWAIT, or the child is no longer waitable).
+async fn leader_exited(group: Option<rustix::process::Pid>) -> Option<Option<i32>> {
+    let group = group?;
     #[cfg(not(any(
         target_os = "cygwin",
         target_os = "horizon",
@@ -397,9 +400,9 @@ async fn leader_exited(group: Option<rustix::process::Pid>) {
         ) {
             Ok(None) => tokio::time::sleep(Duration::from_millis(5)).await,
             Err(rustix::io::Errno::INTR) => continue,
-            // Exited, or the child is no longer waitable: the final `wait`
-            // reports the real status either way.
-            _ => return,
+            Ok(Some(status)) => return Some(status.exit_status()),
+            // No longer waitable: the final `wait` reports the real status.
+            Err(_) => return None,
         }
     }
     #[cfg(any(
@@ -411,7 +414,14 @@ async fn leader_exited(group: Option<rustix::process::Pid>) {
     ))]
     {
         let _ = group;
+        None
     }
+}
+
+/// `try { options.onStdout(text) } catch {}`: a panicking progress callback
+/// never crashes the runner.
+pub(crate) fn fire_and_forget(callback: &OutputCallback, text: &str) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(text)));
 }
 
 const KILL_AFTER: Duration = Duration::from_millis(3_000);
@@ -451,6 +461,23 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
             "The argument 'args[{index}]' must be a string without null bytes. Received {}",
             inspect_string(&args[index])
         )));
+    }
+    // Node's `normalizeSpawnArguments` order: args, then cwd, then each env
+    // entry (key before value, `Object.keys` order). Without these checks
+    // `std::process::Command` fails the spawn with its own InvalidInput error.
+    if options.cwd.units().contains(&0) {
+        return Err(ToolError::failed(format!(
+            "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {}",
+            inspect_string(&String::from_utf16_lossy(options.cwd.units()))
+        )));
+    }
+    for (key, value) in options.env.iter().flatten() {
+        if let Some(bad) = [key, value].into_iter().find(|text| text.contains('\0')) {
+            return Err(ToolError::failed(format!(
+                "The property 'options.env['{key}']' must be a string without null bytes. Received {}",
+                inspect_string(bad)
+            )));
+        }
     }
 
     let mut process = Command::new(&shell.shell);
@@ -516,10 +543,10 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
     let mut err_buffer = vec![0u8; 64 * 1024];
     let mut timed_out = false;
     let mut timeout_armed = true;
-    let mut terminated = false;
     let mut kill_at: Option<tokio::time::Instant> = None;
     let mut force_at: Option<tokio::time::Instant> = None;
     let mut exited = false;
+    let mut leader_status: Option<Option<i32>> = None;
 
     let terminate = |guard: &GroupGuard,
                      kill_at: &mut Option<tokio::time::Instant>,
@@ -539,7 +566,7 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
                         let text = out_decoder.decode(&out_buffer[..length]);
                         out_text.push_str(&text);
                         if let Some(callback) = &options.on_stdout {
-                            callback(&text);
+                            fire_and_forget(callback, &text);
                         }
                     }
                     _ => stdout = None,
@@ -551,22 +578,23 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
                         let text = err_decoder.decode(&err_buffer[..length]);
                         err_text.push_str(&text);
                         if let Some(callback) = &options.on_stderr {
-                            callback(&text);
+                            fire_and_forget(callback, &text);
                         }
                     }
                     _ => stderr = None,
                 }
             }
-            _ = leader_exited(group), if streams_closed && !exited => exited = true,
+            status = leader_exited(group), if streams_closed && !exited => {
+                exited = true;
+                leader_status = status;
+            }
             _ = sleep_until(timeout_at), if timeout_armed => {
                 timeout_armed = false;
                 timed_out = true;
-                terminated = true;
                 terminate(&guard, &mut kill_at, &mut force_at);
             }
             _ = async { options.signal.as_ref().unwrap().wait().await }, if abort_armed => {
                 abort_armed = false;
-                terminated = true;
                 terminate(&guard, &mut kill_at, &mut force_at);
             }
             _ = sleep_until(kill_at.unwrap_or(timeout_at)), if kill_at.is_some() => {
@@ -594,13 +622,33 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
 
     out_text.push_str(&out_decoder.flush());
     err_text.push_str(&err_decoder.flush());
-    if terminated {
-        // Stands in for the baseline's pending 3 s SIGKILL (see module docs).
-        guard.signal(rustix::process::Signal::KILL);
-    }
-    let status = child.wait().await;
-    guard.disarm();
-    let exit_code = status.ok().and_then(|status| status.code());
+    let exit_code = match (kill_at, leader_status) {
+        // The baseline's 3 s SIGKILL is still pending after a terminated run
+        // settled: it fires on schedule for group members that ignored TERM
+        // without holding the pipes. The leader stays unreaped (a zombie)
+        // until then, so the group ID cannot be reused. The timer owns only
+        // the zombie and the guard; if the runtime drops it, the guard kills
+        // the group at once.
+        (Some(deadline), Some(code)) => {
+            tokio::spawn(async move {
+                sleep_until(deadline).await;
+                guard.signal(rustix::process::Signal::KILL);
+                guard.disarm();
+                let _ = child.wait().await;
+            });
+            code
+        }
+        (pending, _) => {
+            if pending.is_some() {
+                // Status unobservable without reaping: kill now instead of
+                // signalling a group ID that may be reused after the wait.
+                guard.signal(rustix::process::Signal::KILL);
+            }
+            let status = child.wait().await;
+            guard.disarm();
+            status.ok().and_then(|status| status.code())
+        }
+    };
     Ok(CommandResult {
         exit_code,
         stdout: out_text,
@@ -644,6 +692,28 @@ mod tests {
         );
         let long = format!("{}\0", "x".repeat(200));
         assert_eq!(inspect_string(&long), format!("'{}...", "x".repeat(127)));
+        // `probes/nul3.out` is raw `util.inspect`; the error message then
+        // cuts it at 128 UTF-16 units. The line split starts above 76 units.
+        let cut = |inspected: String| {
+            let units: Vec<u16> = inspected.encode_utf16().collect();
+            if units.len() > 128 {
+                format!("{}...", String::from_utf16_lossy(&units[..128]))
+            } else {
+                inspected
+            }
+        };
+        let near = |n: usize| format!("{}\ny\0", "x".repeat(n - 3));
+        assert_eq!(
+            inspect_string(&near(76)),
+            format!("'{}\\ny\\x00'", "x".repeat(73))
+        );
+        for n in [77, 124, 125] {
+            assert_eq!(
+                inspect_string(&near(n)),
+                cut(format!("'{}\\n' +\n  'y\\x00'", "x".repeat(n - 3))),
+                "{n}"
+            );
+        }
         let split = format!("line1\n{}\0\nz", "y".repeat(150));
         assert_eq!(
             inspect_string(&split),

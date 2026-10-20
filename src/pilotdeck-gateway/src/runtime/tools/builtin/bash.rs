@@ -365,13 +365,22 @@ fn spawn_env(context: &ToolRunContext) -> Result<Option<Vec<(String, String)>>, 
         return Ok(None);
     };
     let mut pairs = Vec::new();
-    for (key, value) in env.entries() {
+    // `Object.keys` order (array indices first), which is also the order in
+    // which Node reports the first entry holding a NUL byte.
+    for (key, value) in env.own_entries() {
         if value.is_undefined() {
             continue;
         }
-        let value = js_value::display(value)
+        let mut text = js_value::display(value)
             .map_err(|_| ToolError::failed(js_value::StackOverflow::MESSAGE))?;
-        pairs.push((String::from_utf16_lossy(key.units()), value));
+        // Node only NUL-checks string values; any other value is `${value}`d
+        // and the C string ends at its first NUL (probes/nul4.out).
+        if !matches!(value, JsValue::String(_))
+            && let Some(end) = text.find('\0')
+        {
+            text.truncate(end);
+        }
+        pairs.push((String::from_utf16_lossy(key.units()), text));
     }
     Ok(Some(pairs))
 }
@@ -380,6 +389,10 @@ fn progress_callback(context: &ToolRunContext, stream: &'static str) -> Option<O
     let sink = context.host.progress.clone()?;
     let context = context.clone();
     Some(Arc::new(move |chunk: &str| {
+        // `try { progress(...) } catch {}`: a failing sink never crashes the tool.
+        let sink = |event: JsObject| {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(event)));
+        };
         let length = chunk.encode_utf16().count();
         // `(context.now?.() ?? new Date()).toISOString()`; a throwing clock is
         // swallowed like every other progress failure.

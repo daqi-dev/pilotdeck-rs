@@ -60,6 +60,21 @@ pub fn register_write_tools(registry: &ToolRegistry) -> Result<Vec<ToolRegistrat
         .collect()
 }
 
+/// A6.5-pr7 shell family (`bash`). Kept apart from the file families so the
+/// wiring PR decides where shell tools join the session catalog.
+#[cfg(unix)]
+pub fn shell_tools() -> Vec<Arc<dyn ExecutableTool>> {
+    vec![Arc::new(bash::BashTool::new())]
+}
+
+#[cfg(unix)]
+pub fn register_shell_tools(registry: &ToolRegistry) -> Result<Vec<ToolRegistration>, HostError> {
+    shell_tools()
+        .into_iter()
+        .map(|tool| registry.register(tool))
+        .collect()
+}
+
 pub(super) fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
     let mut result = JsObject::new();
     for (key, value) in entries {

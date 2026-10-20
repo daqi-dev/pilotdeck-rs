@@ -167,7 +167,8 @@ export const cases = {
       run('both-streams', 'echo out; echo err 1>&2'),
       run('empty', 'true'),
       run('nonzero', 'echo out; echo err 1>&2; exit 3'),
-      run('not-found', 'nosuchcmd_pdrs_bash'),
+      // bash 3.2 (macOS) prints `/bin/bash: x: command not found`; bash 5 adds `line 1:`.
+      run('not-found', 'nosuchcmd_pdrs_bash', { darwinOnly: 'bash 3.2 diagnostic text' }),
       run('signal-exit', 'kill -9 $$'),
       run('term-exit', 'kill -TERM $$'),
       run('utf8-decode', "printf '\\357\\273\\277BOM \\377\\376 \\344\\270\\255\\346'"),
@@ -196,7 +197,21 @@ export const cases = {
       run('shell-empty-path-var', 'echo $0', { env: { ...env, PILOTDECK_SHELL_PATH: '' } }),
       run('stdin-closed', 'cat; echo done'),
       run('nul-command', 'echo a\u0000b'),
-      run('cancel-escaped', "set -m\nsh -c 'echo $$ > escaped.pid; exec sleep 30' &\nwait", { timeout: 60000, abortAfterMs: 300, minWallMs: 15000, maxWallMs: 25000 }),
+      run('cancel-escaped', "set -m\nsh -c 'echo $$ > escaped.pid; exec sleep 30' &\nwait", { timeout: 60000, abortAfterMs: 300, minWallMs: 15000, maxWallMs: 25000, darwinOnly: 'job control without a tty differs across bash versions' }),
+      // NUL bytes at every spawn entry point (Node validates args, cwd, then env).
+      // Fixed cwd text: util.inspect output must not depend on the temp dir length.
+      run('nul-command-split', `echo ${'x'.repeat(70)}\ny\u0000`),
+      run('nul-env-value', 'echo x', { env: { ...env, A: 'a\u0000b' } }),
+      run('nul-env-key', 'echo x', { env: { ...env, ['K\u0000Y']: 'v' } }),
+      run('nul-env-index-order', 'echo x', { env: { ...env, B: 'x\u0000', 7: 'y\u0000' } }),
+      run('nul-cwd', 'echo x', { cwd: '/nonexistent/a\u0000b' }),
+      run('nul-cwd-and-env', 'echo x', { cwd: '/nonexistent/a\u0000b', env: { ...env, A: '\u0000' } }),
+      run('nul-shell-path', 'echo x', { env: { ...env, PILOTDECK_SHELL_PATH: '/bin/sh\u0000x' } }),
+      run('env-non-string', 'echo "$N|$T|$Z|${U-unset}|$A"', { env: { ...env, N: 5, T: true, Z: null, A: ['a\u0000b'] } }),
+      // The baseline's 3 s SIGKILL fires after the result for a member that
+      // ignored TERM and does not hold the pipes: early.txt (1.5 s) is written,
+      // late.txt (4.5 s) is not.
+      run('deferred-kill', "(trap '' TERM; sleep 1.5; echo early > early.txt; sleep 3; echo late > late.txt) >/dev/null 2>&1 </dev/null & sleep 10", { timeout: 300, minWallMs: 300, maxWallMs: 1500, postCheckAtMs: 6500, postFiles: ['early.txt', 'late.txt'] }),
     ];
   })(),
 };

@@ -155,6 +155,7 @@ const placeholders = (root: string) => (value: any): any => {
 };
 const substitute = (root: string) => (value: any): any => {
   if (typeof value === 'string') return value.split('<root>').join(root);
+  if (Array.isArray(value)) return value.map(substitute(root));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, substitute(root)(item)]));
   return value;
 };
@@ -218,6 +219,13 @@ for (const scenario of cases.real) {
     entry.expected = result;
   }
   if (scenario.progress) entry.progressStreams = streams, assert.ok(progressEvents > 0);
+  if (scenario.postCheckAtMs !== undefined) {
+    const wait = started + scenario.postCheckAtMs - Date.now();
+    assert.ok(wait > 0, `${scenario.name}: post check already late`);
+    await new Promise((done) => setTimeout(done, wait));
+    entry.postFilesExist = await Promise.all(scenario.postFiles.map((name: string) =>
+      readFile(join(root, name)).then(() => true, () => false)));
+  }
   real.push(entry);
 }
 await removeScratch();
