@@ -150,7 +150,9 @@ fn format_offset(seconds: i32) -> String {
     format!("{sign}{:02}:{:02}", seconds / 3_600, seconds % 3_600 / 60)
 }
 
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+/// Days since 1970-01-01 (Howard Hinnant), proleptic Gregorian;
+/// **1-based** month. Shared with the Retry-After date parser.
+pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let year = year - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let y = year - era * 400;
