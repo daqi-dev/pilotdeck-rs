@@ -9,5 +9,5 @@ const ORACLE: &str = include_str!("fixtures/model-stream-google/oracle.json");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_ts_google_stream_model_over_loopback_http() {
-    model_mock::replay(&baseline::oracle(ORACLE), 26, 26).await;
+    model_mock::replay(&baseline::oracle(ORACLE), 28, 28).await;
 }

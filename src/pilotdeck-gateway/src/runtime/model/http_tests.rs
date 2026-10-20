@@ -174,7 +174,7 @@ fn google_protocol_dispatch_matches_the_recorded_sdk_request() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 26);
+    assert_eq!(checked, 28);
     assert_eq!(
         no_request,
         [
@@ -407,7 +407,7 @@ fn run_with_limit(
         .enable_all()
         .build()
         .unwrap();
-    STRING_LIMIT.with(|cell| cell.set(limit));
+    let _limit = LimitGuard::set(limit);
     let (request, config) = stream_config();
     let transport = Scripted(std::sync::Mutex::new(vec![(200, frames)]));
     let mut events = Vec::new();
@@ -425,7 +425,6 @@ fn run_with_limit(
             &mut sink,
         ))
         .unwrap_err();
-    STRING_LIMIT.with(|cell| cell.set(super::super::count_http::MAX_STRING_LENGTH));
     (error, events)
 }
 fn tags(events: &[JsValue]) -> Vec<String> {
@@ -495,12 +494,11 @@ fn partial_text_accumulator_over_the_v8_limit_throws_range_error() {
 
 #[test]
 fn append_js_string_allows_exactly_the_limit() {
-    STRING_LIMIT.with(|cell| cell.set(3));
+    let _limit = LimitGuard::set(3);
     let mut buffer = vec![1, 2];
     assert!(append_js_string(&mut buffer, &[3]).is_ok());
     assert!(append_js_string(&mut buffer, &[4]).is_err());
     assert_eq!(buffer, [1, 2, 3], "unchanged after the throw");
-    STRING_LIMIT.with(|cell| cell.set(super::super::count_http::MAX_STRING_LENGTH));
 }
 
 /// node probe r2 (`r2/probe-r2.out.txt`): years beyond V8's range are NaN
@@ -537,8 +535,7 @@ fn imf_fixdate_year_edges_follow_date_parse() {
 #[test]
 fn text_deltas_accumulate_under_the_v8_string_limit() {
     use pilotdeck_protocol::parse_json;
-    let previous = STRING_LIMIT.with(std::cell::Cell::get);
-    STRING_LIMIT.with(|limit| limit.set(4));
+    let _limit = LimitGuard::set(4);
     let mut checkpoint = Checkpoint::default();
     let mut deltas = 0;
     for text in ["ab", "cd"] {
@@ -554,5 +551,4 @@ fn text_deltas_accumulate_under_the_v8_string_limit() {
             if name.equals_str("RangeError") && message.equals_str("Invalid string length")
     ));
     assert_eq!(deltas, 2);
-    STRING_LIMIT.with(|limit| limit.set(previous));
 }

@@ -65,9 +65,7 @@ fn message_content(message: &JsValue) -> &[JsValue] {
     array(field(message, "content"))
 }
 
-/// `isGoogleOpenAICompatibleProvider(provider)`; the Google schema cleaner
-/// itself arrives with A6.4-pr8, so schema normalization falls back to the
-/// OpenAI projection until then (only reachable for Google-compatible hosts).
+/// `isGoogleOpenAICompatibleProvider(provider)` gates the shared Google cleaner.
 fn google_openai_compatible(provider: &JsValue) -> bool {
     if !is(field(provider, "protocol"), "openai") {
         return false;
@@ -100,8 +98,12 @@ fn is_record(value: &JsValue) -> bool {
 }
 
 /// `toOpenAITool(tool, googleOpenAICompatible)`.
-fn to_openai_tool(tool: &JsValue, _google: bool) -> Result<JsValue, ModelStreamError> {
-    let schema = normalize_tool_schema(field(tool, "inputSchema"))?;
+fn to_openai_tool(tool: &JsValue, google: bool) -> Result<JsValue, ModelStreamError> {
+    let schema = if google {
+        super::google::normalize_google_tool_schema(field(tool, "inputSchema"))
+    } else {
+        normalize_tool_schema(field(tool, "inputSchema"))?
+    };
     Ok(object([
         ("type", "function".into()),
         (
@@ -745,7 +747,20 @@ pub(crate) fn build_request(
                     object([
                         ("name", field(schema, "name").clone()),
                         ("description", field(schema, "description").clone()),
-                        ("schema", normalize_tool_schema(field(schema, "schema"))?),
+                        (
+                            "schema",
+                            if google {
+                                let cleaned =
+                                    super::google::clean_schema_for_google(field(schema, "schema"));
+                                if is_record(&cleaned) {
+                                    cleaned
+                                } else {
+                                    JsValue::Object(JsObject::new())
+                                }
+                            } else {
+                                normalize_tool_schema(field(schema, "schema"))?
+                            },
+                        ),
                         (
                             "strict",
                             match field(schema, "strict") {
@@ -1327,21 +1342,37 @@ mod tests {
     fn chunk(value: &str) -> JsValue {
         parse_json(value).unwrap()
     }
-    /// Restores the previous `STRING_LIMIT` on drop, including on panic: a
-    /// leaked tiny limit would make later tests in this thread fail spuriously.
-    struct LimitGuard(usize);
-    impl LimitGuard {
-        fn set(limit: usize) -> Self {
-            let previous = crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.get());
-            crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.set(limit));
-            Self(previous)
-        }
+    use crate::runtime::model::http::LimitGuard;
+    /// Both Google-compatible call sites are checked against TS wire bytes.
+    #[test]
+    fn google_compatible_schema_matches_real_ts_request() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../../tests/fixtures/model-stream-openai/oracle.json"
+        ));
+        let cases: Vec<_> = array(field(&oracle, "cases"))
+            .iter()
+            .filter(|case| is(field(case, "name"), "google-compatible-schema"))
+            .collect();
+        assert_eq!(cases.len(), 1);
+        let case = cases[0];
+        let merge = |base: &JsValue, overrides: &JsValue| {
+            let mut result = base.as_object().unwrap().clone();
+            for (key, value) in overrides.as_object().unwrap().entries() {
+                result.insert(key.clone(), value.clone());
+            }
+            JsValue::Object(result)
+        };
+        let mut request = merge(field(&oracle, "request"), field(case, "request"));
+        put(&mut request, "stream", JsValue::Bool(true));
+        let provider = merge(field(&oracle, "provider"), field(case, "provider"));
+        let model = field(field(&provider, "models"), &text(field(&request, "model")));
+        let body = build_request(&request, model, &provider).unwrap();
+        let body = super::super::final_body(&body, &provider);
+        let recorded = array(field(case, "requests"));
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(stringify(&body).unwrap(), text(field(&recorded[0], "body")));
     }
-    impl Drop for LimitGuard {
-        fn drop(&mut self) {
-            crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.set(self.0));
-        }
-    }
+
     fn tool_key() -> JsString {
         tool_call_key(0.0, 0.0)
     }

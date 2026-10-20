@@ -635,8 +635,7 @@ mod tests {
     /// length` past V8's limit; exactly the limit is allowed.
     #[test]
     fn function_arguments_over_the_v8_limit_throw_range_error() {
-        use crate::runtime::model::http::STRING_LIMIT;
-        STRING_LIMIT.with(|cell| cell.set(8));
+        let _limit = crate::runtime::model::http::LimitGuard::set(8);
         let mut state = StreamState::with_synthetic_id("stream_t".into());
         feed(&mut state, r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc","call_id":"c","name":"n"}}"#).unwrap();
         assert_eq!(
@@ -648,7 +647,6 @@ mod tests {
             r#"{"type":"response.function_call_arguments.delta","item_id":"fc","delta":"x"}"#,
         )
         .unwrap_err();
-        STRING_LIMIT.with(|cell| cell.set(crate::runtime::model::count_http::MAX_STRING_LENGTH));
         assert!(
             error.name().equals_str("RangeError")
                 && error.message().equals_str("Invalid string length")

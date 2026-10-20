@@ -12,5 +12,5 @@ const ORACLE: &str = include_str!("fixtures/model-stream-openai/oracle.json");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_ts_openai_stream_model_over_loopback_http() {
-    model_mock::replay(&baseline::oracle(ORACLE), 30, 37).await;
+    model_mock::replay(&baseline::oracle(ORACLE), 31, 38).await;
 }

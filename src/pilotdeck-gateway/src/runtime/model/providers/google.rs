@@ -14,16 +14,37 @@ use super::super::http::{ModelStreamError, append_js_string};
 use super::thinking::ThinkingPlan;
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use std::sync::LazyLock;
 
 /// SDK default `x-goog-api-client`/`user-agent` label. The baseline pins
 /// `@google/genai` 2.10.0 on Node v22.22.0, and the fixture records that label.
 const SDK_HEADER: &str = "google-genai-sdk/2.10.0 gl-node/v22.22.0";
 
-fn units(value: &JsValue) -> JsString {
-    JsString::from_utf16(crate::js_value::to_string_units(value).unwrap_or_default())
+fn units(value: &JsValue) -> Result<JsString, ModelStreamError> {
+    crate::js_value::to_string_units_checked(value)
+        .map(JsString::from_utf16)
+        .map_err(|error| ModelStreamError::Thrown {
+            name: error.name().into(),
+            message: error.message().into(),
+        })
 }
-fn text(value: &JsValue) -> String {
-    String::from_utf16_lossy(units(value).units())
+fn text(value: &JsValue) -> Result<String, ModelStreamError> {
+    Ok(String::from_utf16_lossy(units(value)?.units()))
+}
+// These TS fields call `.trim()` directly; they do not coerce non-strings.
+fn trim_input(value: &JsValue, parameter: &str) -> Result<String, ModelStreamError> {
+    if value.as_string().is_some() {
+        return text(value);
+    }
+    let message = match value {
+        JsValue::Null => "Cannot read properties of null (reading 'trim')".to_owned(),
+        JsValue::Undefined => "Cannot read properties of undefined (reading 'trim')".to_owned(),
+        _ => format!("{parameter}.trim is not a function"),
+    };
+    Err(ModelStreamError::Thrown {
+        name: "TypeError".into(),
+        message: message.into(),
+    })
 }
 fn value_object() -> JsObject {
     JsObject::new()
@@ -93,7 +114,7 @@ pub(crate) fn build_request(
         config.insert("thinkingConfig".into(), thinking);
     }
 
-    let contents = sanitize_google_contents(to_google_contents(request));
+    let contents = sanitize_google_contents(to_google_contents(request)?);
     let mut body = value_object();
     body.insert("contents".into(), JsValue::Array(contents));
     if let Some(system_instruction) = system_instruction {
@@ -216,13 +237,16 @@ fn thinking_error(request: &JsValue, mode: &JsString, message: JsString) -> JsOb
 }
 
 /// `toGoogleContents`: group consecutive blocks into `user`/`model` contents.
-fn to_google_contents(request: &JsValue) -> Vec<(String, Vec<JsValue>)> {
-    let mut tool_names: Vec<(JsString, JsString)> = Vec::new();
+fn to_google_contents(request: &JsValue) -> Result<Vec<(String, Vec<JsValue>)>, ModelStreamError> {
+    let mut tool_names: Vec<(JsString, JsValue)> = Vec::new();
     for message in array(field(request, "messages")) {
         for block in array(field(message, "content")) {
             if is(field(block, "type"), "tool_call") {
-                let id = JsString::from(sanitize_tool_call_id(&text(field(block, "id")), "call"));
-                let name = units(field(block, "name"));
+                let id = JsString::from(sanitize_tool_call_id(
+                    &trim_input(field(block, "id"), "id")?,
+                    "call",
+                ));
+                let name = field(block, "name").clone();
                 set_name_pair(&mut tool_names, id, name);
             }
         }
@@ -248,7 +272,7 @@ fn to_google_contents(request: &JsValue) -> Vec<(String, Vec<JsValue>)> {
             } else {
                 "user"
             };
-            let parts = to_google_parts(block, &tool_names);
+            let parts = to_google_parts(block, &tool_names)?;
             if parts.is_empty() {
                 continue;
             }
@@ -260,38 +284,30 @@ fn to_google_contents(request: &JsValue) -> Vec<(String, Vec<JsValue>)> {
         }
         flush(&mut current_role, &mut current_parts);
     }
-    contents
+    Ok(contents)
 }
 
-fn set_name_pair(pairs: &mut Vec<(JsString, JsString)>, key: JsString, value: JsString) {
+fn set_name_pair(pairs: &mut Vec<(JsString, JsValue)>, key: JsString, value: JsValue) {
     if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == key) {
         slot.1 = value;
     } else {
         pairs.push((key, value));
     }
 }
-fn get_name_pair<'a>(pairs: &'a [(JsString, JsString)], key: &JsString) -> Option<&'a JsString> {
+fn get_name_pair<'a>(pairs: &'a [(JsString, JsValue)], key: &JsString) -> Option<&'a JsValue> {
     pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
-fn set_value_pair(pairs: &mut Vec<(JsString, JsValue)>, key: JsString, value: JsValue) {
-    if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == key) {
-        slot.1 = value;
-    } else {
-        pairs.push((key, value));
-    }
-}
-fn get_value_pair<'a>(pairs: &'a [(JsString, JsValue)], key: &JsString) -> Option<&'a JsValue> {
-    pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-}
-
-fn to_google_parts(block: &JsValue, tool_names: &[(JsString, JsString)]) -> Vec<JsValue> {
+fn to_google_parts(
+    block: &JsValue,
+    tool_names: &[(JsString, JsValue)],
+) -> Result<Vec<JsValue>, ModelStreamError> {
     let tag = field(block, "type");
     if is(tag, "text") {
         let value = field(block, "text");
         if value.as_string().is_some_and(|s| !s.is_empty()) {
-            return vec![text_part(value)];
+            return Ok(vec![text_part(value)]);
         }
-        return Vec::new();
+        return Ok(Vec::new());
     }
     if is(tag, "thinking") {
         let mut part = value_object();
@@ -301,16 +317,16 @@ fn to_google_parts(block: &JsValue, tool_names: &[(JsString, JsString)]) -> Vec<
         if truthy(signature) {
             part.insert("thoughtSignature".into(), signature.clone());
         }
-        return vec![JsValue::Object(part)];
+        return Ok(vec![JsValue::Object(part)]);
     }
     if is(tag, "image") || is(tag, "pdf") || is(tag, "audio") {
-        return vec![media_part(block)];
+        return Ok(vec![media_part(block)]);
     }
     if is(tag, "tool_call") {
         let mut function_call = value_object();
         function_call.insert(
             "id".into(),
-            sanitize_tool_call_id(&text(field(block, "id")), "call")
+            sanitize_tool_call_id(&trim_input(field(block, "id"), "id")?, "call")
                 .as_str()
                 .into(),
         );
@@ -318,47 +334,49 @@ fn to_google_parts(block: &JsValue, tool_names: &[(JsString, JsString)]) -> Vec<
         function_call.insert("name".into(), field(block, "name").clone());
         let mut part = value_object();
         part.insert("functionCall".into(), JsValue::Object(function_call));
-        return vec![JsValue::Object(part)];
+        return Ok(vec![JsValue::Object(part)]);
     }
     if is(tag, "tool_result") {
-        let id = sanitize_tool_call_id(&text(field(block, "toolCallId")), "call");
+        let id = sanitize_tool_call_id(&trim_input(field(block, "toolCallId"), "id")?, "call");
         let name = get_name_pair(tool_names, &JsString::from(id.as_str()))
+            .filter(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
             .cloned()
-            .unwrap_or_else(|| units(field(block, "toolCallId")));
+            .unwrap_or_else(|| field(block, "toolCallId").clone());
         // Shared UTF-16 helper from the compaction layer (same TS function);
         // keeps lone surrogates intact for JSON.stringify.
         let output = JsValue::String(
             crate::runtime::context::compaction::flatten_tool_result_block_text(block),
         );
         let content = array(field(block, "content"));
-        return vec![function_response_part(
+        return Ok(vec![function_response_part(
             &id,
             &name,
             &output,
             truthy(field(block, "isError")),
             content,
-        )];
+        )]);
     }
     if is(tag, "tool_result_reference") {
-        let id = sanitize_tool_call_id(&text(field(block, "toolCallId")), "call");
+        let id = sanitize_tool_call_id(&trim_input(field(block, "toolCallId"), "id")?, "call");
         let name = get_name_pair(tool_names, &JsString::from(id.as_str()))
+            .filter(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
             .cloned()
-            .unwrap_or_else(|| units(field(block, "toolCallId")));
+            .unwrap_or_else(|| field(block, "toolCallId").clone());
         // Shared with the anthropic/count-body path; `count_body` keeps the
         // value as a `JsString`, so lone surrogates survive.
         let output = super::super::count_body::reference_text(block);
-        return vec![function_response_part(
+        return Ok(vec![function_response_part(
             &id,
             &name,
             &output,
             truthy(field(block, "isError")),
             &[],
-        )];
+        )]);
     }
     if is(tag, "media_reference") {
-        return vec![text_part(field(block, "preview"))];
+        return Ok(vec![text_part(field(block, "preview"))]);
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 fn media_part(block: &JsValue) -> JsValue {
@@ -378,7 +396,7 @@ fn media_part(block: &JsValue) -> JsValue {
 
 fn function_response_part(
     id: &str,
-    name: &JsString,
+    name: &JsValue,
     output: &JsValue,
     is_error: bool,
     content: &[JsValue],
@@ -399,7 +417,7 @@ fn function_response_part(
     let parts: Vec<JsValue> = content.iter().flat_map(media_response_part).collect();
     let mut inner = value_object();
     inner.insert("id".into(), id.into());
-    inner.insert("name".into(), JsValue::String(name.clone()));
+    inner.insert("name".into(), name.clone());
     inner.insert("response".into(), JsValue::Object(response));
     if !parts.is_empty() {
         inner.insert("parts".into(), JsValue::Array(parts));
@@ -517,44 +535,13 @@ const UNSUPPORTED_SCHEMA_KEYWORDS: [&str; 20] = [
 ];
 const META_KEYS: [&str; 3] = ["description", "title", "default"];
 
-fn record(value: &JsValue) -> Option<&JsObject> {
-    value.as_object()
-}
 fn is_record(value: &JsValue) -> bool {
     value.as_object().is_some()
 }
-type SchemaDefs = Vec<(JsString, JsValue)>;
-
-fn extend_schema_defs(defs: Option<&SchemaDefs>, schema: &JsObject) -> Option<SchemaDefs> {
-    let mut entries: Vec<&JsObject> = Vec::new();
-    if let Some(value) = schema.get("$defs").and_then(record) {
-        entries.push(value);
-    }
-    if let Some(value) = schema.get("definitions").and_then(record) {
-        entries.push(value);
-    }
-    if entries.is_empty() {
-        return defs.cloned();
-    }
-    let mut next = defs.cloned().unwrap_or_default();
-    for entry in entries {
-        for (key, value) in entry.own_entries() {
-            set_value_pair(&mut next, key.clone(), value.clone());
-        }
-    }
-    Some(next)
-}
-
-fn try_resolve_local_ref(reference: &str, defs: Option<&SchemaDefs>) -> Option<JsValue> {
-    let defs = defs?;
-    let captures = regex::Regex::new(r"^#/(?:\$defs|definitions)/(.+)$")
-        .expect("static regex")
-        .captures(reference)?;
-    let segment = captures.get(1)?.as_str();
-    let decoded = segment.replace("~1", "/").replace("~0", "~");
-    let key = JsString::from(decoded);
-    get_value_pair(defs, &key).cloned()
-}
+static LOCAL_REF: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^#/(?:\$defs|definitions)/(.+)$").expect("static regex"));
+static VALID_PARAMETER_NAME: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$").expect("static regex"));
 
 fn copy_schema_meta(from: &JsObject, to: &mut JsObject) {
     for key in META_KEYS {
@@ -569,130 +556,185 @@ fn copy_schema_meta(from: &JsObject, to: &mut JsObject) {
     }
 }
 
-fn clean_schema(
-    schema: &JsValue,
-    defs: Option<&SchemaDefs>,
-    ref_stack: Option<&[String]>,
-    depth: usize,
-) -> JsValue {
-    if depth > crate::js_value::MAX_ARRAY_DEPTH {
-        return JsValue::Object(value_object());
+/// Heap-backed traversal: properties, local refs and single-branch unions all
+/// schedule work instead of consuming the caller's (normally 2 MiB) stack.
+fn clean_schema(schema: &JsValue) -> JsValue {
+    use std::rc::Rc;
+    type Defs<'a> = Rc<Vec<(JsString, &'a JsValue)>>;
+    type Refs = Rc<Vec<String>>;
+    enum Work<'a> {
+        Visit(&'a JsValue, Defs<'a>, Refs),
+        Properties(&'a JsValue, Defs<'a>, Refs),
+        Value(JsValue),
+        Array(usize),
+        Object(Vec<JsString>, Option<&'a JsObject>),
+        Meta(&'a JsObject),
     }
-    match schema {
-        JsValue::Array(items) => JsValue::Array(
-            items
-                .iter()
-                .map(|item| clean_schema(item, defs, ref_stack, depth + 1))
-                .collect(),
-        ),
-        JsValue::Object(obj) => clean_schema_object(obj, defs, ref_stack, depth),
-        other => other.clone(),
-    }
-}
-
-fn clean_schema_object(
-    obj: &JsObject,
-    defs: Option<&SchemaDefs>,
-    ref_stack: Option<&[String]>,
-    depth: usize,
-) -> JsValue {
-    let next_defs = extend_schema_defs(defs, obj);
-    let reference = obj
-        .get("$ref")
-        .and_then(JsValue::as_string)
-        .map(|value| String::from_utf16_lossy(value.units()))
-        .filter(|value| !value.is_empty());
-    if let Some(reference) = reference {
-        let mut stack: Vec<String> = ref_stack.map(<[String]>::to_vec).unwrap_or_default();
-        if stack.iter().any(|value| value == &reference) {
-            return JsValue::Object(value_object());
-        }
-        if let Some(resolved) = try_resolve_local_ref(&reference, next_defs.as_ref()) {
-            stack.push(reference);
-            let cleaned = clean_schema(&resolved, next_defs.as_ref(), Some(&stack), depth + 1);
-            let Some(cleaned) = cleaned.as_object() else {
-                return cleaned;
-            };
-            let mut result = cleaned.clone();
-            copy_schema_meta(obj, &mut result);
-            return JsValue::Object(result);
-        }
-        let mut result = value_object();
-        copy_schema_meta(obj, &mut result);
-        return JsValue::Object(result);
-    }
-    if let Some(union) = simplify_union(obj, next_defs.as_ref(), ref_stack, depth) {
-        return union;
-    }
-    let mut next = value_object();
-    for (key, value) in obj.own_entries() {
-        let name = String::from_utf16_lossy(key.units());
-        if UNSUPPORTED_SCHEMA_KEYWORDS.contains(&name.as_str()) {
-            continue;
-        }
-        match name.as_str() {
-            "const" => {
-                next.insert("enum".into(), JsValue::Array(vec![value.clone()]));
+    let mut work = vec![Work::Visit(schema, Rc::default(), Rc::default())];
+    let mut values = Vec::new();
+    while let Some(task) = work.pop() {
+        match task {
+            Work::Value(value) => values.push(value),
+            Work::Array(count) => {
+                let items = values.split_off(values.len() - count);
+                values.push(JsValue::Array(items));
             }
-            "type" => {
-                next.insert("type".into(), normalize_type(value));
+            Work::Object(keys, source) => {
+                let children = values.split_off(values.len() - keys.len());
+                let mut result = value_object();
+                for (key, value) in keys.into_iter().zip(children) {
+                    result.insert(key, value);
+                }
+                if let Some(source) = source {
+                    if result.get("type").is_some_and(|value| is(value, "array"))
+                        && result.get("items").is_none_or(JsValue::is_undefined)
+                    {
+                        result.insert("items".into(), JsValue::Object(value_object()));
+                    }
+                    let required = clean_required(source.get("required"), result.get("properties"));
+                    if !required.is_empty() {
+                        result.insert(
+                            "required".into(),
+                            JsValue::Array(required.into_iter().map(JsValue::String).collect()),
+                        );
+                    }
+                }
+                values.push(JsValue::Object(result));
             }
-            "properties" => {
-                next.insert(
-                    "properties".into(),
-                    clean_properties(value, next_defs.as_ref(), ref_stack, depth + 1),
+            Work::Meta(source) => {
+                if let Some(JsValue::Object(result)) = values.last_mut() {
+                    copy_schema_meta(source, result);
+                }
+            }
+            Work::Properties(value, defs, refs) => {
+                let entries = value
+                    .as_object()
+                    .map(JsObject::own_entries)
+                    .unwrap_or_default();
+                let entries: Vec<_> = entries
+                    .into_iter()
+                    .filter(|(key, _)| {
+                        VALID_PARAMETER_NAME.is_match(&String::from_utf16_lossy(key.units()))
+                    })
+                    .collect();
+                work.push(Work::Object(
+                    entries.iter().map(|(key, _)| (*key).clone()).collect(),
+                    None,
+                ));
+                work.extend(
+                    entries
+                        .into_iter()
+                        .rev()
+                        .map(|(_, value)| Work::Visit(value, defs.clone(), refs.clone())),
                 );
             }
-            "items" => {
-                next.insert(
-                    "items".into(),
-                    clean_schema(value, next_defs.as_ref(), ref_stack, depth + 1),
-                );
-            }
-            "required" => {}
-            _ => {
-                next.insert(
-                    key.clone(),
-                    clean_schema(value, next_defs.as_ref(), ref_stack, depth + 1),
-                );
-            }
+            Work::Visit(value, defs, refs) => match value {
+                JsValue::Array(items) => {
+                    work.push(Work::Array(items.len()));
+                    work.extend(
+                        items
+                            .iter()
+                            .rev()
+                            .map(|item| Work::Visit(item, defs.clone(), refs.clone())),
+                    );
+                }
+                JsValue::Object(obj) => {
+                    let mut defs = defs;
+                    for entry in [obj.get("$defs"), obj.get("definitions")]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(JsValue::as_object)
+                    {
+                        let next = Rc::make_mut(&mut defs);
+                        for (key, value) in entry.own_entries() {
+                            if let Some((_, existing)) = next.iter_mut().find(|(k, _)| k == key) {
+                                *existing = value;
+                            } else {
+                                next.push((key.clone(), value));
+                            }
+                        }
+                    }
+                    if let Some(reference) = obj
+                        .get("$ref")
+                        .and_then(JsValue::as_string)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let reference = String::from_utf16_lossy(reference.units());
+                        if refs.contains(&reference) {
+                            values.push(JsValue::Object(value_object()));
+                            continue;
+                        }
+                        let resolved = LOCAL_REF
+                            .captures(&reference)
+                            .and_then(|capture| {
+                                let key = JsString::from(
+                                    capture[1].replace("~1", "/").replace("~0", "~"),
+                                );
+                                defs.iter()
+                                    .find(|(name, _)| name == &key)
+                                    .map(|(_, value)| *value)
+                            })
+                            .filter(|value| !value.is_undefined());
+                        work.push(Work::Meta(obj));
+                        if let Some(resolved) = resolved {
+                            let mut refs = refs;
+                            Rc::make_mut(&mut refs).push(reference);
+                            work.push(Work::Visit(resolved, defs, refs));
+                        } else {
+                            work.push(Work::Value(JsValue::Object(value_object())));
+                        }
+                        continue;
+                    }
+                    let variants = match obj.get("anyOf") {
+                        Some(JsValue::Array(items)) => Some(items),
+                        _ => match obj.get("oneOf") {
+                            Some(JsValue::Array(items)) => Some(items),
+                            _ => None,
+                        },
+                    };
+                    if let Some(variants) = variants {
+                        let non_null: Vec<_> =
+                            variants.iter().filter(|v| !is_null_schema(v)).collect();
+                        if let Some(mut union) = try_flatten_literal_union(&non_null) {
+                            copy_schema_meta(obj, &mut union);
+                            values.push(JsValue::Object(union));
+                            continue;
+                        }
+                        if non_null.len() == 1 {
+                            work.push(Work::Meta(obj));
+                            work.push(Work::Visit(non_null[0], defs, refs));
+                            continue;
+                        }
+                    }
+                    let mut keys = Vec::new();
+                    let mut children = Vec::new();
+                    for (key, value) in obj.own_entries() {
+                        let name = String::from_utf16_lossy(key.units());
+                        if UNSUPPORTED_SCHEMA_KEYWORDS.contains(&name.as_ref())
+                            || name == "required"
+                        {
+                            continue;
+                        }
+                        keys.push(if name == "const" {
+                            "enum".into()
+                        } else {
+                            key.clone()
+                        });
+                        children.push(match name.as_ref() {
+                            "const" => Work::Value(JsValue::Array(vec![value.clone()])),
+                            "type" => Work::Value(normalize_type(value)),
+                            "properties" => Work::Properties(value, defs.clone(), refs.clone()),
+                            _ => Work::Visit(value, defs.clone(), refs.clone()),
+                        });
+                    }
+                    work.push(Work::Object(keys, Some(obj)));
+                    work.extend(children.into_iter().rev());
+                }
+                other => values.push(other.clone()),
+            },
         }
     }
-    if next.get("type").is_some_and(|value| is(value, "array")) && next.get("items").is_none() {
-        next.insert("items".into(), JsValue::Object(value_object()));
-    }
-    let required = clean_required(obj.get("required"), next.get("properties"));
-    if !required.is_empty() {
-        next.insert(
-            "required".into(),
-            JsValue::Array(required.into_iter().map(JsValue::String).collect()),
-        );
-    }
-    JsValue::Object(next)
-}
-
-fn clean_properties(
-    properties: &JsValue,
-    defs: Option<&SchemaDefs>,
-    ref_stack: Option<&[String]>,
-    depth: usize,
-) -> JsValue {
-    let Some(properties) = properties.as_object() else {
-        return JsValue::Object(value_object());
-    };
-    let valid = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$").expect("static regex");
-    let mut next = value_object();
-    for (key, value) in properties.own_entries() {
-        let name = String::from_utf16_lossy(key.units());
-        if !valid.is_match(&name) {
-            continue;
-        }
-        next.insert(
-            name.as_str().into(),
-            clean_schema(value, defs, ref_stack, depth + 1),
-        );
-    }
-    JsValue::Object(next)
+    values.pop().expect("one cleaned schema")
 }
 
 fn clean_required(required: Option<&JsValue>, properties: Option<&JsValue>) -> Vec<JsString> {
@@ -742,39 +784,6 @@ fn is_null_schema(value: &JsValue) -> bool {
         record.get("enum"),
         Some(JsValue::Array(items)) if items.len() == 1 && items[0] == JsValue::Null
     )
-}
-
-fn simplify_union(
-    obj: &JsObject,
-    defs: Option<&SchemaDefs>,
-    ref_stack: Option<&[String]>,
-    depth: usize,
-) -> Option<JsValue> {
-    let variants = match obj.get("anyOf") {
-        Some(JsValue::Array(items)) => items,
-        _ => match obj.get("oneOf") {
-            Some(JsValue::Array(items)) => items,
-            _ => return None,
-        },
-    };
-    let non_null: Vec<&JsValue> = variants
-        .iter()
-        .filter(|variant| !is_null_schema(variant))
-        .collect();
-    if let Some(mut flattened) = try_flatten_literal_union(&non_null) {
-        copy_schema_meta(obj, &mut flattened);
-        return Some(JsValue::Object(flattened));
-    }
-    if non_null.len() == 1 {
-        let cleaned = clean_schema(non_null[0], defs, ref_stack, depth + 1);
-        let Some(cleaned) = cleaned.as_object() else {
-            return Some(cleaned);
-        };
-        let mut result = cleaned.clone();
-        copy_schema_meta(obj, &mut result);
-        return Some(JsValue::Object(result));
-    }
-    None
 }
 
 fn try_flatten_literal_union(variants: &[&JsValue]) -> Option<JsObject> {
@@ -829,29 +838,33 @@ fn extract_single_enum_value(schema: &JsValue) -> Option<(String, JsValue)> {
 }
 
 fn extract_enum_values(schema: &JsValue) -> Option<Vec<JsValue>> {
-    extract_enum_values_at(schema, 0)
-}
-fn extract_enum_values_at(schema: &JsValue, depth: usize) -> Option<Vec<JsValue>> {
-    if depth > crate::js_value::MAX_ARRAY_DEPTH {
-        return None;
-    }
     let record = schema.as_object()?;
+    // A direct empty enum is Some([]), unlike an empty union traversal.
     if let Some(JsValue::Array(items)) = record.get("enum") {
         return Some(items.clone());
     }
-    if let Some(value) = record.get("const") {
-        return Some(vec![value.clone()]);
-    }
-    let variants = match record.get("anyOf") {
-        Some(JsValue::Array(items)) => items,
-        _ => match record.get("oneOf") {
-            Some(JsValue::Array(items)) => items,
-            _ => return None,
-        },
-    };
+    let mut pending = vec![schema];
     let mut values = Vec::new();
-    for variant in variants {
-        values.extend(extract_enum_values_at(variant, depth + 1).unwrap_or_default());
+    while let Some(schema) = pending.pop() {
+        let Some(record) = schema.as_object() else {
+            continue;
+        };
+        if let Some(JsValue::Array(items)) = record.get("enum") {
+            values.extend(items.iter().cloned());
+        } else if let Some(value) = record.get("const") {
+            values.push(value.clone());
+        } else {
+            let variants = match record.get("anyOf") {
+                Some(JsValue::Array(items)) => Some(items),
+                _ => match record.get("oneOf") {
+                    Some(JsValue::Array(items)) => Some(items),
+                    _ => None,
+                },
+            };
+            if let Some(variants) = variants {
+                pending.extend(variants.iter().rev());
+            }
+        }
     }
     (!values.is_empty()).then_some(values)
 }
@@ -1017,7 +1030,7 @@ pub(crate) fn normalize_google_tool_schema(schema: &JsValue) -> JsValue {
 
 /// `cleanSchemaForGoogle`.
 pub(crate) fn clean_schema_for_google(schema: &JsValue) -> JsValue {
-    clean_schema(schema, None, None, 0)
+    clean_schema(schema)
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,8 +1090,8 @@ fn resolve_endpoint(raw_url: &str) -> (String, String) {
 
 /// `createGoogleClient(...).models.generateContentStream` endpoint, without
 /// the leading model path rewriting performed by `tModel`.
-pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> String {
-    let (base_url, api_version) = resolve_endpoint(&text(field(provider, "url")));
+pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> Result<String, ModelStreamError> {
+    let (base_url, api_version) = resolve_endpoint(&trim_input(field(provider, "url"), "rawUrl")?);
     let base = base_url.trim_end_matches('/');
     let mut url = String::new();
     url.push_str(base);
@@ -1086,7 +1099,7 @@ pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> String {
         url.push('/');
         url.push_str(&api_version);
     }
-    let model = normalize_model_id(&text(model));
+    let model = normalize_model_id(&trim_input(model, "id")?);
     let path = if model.starts_with("models/") || model.starts_with("tunedModels/") {
         model
     } else {
@@ -1095,12 +1108,12 @@ pub(crate) fn endpoint(provider: &JsValue, model: &JsValue) -> String {
     url.push('/');
     url.push_str(&path);
     url.push_str(":streamGenerateContent?alt=sse");
-    url
+    Ok(url)
 }
 
 /// SDK request headers. `user-agent` is transport-level (excluded by fixtures);
 /// `x-goog-api-client` is the SDK's own protocol header.
-pub(crate) fn headers(provider: &JsValue) -> Vec<(JsString, JsValue)> {
+pub(crate) fn headers(provider: &JsValue) -> Result<Vec<(JsString, JsValue)>, ModelStreamError> {
     let mut headers = value_object();
     headers.insert("content-type".into(), "application/json".into());
     if let Some(custom) = field(provider, "headers").as_object() {
@@ -1118,14 +1131,14 @@ pub(crate) fn headers(provider: &JsValue) -> Vec<(JsString, JsValue)> {
         String::from_utf16_lossy(name.units()).eq_ignore_ascii_case("x-goog-api-key")
     });
     if !has_key {
-        let key = text(field(provider, "apiKey"));
+        let key = text(field(provider, "apiKey"))?;
         headers.insert("x-goog-api-key".into(), js_trim(&key).into());
     }
-    headers
+    Ok(headers
         .own_entries()
         .into_iter()
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect()
+        .collect())
 }
 
 /// `sanitizeProviderBody` + the SDK's recursive `extraBody` merge.
@@ -1160,31 +1173,53 @@ pub(crate) fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
 }
 
 fn deep_merge(target: JsObject, source: &JsObject) -> JsObject {
-    deep_merge_at(target, source, 0)
-}
-fn deep_merge_at(target: JsObject, source: &JsObject, depth: usize) -> JsObject {
-    if depth > crate::js_value::MAX_ARRAY_DEPTH {
-        return target;
+    struct Frame<'a> {
+        output: JsObject,
+        entries: std::vec::IntoIter<(&'a JsString, &'a JsValue)>,
+        parent_key: Option<JsString>,
     }
-    let mut output = target;
-    for (key, source_value) in source.own_entries() {
-        let target_value = output.get_key(key).cloned();
-        let recurse = matches!(source_value, JsValue::Object(_))
-            && matches!(target_value, Some(JsValue::Object(_)));
-        if recurse {
-            let merged = deep_merge_at(
-                target_value
-                    .and_then(|value| value.as_object().cloned())
-                    .unwrap_or_default(),
-                source_value.as_object().expect("object"),
-                depth + 1,
-            );
-            output.insert(key.clone(), JsValue::Object(merged));
+    let mut stack = vec![Frame {
+        output: target,
+        entries: source.own_entries().into_iter(),
+        parent_key: None,
+    }];
+    loop {
+        let frame = stack.last_mut().expect("root merge frame");
+        if let Some((key, source)) = frame.entries.next() {
+            if matches!(frame.output.get_key(key), Some(JsValue::Object(_)))
+                && let JsValue::Object(source) = source
+            {
+                // Move the subtree out, leaving its insertion slot in place.
+                // Keeping a clone in every parent would use quadratic memory.
+                let mut previous = frame
+                    .output
+                    .insert(key.clone(), JsValue::Undefined)
+                    .expect("target");
+                let JsValue::Object(target) = &mut previous else {
+                    unreachable!("object checked")
+                };
+                let target = std::mem::take(target);
+                stack.push(Frame {
+                    output: target,
+                    entries: source.own_entries().into_iter(),
+                    parent_key: Some(key.clone()),
+                });
+            } else {
+                frame.output.insert(key.clone(), source.clone());
+            }
         } else {
-            output.insert(key.clone(), source_value.clone());
+            let finished = stack.pop().expect("completed frame");
+            if let Some(key) = finished.parent_key {
+                stack
+                    .last_mut()
+                    .expect("parent")
+                    .output
+                    .insert(key, JsValue::Object(finished.output));
+            } else {
+                return finished.output;
+            }
         }
     }
-    output
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,7 +1334,7 @@ impl StreamState {
     fn next_id(&mut self, incoming: Option<&JsString>) -> String {
         let candidate = match incoming {
             Some(id) if !id.is_empty() => {
-                sanitize_tool_call_id(&text(&JsValue::String(id.clone())), "google")
+                sanitize_tool_call_id(&String::from_utf16_lossy(id.units()), "google")
             }
             _ => format!(
                 "call_{}_{}",
@@ -1392,7 +1427,19 @@ fn sdk_candidate(candidate: &JsValue) -> JsValue {
         if matches!(value, JsValue::Undefined | JsValue::Null) {
             continue;
         }
-        out.insert(key.into(), value.clone());
+        let value = if key == "citationMetadata" {
+            // SDK citationMetadataFromMldev: only citationSources survives,
+            // renamed to citations; citation entries themselves pass through.
+            let mut metadata = value_object();
+            let sources = field(value, "citationSources");
+            if !matches!(sources, JsValue::Undefined | JsValue::Null) {
+                metadata.insert("citations".into(), sources.clone());
+            }
+            JsValue::Object(metadata)
+        } else {
+            value.clone()
+        };
+        out.insert(key.into(), value);
     }
     JsValue::Object(out)
 }
@@ -1616,6 +1663,129 @@ mod tests {
         pilotdeck_protocol::stringify_json(value).unwrap().unwrap()
     }
 
+    // Keep this probe isolated: reverting to native recursion can abort a process.
+    #[test]
+    #[ignore = "2 MiB stack probe; run explicitly in debug and release"]
+    fn schema_two_mib_stack_probe() {
+        std::thread::Builder::new()
+            .name("google-schema-2mib".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let oracle = crate::test_baseline::oracle(include_str!(
+                    "../../../../tests/fixtures/model-stream-google/oracle.json"
+                ));
+                let cases = array(field(&oracle, "schemaCases"));
+                assert_eq!(cases.len(), 4);
+                for case in cases {
+                    let depth = field(case, "depth").as_number().unwrap() as usize;
+                    let mut schema = json(r#"{"const":"leaf"}"#);
+                    for _ in 0..depth {
+                        let mut properties = JsObject::new();
+                        properties.insert("a".into(), schema);
+                        let mut node = JsObject::new();
+                        node.insert("properties".into(), JsValue::Object(properties));
+                        schema = JsValue::Object(node);
+                    }
+                    let mut tool = JsObject::new();
+                    tool.insert("name".into(), "deep".into());
+                    tool.insert("inputSchema".into(), schema);
+                    let mut request = JsObject::new();
+                    request.insert("tools".into(), JsValue::Array(vec![JsValue::Object(tool)]));
+                    eprintln!("stack_bytes=2097152 properties_depth={depth} phase=build_request");
+                    let result =
+                        build_request(&JsValue::Object(request), &json(r#"{"id":"gemini-3-pro"}"#))
+                            .unwrap();
+                    let declaration = &array(field(
+                        &array(field(&result, "tools"))[0],
+                        "functionDeclarations",
+                    ))[0];
+                    let mut leaf = field(declaration, "parametersJsonSchema");
+                    let mut traversed = 0;
+                    while !field(field(leaf, "properties"), "a").is_undefined() {
+                        leaf = field(field(leaf, "properties"), "a");
+                        traversed += 1;
+                    }
+                    assert_eq!(
+                        traversed,
+                        field(case, "traversed").as_number().unwrap() as usize
+                    );
+                    assert_eq!(text_of(leaf), text_of(field(case, "leaf")));
+                    eprintln!("returned=Ok traversed={traversed} leaf={}", text_of(leaf));
+                }
+                // The other two former recursive walks must also survive 2 MiB.
+                let mut union = json(r#"{"const":"leaf"}"#);
+                for _ in 0..2000 {
+                    let mut node = JsObject::new();
+                    node.insert("anyOf".into(), JsValue::Array(vec![union]));
+                    union = JsValue::Object(node);
+                }
+                assert_eq!(extract_enum_values(&union), Some(vec!["leaf".into()]));
+                assert_eq!(
+                    text_of(&clean_schema_for_google(&union)),
+                    text_of(field(cases.last().unwrap(), "union"))
+                );
+                eprintln!("union_depth=2000 extract_enum_values=Ok clean_schema=Ok");
+                let mut target = json(r#"{"keep":true,"value":"old"}"#);
+                let mut source = json(r#"{"value":"new","add":true}"#);
+                for _ in 0..2000 {
+                    let wrap = |value| {
+                        let mut node = JsObject::new();
+                        node.insert("a".into(), value);
+                        JsValue::Object(node)
+                    };
+                    target = wrap(target);
+                    source = wrap(source);
+                }
+                let result = JsValue::Object(deep_merge(
+                    target.as_object().unwrap().clone(),
+                    source.as_object().unwrap(),
+                ));
+                let mut leaf = &result;
+                for _ in 0..2000 {
+                    leaf = field(leaf, "a");
+                }
+                assert_eq!(text_of(leaf), r#"{"keep":true,"value":"new","add":true}"#);
+                eprintln!("deep_merge_depth=2000 leaf={}", text_of(leaf));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// Socket-free replay of the actual SDK projection recorded by TS.
+    #[test]
+    fn citation_metadata_matches_real_ts_events() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../../tests/fixtures/model-stream-google/oracle.json"
+        ));
+        let cases: Vec<_> = array(field(&oracle, "cases"))
+            .iter()
+            .filter(|case| is(field(case, "name"), "citation-metadata"))
+            .collect();
+        assert_eq!(cases.len(), 1);
+        let case = cases[0];
+        let mut state = StreamState::default();
+        let mut events = Vec::new();
+        for reply in array(field(case, "replies")) {
+            for chunk in array(field(reply, "chunks")) {
+                let text = field(chunk, "text").as_string().unwrap().to_utf8().unwrap();
+                let wire = json(text.strip_prefix("data: ").unwrap().trim());
+                events.extend(normalize_stream_event(&wire, &mut state).unwrap());
+            }
+        }
+        let expected: Vec<_> = array(field(case, "timeline"))
+            .iter()
+            .map(|entry| field(entry, "event"))
+            .filter(|event| !is(field(event, "type"), "request_started"))
+            .cloned()
+            .collect();
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            text_of(&JsValue::Array(events)),
+            text_of(&JsValue::Array(expected))
+        );
+    }
+
     #[test]
     fn model_ids_match_the_baseline_table() {
         assert_eq!(normalize_model_id("gemini-3-pro"), "gemini-3-pro-preview");
@@ -1795,8 +1965,7 @@ mod tests {
 
     #[test]
     fn raw_chunk_accumulation_uses_the_v8_string_limit() {
-        let previous = crate::runtime::model::http::STRING_LIMIT.with(std::cell::Cell::get);
-        crate::runtime::model::http::STRING_LIMIT.with(|limit| limit.set(16));
+        let _limit = crate::runtime::model::http::LimitGuard::set(16);
         let mut state = StreamState::default();
         let raw = json(r#"{"candidates":[{"content":{"parts":[{"text":"long enough"}]}}]}"#);
         let error = normalize_stream_event(&raw, &mut state).unwrap_err();
@@ -1805,7 +1974,6 @@ mod tests {
             ModelStreamError::Thrown { ref name, ref message }
                 if name.equals_str("RangeError") && message.equals_str("Invalid string length")
         ));
-        crate::runtime::model::http::STRING_LIMIT.with(|limit| limit.set(previous));
     }
 
     #[test]
