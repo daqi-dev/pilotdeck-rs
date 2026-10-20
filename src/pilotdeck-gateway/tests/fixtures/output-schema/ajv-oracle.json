@@ -1218,6 +1218,138 @@
       "actualCompileError": "Invalid regular expression: /[^]a]/u: Lone quantifier brackets"
     },
     {
+      "id": "invalid-pattern/property/lone-unknown",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{Foo}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{Foo}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/property/lone-script",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{Latin}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{Latin}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/property/class-unknown",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\p{Foo}]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name in character class",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /[\\p{Foo}]/u: Invalid property name in character class"
+    },
+    {
+      "id": "invalid-pattern/property/lowercase-key",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{script=Han}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{script=Han}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/property/unknown-key",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{Foo=Bar}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{Foo=Bar}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/property/binary-with-value",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{Alphabetic=Y}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{Alphabetic=Y}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/property/spaced",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p{Script = Han}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\p{Script = Han}/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/group-name-euro",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<€>a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<€>a)/u: Invalid capture group name"
+    },
+    {
+      "id": "invalid-pattern/group-name-arabic-digit",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<١>a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<١>a)/u: Invalid capture group name"
+    },
+    {
+      "id": "invalid-pattern/group-name-escaped-euro",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<\\u{20AC}>a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<\\u{20AC}>a)/u: Invalid capture group name"
+    },
+    {
+      "id": "invalid-pattern/group-name-escape-q",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<\\q>a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<\\q>a)/u: Invalid capture group name"
+    },
+    {
       "id": "invalid-pattern/grok-property-pattern",
       "schema": {
         "type": "object",
@@ -4368,6 +4500,776 @@
       "data": "aaa"
     },
     {
+      "id": "positive-pattern/unicode-bmp-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u00e9$"
+      },
+      "data": "é"
+    },
+    {
+      "id": "positive-pattern/unicode-bmp-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u00e9$"
+      },
+      "data": "e",
+      "errorText": "data must match pattern \"^\\u00e9$\""
+    },
+    {
+      "id": "positive-pattern/unicode-cjk-range-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\u4e00-\\u9fa5]+$"
+      },
+      "data": "中文"
+    },
+    {
+      "id": "positive-pattern/unicode-cjk-range-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\u4e00-\\u9fa5]+$"
+      },
+      "data": "abc",
+      "errorText": "data must match pattern \"^[\\u4e00-\\u9fa5]+$\""
+    },
+    {
+      "id": "positive-pattern/unicode-no-controls-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001f]*$"
+      },
+      "data": "ok"
+    },
+    {
+      "id": "positive-pattern/unicode-no-controls-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u001f]*$"
+      },
+      "data": "a\u0001b",
+      "errorText": "data must match pattern \"^[^\\u0000-\\u001f]*$\""
+    },
+    {
+      "id": "positive-pattern/unicode-brace-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F600}$"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "positive-pattern/unicode-brace-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F600}$"
+      },
+      "data": "😁",
+      "errorText": "data must match pattern \"^\\u{1F600}$\""
+    },
+    {
+      "id": "positive-pattern/unicode-surrogate-pair-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD83D\\uDE00$"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "positive-pattern/unicode-surrogate-pair-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD83D\\uDE00$"
+      },
+      "data": "x",
+      "errorText": "data must match pattern \"^\\uD83D\\uDE00$\""
+    },
+    {
+      "id": "positive-pattern/hex-escape-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\x41$"
+      },
+      "data": "A"
+    },
+    {
+      "id": "positive-pattern/hex-escape-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\x41$"
+      },
+      "data": "B",
+      "errorText": "data must match pattern \"^\\x41$\""
+    },
+    {
+      "id": "positive-pattern/control-escape-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\cJ$"
+      },
+      "data": "\n"
+    },
+    {
+      "id": "positive-pattern/control-escape-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\cJ$"
+      },
+      "data": "J",
+      "errorText": "data must match pattern \"^\\cJ$\""
+    },
+    {
+      "id": "positive-pattern/nul-escape-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\0$"
+      },
+      "data": "\u0000"
+    },
+    {
+      "id": "positive-pattern/nul-escape-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\0$"
+      },
+      "data": "0",
+      "errorText": "data must match pattern \"^\\0$\""
+    },
+    {
+      "id": "positive-pattern/named-groups-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<year>\\d{4})-(?<month>\\d{2})$"
+      },
+      "data": "2026-10"
+    },
+    {
+      "id": "positive-pattern/named-groups-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<year>\\d{4})-(?<month>\\d{2})$"
+      },
+      "data": "2026-1",
+      "errorText": "data must match pattern \"^(?<year>\\d{4})-(?<month>\\d{2})$\""
+    },
+    {
+      "id": "positive-pattern/named-group-single-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<y>a)$"
+      },
+      "data": "a"
+    },
+    {
+      "id": "positive-pattern/named-group-single-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<y>a)$"
+      },
+      "data": "b",
+      "errorText": "data must match pattern \"^(?<y>a)$\""
+    },
+    {
+      "id": "positive-pattern/property-letter-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{L}+$"
+      },
+      "data": "abc"
+    },
+    {
+      "id": "positive-pattern/property-letter-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{L}+$"
+      },
+      "data": "123",
+      "errorText": "data must match pattern \"^\\p{L}+$\""
+    },
+    {
+      "id": "positive-pattern/property-letter-class-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\p{L}]+$"
+      },
+      "data": "中文"
+    },
+    {
+      "id": "positive-pattern/property-letter-class-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\p{L}]+$"
+      },
+      "data": "12",
+      "errorText": "data must match pattern \"^[\\p{L}]+$\""
+    },
+    {
+      "id": "positive-pattern/property-script-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Script=Han}+$"
+      },
+      "data": "中文"
+    },
+    {
+      "id": "positive-pattern/property-script-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Script=Han}+$"
+      },
+      "data": "abc",
+      "errorText": "data must match pattern \"^\\p{Script=Han}+$\""
+    },
+    {
+      "id": "positive-pattern/property-categories-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Lu}\\p{Ll}+$"
+      },
+      "data": "Hello"
+    },
+    {
+      "id": "positive-pattern/property-categories-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Lu}\\p{Ll}+$"
+      },
+      "data": "hello",
+      "errorText": "data must match pattern \"^\\p{Lu}\\p{Ll}+$\""
+    },
+    {
+      "id": "positive-pattern/word-hyphen-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+      },
+      "data": "a-b_1"
+    },
+    {
+      "id": "positive-pattern/word-hyphen-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+      },
+      "data": "a b",
+      "errorText": "data must match pattern \"^[\\w-]+$\""
+    },
+    {
+      "id": "positive-pattern/word-dot-hyphen-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w.-]+$"
+      },
+      "data": "a.b-c"
+    },
+    {
+      "id": "positive-pattern/word-dot-hyphen-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w.-]+$"
+      },
+      "data": "a/b",
+      "errorText": "data must match pattern \"^[\\w.-]+$\""
+    },
+    {
+      "id": "positive-pattern/letters-space-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a-z\\s]+$"
+      },
+      "data": "a b\tc"
+    },
+    {
+      "id": "positive-pattern/letters-space-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a-z\\s]+$"
+      },
+      "data": "a1",
+      "errorText": "data must match pattern \"^[a-z\\s]+$\""
+    },
+    {
+      "id": "positive-pattern/digits-space-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[0-9\\s]+$"
+      },
+      "data": "12 3"
+    },
+    {
+      "id": "positive-pattern/digits-space-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[0-9\\s]+$"
+      },
+      "data": "12a",
+      "errorText": "data must match pattern \"^[0-9\\s]+$\""
+    },
+    {
+      "id": "positive-pattern/dash-digit-left-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[-\\d]+$"
+      },
+      "data": "-12"
+    },
+    {
+      "id": "positive-pattern/dash-digit-left-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[-\\d]+$"
+      },
+      "data": "a1",
+      "errorText": "data must match pattern \"^[-\\d]+$\""
+    },
+    {
+      "id": "positive-pattern/dash-digit-right-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\d-]+$"
+      },
+      "data": "1-2"
+    },
+    {
+      "id": "positive-pattern/dash-digit-right-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\d-]+$"
+      },
+      "data": "a1",
+      "errorText": "data must match pattern \"^[\\d-]+$\""
+    },
+    {
+      "id": "positive-pattern/word-space-hyphen-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w\\s-]+$"
+      },
+      "data": "a b-c"
+    },
+    {
+      "id": "positive-pattern/word-space-hyphen-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\w\\s-]+$"
+      },
+      "data": "a.b",
+      "errorText": "data must match pattern \"^[\\w\\s-]+$\""
+    },
+    {
+      "id": "positive-pattern/escaped-hyphen-class-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_\\-]+$"
+      },
+      "data": "a-b"
+    },
+    {
+      "id": "positive-pattern/escaped-hyphen-class-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_\\-]+$"
+      },
+      "data": "a.b",
+      "errorText": "data must match pattern \"^[a-zA-Z0-9_\\-]+$\""
+    },
+    {
+      "id": "positive-pattern/cjk-and-word-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\u4e00-\\u9fa5\\w]+$"
+      },
+      "data": "中文a_1"
+    },
+    {
+      "id": "positive-pattern/cjk-and-word-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\u4e00-\\u9fa5\\w]+$"
+      },
+      "data": "中文 a",
+      "errorText": "data must match pattern \"^[\\u4e00-\\u9fa5\\w]+$\""
+    },
+    {
+      "id": "positive-pattern/non-ascii-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u007F]+$"
+      },
+      "data": "é中"
+    },
+    {
+      "id": "positive-pattern/non-ascii-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^\\u0000-\\u007F]+$"
+      },
+      "data": "abc",
+      "errorText": "data must match pattern \"^[^\\u0000-\\u007F]+$\""
+    },
+    {
+      "id": "positive-pattern/emoji-range-brace-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F600}-\\u{1F64F}$"
+      },
+      "data": "😀-🙏"
+    },
+    {
+      "id": "positive-pattern/emoji-range-brace-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F600}-\\u{1F64F}$"
+      },
+      "data": "a",
+      "errorText": "data must match pattern \"^\\u{1F600}-\\u{1F64F}$\""
+    },
+    {
+      "id": "positive-pattern/emoji-class-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[😀-😁]$"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "positive-pattern/emoji-class-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[😀-😁]$"
+      },
+      "data": "😁"
+    },
+    {
+      "id": "positive-pattern/max-code-point-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{10FFFF}$"
+      },
+      "data": "􏿿"
+    },
+    {
+      "id": "positive-pattern/max-code-point-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{10FFFF}$"
+      },
+      "data": "x",
+      "errorText": "data must match pattern \"^\\u{10FFFF}$\""
+    },
+    {
+      "id": "positive-pattern/noncapturing-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?:foo|bar)$"
+      },
+      "data": "foo"
+    },
+    {
+      "id": "positive-pattern/noncapturing-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?:foo|bar)$"
+      },
+      "data": "baz",
+      "errorText": "data must match pattern \"^(?:foo|bar)$\""
+    },
+    {
+      "id": "positive-pattern/bounded-quantifier-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\d{2,4}$"
+      },
+      "data": "123"
+    },
+    {
+      "id": "positive-pattern/bounded-quantifier-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\d{2,4}$"
+      },
+      "data": "1",
+      "errorText": "data must match pattern \"^\\d{2,4}$\""
+    },
+    {
+      "id": "positive-pattern/optional-hyphen-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\-]?\\d+$"
+      },
+      "data": "-42"
+    },
+    {
+      "id": "positive-pattern/optional-hyphen-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\-]?\\d+$"
+      },
+      "data": "--42",
+      "errorText": "data must match pattern \"^[\\-]?\\d+$\""
+    },
+    {
+      "id": "positive-pattern/escaped-slash-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\/[a-z]+$"
+      },
+      "data": "/abc"
+    },
+    {
+      "id": "positive-pattern/escaped-slash-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\/[a-z]+$"
+      },
+      "data": "abc",
+      "errorText": "data must match pattern \"^\\/[a-z]+$\""
+    },
+    {
+      "id": "positive-pattern/escaped-dot-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\.$"
+      },
+      "data": "."
+    },
+    {
+      "id": "positive-pattern/escaped-dot-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\.$"
+      },
+      "data": "x",
+      "errorText": "data must match pattern \"^\\.$\""
+    },
+    {
+      "id": "positive-pattern/escaped-anchors-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\$\\^$"
+      },
+      "data": "$^"
+    },
+    {
+      "id": "positive-pattern/escaped-anchors-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\$\\^$"
+      },
+      "data": "a",
+      "errorText": "data must match pattern \"^\\$\\^$\""
+    },
+    {
+      "id": "positive-pattern/named-word-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<word>[A-Za-z]+)$"
+      },
+      "data": "hello"
+    },
+    {
+      "id": "positive-pattern/named-word-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<word>[A-Za-z]+)$"
+      },
+      "data": "hello1",
+      "errorText": "data must match pattern \"^(?<word>[A-Za-z]+)$\""
+    },
+    {
+      "id": "positive-pattern/regional-indicator-range-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F1E6}-\\u{1F1FF}$"
+      },
+      "data": "🇦-🇿"
+    },
+    {
+      "id": "positive-pattern/regional-indicator-range-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\u{1F1E6}-\\u{1F1FF}$"
+      },
+      "data": "A",
+      "errorText": "data must match pattern \"^\\u{1F1E6}-\\u{1F1FF}$\""
+    },
+    {
+      "id": "positive-pattern/mix-property-class-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\p{Script=Han}\\p{L}]+$"
+      },
+      "data": "中文abc"
+    },
+    {
+      "id": "positive-pattern/mix-property-class-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\p{Script=Han}\\p{L}]+$"
+      },
+      "data": "123",
+      "errorText": "data must match pattern \"^[\\p{Script=Han}\\p{L}]+$\""
+    },
+    {
+      "id": "positive-pattern/property-emoji-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Emoji}$"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "positive-pattern/property-emoji-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Emoji}$"
+      },
+      "data": "a",
+      "errorText": "data must match pattern \"^\\p{Emoji}$\""
+    },
+    {
+      "id": "positive-pattern/named-group-unicode-0",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<é>x)$"
+      },
+      "data": "x"
+    },
+    {
+      "id": "positive-pattern/named-group-unicode-1",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<é>x)$"
+      },
+      "data": "y",
+      "errorText": "data must match pattern \"^(?<é>x)$\""
+    },
+    {
+      "id": "pattern-properties/always-valid-invalid-key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {}
+        }
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-js-only-key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?=a)": {}
+        }
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-true-child",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": true
+        }
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-metadata-child",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {
+            "title": "x"
+          }
+        }
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-additional-true",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {}
+        },
+        "additionalProperties": true
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-additional-empty",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {}
+        },
+        "additionalProperties": {}
+      },
+      "data": {
+        "x": 1
+      }
+    },
+    {
+      "id": "pattern-properties/always-valid-additional-false",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {}
+        },
+        "additionalProperties": false
+      },
+      "data": null,
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\-/u: Invalid escape"
+    },
+    {
+      "id": "pattern-properties/mixed-child",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {},
+          "x": {
+            "type": "number"
+          }
+        }
+      },
+      "data": null,
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\-/u: Invalid escape"
+    },
+    {
+      "id": "pattern-properties/always-valid-additional-schema",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {}
+        },
+        "additionalProperties": {
+          "type": "number"
+        }
+      },
+      "data": null,
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\-/u: Invalid escape"
+    },
+    {
       "id": "type/array-mismatch",
       "schema": {
         "type": [
@@ -4597,6 +5499,494 @@
       "data": "0000-02-29"
     },
     {
+      "id": "format-regex/anchored",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "^a+$"
+    },
+    {
+      "id": "format-regex/unterminated-class",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/lookahead",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?=a)"
+    },
+    {
+      "id": "format-regex/identity-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\-"
+    },
+    {
+      "id": "format-regex/lone-close-bracket",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a]"
+    },
+    {
+      "id": "format-regex/identity-angle",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\<a"
+    },
+    {
+      "id": "format-regex/inline-flags",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?i:a)",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/double-quantifier",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a**",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/double-range-quantifier",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "x{2}{3}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/open-lower-quantifier",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{,5}"
+    },
+    {
+      "id": "format-regex/control-j",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\cJ"
+    },
+    {
+      "id": "format-regex/nul",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\0"
+    },
+    {
+      "id": "format-regex/bare-k",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\k"
+    },
+    {
+      "id": "format-regex/anchor-z",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\Z"
+    },
+    {
+      "id": "format-regex/anchor-z-after",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a\\Z",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/literal-z-after",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a\\\\Z"
+    },
+    {
+      "id": "format-regex/property-without-u",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\p{L}"
+    },
+    {
+      "id": "format-regex/named-group",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<x>a)"
+    },
+    {
+      "id": "format-regex/named-backreference",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<x>a)\\k<x>"
+    },
+    {
+      "id": "format-regex/unknown-named-backreference",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<x>a)\\k<y>",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/reversed-range",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2,1}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/literal-open-brace",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2x}"
+    },
+    {
+      "id": "format-regex/spaced-brace",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2, 3}"
+    },
+    {
+      "id": "format-regex/empty-group",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "()"
+    },
+    {
+      "id": "format-regex/empty-class",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[]"
+    },
+    {
+      "id": "format-regex/negated-empty-class",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[^]"
+    },
+    {
+      "id": "format-regex/empty-class-close",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[]]"
+    },
+    {
+      "id": "format-regex/class-shorthand-range-right",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[a-\\w]"
+    },
+    {
+      "id": "format-regex/class-shorthand-range-left",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[\\w-a]"
+    },
+    {
+      "id": "format-regex/identity-eight",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\8"
+    },
+    {
+      "id": "format-regex/identity-two",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\2"
+    },
+    {
+      "id": "format-regex/backreference-two",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(a)\\2"
+    },
+    {
+      "id": "format-regex/short-hex",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\x"
+    },
+    {
+      "id": "format-regex/short-hex-one",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\x1"
+    },
+    {
+      "id": "format-regex/short-unicode",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\u"
+    },
+    {
+      "id": "format-regex/short-unicode-one",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\u1"
+    },
+    {
+      "id": "format-regex/brace-unicode-without-u",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\u{41}"
+    },
+    {
+      "id": "format-regex/control-digit",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\c1"
+    },
+    {
+      "id": "format-regex/control-class",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\c[",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/trailing-backslash",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/quantified-lookbehind",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a)*",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/lookbehind-literal-open-lower",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){,3}"
+    },
+    {
+      "id": "format-regex/lookbehind-literal-open-brace",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){2x}"
+    },
+    {
+      "id": "format-regex/lookbehind",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a)"
+    },
+    {
+      "id": "format-regex/quantified-lookahead",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?=a)*"
+    },
+    {
+      "id": "format-regex/rust-named-group",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?P<x>a)",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/digit-group-name",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<1a>x)",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/astral-class-range",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[😀-😁]",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/double-dash-order",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[a--b]",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/double-dash-start",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[--a]"
+    },
+    {
+      "id": "format-regex/standalone-named-reference",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\k<x>"
+    },
+    {
+      "id": "format-regex/empty-named-reference",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\k<>"
+    },
+    {
+      "id": "format-regex/empty-named-reference-with-group",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<x>a)\\k<>",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/identity-q",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\q"
+    },
+    {
+      "id": "format-regex/class-identity-q",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "[\\q]"
+    },
+    {
+      "id": "format-regex/literal-brace-after-star",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a*{x}"
+    },
+    {
+      "id": "format-regex/quantifier-after-star",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a*{2}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/lazy-star",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a*?"
+    },
+    {
+      "id": "format-regex/lazy-range",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2,3}?"
+    },
+    {
       "id": "unsupported-pattern/intersection-not",
       "schema": {
         "not": {
@@ -4731,78 +6121,12 @@
       "portUnsupported": true
     },
     {
-      "id": "unsupported-pattern/named-group-nonascii",
-      "schema": {
-        "pattern": "(?<é>x)"
-      },
-      "data": "x",
-      "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/unicode-escape",
-      "schema": {
-        "pattern": "\\u0041"
-      },
-      "data": "A",
-      "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/unicode-brace-escape",
-      "schema": {
-        "pattern": "\\u{1F600}"
-      },
-      "data": "😀",
-      "portUnsupported": true
-    },
-    {
       "id": "unsupported-pattern/lone-surrogate-escape",
       "schema": {
         "pattern": "\\uD83D"
       },
       "data": "\ud83d",
       "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/surrogate-pair-escape",
-      "schema": {
-        "pattern": "\\uD83D\\uDE00"
-      },
-      "data": "😀",
-      "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/property-escape",
-      "schema": {
-        "pattern": "\\p{L}"
-      },
-      "data": "a",
-      "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/property-escape-in-class",
-      "schema": {
-        "pattern": "[\\p{L}]"
-      },
-      "data": "a",
-      "portUnsupported": true
-    },
-    {
-      "id": "unsupported-pattern/property-name-not-validated",
-      "schema": {
-        "pattern": "\\p{NotAProperty}"
-      },
-      "data": "a",
-      "portUnsupported": true,
-      "compileError": "Invalid regular expression: /\\p{NotAProperty}/u: Invalid property name"
-    },
-    {
-      "id": "unsupported-pattern/property-name-not-validated-in-class",
-      "schema": {
-        "pattern": "[\\p{NotAProperty}]"
-      },
-      "data": "a",
-      "portUnsupported": true,
-      "compileError": "Invalid regular expression: /[\\p{NotAProperty}]/u: Invalid property name in character class"
     },
     {
       "id": "unsupported-pattern/huge-quantifier",
