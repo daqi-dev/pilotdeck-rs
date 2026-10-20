@@ -34,6 +34,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{
     collections::BTreeSet,
     fs,
+    future::Future,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -747,5 +748,166 @@ fn registry_dispose_drains_background_tasks() {
                 .is_err_and(|error| String::from_utf16_lossy(error.message.units())
                     == "Background task runtime is disposed; refusing a new task.")
         );
+    });
+}
+
+/// A shell whose whole group ignores SIGTERM (the disposition is inherited
+/// across exec), so only the grace-period SIGKILL can end it.
+fn term_ignoring(
+    runtime: &BackgroundTaskRuntime,
+    root: &Path,
+) -> impl Future<Output = (JsString, u32)> {
+    let runtime = runtime.clone();
+    let cwd = JsString::from(root.to_string_lossy().as_ref());
+    async move {
+        let task = runtime
+            .start(StartTaskSpec {
+                command: JsValue::from("trap '' TERM; sleep 30"),
+                cwd,
+                env: None,
+                session_id: JsValue::Undefined,
+                agent_id: JsValue::Undefined,
+                kind: JsValue::Undefined,
+            })
+            .await
+            .unwrap();
+        (task.task_id, task.pid.expect("pid"))
+    }
+}
+
+/// Repair round 1 P1-1: dropping `stop` after SIGTERM must not cancel the
+/// grace-period SIGKILL (the baseline's `rt.stop()` keeps running).
+#[test]
+fn dropped_stop_still_kills_a_term_ignoring_group() {
+    let scratch = scratch::Scratch::new("background-dropped-stop");
+    let root: PathBuf = fs::canonicalize(scratch.path()).unwrap();
+    runtime().block_on(async {
+        let tasks = BackgroundTaskRuntime::default();
+        let (id, pid) = term_ignoring(&tasks, &root).await;
+        // Let the shell install its trap before the TERM is sent.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let grace = JsValue::Number(300.0);
+        let stop = tasks.stop(&id, &grace, None);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), stop)
+                .await
+                .is_err(),
+            "the group ignores TERM, so stop is still in its grace period"
+        );
+        assert!(group_alive(pid), "TERM alone must not end the group");
+        until("SIGKILL after the dropped stop", || !group_alive(pid)).await;
+        until("dropped stop settles", || {
+            tasks.get(&id, None).unwrap().status.as_str() == "cancelled"
+        })
+        .await;
+        assert!(tasks.get(&id, None).unwrap().interrupted);
+        tasks.dispose().await;
+    });
+}
+
+/// Repair round 1 P1-1: a dropped first `dispose` must still finish, and a
+/// later `dispose` must return instead of waiting forever.
+#[test]
+fn dropped_dispose_still_completes() {
+    let scratch = scratch::Scratch::new("background-dropped-dispose");
+    let root: PathBuf = fs::canonicalize(scratch.path()).unwrap();
+    runtime().block_on(async {
+        let tasks = BackgroundTaskRuntime::default();
+        let (id, pid) = term_ignoring(&tasks, &root).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), tasks.dispose())
+                .await
+                .is_err(),
+            "dispose waits out the 5 s grace of a TERM-ignoring group"
+        );
+        tokio::time::timeout(Duration::from_secs(8), tasks.dispose())
+            .await
+            .expect("a second dispose returns once the first one finishes");
+        assert!(!group_alive(pid));
+        let task = tasks.get(&id, None).unwrap();
+        assert_eq!(task.status.as_str(), "cancelled");
+        assert!(task.interrupted);
+    });
+}
+
+/// Repair round 1 P1-2 (deliberate deviation, see the module docs): a spawn
+/// Node reports asynchronously never exits in the baseline, so stop/dispose
+/// would hang there. Here stop settles it as cancelled at once, with the
+/// completion event, and dispose does not wait.
+#[test]
+fn async_spawn_failure_is_settled_by_stop_and_dispose() {
+    let scratch = scratch::Scratch::new("background-async-spawn");
+    let root: PathBuf = fs::canonicalize(scratch.path()).unwrap();
+    runtime().block_on(async {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let tasks = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            now: Some(Arc::new(|| FIXED_MS)),
+            on_completion: Some(Arc::new(move |event| sink.lock().unwrap().push(event))),
+            ..Default::default()
+        });
+        let spec = |cwd: &str| StartTaskSpec {
+            command: JsValue::from("echo x"),
+            cwd: JsString::from(cwd),
+            env: None,
+            session_id: JsValue::from("s1"),
+            agent_id: JsValue::Undefined,
+            kind: JsValue::Undefined,
+        };
+        let missing = root.join("missing").to_string_lossy().into_owned();
+        let stopped = tasks.start(spec(&missing)).await.unwrap();
+        let disposed = tasks.start(spec(&missing)).await.unwrap();
+        for task in [&stopped, &disposed] {
+            assert_eq!(task.status.as_str(), "running");
+            assert_eq!(task.pid, None);
+        }
+        let started = Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tasks.stop(&stopped.task_id, &JsValue::Undefined, None),
+        )
+        .await
+        .expect("stop does not wait out a grace period with no process")
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let task = tasks.get(&stopped.task_id, None).unwrap();
+        assert_eq!(
+            (
+                task.status.as_str(),
+                task.interrupted,
+                task.ended_at,
+                task.exit_code
+            ),
+            ("cancelled", true, Some(FIXED_MS), None)
+        );
+        let waited = tasks
+            .wait(&stopped.task_id, &JsValue::Number(50.0), None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(waited.outcome, "completed");
+        // A second stop is a no-op on the settled task.
+        tasks
+            .stop(&stopped.task_id, &JsValue::Undefined, None)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), tasks.dispose())
+            .await
+            .expect("dispose settles the other pid-less task without waiting");
+        let task = tasks.get(&disposed.task_id, None).unwrap();
+        assert_eq!(
+            (task.status.as_str(), task.interrupted),
+            ("cancelled", true)
+        );
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2, "one completion event per settled task");
+        for (event, task) in events.iter().zip([&stopped, &disposed]) {
+            let event = JsValue::Object(event.clone());
+            assert_eq!(field(&event, "taskId").as_string(), Some(&task.task_id));
+            assert_eq!(text(field(&event, "status")), "cancelled");
+            assert!(matches!(field(&event, "exitCode"), JsValue::Undefined));
+            assert!(text(field(&event, "outputPreview")).starts_with("error: spawn "));
+        }
     });
 }
