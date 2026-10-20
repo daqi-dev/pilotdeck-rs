@@ -26,6 +26,11 @@ pub type ToolFuture<T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Sen
 
 /// The native counterpart of a PilotDeckToolDefinition. Futures must own their
 /// I/O and stop it on Drop; spawning detached tasks violates this port contract.
+///
+/// Registered exception: `builtin::bash::runner` keeps the baseline's 3 s
+/// post-termination SIGKILL. That bounded task owns only the unreaped shell
+/// leader and its process-group guard, and kills the group at once if the
+/// runtime drops it (see the runner's module docs).
 pub trait ExecutableTool: ToolDefinition {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput>;
     /// `None` is TS `undefined` or `{ ok: true }`; `Some(issues)` is

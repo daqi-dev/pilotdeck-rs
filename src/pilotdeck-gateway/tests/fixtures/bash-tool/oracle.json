@@ -658,7 +658,7 @@
     "predicates": 10,
     "decisions": 24,
     "scripted": 118,
-    "real": 43
+    "real": 49
   },
   "definition": {
     "name": "bash",
@@ -11579,6 +11579,112 @@
         "error": {
           "code": "tool_execution_failed",
           "message": "Configured PilotDeck shell was not found: /bin/sh\u0000x"
+        }
+      }
+    },
+    {
+      "name": "nul-lone-surrogate-command",
+      "input": {
+        "command": "echo \ud800\u0000"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The argument 'args[1]' must be a string without null bytes. Received 'echo \\ud800\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-surrogate-pair-command",
+      "input": {
+        "command": "echo 😀\udc00\u0000"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The argument 'args[1]' must be a string without null bytes. Received 'echo 😀\\udc00\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-lone-surrogate-cwd",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "cwd": "/nonexistent/\udbff\u0000",
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received '/nonexistent/\\udbff\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-lone-surrogate-env-key",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "K\ud800": "a\u0000"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.env['K\ud800']' must be a string without null bytes. Received 'a\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-lone-surrogate-env-value",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "A": "\udfff\u0000"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.env['A']' must be a string without null bytes. Received '\\udfff\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-lone-surrogate-shell",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "PILOTDECK_SHELL_PATH": "/bin/\ud800sh\u0000"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "Configured PilotDeck shell was not found: /bin/\ud800sh\u0000"
         }
       }
     },

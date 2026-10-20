@@ -261,16 +261,20 @@ struct ScriptedRunner {
 }
 
 impl CommandRunner for ScriptedRunner {
-    fn run(&self, command: String, options: CommandOptions) -> ToolFuture<CommandResult> {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
         self.calls.lock().unwrap().push(JsValue::Object(object([
-            ("command", JsValue::from(command.as_str())),
+            // What the OS receives: the UTF-8 form, lone surrogates as U+FFFD.
+            (
+                "command",
+                JsValue::from(String::from_utf16_lossy(command.units()).as_str()),
+            ),
             ("cwd", JsValue::String(options.cwd.clone())),
             (
                 "envKeys",
                 options.env.as_ref().map_or(JsValue::Null, |env| {
                     JsValue::Array(
                         env.iter()
-                            .map(|(key, _)| JsValue::from(key.as_str()))
+                            .map(|(key, _)| JsValue::String(key.clone()))
                             .collect(),
                     )
                 }),
@@ -386,7 +390,7 @@ struct RecordingRunner {
 }
 
 impl CommandRunner for RecordingRunner {
-    fn run(&self, command: String, options: CommandOptions) -> ToolFuture<CommandResult> {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
         let pids = self.pids.clone();
         Box::pin(async move {
             let result = NodeShellCommandRunner.run(command, options).await?;
@@ -414,14 +418,33 @@ async fn assert_group_gone(pid: u32, label: &str) {
     }
 }
 
+/// `value.split(from).join(to)` on UTF-16 units, so lone surrogates in the
+/// oracle survive the placeholder substitution.
+fn replace_units(value: &JsString, from: &str, to: &str) -> JsString {
+    let from: Vec<u16> = from.encode_utf16().collect();
+    let to: Vec<u16> = to.encode_utf16().collect();
+    let units = value.units();
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if !from.is_empty() && units[index..].starts_with(&from) {
+            out.extend_from_slice(&to);
+            index += from.len();
+        } else {
+            out.push(units[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
+}
+
 fn replace_paths(value: &JsValue, root: &str, scratch: &str) -> JsValue {
     match value {
-        JsValue::String(value) => JsValue::from(
-            String::from_utf16_lossy(value.units())
-                .replace(root, "<root>")
-                .replace(scratch, "<scratch>")
-                .as_str(),
-        ),
+        JsValue::String(value) => JsValue::String(replace_units(
+            &replace_units(value, root, "<root>"),
+            scratch,
+            "<scratch>",
+        )),
         JsValue::Array(items) => JsValue::Array(
             items
                 .iter()
@@ -446,11 +469,7 @@ fn replace_paths(value: &JsValue, root: &str, scratch: &str) -> JsValue {
 
 fn substitute(value: &JsValue, root: &str) -> JsValue {
     match value {
-        JsValue::String(value) => JsValue::from(
-            String::from_utf16_lossy(value.units())
-                .replace("<root>", root)
-                .as_str(),
-        ),
+        JsValue::String(value) => JsValue::String(replace_units(value, "<root>", root)),
         JsValue::Array(items) => {
             JsValue::Array(items.iter().map(|item| substitute(item, root)).collect())
         }
@@ -675,7 +694,7 @@ fn canonical_scratch(scratch: &scratch::Scratch) -> PathBuf {
 
 #[test]
 fn real_process_scenarios_replay() {
-    let scenarios = section("real", 43);
+    let scenarios = section("real", 49);
     let scratch = scratch::Scratch::new("bash-tool");
     let root = canonical_scratch(&scratch);
     let mut ran = 0;
@@ -700,16 +719,16 @@ fn real_process_scenarios_replay() {
             }
         });
     if cfg!(target_os = "macos") {
-        assert_eq!((ran, skipped.len()), (42, 0));
+        assert_eq!((ran, skipped.len()), (48, 0));
     } else {
-        assert_eq!((ran, skipped), (41, vec!["not-found".to_string()]));
+        assert_eq!((ran, skipped), (47, vec!["not-found".to_string()]));
     }
 }
 
 /// The 15 s force-resolve path, split out so it runs beside the others.
 #[test]
 fn real_force_resolve_after_escaped_job_replays() {
-    let scenario = section("real", 43)
+    let scenario = section("real", 49)
         .iter()
         .find(|scenario| text(field(scenario, "name")) == "cancel-escaped")
         .expect("cancel-escaped scenario");
@@ -736,14 +755,19 @@ fn dropped_run_kills_process_group() {
     block_on(async {
         let options = CommandOptions {
             cwd: JsString::from(root.to_string_lossy().as_ref()),
-            env: Some(vec![("PATH".into(), "/usr/bin:/bin".into())]),
+            env: Some(vec![(
+                JsString::from("PATH"),
+                JsString::from("/usr/bin:/bin"),
+            )]),
             timeout_ms: 60_000.0,
             signal: None,
             on_stdout: None,
             on_stderr: None,
         };
-        let run =
-            NodeShellCommandRunner.run("echo $$ > leader.pid; sleep 30 | sleep 30".into(), options);
+        let run = NodeShellCommandRunner.run(
+            JsString::from("echo $$ > leader.pid; sleep 30 | sleep 30"),
+            options,
+        );
         let wait_for_pid = async {
             loop {
                 if let Ok(text) = fs::read_to_string(&pid_file)
