@@ -23,7 +23,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use sha2::{Digest, Sha256};
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
-use super::count_body::field;
+use super::count_body::{field, is, put, text as header_text};
 use super::providers::{self, StreamState};
 use super::router::AbortFlag;
 use crate::host::ModuleError;
@@ -33,12 +33,6 @@ mod sse;
 pub use errors::NetworkFetchError;
 pub(crate) use errors::retry_after_from_message;
 use errors::{ErrorInput, is_premature_stream_close, normalize_model_error};
-
-pub(crate) fn put(value: &mut JsValue, key: &str, item: JsValue) {
-    if let JsValue::Object(object) = value {
-        object.insert(key.into(), item);
-    }
-}
 
 /// `Math.round`.
 pub(crate) fn js_round(value: f64) -> f64 {
@@ -61,6 +55,19 @@ pub(crate) struct JsError {
     pub code: Option<JsString>,
     pub network_code: Option<&'static str>,
     pub raw: JsValue,
+}
+
+/// The `streamModel.ts` error classes that assign `this.name` and are
+/// always retryable stream errors.
+fn is_stream_guard_error(name: &JsString) -> bool {
+    [
+        "StreamIdleTimeoutError",
+        "IncompleteStreamError",
+        "MaxStreamingDurationError",
+        "RepeatedStreamingChunkError",
+    ]
+    .iter()
+    .any(|n| name.equals_str(n))
 }
 
 /// What `streamModel` throws.
@@ -105,24 +112,18 @@ impl ModelStreamError {
     fn message_text(&self) -> String {
         String::from_utf16_lossy(self.message().units())
     }
+    /// `isAbortError`: every variant is an `Error`, so the message test also
+    /// applies to provider/request errors (node probe: a ModelProviderError
+    /// whose message contains "aborted" is an abort error).
     fn is_abort(&self) -> bool {
-        matches!(self, Self::Thrown { .. })
-            && (self.name().equals_str("AbortError")
-                || self.message_text().to_lowercase().contains("aborted"))
+        self.name().equals_str("AbortError")
+            || self.message_text().to_lowercase().contains("aborted")
     }
     fn as_js_error(&self) -> JsError {
         let name = self.name();
         // Custom stream errors assign `this.name`; built-ins serialize as `{}`.
         let mut raw = JsObject::new();
-        if [
-            "StreamIdleTimeoutError",
-            "IncompleteStreamError",
-            "MaxStreamingDurationError",
-            "RepeatedStreamingChunkError",
-        ]
-        .iter()
-        .any(|n| name.equals_str(n))
-        {
+        if is_stream_guard_error(&name) {
             raw.insert("name".into(), JsValue::String(name.clone()));
         }
         JsError {
@@ -208,16 +209,11 @@ impl HyperModelTransport {
     /// Mozilla roots (`webpki-roots`), like Node's bundled CA store; the OS
     /// trust store and `NODE_EXTRA_CA_CERTS` are not consulted.
     pub fn new() -> Self {
-        use hyper_rustls::ConfigBuilderExt;
-        Self::from_config(Self::builder().with_webpki_roots().with_no_client_auth())
+        Self::from_config(webpki_client_config())
     }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
-        Self::from_config(
-            Self::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        )
+        Self::from_config(rooted_client_config(roots))
     }
     fn builder() -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
         rustls::ClientConfig::builder_with_provider(Arc::new(
@@ -227,15 +223,40 @@ impl HyperModelTransport {
         .expect("ring supports the default protocol versions")
     }
     fn from_config(config: rustls::ClientConfig) -> Self {
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(config)
-            .https_or_http()
-            .enable_http1()
-            .build();
         Self {
-            client: Client::builder(TokioExecutor::new()).build(connector),
+            client: Client::builder(TokioExecutor::new()).build(https_connector(config)),
         }
     }
+}
+
+/// Shared by the stream and count transports: rustls (ring) for `https`,
+/// plain TCP for `http`, HTTP/1.1. The connect timeout is undici's default
+/// `connectTimeout` (10 s); PilotDeck's global dispatcher does not override it.
+pub(crate) fn https_connector(
+    config: rustls::ClientConfig,
+) -> hyper_rustls::HttpsConnector<HttpConnector> {
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    http.set_connect_timeout(Some(Duration::from_secs(10)));
+    hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(config)
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(http)
+}
+
+/// rustls client config trusting the Mozilla roots (`webpki-roots`).
+pub(crate) fn webpki_client_config() -> rustls::ClientConfig {
+    use hyper_rustls::ConfigBuilderExt;
+    HyperModelTransport::builder()
+        .with_webpki_roots()
+        .with_no_client_auth()
+}
+/// rustls client config trusting exactly `roots`.
+pub(crate) fn rooted_client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
+    HyperModelTransport::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth()
 }
 impl Default for HyperModelTransport {
     fn default() -> Self {
@@ -324,6 +345,10 @@ pub struct StreamOptions {
     pub random: Arc<dyn Fn() -> f64 + Send + Sync>,
     /// `Date.now` for Retry-After dates and the max-duration guard.
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
+    /// undici `bodyTimeout` of the global dispatcher (PilotDeck installs
+    /// 600000 ms in `cli/proxy.ts`): a body read that sees no bytes for this
+    /// long fails with `TypeError: terminated`.
+    pub body_timeout_ms: f64,
 }
 impl Default for StreamOptions {
     fn default() -> Self {
@@ -334,11 +359,14 @@ impl Default for StreamOptions {
                 (uuid::Uuid::new_v4().as_u128() >> 75) as f64 / (1u64 << 53) as f64
             }),
             clock: Arc::new(super::router::wall_clock),
+            body_timeout_ms: UNDICI_BODY_TIMEOUT_MS,
         }
     }
 }
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = 600_000.0;
+/// `UNDICI_TRANSPORT_TIMEOUT_MS` (`cli/proxy.ts`, = LITELLM_COMPLETION_HTTP_FALLBACK_MS).
+pub const UNDICI_BODY_TIMEOUT_MS: f64 = 600_000.0;
 const REPEATED_CHUNK_LIMIT: f64 = 100.0;
 
 fn retry_number(provider: &JsValue, key: &str) -> Option<f64> {
@@ -422,20 +450,19 @@ struct Checkpoint {
 impl Checkpoint {
     fn on_event(&mut self, event: &JsValue) {
         let tag = field(event, "type");
-        let is = |t: &str| tag.as_string().is_some_and(|s| s.equals_str(t));
         let string = |key: &str| {
             JsString::from_utf16(
                 crate::js_value::to_string_units(field(event, key)).unwrap_or_default(),
             )
         };
-        if is("text_delta") {
+        if is(tag, "text_delta") {
             self.partial_text.extend(string("text").units());
-        } else if is("thinking_delta") {
+        } else if is(tag, "thinking_delta") {
             self.has_reasoning = true;
-        } else if is("tool_call_start") {
+        } else if is(tag, "tool_call_start") {
             self.has_tool_calls = true;
             self.set_active(string("id"), field(event, "name").clone(), 0.0);
-        } else if is("tool_call_delta") {
+        } else if is(tag, "tool_call_delta") {
             self.has_tool_calls = true;
             let id = string("id");
             let added = string("delta").len_utf16() as f64;
@@ -443,7 +470,7 @@ impl Checkpoint {
                 Some(entry) => entry.2 += added,
                 None => self.active.push((id, "".into(), added)),
             }
-        } else if is("tool_call_end") {
+        } else if is(tag, "tool_call_end") {
             self.has_tool_calls = true;
             let id = JsString::from_utf16(
                 crate::js_value::to_string_units(field(field(event, "toolCall"), "id"))
@@ -527,7 +554,6 @@ fn continuation_request(original: &JsValue, partial: &[u16]) -> JsValue {
             JsValue::Array(content) => content.as_slice(),
             _ => &[],
         };
-        let is = |v: &JsValue, t: &str| v.as_string().is_some_and(|s| s.equals_str(t));
         if is(field(last, "role"), "user")
             && is(field(second, "role"), "assistant")
             && content.len() == 1
@@ -580,15 +606,7 @@ fn is_retryable_stream_error(error: &ModelStreamError) -> bool {
             retryable_message(&message) || is_premature_stream_close(&error.message_text())
         }
         ModelStreamError::Thrown { name, .. } => {
-            if [
-                "StreamIdleTimeoutError",
-                "IncompleteStreamError",
-                "MaxStreamingDurationError",
-                "RepeatedStreamingChunkError",
-            ]
-            .iter()
-            .any(|n| name.equals_str(n))
-            {
+            if is_stream_guard_error(name) {
                 return true;
             }
             let message = error.message_text().to_lowercase();
@@ -666,10 +684,6 @@ fn retry_after(error: &ModelStreamError) -> Option<f64> {
 
 // ---------------------------------------------------------------------------
 // Request sending
-
-fn header_text(value: &JsValue) -> String {
-    String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default())
-}
 
 fn build_http_request(
     url: &str,
@@ -788,26 +802,35 @@ async fn response_text(
     body: &mut ModelBody,
     options: &StreamOptions,
 ) -> Result<String, ModelStreamError> {
+    // TS reads this body after the request timer was cleared and the abort
+    // listener detached; only undici's `bodyTimeout` bounds a stalled body
+    // (node probe: `TypeError: terminated`, cause UND_ERR_BODY_TIMEOUT). The
+    // caller's abort is still honoured here (safer than TS, which hangs on).
     let mut decoder = sse::Utf8Decoder::default();
     let mut text = String::new();
+    let mut units = 0usize;
     loop {
         let frame = tokio::select! {
-            frame = body.frame() => frame,
+            frame = tokio::time::timeout(duration(options.body_timeout_ms), body.frame()) => frame,
             _ = wait_abort(&options.abort) => return Err(ModelStreamError::abort()),
         };
         match frame {
-            None => break,
-            Some(Err(_)) => return Err(ModelStreamError::thrown("TypeError", "terminated")),
-            Some(Ok(frame)) => {
+            Err(_) | Ok(Some(Err(_))) => {
+                return Err(ModelStreamError::thrown("TypeError", "terminated"));
+            }
+            Ok(None) => break,
+            Ok(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {
-                    if text.len().saturating_add(data.len()) > super::count_http::MAX_STRING_LENGTH
-                    {
+                    let start = text.len();
+                    decoder.decode(data, &mut text);
+                    // V8's cap counts UTF-16 code units of the decoded text.
+                    units += text[start..].encode_utf16().count();
+                    if units > super::count_http::MAX_STRING_LENGTH {
                         return Err(ModelStreamError::thrown(
                             "RangeError",
                             "Cannot create a string longer than 0x1fffffe8 characters",
                         ));
                     }
-                    decoder.decode(data, &mut text);
                 }
             }
         }
@@ -896,12 +919,23 @@ async fn read_frame(
     idle_ms: f64,
     options: &StreamOptions,
 ) -> Result<Option<Bytes>, ModelStreamError> {
+    // undici's bodyTimeout races the idle watchdog; the shorter one wins
+    // (equal: the watchdog, armed per read like TS's `withIdleTimeout`).
+    let body_first = options.body_timeout_ms < idle_ms;
+    let wait = if body_first {
+        options.body_timeout_ms
+    } else {
+        idle_ms
+    };
     loop {
         let frame = tokio::select! {
-            frame = tokio::time::timeout(duration(idle_ms), body.frame()) => frame,
+            frame = tokio::time::timeout(duration(wait), body.frame()) => frame,
             _ = wait_abort(&options.abort) => return Err(ModelStreamError::abort()),
         };
         match frame {
+            Err(_) if body_first => {
+                return Err(ModelStreamError::thrown("TypeError", "terminated"));
+            }
             Err(_) => {
                 return Err(ModelStreamError::thrown(
                     "StreamIdleTimeoutError",
@@ -922,8 +956,28 @@ async fn read_frame(
     }
 }
 
-fn sse_error(error: sse::SyntaxError) -> ModelStreamError {
-    ModelStreamError::thrown("SyntaxError", error.0)
+#[cfg(not(test))]
+fn sse_limit() -> usize {
+    super::count_http::MAX_STRING_LENGTH
+}
+#[cfg(test)]
+thread_local! {
+    /// Tests shrink V8's string limit to exercise the cap without 512 MiB.
+    static SSE_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
+}
+#[cfg(test)]
+fn sse_limit() -> usize {
+    SSE_LIMIT.with(std::cell::Cell::get)
+}
+
+fn sse_error(error: sse::SseError) -> ModelStreamError {
+    match error {
+        sse::SseError::Syntax(message) => ModelStreamError::thrown("SyntaxError", message),
+        // V8 `RangeError: Invalid string length` (node probe), not retryable.
+        sse::SseError::InvalidStringLength => {
+            ModelStreamError::thrown("RangeError", "Invalid string length")
+        }
+    }
 }
 
 /// `streamModel(request, config, options)` for the HTTP protocols.
@@ -1012,6 +1066,24 @@ pub async fn stream_model(
             (!values.is_empty()).then(|| values.join(", "))
         };
         let mut body = response.into_body();
+        if matches!(status, 204 | 205) {
+            // Null-body statuses: `response.body` is null in fetch.
+            let missing = JsError {
+                message: "Missing response body.".into(),
+                code: None,
+                network_code: None,
+                raw: JsValue::Object(JsObject::new()),
+            };
+            sink(StreamOutput::Event(error_event(JsValue::Object(
+                normalize_model_error(
+                    &provider_id(&provider),
+                    &protocol(&provider),
+                    ErrorInput::Error(&missing),
+                    None,
+                ),
+            ))));
+            return Ok(());
+        }
         if !(200..300).contains(&status) {
             let text = response_text(&mut body, options).await?;
             let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
@@ -1055,7 +1127,7 @@ pub async fn stream_model(
         let mut sentinel = false;
         let idle_ms = idle_timeout_ms(&provider, options);
         let mut guard = StreamGuard::new(&provider, (options.clock)());
-        let mut buffer = sse::SseBuffer::default();
+        let mut buffer = sse::SseBuffer::with_limit(sse_limit());
         let outcome: Result<(), ModelStreamError> = async {
             throw_if_aborted(options)?;
             loop {

@@ -1,0 +1,7418 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+  "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+  "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+  "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+  "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+  "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+  "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+  "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+  "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05"
+ },
+ "node": "v22.22.0",
+ "jsonrepair": "3.14.0",
+ "packageSha256": {
+  "lib/esm/regular/jsonrepair.js": "a023cd6401d78caceaabdf0abb902227cc064b9dbaed8a3d329d6bfabdab9ccf",
+  "lib/esm/utils/stringUtils.js": "d5e1065bc473e1c06c9ae2c70dae048175fe8b96c7749b00c267fe29f5c322c3",
+  "lib/cjs/regular/jsonrepair.js": "1373098f999e5c3bf30dba0cc7257a230d2061eb18a37d08a9d1fdf927e513d7",
+  "lib/cjs/utils/stringUtils.js": "f0f5145654e9f0efbe1694b7928ad29d24ca073768622c3fe1d9b7202c8b8185"
+ },
+ "locale": "en-US",
+ "cases": [
+  {
+   "input": "{\"a\":1}",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[]",
+   "repaired": "[]",
+   "parses": true,
+   "parsed": [],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "\"x\"",
+   "repaired": "\"x\"",
+   "parses": true,
+   "parsed": "x",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "\"x\"",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "\"x\""
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": "x",
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "42",
+   "repaired": "42",
+   "parses": true,
+   "parsed": 42,
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "42",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "42"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": 42,
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": " {\"a\": [1, 2.5e3, -0.1]} ",
+   "repaired": " {\"a\": [1, 2.5e3, -0.1]} ",
+   "parses": true,
+   "parsed": {
+    "a": [
+     1,
+     2500,
+     -0.1
+    ]
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": " {\"a\": [1, 2.5e3, -0.1]} ",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": " {\"a\": [1, 2.5e3, -0.1]} "
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": [
+        1,
+        2500,
+        -0.1
+       ]
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"q\":\"ab",
+   "repaired": "{\"q\":\"ab\"}",
+   "parses": true,
+   "parsed": {
+    "q": "ab"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"q\":\"ab",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"q\":\"ab"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "q": "ab"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"q\":\"ab\\",
+   "repaired": "{\"q\":\"ab\"}",
+   "parses": true,
+   "parsed": {
+    "q": "ab"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"q\":\"ab\\",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"q\":\"ab\\"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "q": "ab"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"q\":",
+   "repaired": "{\"q\":null}",
+   "parses": true,
+   "parsed": {
+    "q": null
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"q\":",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"q\":"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "q": null
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"q\"",
+   "repaired": "{\"q\":null}",
+   "parses": true,
+   "parsed": {
+    "q": null
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"q\"",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"q\""
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "q": null
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"q",
+   "repaired": "{\"q\":null}",
+   "parses": true,
+   "parsed": {
+    "q": null
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"q",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"q"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "q": null
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{",
+   "repaired": "{}",
+   "parses": true,
+   "parsed": {},
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {},
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1,2",
+   "repaired": "[1,2]",
+   "parses": true,
+   "parsed": [
+    1,
+    2
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1,2",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1,2"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1,
+       2
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1,2,",
+   "repaired": "[1,2]",
+   "parses": true,
+   "parsed": [
+    1,
+    2
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1,2,",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1,2,"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1,
+       2
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":{\"b\":[1,{\"c\":\"d",
+   "repaired": "{\"a\":{\"b\":[1,{\"c\":\"d\"}]}}",
+   "parses": true,
+   "parsed": {
+    "a": {
+     "b": [
+      1,
+      {
+       "c": "d"
+      }
+     ]
+    }
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":{\"b\":[1,{\"c\":\"d",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":{\"b\":[1,{\"c\":\"d"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": {
+        "b": [
+         1,
+         {
+          "c": "d"
+         }
+        ]
+       }
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"n\":-",
+   "repaired": "{\"n\":-0}",
+   "parses": true,
+   "parsed": {
+    "n": 0
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"n\":-",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"n\":-"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "n": 0
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"n\":1.",
+   "repaired": "{\"n\":1.0}",
+   "parses": true,
+   "parsed": {
+    "n": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"n\":1.",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"n\":1."
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "n": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"n\":1e",
+   "repaired": "{\"n\":1e0}",
+   "parses": true,
+   "parsed": {
+    "n": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"n\":1e",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"n\":1e"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "n": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"n\":1e+",
+   "repaired": "{\"n\":1e+0}",
+   "parses": true,
+   "parsed": {
+    "n": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"n\":1e+",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"n\":1e+"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "n": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"u\":\"\\u12",
+   "repaired": "{\"u\":\"\"}",
+   "parses": true,
+   "parsed": {
+    "u": ""
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"u\":\"\\u12",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"u\":\"\\u12"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "u": ""
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"u\":\"\\u12\"}",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"u\":\"\\u12\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"u\":\"\\u12\"}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"u\":\"\\uZZZZ\"}",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"u\":\"\\uZZZZ\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"u\":\"\\uZZZZ\"}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"t\":tru",
+   "repaired": "{\"t\":\"tru\"}",
+   "parses": true,
+   "parsed": {
+    "t": "tru"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"t\":tru",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"t\":tru"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "t": "tru"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"t\":nul",
+   "repaired": "{\"t\":\"nul\"}",
+   "parses": true,
+   "parsed": {
+    "t": "nul"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"t\":nul",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"t\":nul"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "t": "nul"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1,}",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1,}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1,}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1,2,]",
+   "repaired": "[1,2]",
+   "parses": true,
+   "parsed": [
+    1,
+    2
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1,2,]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1,2,]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1,
+       2
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1 \"b\":2}",
+   "repaired": "{\"a\":1, \"b\":2}",
+   "parses": true,
+   "parsed": {
+    "a": 1,
+    "b": 2
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1 \"b\":2}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1 \"b\":2}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1,
+       "b": 2
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1 2 3]",
+   "repaired": "[1, 2, 3]",
+   "parses": true,
+   "parsed": [
+    1,
+    2,
+    3
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1 2 3]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1 2 3]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1,
+       2,
+       3
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{,\"a\":1}",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{,\"a\":1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{,\"a\":1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[,1]",
+   "repaired": "[1]",
+   "parses": true,
+   "parsed": [
+    1
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[,1]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[,1]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{'a':'b'}",
+   "repaired": "{\"a\":\"b\"}",
+   "parses": true,
+   "parsed": {
+    "a": "b"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{'a':'b'}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{'a':'b'}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "b"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{“a”:“b”}",
+   "repaired": "{\"a\":\"b\"}",
+   "parses": true,
+   "parsed": {
+    "a": "b"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{“a”:“b”}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{“a”:“b”}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "b"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{‘a’:‘b’}",
+   "repaired": "{\"a\":\"b\"}",
+   "parses": true,
+   "parsed": {
+    "a": "b"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{‘a’:‘b’}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{‘a’:‘b’}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "b"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"he said \"hi\" ok\"}",
+   "repaired": "{\"a\":\"he said \\\"hi\\\" ok\"}",
+   "parses": true,
+   "parsed": {
+    "a": "he said \"hi\" ok"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"he said \"hi\" ok\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"he said \"hi\" ok\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "he said \"hi\" ok"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"b,c,\"d\":\"e\"}",
+   "repaired": "{\"a\":\"b,c\",\"d\":\"e\"}",
+   "parses": true,
+   "parsed": {
+    "a": "b,c",
+    "d": "e"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"b,c,\"d\":\"e\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"b,c,\"d\":\"e\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "b,c",
+       "d": "e"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":`x`}",
+   "repaired": "{\"a\":\"x\"}",
+   "parses": true,
+   "parsed": {
+    "a": "x"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":`x`}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":`x`}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "x"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{a:1}",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{a:1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{a:1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{a:b}",
+   "repaired": "{\"a\":\"b\"}",
+   "parses": true,
+   "parsed": {
+    "a": "b"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{a:b}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{a:b}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "b"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{a: hello world}",
+   "repaired": "{\"a\": \"hello world\"}",
+   "parses": true,
+   "parsed": {
+    "a": "hello world"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{a: hello world}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{a: hello world}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "hello world"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":undefined}",
+   "repaired": "{\"a\":null}",
+   "parses": true,
+   "parsed": {
+    "a": null
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":undefined}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":undefined}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": null
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":True,\"b\":False,\"c\":None}",
+   "repaired": "{\"a\":true,\"b\":false,\"c\":null}",
+   "parses": true,
+   "parsed": {
+    "a": true,
+    "b": false,
+    "c": null
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":True,\"b\":False,\"c\":None}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":True,\"b\":False,\"c\":None}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": true,
+       "b": false,
+       "c": null
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"k\":hello\"}",
+   "repaired": "{\"k\":\"hello\"}",
+   "parses": true,
+   "parsed": {
+    "k": "hello"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"k\":hello\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"k\":hello\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "k": "hello"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1 /* c */}",
+   "repaired": "{\"a\":1 }",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1 /* c */}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1 /* c */}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1} // tail",
+   "repaired": "{\"a\":1} ",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1} // tail",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1} // tail"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{ \"a\":1}",
+   "repaired": "{ \"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{ \"a\":1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{ \"a\":1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":　 2}",
+   "repaired": "{\"a\":  2}",
+   "parses": true,
+   "parsed": {
+    "a": 2
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":　 2}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":　 2}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 2
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "/* only */",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "/* only */",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "/* only */"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1}}",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1}}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1}}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1]]",
+   "repaired": "[1]",
+   "parses": true,
+   "parsed": [
+    1
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1]]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1]]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":[1,2}",
+   "repaired": "{\"a\":[1,2]}",
+   "parses": true,
+   "parsed": {
+    "a": [
+     1,
+     2
+    ]
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":[1,2}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":[1,2}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": [
+        1,
+        2
+       ]
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[{\"a\":1]",
+   "repaired": "[{\"a\":1}]",
+   "parses": true,
+   "parsed": [
+    {
+     "a": 1
+    }
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[{\"a\":1]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[{\"a\":1]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       {
+        "a": 1
+       }
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"line\nbreak\"}",
+   "repaired": "{\"a\":\"line\\nbreak\"}",
+   "parses": true,
+   "parsed": {
+    "a": "line\nbreak"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"line\nbreak\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"line\nbreak\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "line\nbreak"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"tab\there\"}",
+   "repaired": "{\"a\":\"tab\\there\"}",
+   "parses": true,
+   "parsed": {
+    "a": "tab\there"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"tab\there\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"tab\there\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "tab\there"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"x\\qy\"}",
+   "repaired": "{\"a\":\"xqy\"}",
+   "parses": true,
+   "parsed": {
+    "a": "xqy"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"x\\qy\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"x\\qy\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "xqy"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"\\\nb\"}",
+   "repaired": "{\"a\":\"\\nb\"}",
+   "parses": true,
+   "parsed": {
+    "a": "\nb"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"\\\nb\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"\\\nb\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "\nb"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "\"a\" + \"b\"",
+   "repaired": "\"ab\"",
+   "parses": true,
+   "parsed": "ab",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "\"a\" + \"b\"",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "\"a\" + \"b\""
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": "ab",
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"x\" + \"y\" + }",
+   "repaired": "{\"a\":\"xy\"}",
+   "parses": true,
+   "parsed": {
+    "a": "xy"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"x\" + \"y\" + }",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"x\" + \"y\" + }"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": "xy"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":\"\u0001\"}",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":\"\u0001\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":\"\u0001\"}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"s\":\"\ud800\"}",
+   "repaired": "{\"s\":\"\ud800\"}",
+   "parses": true,
+   "parsed": {
+    "s": "\ud800"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"s\":\"\ud800\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"s\":\"\ud800\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "s": "\ud800"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"u\":\"https://example.com/a?b=1\"}",
+   "repaired": "{\"u\":\"https://example.com/a?b=1\"}",
+   "parses": true,
+   "parsed": {
+    "u": "https://example.com/a?b=1"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"u\":\"https://example.com/a?b=1\"}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"u\":\"https://example.com/a?b=1\"}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "u": "https://example.com/a?b=1"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"u\":https://example.com/x}",
+   "repaired": "{\"u\":\"https://example.com/x\"}",
+   "parses": true,
+   "parsed": {
+    "u": "https://example.com/x"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"u\":https://example.com/x}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"u\":https://example.com/x}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "u": "https://example.com/x"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"z\":00789}",
+   "repaired": "{\"z\":\"00789\"}",
+   "parses": true,
+   "parsed": {
+    "z": "00789"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"z\":00789}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"z\":00789}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "z": "00789"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"z\":-01}",
+   "repaired": "{\"z\":-01}",
+   "parses": false,
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"z\":-01}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"z\":-01}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"z\":.5}",
+   "repaired": "{\"z\":.5}",
+   "parses": false,
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"z\":.5}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"z\":.5}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"z\":1.2.3}",
+   "repaired": "{\"z\":\"1.2.3\"}",
+   "parses": true,
+   "parsed": {
+    "z": "1.2.3"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"z\":1.2.3}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"z\":1.2.3}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "z": "1.2.3"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"z\":2e}",
+   "repaired": "{\"z\":2e0}",
+   "parses": true,
+   "parsed": {
+    "z": 2
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"z\":2e}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"z\":2e}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "z": 2
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "```json\n{\"a\":1}\n```",
+   "repaired": "\n{\"a\":1}\n",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "```json\n{\"a\":1}\n```",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "```json\n{\"a\":1}\n```"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[```{\"a\":1}```]",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[```{\"a\":1}```]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[```{\"a\":1}```]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "callback({\"a\":1});",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "callback({\"a\":1});",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "callback({\"a\":1});"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "NumberLong(\"2\")",
+   "repaired": "\"2\"",
+   "parses": true,
+   "parsed": "2",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "NumberLong(\"2\")",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "NumberLong(\"2\")"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": "2",
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"r\":/ab+c/}",
+   "repaired": "{\"r\":\"/ab+c/\"}",
+   "parses": true,
+   "parsed": {
+    "r": "/ab+c/"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"r\":/ab+c/}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"r\":/ab+c/}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "r": "/ab+c/"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1,2,...]",
+   "repaired": "[1,2]",
+   "parses": true,
+   "parsed": [
+    1,
+    2
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1,2,...]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1,2,...]"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1,
+       2
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1, ...}",
+   "repaired": "{\"a\":1 }",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1, ...}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1, ...}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1},",
+   "repaired": "{\"a\":1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1},",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1},"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1} , ",
+   "repaired": "{\"a\":1}  ",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1} , ",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1} , "
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "[1],\n",
+   "repaired": "[1]\n",
+   "parses": true,
+   "parsed": [
+    1
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "[1],\n",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "[1],\n"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       1
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1}\n{\"b\":2}",
+   "repaired": "[\n{\"a\":1},\n{\"b\":2}\n]",
+   "parses": true,
+   "parsed": [
+    {
+     "a": 1
+    },
+    {
+     "b": 2
+    }
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1}\n{\"b\":2}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1}\n{\"b\":2}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       {
+        "a": 1
+       },
+       {
+        "b": 2
+       }
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1},\n{\"b\":2}",
+   "repaired": "[\n{\"a\":1},\n{\"b\":2}\n]",
+   "parses": true,
+   "parsed": [
+    {
+     "a": 1
+    },
+    {
+     "b": 2
+    }
+   ],
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1},\n{\"b\":2}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1},\n{\"b\":2}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": [
+       {
+        "a": 1
+       },
+       {
+        "b": 2
+       }
+      ],
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "\\\"{\\\"a\\\":1}\\\"",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "\\\"{\\\"a\\\":1}\\\"",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "\\\"{\\\"a\\\":1}\\\""
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": ""
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {},
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": false,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "   ",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "   ",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "   "
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "]",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "]",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "]"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\" 1}",
+   "repaired": "{\"a\": 1}",
+   "parses": true,
+   "parsed": {
+    "a": 1
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\" 1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\" 1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": 1
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\":1} x",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\":1} x",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\":1} x"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{:1}",
+   "error": "Error",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{:1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{:1}"
+      }
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "error",
+     "error": {
+      "provider": "anthropic",
+      "protocol": "anthropic",
+      "code": "invalid_tool_arguments",
+      "message": "Anthropic stream tool call arguments are not valid JSON.",
+      "retryable": true,
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "output_tokens": 1
+       }
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "{\"a\"::1}",
+   "repaired": "{\"a\":\":1\"}",
+   "parses": true,
+   "parsed": {
+    "a": ":1"
+   },
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "{\"a\"::1}",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "{\"a\"::1}"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": {
+       "a": ":1"
+      },
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "@",
+   "repaired": "\"@\"",
+   "parses": true,
+   "parsed": "@",
+   "events": [
+    {
+     "type": "tool_call_start",
+     "id": "toolu_r",
+     "name": "fix",
+     "raw": {
+      "type": "content_block_start",
+      "index": 3,
+      "content_block": {
+       "type": "tool_use",
+       "id": "toolu_r",
+       "name": "fix",
+       "input": {}
+      }
+     }
+    },
+    {
+     "type": "tool_call_delta",
+     "id": "toolu_r",
+     "delta": "@",
+     "raw": {
+      "type": "content_block_delta",
+      "index": 3,
+      "delta": {
+       "type": "input_json_delta",
+       "partial_json": "@"
+      }
+     }
+    },
+    {
+     "type": "tool_call_end",
+     "toolCall": {
+      "id": "toolu_r",
+      "name": "fix",
+      "input": "@",
+      "raw": {
+       "type": "content_block_stop",
+       "index": 3
+      }
+     },
+     "wasRepaired": true,
+     "raw": {
+      "type": "content_block_stop",
+      "index": 3
+     }
+    },
+    {
+     "type": "usage",
+     "usage": {
+      "outputTokens": 1,
+      "totalTokens": 1
+     },
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    },
+    {
+     "type": "message_end",
+     "finishReason": "tool_call",
+     "raw": {
+      "type": "message_delta",
+      "delta": {
+       "stop_reason": "tool_use"
+      },
+      "usage": {
+       "output_tokens": 1
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

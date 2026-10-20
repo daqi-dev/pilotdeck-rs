@@ -4,6 +4,7 @@ mod count_json;
 pub(crate) mod cpu;
 pub mod http;
 mod json_walk;
+mod jsonrepair;
 pub(crate) mod providers;
 pub mod router;
 pub mod token_accounting;

@@ -80,11 +80,7 @@ fn thinking_plan(request: &JsValue, model: &JsValue) -> Result<ThinkingPlan, Mod
                     ..Default::default()
                 });
             }
-            let budget_only = regex::Regex::new(
-                r"claude-(?:3|haiku-3|haiku-4|(?:sonnet|opus)-4(?:[.-][0-5](?:[^0-9]|$)|-20|$))",
-            )
-            .expect("static regex")
-            .is_match(&model_id);
+            let budget_only = super::super::count_body::budget_only_model(&model_id);
             if budget_only {
                 if effort.is_some() {
                     return fail(
@@ -329,6 +325,32 @@ fn usage(raw: &JsValue) -> Option<JsValue> {
     Some(JsValue::Object(out))
 }
 
+/// UTF-16 JSON text as a Rust string for `parse_json`. A lone surrogate is
+/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
+/// that would follow an escaping backslash stays invalid (U+FFFD), and
+/// anywhere else both forms are a syntax error, as in `JSON.parse`.
+fn json_text(units: &[u16]) -> String {
+    let mut out = String::with_capacity(units.len());
+    let mut backslashes = 0usize;
+    for item in char::decode_utf16(units.iter().copied()) {
+        match item {
+            Ok(c) => {
+                out.push(c);
+                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+            }
+            Err(error) => {
+                if backslashes % 2 == 1 {
+                    out.push('\u{FFFD}');
+                } else {
+                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
+                }
+                backslashes = 0;
+            }
+        }
+    }
+    out
+}
+
 /// JS `Map` keys compare with SameValueZero.
 fn same_key(a: f64, b: f64) -> bool {
     a == b || (a.is_nan() && b.is_nan())
@@ -497,15 +519,21 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
             let Some(call) = state.get(index) else {
                 return Vec::new();
             };
-            let raw_input = String::from_utf16_lossy(&call.input_buffer);
-            let input = if raw_input.is_empty() {
-                Some(JsValue::Object(JsObject::new()))
+            // `JSON.parse(rawInput)`, then `JSON.parse(jsonrepair(rawInput))`.
+            let parse = |units: &[u16]| parse_json(&json_text(units)).ok();
+            let (input, was_repaired) = if call.input_buffer.is_empty() {
+                (Some(JsValue::Object(JsObject::new())), false)
+            } else if let Some(input) = parse(&call.input_buffer) {
+                (Some(input), false)
             } else {
-                parse_json(&raw_input).ok()
+                match crate::runtime::model::jsonrepair::jsonrepair(&call.input_buffer) {
+                    Ok(repaired) => match parse(&repaired) {
+                        Some(input) => (Some(input), true),
+                        None => (None, false),
+                    },
+                    Err(_) => (None, false),
+                }
             };
-            // Known gap: the baseline tries `jsonrepair` (npm) before giving
-            // up. Without a port, every unparseable buffer is deferred as a
-            // failure, matching only inputs jsonrepair cannot repair either.
             let call = state.delete(index).expect("present");
             match input {
                 Some(input) => vec![event([
@@ -519,7 +547,7 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
                             ("raw", raw.clone()),
                         ]),
                     ),
-                    ("wasRepaired", JsValue::Bool(false)),
+                    ("wasRepaired", JsValue::Bool(was_repaired)),
                     ("raw", raw.clone()),
                 ])],
                 None => {
