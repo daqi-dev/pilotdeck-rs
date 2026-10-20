@@ -199,8 +199,76 @@ impl std::fmt::Display for BodyFailure {
 impl std::error::Error for BodyFailure {}
 
 pub type ModelBody = BoxBody<Bytes, BodyFailure>;
-pub type TransportFuture =
-    Pin<Box<dyn Future<Output = Result<Response<ModelBody>, TransportFailure>> + Send>>;
+type TransportResult = Result<Response<ModelBody>, TransportFailure>;
+
+/// An exchange with an observable completion source. A timer-backed transport
+/// must use `after`, rather than hide a sleep in an opaque future: consumers
+/// racing an abort timer need both deadlines when the executor resumes late.
+/// Ordinary I/O is dispatched when polled; an already fulfilled exchange is a
+/// microtask (`ready`). Dropping any variant also drops its body/connection.
+pub struct TransportFuture {
+    future: Pin<Box<dyn Future<Output = TransportResult> + Send>>,
+    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+    microtask: bool,
+}
+
+impl TransportFuture {
+    /// Socket I/O, without an application-level delayed completion.
+    pub fn io(future: impl Future<Output = TransportResult> + Send + 'static) -> Self {
+        Self {
+            future: Box::pin(future),
+            timer: None,
+            microtask: false,
+        }
+    }
+
+    pub fn ready(result: TransportResult) -> Self {
+        Self::microtask(std::future::ready(result))
+    }
+
+    /// A promise continuation dispatched before the next timer callback.
+    /// This must not hide a timer or socket wait; those have separate event
+    /// sources. It may yield while its queued continuation is being delivered.
+    pub fn microtask(future: impl Future<Output = TransportResult> + Send + 'static) -> Self {
+        Self {
+            future: Box::pin(future),
+            timer: None,
+            microtask: true,
+        }
+    }
+
+    /// A timer callback that settles the exchange. Keep the timer here so
+    /// callers can order it against their own timers, including overdue ones.
+    pub fn after(delay: Duration, result: TransportResult) -> Self {
+        Self {
+            future: Box::pin(std::future::ready(result)),
+            timer: Some(Box::pin(tokio::time::sleep(delay))),
+            microtask: false,
+        }
+    }
+
+    pub fn scheduled_at(&self) -> Option<tokio::time::Instant> {
+        self.timer.as_ref().map(|timer| timer.deadline())
+    }
+
+    pub fn is_microtask(&self) -> bool {
+        self.microtask
+    }
+}
+
+impl Future for TransportFuture {
+    type Output = TransportResult;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if let Some(timer) = &mut self.timer {
+            std::task::ready!(timer.as_mut().poll(cx));
+        }
+        self.future.as_mut().poll(cx)
+    }
+}
 
 /// One HTTP exchange. Dropping the future or the response body closes the
 /// connection; nothing is detached.
@@ -274,7 +342,7 @@ impl Default for HyperModelTransport {
 impl ModelHttpTransport for HyperModelTransport {
     fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
         let client = self.client.clone();
-        Box::pin(async move {
+        TransportFuture::io(async move {
             let response = client
                 .request(request)
                 .await

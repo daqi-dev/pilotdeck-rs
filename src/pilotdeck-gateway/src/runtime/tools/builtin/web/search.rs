@@ -14,7 +14,7 @@ use super::{
     super::{field, object, schema, string},
     ask_permission,
     network::{
-        BodyError, FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions, network_fetch,
+        BodyError, FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions,
         node_timer_duration, read_body,
     },
 };
@@ -711,38 +711,23 @@ async fn send(
         },
         random: Arc::clone(&options.random),
     };
-    let timed = async {
-        let result = network_fetch(options.transport.as_ref(), request, &fetch).await;
-        match result {
-            Ok(response) => Ok(response),
-            // `isLocalTimeout`: a parent abort is never a timeout.
-            Err(error) if error.code == "network_timeout" && !context.is_aborted() => Err(None),
-            Err(error) => Err(Some(error)),
-        }
-    };
     // `setTimeout(() => controller.abort(), timeoutMs)` in every provider is
     // unconditional: 0, a negative value and NaN still abort the call. Only
     // `networkFetch`'s own per-attempt timer is gated on `timeoutMs > 0`.
     // Node clamps the delay to [1, 2^31-1] ms (NaN, ±Infinity, values below
     // 1 and values above 2^31-1 become 1 ms), so an overflowing number never
     // reaches `Duration::from_secs_f64`, which panics.
-    //
-    // Ordering (`probes/search-timeout-block.out`): with a 60 ms transport and
-    // a 120 ms synchronous event-loop block, 0/-1/NaN/1/60 return
-    // `tool_timeout` and 100 succeeds — the abort timer wins whenever it is
-    // due no later than the response, and it is armed before the fetch starts
-    // (the 60/60 tie goes to the timer). Rust cannot see the transport's
-    // internal deadline, so when both branches are ready in the same poll the
-    // timer is the one that has already expired and is polled first; an
-    // already-expired timeout is never silently replaced by a response. A
-    // response that is ready on an earlier wake-up still wins, which is the
-    // normal positive-timeout path (and real I/O, where an unblocked Node
-    // event loop runs the expired timers phase before I/O callbacks).
-    let delay = node_timer_duration(timeout_ms);
-    tokio::select! {
-        biased;
-        () = tokio::time::sleep(delay) => Err(None),
-        result = timed => result,
+    // The network layer dispatches this deadline together with the response,
+    // parent signal, per-attempt timer and retry timers; no outer race may
+    // override the event that it has already selected.
+    let deadline = tokio::time::Instant::now() + node_timer_duration(timeout_ms);
+    match super::network::network_fetch_until(options.transport.as_ref(), request, &fetch, deadline)
+        .await
+    {
+        Ok(response) => Ok(response),
+        // `isLocalTimeout`: a parent abort is never a timeout.
+        Err(error) if error.code == "network_timeout" && !context.is_aborted() => Err(None),
+        Err(error) => Err(Some(error)),
     }
 }
 

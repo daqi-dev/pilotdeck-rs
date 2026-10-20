@@ -1121,19 +1121,22 @@ struct DelayedTransport {
 impl ModelHttpTransport for DelayedTransport {
     fn send(&self, _request: hyper::Request<Full<Bytes>>) -> TransportFuture {
         *self.calls.lock().unwrap() += 1;
-        let delay = self.delay;
-        Box::pin(async move {
-            tokio::time::sleep(delay).await;
-            let body = Full::new(Bytes::from_static(br#"{"search_result":[]}"#))
-                .map_err(|never: std::convert::Infallible| -> BodyFailure { match never {} })
-                .boxed();
-            Ok(hyper::Response::builder()
-                .status(200)
-                .header("content-type", "application/json")
-                .body(body)
-                .unwrap())
-        })
+        TransportFuture::after(self.delay, Ok(search_response(200)))
     }
+}
+
+fn search_response(
+    status: u16,
+) -> hyper::Response<pilotdeck_gateway::runtime::model::http::ModelBody> {
+    let body = Full::new(Bytes::from_static(br#"{"search_result":[]}"#))
+        .map_err(|never: std::convert::Infallible| -> BodyFailure { match never {} })
+        .boxed();
+    hyper::Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .header("retry-after", "0.05")
+        .body(body)
+        .unwrap()
 }
 
 fn delayed_search(timeout_ms: f64, delay: Duration) -> (WebSearchTool, Arc<Mutex<usize>>) {
@@ -1199,8 +1202,8 @@ async fn negative_control_positive_timeout_lets_delayed_response_through() {
 }
 
 /// `Duration::from_secs_f64` panics on non-finite or overflowing seconds.
-/// Node's `setTimeout` instead clamps to `[1, 2^31-1]` ms, keeping fractional
-/// delays inside that range, and turns `NaN`, `±Infinity` and everything
+/// Node's `setTimeout` instead truncates valid fractional delays, and turns
+/// `NaN`, `±Infinity` and everything
 /// outside it into 1 ms (`probes/timer-clamp.out`).
 #[test]
 fn node_set_timeout_clamp_boundaries() {
@@ -1212,9 +1215,10 @@ fn node_set_timeout_clamp_boundaries() {
         (f64::NAN, 1.0),
         (f64::NEG_INFINITY, 1.0),
         (1.0, 1.0),
-        (1.9, 1.9),
+        (1.9, 1.0),
         (2.0, 2.0),
         (60.0, 60.0),
+        (60.9, 60.0),
         (i32::MAX as f64, i32::MAX as f64),
         (i32::MAX as f64 + 0.5, 1.0),
         (i32::MAX as f64 + 1.0, 1.0),
@@ -1234,7 +1238,7 @@ fn node_set_timeout_clamp_boundaries() {
 struct NeverTransport;
 impl ModelHttpTransport for NeverTransport {
     fn send(&self, _request: hyper::Request<Full<Bytes>>) -> TransportFuture {
-        Box::pin(std::future::pending())
+        TransportFuture::io(std::future::pending())
     }
 }
 
@@ -1377,6 +1381,252 @@ async fn web_search_expired_timeout_is_not_replaced_by_a_later_response() {
         "web_search timed out after 1ms."
     );
     assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+/// Poll exactly once, then let the driver advance the clock without polling
+/// the tool. Unlike spawning two tasks, this cannot accidentally process the
+/// response before both timers are due.
+async fn poll_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending(), "must have yielded");
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+/// TS Node probe: overdue timers retain their due-time ordering and the outer
+/// timer was registered first in a tie. The 100/60 case is the negative
+/// control for unconditional timeout priority; 1/60 rejects response priority.
+#[tokio::test(start_paused = true)]
+async fn web_search_orders_both_expired_response_and_timeout() {
+    for (budget, success) in [(1.0, false), (60.0, false), (100.0, true)] {
+        let (tool, calls) = delayed_search(budget, Duration::from_millis(60));
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), None),
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        let result = pending.await;
+        if success {
+            assert_eq!(
+                json(get(get(&result, "ok"), "data")),
+                r#"{"query":"q","organic":[]}"#
+            );
+        } else {
+            assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+        }
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+}
+
+/// A delivered parent abort wins even if the loop was blocked past the timeout
+/// before abort() was called. Nominal deadlines are not delivered callbacks.
+#[tokio::test(start_paused = true)]
+async fn web_search_parent_abort_is_not_overwritten_by_overdue_timers() {
+    for abort_after_block in [false, true] {
+        let (tool, calls) = delayed_search(100.0, Duration::from_millis(60));
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), Some(signal.clone())),
+        ));
+        poll_pending(pending.as_mut()).await;
+        if !abort_after_block {
+            signal.cancel();
+        }
+        tokio::time::advance(Duration::from_millis(120)).await;
+        if abort_after_block {
+            signal.cancel();
+        }
+        let result = pending.await;
+        let error = get(&result, "error");
+        assert_eq!(text(get(error, "code")), "tool_execution_failed");
+        assert_eq!(
+            text(get(error, "message")),
+            "web_search (glm) request failed: Network request aborted by parent signal."
+        );
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+}
+
+/// Negative control for parent priority: dispatching a response/timeout first
+/// settles the call; a subsequently delivered abort cannot replace that result.
+#[tokio::test(start_paused = true)]
+async fn web_search_later_parent_abort_preserves_settled_event() {
+    for (budget, success) in [(30.0, false), (100.0, true)] {
+        let (tool, _) = delayed_search(budget, Duration::from_millis(60));
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), Some(signal.clone())),
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(60)).await;
+        let result = pending.await;
+        signal.cancel();
+        tokio::time::advance(Duration::from_millis(60)).await;
+        if success {
+            assert_eq!(
+                json(get(get(&result, "ok"), "data")),
+                r#"{"query":"q","organic":[]}"#
+            );
+        } else {
+            assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+        }
+    }
+}
+
+/// Standalone networkFetch (also used by web_fetch) must use the same ordering;
+/// fixing only the search wrapper would leave its hidden timeout race intact.
+#[tokio::test(start_paused = true)]
+async fn network_fetch_orders_both_expired_response_and_timeout() {
+    for (budget, success) in [(1.0, false), (60.9, false), (100.0, true)] {
+        let transport = DelayedTransport {
+            delay: Duration::from_millis(60),
+            calls: Arc::new(Mutex::new(0)),
+        };
+        let request = HttpRequest {
+            method: "GET",
+            url: "http://example.com/".into(),
+            headers: Vec::new(),
+            body: None,
+        };
+        let options = network_fetch_options(budget);
+        let mut pending = Box::pin(network_fetch(&transport, &request, &options));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        match pending.await {
+            Ok(response) => assert!(success && response.status == 200),
+            Err(error) => {
+                assert!(!success);
+                assert_eq!(error.code, "network_timeout");
+            }
+        }
+    }
+}
+
+/// `60.9` schedules in Node's 60 ms timer list, while `61.1` schedules at
+/// 61 ms. Checking only Timeout._idleTimeout would make the first case green
+/// for the wrong reason. The second is a boundary negative control.
+#[tokio::test(start_paused = true)]
+async fn web_search_fractional_timer_matches_node_scheduling() {
+    for (budget, success) in [(60.9, false), (61.1, true), (2147483647.5, false)] {
+        let (tool, _) = delayed_search(budget, Duration::from_millis(60));
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), None),
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        let result = pending.await;
+        if success {
+            assert_eq!(
+                json(get(get(&result, "ok"), "data")),
+                r#"{"query":"q","organic":[]}"#
+            );
+        } else {
+            let error = get(&result, "error");
+            assert_eq!(text(get(error, "code")), "tool_timeout");
+            assert_eq!(
+                text(get(error, "message")),
+                format!("web_search timed out after {budget}ms.")
+            );
+        }
+    }
+}
+
+struct RetryTransport {
+    calls: Arc<Mutex<usize>>,
+    delayed_second: bool,
+}
+
+impl ModelHttpTransport for RetryTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls == 1 {
+            TransportFuture::ready(Ok(search_response(429)))
+        } else if self.delayed_second {
+            TransportFuture::after(Duration::from_millis(60), Ok(search_response(200)))
+        } else {
+            TransportFuture::ready(Ok(search_response(200)))
+        }
+    }
+}
+
+/// After an overdue retry callback, Node runs microtasks before the next
+/// timer. A synchronous second response wins; a pending second fetch times
+/// out. Both must issue the second request (probe records calls=2).
+#[tokio::test(start_paused = true)]
+async fn web_search_overdue_retry_runs_before_later_timeout() {
+    for delayed_second in [false, true] {
+        let calls = Arc::new(Mutex::new(0));
+        let mut options = WebSearchOptions::new(Arc::new(RetryTransport {
+            calls: calls.clone(),
+            delayed_second,
+        }));
+        options.provider = Some("glm".into());
+        options.api_key = Some("k".into());
+        options.timeout_ms = Some(100.0);
+        options.random = random();
+        let tool = WebSearchTool::new(options);
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), None),
+        ));
+        poll_pending(pending.as_mut()).await;
+        assert_eq!(*calls.lock().unwrap(), 1);
+        tokio::time::advance(Duration::from_millis(120)).await;
+        let result = pending.await;
+        if delayed_second {
+            assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+        } else {
+            assert_eq!(
+                json(get(get(&result, "ok"), "data")),
+                r#"{"query":"q","organic":[]}"#
+            );
+        }
+        assert_eq!(*calls.lock().unwrap(), 2);
+    }
+}
+
+struct MicrotaskTransport;
+impl ModelHttpTransport for MicrotaskTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::microtask(async {
+            tokio::task::yield_now().await;
+            Ok(search_response(200))
+        })
+    }
+}
+
+/// A queued promise continuation is not a timer: queueMicrotask(resolve) in
+/// Node succeeds even with a 1 ms timeout and a 120 ms blocked event loop.
+#[tokio::test(start_paused = true)]
+async fn web_search_queued_microtask_precedes_overdue_timer() {
+    let mut options = WebSearchOptions::new(Arc::new(MicrotaskTransport));
+    options.provider = Some("glm".into());
+    options.api_key = Some("k".into());
+    options.timeout_ms = Some(1.0);
+    let tool = WebSearchTool::new(options);
+    let mut pending = Box::pin(run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), None),
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    let result = pending.await;
+    assert_eq!(
+        json(get(get(&result, "ok"), "data")),
+        r#"{"query":"q","organic":[]}"#
+    );
 }
 
 fn doc_harness() -> Harness {
