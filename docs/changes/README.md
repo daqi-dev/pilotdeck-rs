@@ -19,3 +19,4 @@
 
 | 编号 | 日期 | 标题 |
 |------|------|------|
+| [002](ops/002_org-merge-queue.md) | 2026-10-18 | 仓库迁入 daqi-dev 组织、main 改 ruleset + merge queue、组织 Project 看板 |
