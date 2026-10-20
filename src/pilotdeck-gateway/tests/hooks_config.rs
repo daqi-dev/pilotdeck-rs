@@ -228,3 +228,29 @@ fn supported_and_legacy_events_match_real_ts() {
             .all(|name| !is_hook_event(&(*name).into()))
     );
 }
+
+/// Regenerates the oracle from the real TS hook config code and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn hooks_config_fixtures_regenerate_identically_from_ts() {
+    baseline::regenerates_identically("hooks-config");
+}
+
+/// `identifier_ranges.rs` must equal what Node v22.22.0 records now.
+#[test]
+#[ignore = "requires Node v22.22.0 (Unicode 17.0)"]
+fn identifier_ranges_are_fresh() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = std::process::Command::new("node")
+        .arg(root.join("tests/fixtures/hooks-config/generate-identifiers.mjs"))
+        .arg(root.join("src/hooks/identifier_ranges.rs"))
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

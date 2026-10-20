@@ -413,3 +413,10 @@ async fn dropping_execute_during_dispose_does_not_cancel_or_repeat_cleanup() {
     assert_eq!(handler.finished.load(Ordering::SeqCst), 1);
     receipt.assert_pass("positive");
 }
+
+/// Regenerates the oracle from the real TS dispatcher and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn host_modules_fixtures_regenerate_identically_from_ts() {
+    crate::test_baseline::regenerates_identically("host-modules");
+}

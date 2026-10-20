@@ -639,3 +639,10 @@ async fn host_context_retains_shared_state_and_service_identity() {
     router.module_call(parse_json(r#"{"module":"permission","payload":{"operation":"decide","tool":{"name":"read"},"toolCallId":"id"}}"#).unwrap()).await.unwrap();
     assert_eq!(state.accesses.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+/// Regenerates the oracle from the real TS capability code and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn host_capability_fixtures_regenerate_identically_from_ts() {
+    baseline::regenerates_identically("host-capability");
+}

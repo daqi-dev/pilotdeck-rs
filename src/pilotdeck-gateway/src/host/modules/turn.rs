@@ -84,7 +84,7 @@ impl Handler {
                 if let Some(drain) = handler.ports.drain_steer {
                     let messages = drain().await?;
                     for message in &messages {
-                        remember(message, handler.authorizations.as_ref())?;
+                        remember_steer_grants(message, handler.authorizations.as_ref())?;
                     }
                     return Ok(response_messages(messages));
                 }
@@ -99,7 +99,7 @@ impl Handler {
                     let message = message
                         .as_object()
                         .ok_or_else(|| ModuleError::new("Invalid host steer message."))?;
-                    remember(message, handler.authorizations.as_ref())?;
+                    remember_steer_grants(message, handler.authorizations.as_ref())?;
                 }
                 return Ok(result);
             } else if operation.equals_str("persist_compaction")
@@ -221,7 +221,10 @@ fn response_messages(messages: Vec<JsObject>) -> JsObject {
     );
     result
 }
-fn remember(
+/// Records a steer message's read grants like TS's dispatcher
+/// (`message.allowedReadFiles?.filter(...)` then `grants.remember`): only
+/// string paths, a missing/null list is empty, any other type throws.
+pub fn remember_steer_grants(
     message: &JsObject,
     authorizations: Option<&SteerAuthorizations>,
 ) -> Result<(), HostError> {

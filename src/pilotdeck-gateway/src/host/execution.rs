@@ -363,10 +363,15 @@ pub(super) async fn run(
                         }
                         let correlation = client.connection.budget.retain(JsValue::Object(correlation))?;
                         calls.insert(id.clone(), Call { request: raw, response: None, deliveries: 1 });
-                        let handler = handler.clone();
+                        // Construct the callback in arrival order on this task:
+                        // a handler's synchronous prefix (e.g. `event.emit`)
+                        // then runs in sidecar order, like TS's async handlers
+                        // before their first await. Only the rest runs
+                        // concurrently.
+                        let callback = handler.module_call(callback_request);
                         let budget = client.connection.budget.clone();
                         callbacks.spawn(async move {
-                            let payload = handler.module_call(callback_request).await;
+                            let payload = callback.await;
                             drop(lease);
                             let response = module_response(&correlation, payload);
                             // Acquire before JoinSet stores a completed result: many

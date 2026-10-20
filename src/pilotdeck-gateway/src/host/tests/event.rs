@@ -3,7 +3,6 @@ use crate::host::execution::module_response;
 use crate::host::modules::ModuleRouter;
 use crate::host::modules::event::{EventSink, Handler, TurnIdentity};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const BASELINE_COMMIT: &str = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
@@ -360,34 +359,53 @@ fn checks_oracle_against_baseline_when_available(hashes: &JsValue) {
 #[test]
 #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
 fn event_fixtures_regenerate_identically_from_ts() {
-    let baseline = PathBuf::from(
-        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
-    );
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/host-event");
-    // Every invocation gets its own directory; nothing outside it is removed.
-    let scratch = std::env::temp_dir().join(format!("pdrs-event-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&scratch).unwrap();
-    let output = std::process::Command::new("node")
-        .arg("--disable-warning=ExperimentalWarning")
-        .arg("--import")
-        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
-        .arg(fixtures.join("generate.mts"))
-        .arg(&scratch)
-        .env("PDRS_BASELINE", &baseline)
-        .output()
+    crate::test_baseline::regenerates_identically("host-event");
+}
+
+/// Records each event's `index`; the first emit is slow so a sink reached
+/// from concurrently running callback tasks would see later events first.
+#[derive(Default)]
+struct OrderSink(Mutex<Vec<f64>>);
+impl EventSink for OrderSink {
+    fn emit(&self, event: JsObject) -> Result<(), HostError> {
+        let index = match event.get("index") {
+            Some(JsValue::Number(index)) => *index,
+            other => panic!("probe index {other:?}"),
+        };
+        if index == 0.0 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        self.0.lock().unwrap().push(index);
+        Ok(())
+    }
+}
+
+/// #289: 16 `event.emit` calls in flight over stdio reach the sink in the
+/// sidecar's send order (TS emits before the handler's first await). With
+/// emission inside the spawned callback tasks the slow first emit lets the
+/// other workers overtake it (negative control).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_emits_reach_the_sink_in_arrival_order() {
+    let (mut command, receipt) = peer("event-order");
+    let client = HostClient::spawn(&mut command, None, protocol_limits())
+        .await
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    let sink = Arc::new(OrderSink::default());
+    let router = Arc::new(ModuleRouter {
+        event: Handler::new(TurnIdentity::new("session", "turn"), sink.clone()),
+        ..ModuleRouter::default()
+    });
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.execute(super::request(), router),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(result, ExecuteResult::Terminal(_)));
+    receipt.assert_pass("event-order");
+    assert_eq!(
+        *sink.0.lock().unwrap(),
+        (0..16).map(f64::from).collect::<Vec<_>>()
     );
-    let generated = std::fs::read(scratch.join("oracle.json")).unwrap();
-    let committed = std::fs::read(fixtures.join("oracle.json")).unwrap();
-    assert_eq!(generated, committed, "oracle.json");
-    assert!(
-        !scratch.join("oracle.json.tmp").exists(),
-        "generator left a temporary file behind"
-    );
-    let _ = std::fs::remove_dir_all(&scratch);
 }

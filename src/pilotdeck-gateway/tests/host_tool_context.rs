@@ -4,6 +4,7 @@ use pilotdeck_gateway::host::{
         capability::{RuntimeContext, ToolContext},
         permission::PermissionContext,
         tool_context::*,
+        turn::remember_steer_grants,
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -669,18 +670,9 @@ async fn replay_real_ts_constructors() {
                 counts[3] += 1;
                 let checkpoint = HostToolCheckpoint::new(None, &["seed".into()]).unwrap();
                 let grants = SteerAuthorizations::new(checkpoint.clone());
+                // Same product path as the turn module's steer drain.
                 for message in array(&field(spec, "messages")) {
-                    let paths = field(message, "allowedReadFiles");
-                    let paths = if let JsValue::Array(paths) = &paths {
-                        paths
-                            .iter()
-                            .filter_map(JsValue::as_string)
-                            .cloned()
-                            .collect()
-                    } else {
-                        vec![]
-                    };
-                    grants.remember(field(message, "itemId").as_string().unwrap().clone(), paths);
+                    remember_steer_grants(message.as_object().unwrap(), Some(&grants)).unwrap();
                 }
                 let snapshot =
                     || JsValue::Object(serialize_seed_state(&checkpoint.snapshot().unwrap()));

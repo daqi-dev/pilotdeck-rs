@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or Rust snapshot root');
@@ -48,59 +48,10 @@ assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked fi
 
 // Every source reachable from workspaceSnapshot.ts through relative imports is
 // part of the calibrating implementation, so `sourceSha256` covers the closure
-// rather than the entry file alone. Bare/node: imports are external.
-async function resolveSource(absolute: string): Promise<string | undefined> {
-  // A compiled `.js` specifier in TS source usually points at a sibling `.ts`.
-  const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
-  const candidates = [
-    absolute,
-    `${absolute}.ts`,
-    `${absolute}.tsx`,
-    `${absolute}.mts`,
-    join(absolute, 'index.ts'),
-    ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : []),
-  ];
-  for (const candidate of candidates) {
-    try {
-      if ((await lstat(candidate)).isFile()) return candidate;
-    } catch {
-      // try the next extension
-    }
-  }
-  return undefined;
-}
-async function sourceClosure(entry: string): Promise<string[]> {
-  const seen = new Set<string>([entry]);
-  const queue = [entry];
-  while (queue.length > 0) {
-    const relativePath = queue.shift()!;
-    const text = await readFile(join(baseline, relativePath), 'utf8');
-    const specifiers = [
-      ...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g),
-    ].map((match) => match[2]);
-    for (const specifier of specifiers) {
-      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
-      const resolved = await resolveSource(join(baseline, dirname(relativePath), specifier));
-      assert.ok(resolved, `unresolved baseline import ${specifier} in ${relativePath}`);
-      const path = relative(baseline, resolved).split(sep).join('/');
-      if (!seen.has(path)) {
-        seen.add(path);
-        queue.push(path);
-      }
-    }
-  }
-  return [...seen].sort();
-}
+// rather than the entry file alone (shared helper; bare/node: imports are
+// external, each file is verified against and hashed from the commit blob).
 const source = 'src/storage/workspaceSnapshot.ts';
-const closure = await sourceClosure(source);
-const sourceSha256: Record<string, string> = {};
-for (const path of closure) {
-  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
-  const working = await readFile(join(baseline, path));
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}; the baseline checkout is not clean`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256: Record<string, string> = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [source]);
 
 type RemoveImpl = (path: string | Buffer, options: { recursive: boolean; force: boolean }) => Promise<void>;
 

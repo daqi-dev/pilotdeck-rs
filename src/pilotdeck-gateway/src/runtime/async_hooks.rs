@@ -168,7 +168,10 @@ struct Inner {
 /// at a time and in queue order. The sink may therefore re-enter the registry
 /// (no deadlock); events raised meanwhile are delivered after the current call
 /// returns. When another thread is draining, an operation can return before
-/// its event has reached the sink.
+/// its event has reached the sink. `expire_for_turn` settles its whole burst
+/// before the first event is drained, so a sink re-entering for a later entry
+/// of the same burst sees it already expired, while TS's per-entry
+/// settle→emit loop would still show it pending.
 #[derive(Clone)]
 pub struct AsyncHookRegistry(Arc<Inner>);
 impl AsyncHookRegistry {
@@ -303,8 +306,11 @@ impl AsyncHookRegistry {
             } else {
                 // Keep admission held so no other submit settles in between;
                 // still report the stored outcome like the TS prefix would.
-                let status = self.expire(&pending);
+                // Like the delivered branch, the sink only runs after every
+                // registry lock (including admission) is released.
+                let status = self.expire_unflushed(&pending);
                 drop(in_flight);
+                self.flush();
                 status
             };
             return ready(Ok(result(status)));
@@ -387,6 +393,13 @@ impl AsyncHookRegistry {
     /// submission from the same session would observe under the same lock:
     /// `expired` when this call settled it, otherwise the outcome that won.
     fn expire(&self, pending: &Arc<Pending>) -> AsyncHookStatus {
+        let status = self.expire_unflushed(pending);
+        self.flush();
+        status
+    }
+    /// [`Self::expire`] without draining events; the caller must `flush`
+    /// after releasing its own locks.
+    fn expire_unflushed(&self, pending: &Arc<Pending>) -> AsyncHookStatus {
         let mut state = self.0.state.lock().unwrap();
         if !state
             .pending(&pending.input.invocation_id)
@@ -395,8 +408,6 @@ impl AsyncHookRegistry {
             return state.observed(pending);
         }
         self.settle_locked(&mut state, pending, AsyncHookStatus::Expired);
-        drop(state);
-        self.flush();
         AsyncHookStatus::Expired
     }
     fn settle(&self, pending: &Arc<Pending>, status: AsyncHookStatus) {

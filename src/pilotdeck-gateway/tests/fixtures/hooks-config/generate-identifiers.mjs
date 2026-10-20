@@ -1,9 +1,11 @@
 // ECMAScript identifier data from the same Node runtime as the TS oracle.
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 assert.equal(process.version,'v22.22.0');
 assert.equal(process.versions.unicode,'17.0');
 assert.ok(process.argv[2], 'provide identifier_ranges.rs output path');
+// `--check`: compare against the committed file instead of writing it.
+const check = process.argv[3] === '--check';
 function ranges(re) {
   const result=[];
   let start=null;
@@ -33,5 +35,10 @@ fn contains(ranges: &[(u32, u32)], c: char) -> bool {
 const START: &[(u32, u32)] = &[\n${start}\n];
 const CONTINUE: &[(u32, u32)] = &[\n${continuation}\n];
 `;
-await writeFile(process.argv[2],source);
-console.log('PASS: recorded ECMAScript identifier ranges from Node v22.22.0 / Unicode 17.0');
+if (check) {
+  assert.equal(await readFile(process.argv[2],'utf8'),source,`${process.argv[2]} is stale; regenerate it`);
+  console.log('PASS: identifier ranges match Node v22.22.0 / Unicode 17.0');
+} else {
+  await writeFile(process.argv[2],source);
+  console.log('PASS: recorded ECMAScript identifier ranges from Node v22.22.0 / Unicode 17.0');
+}

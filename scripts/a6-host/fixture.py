@@ -43,6 +43,7 @@ known_modes.update({
     'frame-boundary', 'cancel-write-failure', 'cancel-duplicate-acceptance', 'event-then-disconnect',
     'cancel-before-timeout', 'cancel-before-disconnect',
     'batched-split-frames', 'accepted-then-rejected', 'close-term-cleanup',
+    'event-order',
 })
 if mode not in known_modes:
     sys.exit('unknown fixture mode: ' + mode)
@@ -300,6 +301,21 @@ if mode in ('module-routing', 'module-errors'):
             reply = read()
             assert reply == expected.pop(reply['inReplyTo']), reply
     assert not expected
+    send(event(final=True))
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
+
+if mode == 'event-order':
+    # 16 event.emit calls in flight at once: the host sink must see them in
+    # this send order (TS emits before the handler's first await).
+    for number in range(16):
+        send(dict(kind='request', messageId='emit-' + str(number), method='module_call', module='event',
+                  runId=execute['runId'], operationId=execute['operationId'], requestId='callback-request',
+                  payload=dict(operation='emit', event=dict(type='probe', sessionId=execute['sessionId'],
+                                                            turnId=execute['turnId'], index=number))))
+    replies = {read()['inReplyTo'] for _ in range(16)}
+    assert replies == {'emit-' + str(number) for number in range(16)}, replies
     send(event(final=True))
     assert sys.stdin.read() == ''
     write_receipt()
