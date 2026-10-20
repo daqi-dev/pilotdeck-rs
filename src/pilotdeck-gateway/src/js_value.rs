@@ -69,8 +69,59 @@ pub(crate) fn expand_replacement(
     out
 }
 
+/// Why a full `String(value)` (with `ToPrimitive`) throws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToStringError {
+    /// `RangeError: Maximum call stack size exceeded` (too-deep array join).
+    StackOverflow,
+    /// `TypeError: Cannot convert object to primitive value`: a wire object
+    /// with a `toString` property (JSON cannot hold a callable, so it
+    /// shadows `Object.prototype.toString`, and `valueOf` returns the object).
+    NotPrimitive,
+}
+impl ToStringError {
+    pub(crate) const NOT_PRIMITIVE: &'static str = "Cannot convert object to primitive value";
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::StackOverflow => "RangeError",
+            Self::NotPrimitive => "TypeError",
+        }
+    }
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::StackOverflow => StackOverflow::MESSAGE,
+            Self::NotPrimitive => Self::NOT_PRIMITIVE,
+        }
+    }
+}
+
+/// `String(value)` including `ToPrimitive` on objects, also inside arrays
+/// (node probe, A6.4-pr7 修复轮 4: `{toString:null}` and `[{toString:null}]`
+/// throw `TypeError: Cannot convert object to primitive value`). Errors are
+/// reported in element order, like the joining walk.
+pub(crate) fn to_string_units_checked(value: &JsValue) -> Result<Vec<u16>, ToStringError> {
+    let mut pending = vec![(value, 0usize)];
+    while let Some((value, depth)) = pending.pop() {
+        match value {
+            JsValue::Array(items) => {
+                if depth >= MAX_ARRAY_DEPTH {
+                    return Err(ToStringError::StackOverflow);
+                }
+                pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
+            }
+            JsValue::Object(object) if object.get_property("toString").is_some() => {
+                return Err(ToStringError::NotPrimitive);
+            }
+            _ => {}
+        }
+    }
+    to_string_units(value).map_err(|_| ToStringError::StackOverflow)
+}
+
 /// `String(value)` as UTF-16 units (lone surrogates kept). Inside arrays,
-/// `null`/`undefined` elements join as empty strings.
+/// `null`/`undefined` elements join as empty strings. Objects always become
+/// `[object Object]`; use [`to_string_units_checked`] where an own
+/// `toString` must make the conversion throw.
 pub(crate) fn to_string_units(value: &JsValue) -> Result<Vec<u16>, StackOverflow> {
     let mut out = Vec::new();
     // One frame per array being joined: its remaining items and whether a
