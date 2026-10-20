@@ -478,6 +478,7 @@ async fn execute(
                 signal: AbortSignal::from_context(context),
                 on_stdout: progress_callback(context, "stdout"),
                 on_stderr: progress_callback(context, "stderr"),
+                max_output_units: None,
             },
         )
         .await?;

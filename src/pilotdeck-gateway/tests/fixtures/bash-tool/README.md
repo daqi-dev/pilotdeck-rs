@@ -59,6 +59,16 @@ scripted 118 · real 49。输入清单在 `cases.mjs`。
 macOS：real 48 条 + 强制返回 1 条；其它 Unix：47 条，`skipped == ["not-found"]`，强制返回测试直接返回。
 Linux 本机未实测（本机 colima 未运行、未拉镜像）；其余 47 条若在 Linux 上出现文本差异会如实变红，不会被跳过。
 
+## 输出上限（gate3 P1，#359-2）
+
+每条流按 V8 `MAX_STRING_LENGTH`（0x1fffffe8 个 UTF-16 单元，与 `count_http` 同一常量）封顶。规则与
+TS 实测一致（`_tmp/20261020-a65-pr7/probes/oom-rule.out`）：放不下的那一块整块丢弃，其 progress 回调也
+不触发；之后放得下的块照常追加；子进程继续跑到结束或超时，进程组按原有超时 / 取消语义回收。不同处：
+TS 的 `stdout += text` 在 data 监听里抛出未捕获的 RangeError，CLI 服务端据此
+`shutdownAndExit(1)` 关停整个网关（`cli/pilotdeck.ts:267`；`probes/oom-nohandler.out` 无处理器时
+进程直接退出）；Rust 只丢那一块，网关不退出。测试：`stream_cap_*`（10 单元上限 + 真实上限各一），
+负控 cap-off / cap-callback。
+
 ## 已知边界
 
 - **Windows**：cmd/pwsh/Git Bash 选择与 GB18030 解码未移植。
