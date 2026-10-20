@@ -11,7 +11,7 @@
 //! (`readAgentProjectSessionTranscript`), so the adapter is a parameter: the
 //! project key -> root resolution and runtime lease are A6.3's job.
 use crate::storage::{
-    AsyncTranscriptAdapter, SessionStorageInput,
+    AdapterError, AsyncTranscriptAdapter, LedgerError, SessionStorageInput,
     file_history::{
         ExpectedFileState, FileHistoryClock, FileHistoryOptions, FileHistoryStore, RecordedBackup,
         SnapshotRecordedEntry,
@@ -54,7 +54,7 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
     });
     let read = storage
         .read_transcript(None)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| storage_error(error, &storage.transcript_path))?;
     let snapshots = snapshot_entries(&read.entries)?;
     if snapshots.is_empty() {
         return Ok(failure(NO_CHECKPOINT));
@@ -104,6 +104,29 @@ fn failure(message: &str) -> JsObject {
     result
 }
 
+/// TS `readAgentProjectSessionTranscript` reads the JSONL with `fs.readFile`,
+/// so a transcript I/O failure carries Node's `readFile` message. A Rust
+/// Display (`...(os error N)`) must not become the SDK error text.
+fn storage_error(error: AdapterError, transcript_path: &Path) -> String {
+    match error {
+        AdapterError::Store(LedgerError::Io(io_error)) => {
+            match crate::node_io::read_file(&io_error, &transcript_path.to_string_lossy()) {
+                Some((_, message)) => message,
+                None => strip_os_error(&io_error),
+            }
+        }
+        other => other.to_string(),
+    }
+}
+
+fn strip_os_error(error: &std::io::Error) -> String {
+    let text = error.to_string();
+    match text.rfind(" (os error ") {
+        Some(index) if text.ends_with(')') => text[..index].to_string(),
+        _ => text,
+    }
+}
+
 fn conflict(paths: &[String]) -> JsObject {
     let mut result = JsObject::new();
     result.insert("canRewind".into(), JsValue::Bool(false));
@@ -151,11 +174,22 @@ fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, S
 }
 
 fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
-    let message_id = string_field(entry, "messageId")
-        .ok_or_else(|| "file_snapshot_recorded entry is missing messageId".to_string())
-        .map(text)?;
+    // TS `.map(entry => ({messageId: entry.messageId, ...}))` keeps
+    // `undefined`; strict comparison in `findSnapshot` then never matches a
+    // real id. `None` is that undefined, not an error.
+    let message_id = string_field(entry, "messageId").map(text);
+    // TS `replayFromTranscript` runs `Object.entries(entry.trackedFileBackups)`
+    // unconditionally, so an absent (or null) object throws V8's TypeError and
+    // the outer catch returns it as `error`. A present non-object value keeps
+    // the TS behaviour of enumerating no own keys here.
+    let backups = match entry.get("trackedFileBackups") {
+        Some(JsValue::Null | JsValue::Undefined) | None => {
+            return Err("Cannot convert undefined or null to object".to_string());
+        }
+        Some(backups) => backups.as_object(),
+    };
     let mut tracked_file_backups = Vec::new();
-    if let Some(backups) = entry.get("trackedFileBackups").and_then(JsValue::as_object) {
+    if let Some(backups) = backups {
         for (path, backup) in backups.own_entries() {
             tracked_file_backups.push((text(path), recorded_backup(backup)));
         }

@@ -1469,7 +1469,359 @@
           "mode": 420
         }
       ]
+    },
+    {
+      "name": "snapshot-missing-then-directory",
+      "initialFiles": [],
+      "mutations": [
+        {
+          "op": "file",
+          "path": "a.txt/keep.txt",
+          "base64": "aW5zaWRlCg==",
+          "mode": 420
+        }
+      ],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": null,
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": null,
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "expectedFileStates": {
+            "<root>/a.txt": {
+              "exists": false
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0002",
+          "parentEntryId": "entry-0001"
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"EISDIR: illegal operation on a directory, read\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt/keep.txt",
+              "base64": "aW5zaWRlCg==",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"EISDIR: illegal operation on a directory, read\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt/keep.txt",
+              "base64": "aW5zaWRlCg==",
+              "mode": 420
+            }
+          ]
+        }
+      ],
+      "treeBefore": [
+        {
+          "name": "a.txt/keep.txt",
+          "base64": "aW5zaWRlCg==",
+          "mode": 420
+        }
+      ]
+    },
+    {
+      "name": "snapshot-present-then-directory",
+      "initialFiles": [
+        {
+          "path": "a.txt",
+          "base64": "YWxwaGEKYmV0YQo=",
+          "mode": 420
+        }
+      ],
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "a.txt"
+        },
+        {
+          "op": "file",
+          "path": "a.txt/keep.txt",
+          "base64": "aW5zaWRlCg==",
+          "mode": 420
+        }
+      ],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": "<backup:a.txt>@v1",
+              "version": 1,
+              "mode": 33188,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": "<backup:a.txt>@v1",
+              "version": 1,
+              "mode": 33188,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "expectedFileStates": {
+            "<root>/a.txt": {
+              "exists": true,
+              "sha256": "69726aa4696684f51191101c90b115e8cf6e01d6339e158d01b69ca692562fbf",
+              "mode": 420
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0002",
+          "parentEntryId": "entry-0001"
+        }
+      ],
+      "backups": [
+        {
+          "name": "<backup:a.txt>@v1",
+          "base64": "YWxwaGEKYmV0YQo=",
+          "mode": 420
+        }
+      ],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"EISDIR: illegal operation on a directory, read\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt/keep.txt",
+              "base64": "aW5zaWRlCg==",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"EISDIR: illegal operation on a directory, read\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt/keep.txt",
+              "base64": "aW5zaWRlCg==",
+              "mode": 420
+            }
+          ]
+        }
+      ],
+      "treeBefore": [
+        {
+          "name": "a.txt/keep.txt",
+          "base64": "aW5zaWRlCg==",
+          "mode": 420
+        }
+      ]
+    },
+    {
+      "name": "entry-missing-tracked-backups",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"Cannot convert undefined or null to object\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "entry-missing-message-id",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "trackedFileBackups": {},
+          "expectedFileStates": {},
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"No snapshot for messageId msg-1\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "restore-mkdir-error",
+      "initialFiles": [
+        {
+          "path": "p/a.txt",
+          "base64": "b25lCg==",
+          "mode": 420
+        }
+      ],
+      "mutations": [
+        {
+          "op": "remove",
+          "path": "p/a.txt"
+        },
+        {
+          "op": "remove",
+          "path": "p"
+        },
+        {
+          "op": "file",
+          "path": "p",
+          "base64": "bm90IGEgZGlyZWN0b3J5Cg==",
+          "mode": 420
+        }
+      ],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/p/a.txt": {
+              "backupFileName": "<backup:p/a.txt>@v1",
+              "version": 1,
+              "mode": 33188,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [
+        {
+          "name": "<backup:p/a.txt>@v1",
+          "base64": "b25lCg==",
+          "mode": 420
+        }
+      ],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":true,\"insertions\":0,\"deletions\":2}",
+          "treeAfter": [
+            {
+              "name": "p",
+              "base64": "bm90IGEgZGlyZWN0b3J5Cg==",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"EEXIST: file already exists, mkdir '<root>/p'\"}",
+          "treeAfter": [
+            {
+              "name": "p",
+              "base64": "bm90IGEgZGlyZWN0b3J5Cg==",
+              "mode": 420
+            }
+          ]
+        }
+      ],
+      "treeBefore": [
+        {
+          "name": "p",
+          "base64": "bm90IGEgZGlyZWN0b3J5Cg==",
+          "mode": 420
+        }
+      ]
     }
   ],
-  "sha256": "0a8d044c2eb47e7a93c77f597001b891cd44d303fba569d95a5c8c9085df3698"
+  "sha256": "547f499539933372c79f1ef0ef687658a0d2f3443d018850e8d001d34f717e22"
 }

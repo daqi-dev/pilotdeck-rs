@@ -719,7 +719,10 @@ fn capture_history(replay: &Replay, root: &Path, outside: &Path) -> JsValue {
             })
             .collect::<Vec<_>>();
         snapshots.push(JsValue::Object(object([
-            ("messageId", JsValue::from(snapshot.message_id.as_str())),
+            (
+                "messageId",
+                JsValue::from(snapshot.message_id.as_deref().unwrap_or_default()),
+            ),
             (
                 "timestamp",
                 JsValue::from(
@@ -1619,7 +1622,7 @@ fn file_history_replay_and_conflict_round_trip() {
         warn: None,
     });
     replay.replay_from_transcript(&[SnapshotRecordedEntry {
-        message_id: "m2".into(),
+        message_id: Some("m2".into()),
         tracked_file_backups: vec![(
             file.to_string_lossy().into_owned(),
             RecordedBackup {
@@ -1640,7 +1643,7 @@ fn file_history_replay_and_conflict_round_trip() {
     }]);
     let state = replay.state();
     assert_eq!(state.snapshots.len(), 1);
-    assert_eq!(state.snapshots[0].message_id, "m2");
+    assert_eq!(state.snapshots[0].message_id.as_deref(), Some("m2"));
     assert_eq!(
         state.tracked_files,
         vec![file.to_string_lossy().into_owned()]

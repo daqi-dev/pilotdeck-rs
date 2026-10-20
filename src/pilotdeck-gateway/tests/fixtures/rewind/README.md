@@ -19,8 +19,8 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次逐字节一致才更新
 正本（本次两次运行均为
-`sha256(oracle.json) = f832780f11b22530a73f9b53e920e20b3886005942f0602943a9b959348cd66e`）。
-场景 7 个、`rewindFilesForSdk` 调用 10 次。
+`sha256(oracle.json) = 67ad5a19c89b609cca8866ecd33ea893da1dadf2f7679b7c2a145118391e610f`）。
+场景 12 个、`rewindFilesForSdk` 调用 18 次。
 
 ## 场景
 
@@ -33,6 +33,11 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 | `no-checkpoint` | 有 transcript 但没有任何 `file_snapshot_recorded` → `No persisted file checkpoint is available for this session.` |
 | `older-snapshot-isolation` | 两条消息各自的快照；rewind 旧消息只动它自己的文件，后续消息的文件保持 |
 | `missing-backup` | 备份 blob 缺失 → conflicts 为空、diff 把 before 当不存在、rewind 报 `missing` 且不写目标 |
+| `snapshot-missing-then-directory` | 快照记 `a.txt` 不存在（null backup + Missing 指纹），随后 `a.txt` 变成目录；dry run 与真调用都返回 `EISDIR: illegal operation on a directory, read`，树不变 |
+| `snapshot-present-then-directory` | 快照记 `a.txt` 存在（Present 指纹），随后换成目录；同样 EISDIR，不再退化成 conflict |
+| `entry-missing-tracked-backups` | 畸形条目缺 `trackedFileBackups` → `Cannot convert undefined or null to object` |
+| `entry-missing-message-id` | 畸形条目缺 `messageId` → 按 `undefined` 回放，最终 `No snapshot for messageId msg-1` |
+| `restore-mkdir-error` | track-only 备份仍在、目标父路径被换成普通文件；dry run 正常预览 0/2，真回滚在 `mkdir '<root>/p'` 报 Node 同文 `EEXIST: ...`，不带 `(os error N)` |
 
 ## 归一化与为什么
 
@@ -48,6 +53,11 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 - **`expectedFileStates`**：由真实工具 `markEditCommitted` 产生；`deleted-file-restore`
   刻意使用不调用 `markEditCommitted` 的 track-only 端口（该方法是 TS 工具端
   optional），否则外部删除会先被 conflict 守卫拒绝，无法观察恢复路径。
+  `snapshot-missing-then-directory` 用真实 `FileHistoryStore.trackEdit` +
+  `markEditCommitted`（文件缺失时）直接产生 Missing 指纹——真实写工具在写完前不会
+  记录 Missing，这是该状态唯一可复现的宿主端口形态。
+- **畸形条目**：`entry-missing-*` 直接把畸形快照交给真实
+  `JsonlTranscriptWriter.recordFileHistorySnapshot`；TS 的 replay / catch 路径未修改。
 - **工作树**：`treeBefore` 是首次调用前的完整文件树（相对路径 + base64 + mode），
   Rust 回放以它重建调用前状态；`treeAfter` 逐调用保存，用于证明 dry run 不落盘与
   rewind 的最终字节。
@@ -57,5 +67,7 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 - `backupStorage`（host blob 存储）未移植；与 A6.5-pr5 一致，只覆盖文件系统布局。
 - 目标 messageId 的语义与 TS 一致：`findSnapshot` 取**最后一个 messageId 完全相等**
   的快照；不是“严格早于该消息”的搜索。
-- 非 UTF-8 文件名、损坏 transcript、`backupFileName` 缺失以外的畸形条目不在本夹具
-  范围；解析层对畸形条目返回 error 文本而不是猜测。
+- 非 UTF-8 文件名、损坏 transcript 与其他畸形条目不在本夹具范围；本轮只覆盖
+  `trackedFileBackups` 缺失与 `messageId` 缺失两类已实测的 TS 行为。
+- 目录本身没有独立 tree 行（`walk` 只记文件）；涉及目录的场景都放一个
+  `keep.txt` 子文件，确保目录存在与否可在 `treeBefore`/`treeAfter` 中逐字节观察。

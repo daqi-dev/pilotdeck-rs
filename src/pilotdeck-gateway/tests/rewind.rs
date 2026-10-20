@@ -132,11 +132,18 @@ fn apply_step(project_root: &Path, step: &JsValue) {
             &text(field(step, "base64")),
             field(step, "mode").as_number().unwrap_or(0o644 as f64) as u32,
         ),
-        "remove" => match fs::remove_file(&target) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!("remove {relative}: {error}"),
-        },
+        "remove" => {
+            if target.is_dir() {
+                fs::remove_dir_all(&target)
+                    .unwrap_or_else(|error| panic!("remove dir {relative}: {error}"));
+            } else {
+                match fs::remove_file(&target) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => panic!("remove {relative}: {error}"),
+                }
+            }
+        }
         other => panic!("unknown setup step {other}"),
     }
 }
@@ -279,13 +286,13 @@ fn run_scenario(scenario: &JsValue) {
 fn rewind_files_replays_the_ts_oracle() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 7, "fixture scenario count");
+    assert_eq!(scenarios.len(), 12, "fixture scenario count");
     assert_eq!(
         scenarios
             .iter()
             .map(|scenario| array(field(scenario, "calls")).len())
             .sum::<usize>(),
-        10,
+        18,
         "fixture call count"
     );
     for scenario in scenarios {
@@ -299,15 +306,18 @@ fn fixture_paths_are_project_relative_or_tokens() {
     let oracle = baseline::oracle(ORACLE);
     let oracle_text = wire(&oracle);
     assert!(
-        !oracle_text.contains("/tmp/pdrs-rewind-") && !oracle_text.contains("/var/folders/"),
-        "oracle contains a generator scratch path"
+        !oracle_text.contains("pdrs-rewind-"),
+        "oracle contains the generator scratch prefix"
     );
+    assert_no_absolute_path(&oracle, "oracle");
     let scenarios = array(field(&oracle, "scenarios"));
     for scenario in scenarios {
         let transcript = wire(field(scenario, "transcript"));
-        if transcript.contains("file_snapshot_recorded") {
+        // Malformed entries (missing trackedFileBackups / messageId) carry no
+        // paths at all; only a real backup record must use the tokens.
+        if transcript.contains(r#""backupFileName":"<backup:"#) {
             assert!(
-                transcript.contains("<root>/") && transcript.contains("<backup:"),
+                transcript.contains("<root>/"),
                 "transcript paths and backup names must be tokens"
             );
         }
@@ -323,6 +333,79 @@ fn fixture_paths_are_project_relative_or_tokens() {
             }
         }
     }
+}
+
+/// The scratch root is the only external absolute path the generator can
+/// touch, and it is always replaced by `<root>`. Any other absolute path token
+/// (a `/` at a string boundary) means normalization leaked a run-specific path.
+/// This is platform-independent, unlike matching `/tmp` or `/var/folders`.
+fn assert_no_absolute_path(value: &JsValue, location: &str) {
+    match value {
+        JsValue::String(text) => check_no_absolute_path(&text.to_utf8().unwrap(), location),
+        JsValue::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                assert_no_absolute_path(value, &format!("{location}[{index}]"));
+            }
+        }
+        JsValue::Object(object) => {
+            for (key, value) in object.entries() {
+                check_no_absolute_path(&key.to_utf8().unwrap(), location);
+                assert_no_absolute_path(value, location);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn check_no_absolute_path(text: &str, location: &str) {
+    let bytes = text.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'/' {
+            continue;
+        }
+        let boundary = index == 0
+            || matches!(
+                bytes[index - 1],
+                b' ' | b'\t' | b'\n' | b'\'' | b'"' | b'(' | b'[' | b'{' | b',' | b':'
+            );
+        // `<root>/...` and `<backup:...>` are the sanctioned tokens.
+        if boundary {
+            panic!("{location}: absolute path outside a token: {text}");
+        }
+    }
+}
+
+#[test]
+fn transcript_directory_reports_node_eisdir() {
+    let scratch = scratch::Scratch::new("rewind-transcript-dir");
+    let project_root = scratch.path().join("project");
+    let pilot_home = scratch.path().join("pilot");
+    fs::create_dir_all(&project_root).unwrap();
+    fs::create_dir_all(&pilot_home).unwrap();
+    let adapter = adapter(&pilot_home);
+    let storage = adapter.create_session_storage(SessionStorageInput {
+        project_root: project_root.clone(),
+        pilot_home: pilot_home.clone(),
+        session_id: JsString::from(SESSION),
+        now: None,
+    });
+    fs::create_dir_all(&storage.transcript_path).unwrap();
+    let session = JsString::from(SESSION);
+    let result = rewind_files(RewindFilesInput {
+        adapter: &adapter,
+        project_root: &project_root,
+        pilot_home: &pilot_home,
+        session_key: &session,
+        user_message_id: "msg-1",
+        dry_run: false,
+        now: None,
+    });
+    // TS readAgentProjectSessionTranscript uses fs.readFile, so a directory at
+    // the transcript path surfaces EISDIR and never the Rust "(os error 21)".
+    assert_eq!(
+        wire(&result),
+        r#"{"canRewind":false,"error":"EISDIR: illegal operation on a directory, read"}"#
+    );
 }
 
 #[test]

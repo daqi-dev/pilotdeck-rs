@@ -178,7 +178,7 @@ async function mutateFile(run: any, path: string, content: string, mode = 0o644)
 
 async function mutateRemove(run: any, path: string) {
   run.mutations.push({ op: 'remove', path });
-  await rm(resolve(run.__projectRoot, path), { force: true });
+  await rm(resolve(run.__projectRoot, path), { recursive: true, force: true });
 }
 
 async function callTool(run: any, turnId: string, tool: string, input: any) {
@@ -359,8 +359,82 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
   await finish(run, [{ userMessageId: 'msg-1', dryRun: false }]);
 }
 
-assert.equal(scenarios.length, 7, 'scenario count');
-assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 10, 'call count');
+// 8. The snapshot recorded "a.txt did not exist" (null backup + Missing
+//    fingerprint), then a.txt became a directory. TS stat succeeds but
+//    readFile raises EISDIR inside readExpectedFileState; both dry run and the
+//    real call must return that exact error and leave the tree alone.
+{
+  const run = begin('snapshot-missing-then-directory');
+  const a = resolve(run.__projectRoot, 'a.txt');
+  await run.__store.trackEdit(a, 'msg-1');
+  await run.__store.markEditCommitted(a, 'msg-1');
+  // A child file makes the directory itself observable in the tree snapshot
+  // without changing the fixture schema (walk only records files).
+  await mutateFile(run, 'a.txt/keep.txt', 'inside\n');
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 9. The snapshot recorded the edited file as Present, then the file became a
+//    directory. Same EISDIR path as scenario 8 even though the fingerprint says
+//    Present (the old Rust non-file shortcut returned a conflict instead).
+{
+  const run = begin('snapshot-present-then-directory');
+  await seed(run, 'a.txt', 'alpha\nbeta\n');
+  await callTool(run, 'msg-1', 'read_file', { file_path: 'a.txt' });
+  await callTool(run, 'msg-1', 'edit_file', { file_path: 'a.txt', old_string: 'beta', new_string: 'BETA' });
+  await mutateRemove(run, 'a.txt');
+  await mutateFile(run, 'a.txt/keep.txt', 'inside\n');
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 10. A malformed `file_snapshot_recorded` entry without `trackedFileBackups`:
+//     TS `Object.entries(undefined)` throws "Cannot convert undefined or null
+//     to object" from replayFromTranscript, and the SDK catch returns it.
+{
+  const run = begin('entry-missing-tracked-backups');
+  await run.__writer.recordFileHistorySnapshot(SESSION, 'msg-1', { messageId: 'msg-1' }, 'create');
+  await finish(run, [{ userMessageId: 'msg-1', dryRun: false }]);
+}
+
+// 11. A malformed entry without `messageId`: TS keeps `undefined`, replay
+//     succeeds, and `findSnapshot('msg-1')` misses, so the error is the store's
+//     "No snapshot for messageId msg-1" rather than a parser error.
+{
+  const run = begin('entry-missing-message-id');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    { trackedFileBackups: {}, expectedFileStates: {} },
+    'create',
+  );
+  await finish(run, [{ userMessageId: 'msg-1', dryRun: false }]);
+}
+
+// 12. A restore-path io error: track-only backup for p/a.txt, then p is
+//     replaced by a regular file. Conflict/diff see the missing target, and
+//     rewind's mkdir targetDir fails with Node's EEXIST mkdir message (no
+//     Rust "(os error N)" suffix).
+{
+  const run = begin('restore-mkdir-error', { trackOnly: true });
+  await seed(run, 'p/a.txt', 'one\n');
+  await run.__store.trackEdit(resolve(run.__projectRoot, 'p/a.txt'), 'msg-1');
+  await mutateRemove(run, 'p/a.txt');
+  await mutateRemove(run, 'p');
+  await mutateFile(run, 'p', 'not a directory\n');
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+assert.equal(scenarios.length, 12, 'scenario count');
+assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 18, 'call count');
 
 const oracle = {
   sourceCommit: commit,
