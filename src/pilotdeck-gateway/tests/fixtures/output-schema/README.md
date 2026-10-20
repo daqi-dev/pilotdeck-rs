@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **573** cases. Each case is either:
+count of **598** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -21,7 +21,11 @@ count of **573** cases. Each case is either:
   `exactCompileError` compares the whole `actualCompileError` string;
 - `errorText`: `ajv.errorsText(validator(data).errors)`;
 - `validationThrow`: compilation succeeded, but executing the validator
-  threw; kept with `portUnsupported` for deep patterns/data this port refuses;
+  threw; kept with `portUnsupported` for deep patterns this port refuses;
+- `sdkError`: the real SDK Client.callTool error code and full message;
+- `portDepthLimit`: Rust must return the exact SDK stack-overflow RPC error;
+  `knownDifference: conservative-stack-budget` explicitly labels cases where
+  the SDK returns a different result. Such cases are not counted as parity;
 - no error field: valid.
 
 The `invalid-pattern/*` cases are ECMAScript `/u` syntax rejected by V8.
@@ -33,8 +37,7 @@ the complete V8 message.
 
 `portUnsupported: true` leaves the real Ajv result intact, but requires Rust
 to accept the schema (Ajv compiles it) and to return an explicit unsupported
-error only when the pattern is used or recursive data exceeds the supported
-depth. These cases are never counted as
+error only when the pattern is used. These cases are never counted as
 equal validation results. Valid `/u` syntax is no longer a compile error:
 lookarounds, backreferences, named groups, `\u` escapes and `\p{...}` names
 all pass `check_schema`; the ones Rust can translate are evaluated normally.
@@ -63,25 +66,65 @@ matched, recorded as `validationThrow` rather than `compileError`.
 The worker-stack tests run both `check_schema` and `validate_inner` directly
 on 2 MiB, as well as the public `validate` wrapper.
 
-`recursive-data/*` covers 4000 / 4001 / 4234 / 4235 / 4500 object edges
-for both `properties.a` and `properties.next` referring to `#`. Each case
-starts a fresh Node process with the default stack (no `NODE_OPTIONS` or
-compile cache). Five independent binary searches per property name on
-Node 22.22.0 / V8 12.4 / darwin arm64 found 4234 valid and 4235 throwing
-`RangeError: Maximum call stack size exceeded`. The generator materializes
-`recursive-data.mjs` in a temporary directory with a static import bound to
-the hash-checked provider; a dynamic import changes the cold module call
-stack. It asserts both sides of the observed boundary, so runtime drift
-fails generation instead of silently changing expectations.
+`recursive-data/*` records five recursive shapes (`properties`,
+`patternProperties`, `additionalProperties`, object-wrapped recursive `items`,
+and `anyOf`) at zero depth, both sides of the port budget, and a dynamically
+found SDK overflow sample. `wideAnyOf` adds 512 branches, including a shallow
+SDK-valid / port-error sample and a real SDK overflow. Every observation runs
+in a new default-stack Node process through the real SDK `Client.callTool`
+and linked `InMemoryTransport` / `Server`, after `listTools` compiles the
+schema. Imports are bound to the baseline in a temporary probe; SDK source
+hashes are recorded in `recursiveSdkSha256`.
 
-The exact native stack limit depends on the runtime and call stack, not
-only data depth. Rust conservatively supports 4000 edges (8001 `check`
-frames including the root), then returns explicit `Unsupported`. In the
-4001–4234 range this is a declared coverage gap, not equivalent validation.
-`recursiveData: {key, depth}` records the exact iterative construction from
-an empty object; `data: null` is only a placeholder. Replay builds the tree
-from that recipe, avoiding unrelated JSON serialization/parser limits.
-`recursiveDataRuntime` records the runtime of the cold observations.
+The uniform bound is **1024 active weighted units**. Each schema invocation
+occupies the number of JSON value nodes in its static subtree (objects include
+all their values, arrays include all elements, scalars count one; string
+contents are not expanded). References do not expand during this static pass.
+Targets outside ordinary schema keywords are discovered lazily. Entering a
+referenced target spends its own subtree weight, released on return. This
+charges unused branches and non-schema code-generation inputs such as property
+dependency arrays. Counting only recursive calls still falsely accepted wide
+`allOf` at 42 data layers; counting only subschemas missed wide `dependencies`.
+Definitions, ignored keywords and metadata also count deliberately, so a wide
+schema can be refused even for shallow or empty data.
+
+| fixture shape | last accepted data depth | first refused depth |
+|---|---:|---:|
+| properties / patternProperties | 145 | 146 |
+| additionalProperties | 170 | 171 |
+| object-wrapped items | 168 | 169 |
+| anyOf with one properties branch | 67 | 68 |
+| anyOf with 512 properties branches | none | 0 |
+
+Over budget returns `ValidationError::Threw`. The client projects code
+`-32602` and body `Failed to validate structured content: Maximum call stack
+size exceeded`; the SDK error class and this port both prefix the full message
+with `MCP error -32602: `. Replay compares the actual Client error byte for byte
+above its overflow boundary. Between the port boundary and the measured SDK
+boundary it checks the explicit known-difference label instead of claiming
+parity. `ref/recursive-499` retains its original SDK result and now carries that
+label too.
+
+`recursiveData: {shape, depth}` stores iterative data construction from an
+empty object/array, avoiding JSON serialization/parser limits. The items recipe
+wraps its array in `{a: ...}` to satisfy the SDK outputSchema object contract.
+`comparisonData: {kind, depth}` also reconstructs deep const/enum literals and
+uniqueItems data. The iterative fast-deep-equal port charges comparison depth
+to the same remaining budget; otherwise const/enum/uniqueItems could bypass
+schema recursion accounting. Their fixture boundaries are 510/511 (const),
+509/510 (enum) and 1016/1017 (uniqueItems). The duplicate-items fixture has an
+ordinary validation error below the budget; over-budget errors are explicit
+message differences until the SDK also overflows.
+
+The native V8 limit depends on shape, runtime, JIT and caller stack. The
+generator asserts SDK success for supported valid samples, never a hard-coded
+machine-specific overflow depth, and discovers overflow samples by a bounded
+search. The round-7 RESULT records 14 keyword shapes, wide-schema controls,
+per-layer stack-cost estimates and real Client measurements. This budget is a
+conservative support policy, not a proof about arbitrary custom V8 stacks or
+all possible compiler layouts. `recursiveDataRuntime` records the measured
+runtime and budget. Schema structure and transport parser/serializer limits
+are separate and are not claimed equivalent by these validator-only samples.
 
 `named-group/*` checks matching and nonmatching data for `$`, escaped, and
 Unicode group names. Names without backreferences become ordinary captures;
@@ -117,6 +160,6 @@ exercised both as a value pattern and as a property-name pattern.
 | valid `/u` regex Rust cannot evaluate (lookarounds, backreferences, some `\p{...}` values) in `pattern`/`patternProperties` | `check_schema` accepts it, matching Ajv; `validate` returns `ValidationError::Unsupported` when the pattern is used, never a silent pass |
 | relative/remote `$ref` that needs an `$id` base | `check_schema` error (`can't resolve reference … from id #`), same as Ajv when there is no base |
 | schema nesting > 256 for the compile check | explicit `SchemaError`; Ajv throws `RangeError` at ~600 nested schemas |
-| validation requiring > 8001 `check` frames (more than 4000 edges in the recursive-property fixture) | explicit `ValidationError::Unsupported`; cold SDK samples pass 4234 and throw at 4235 on the recorded runtime; no PASS is inferred beyond the conservative support range |
+| validation requiring >1024 active weighted JSON / comparison units | exact SDK stack-overflow RPC error; earlier rejection is explicitly labelled, including wide shallow schemas, metadata/ignored keyword costs and deep equality |
 | classes with nested `[`, `&&` / `~~` / `--`, or empty classes | accepted at compile time; using the pattern returns `ValidationError::Unsupported` (the real Ajv result is preserved in the oracle) |
 | `patternProperties` whose children are all always-valid and whose sibling `additionalProperties` is absent/always-valid | Ajv's `patternProperties` codegen early-returns without compiling the keys; both `check_schema` and validation skip them (`alwaysValid` early-exit, r4 GLM P1) |

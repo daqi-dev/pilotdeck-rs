@@ -1057,6 +1057,116 @@ async fn failed_handshake_directory_cleanup(cancel_close: bool) {
     }
 }
 
+/// Dispose must join retired cleanup before the executor can be shut down.
+/// Cancel the first close caller while the failed child is gated, then let
+/// the real session registry own the final stop.
+#[tokio::test(start_paused = true)]
+async fn registry_dispose_joins_retired_directory_after_cancelled_close() {
+    use pilotdeck_gateway::runtime::mcp::{
+        registry::SessionMcpRuntimeRegistry,
+        runtime::{McpRuntime, McpRuntimeOptions},
+    };
+    use std::sync::Arc;
+    struct ClockHold(tokio::task::JoinHandle<()>);
+    impl Drop for ClockHold {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _clock = ClockHold(tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    }));
+    let scenario = async {
+        let scratch = Scratch::new("mcp-dispose-retired");
+        let dir = std::fs::canonicalize(scratch.path()).unwrap();
+        let bad_init = INIT_REPLY.replace("2025-06-18", "unsupported");
+        let template = race_client_with_session(
+            &dir,
+            &[
+                format!(
+                    r#"{{"initialize":[{bad_init}],"stdin-end":[{{"wait_file":"old-exit"}}]}}"#
+                ),
+                format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+            ],
+            None,
+            true,
+        );
+        let runtime = Arc::new(McpRuntime::new(
+            vec![template.spec().clone()],
+            McpRuntimeOptions::default(),
+        ));
+        let client = runtime.client("mock").unwrap();
+        assert!(client.start().await.is_err());
+        while !logged(&dir, 0, "stdin-end") {
+            tokio::task::yield_now().await;
+        }
+        let old = logged_session_dir(&dir, 0);
+        client.start().await.unwrap();
+        let new = logged_session_dir(&dir, 1);
+        let mut close = Box::pin(client.close());
+        let returned_early = loop {
+            tokio::select! {
+                biased;
+                () = &mut close => break true,
+                () = tokio::task::yield_now() => {
+                    if !new.exists() && logged(&dir, 1, "exit") { break false; }
+                }
+            }
+        };
+        drop(close);
+        let registry = SessionMcpRuntimeRegistry::new();
+        let _registration = registry.register("session", runtime.clone()).unwrap();
+        let mut dispose = Box::pin(registry.dispose());
+        // Both close and registry disposal use owned completion tickets. A
+        // cancelled close must not hide the old gated directory from dispose.
+        let mut disposed_early = false;
+        for _ in 0..64 {
+            tokio::select! {
+                biased;
+                result = &mut dispose => {
+                    result.unwrap();
+                    disposed_early = true;
+                    break;
+                }
+                () = tokio::task::yield_now() => {}
+            }
+        }
+        let old_still_live = old.exists() && !logged(&dir, 0, "exit");
+        open_gate(&dir, "old-exit");
+        if !disposed_early {
+            dispose.await.unwrap();
+        }
+        let deleted_on_return = !old.exists() && !new.exists();
+        // Reap even an intentionally broken detached implementation before
+        // asserting its observation, so a negative control leaves no child.
+        while !logged(&dir, 0, "exit") || old.exists() {
+            tokio::task::yield_now().await;
+        }
+        assert!(!returned_early, "close returned before retired cleanup");
+        assert!(
+            !disposed_early,
+            "dispose lost the cancelled close's retired cleanup"
+        );
+        assert!(old_still_live);
+        assert!(
+            deleted_on_return,
+            "dispose must finish deletion before returning"
+        );
+    };
+    let watchdog = async {
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < end {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::select! {
+        () = scenario => {}
+        () = watchdog => panic!("dispose cleanup scenario exceeded wall-time bound"),
+    }
+}
+
 /// Two real request timers on W1 expire on opposite sides of W2 publishing
 /// its handshake. Virtual time moves only at the explicit advance calls;
 /// file events establish that each process/request reached the right point.
