@@ -24,6 +24,14 @@
   "providerSha256": "1893726b2b43d0688e8c37ce48b3c5f87a55eb93ca370433f882ae81c09c491a",
   "ajvSha256": "edaed56fc546f5551b0d6dc2ff2a9cc25c2d6c83318a086eaa8c3ad0b2479297",
   "formatsSha256": "b61693a26869970a92cc1fe832c931ccd3afe8b6d66802b19c48306349e84880",
+  "recursiveDataRuntime": {
+    "node": "v22.22.0",
+    "v8": "12.4.254.21-node.33",
+    "platform": "darwin",
+    "arch": "arm64",
+    "coldStart": true,
+    "defaultStack": true
+  },
   "cases": [
     {
       "id": "compile/type-unknown",
@@ -6589,6 +6597,190 @@
       },
       "data": "y",
       "errorText": "data must match pattern \"^(?<中>x)$\""
+    },
+    {
+      "id": "recursive-data/a-4000",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "a",
+        "depth": 4000
+      }
+    },
+    {
+      "id": "recursive-data/a-4001",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "a",
+        "depth": 4001
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "recursive-data/a-4234",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "a",
+        "depth": 4234
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "recursive-data/a-4235",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "a",
+        "depth": 4235
+      },
+      "portUnsupported": true,
+      "validationThrow": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
+      "id": "recursive-data/a-4500",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "a",
+        "depth": 4500
+      },
+      "portUnsupported": true,
+      "validationThrow": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
+      "id": "recursive-data/next-4000",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "next",
+        "depth": 4000
+      }
+    },
+    {
+      "id": "recursive-data/next-4001",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "next",
+        "depth": 4001
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "recursive-data/next-4234",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "next",
+        "depth": 4234
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "recursive-data/next-4235",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "next",
+        "depth": 4235
+      },
+      "portUnsupported": true,
+      "validationThrow": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
+      "id": "recursive-data/next-4500",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "next": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "key": "next",
+        "depth": 4500
+      },
+      "portUnsupported": true,
+      "validationThrow": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
     }
   ]
 }

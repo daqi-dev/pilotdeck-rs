@@ -326,6 +326,12 @@ pub(crate) fn resolve_path(cwd: &Path, path: &Path) -> PathBuf {
     output
 }
 
+/// Node `path.resolve(cwd, path)` when `cwd` may itself be relative.
+pub(crate) fn resolve_process_path(cwd: &Path, path: &Path) -> PathBuf {
+    let process_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    resolve_path(&resolve_path(&process_cwd, cwd), path)
+}
+
 const UTF16_SLASH: u16 = b'/' as u16;
 const UTF16_DOT: u16 = b'.' as u16;
 

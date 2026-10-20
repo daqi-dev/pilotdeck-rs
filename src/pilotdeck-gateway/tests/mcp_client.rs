@@ -947,6 +947,116 @@ async fn reconnect_removes_the_previous_per_session_directory() {
     assert!(!new.exists());
 }
 
+/// The failed initialize rejects immediately, but its original background
+/// close still owns the child and directory while a retry becomes ready.
+#[tokio::test(start_paused = true)]
+async fn failed_handshake_retry_waits_for_old_close_before_removing_directory() {
+    failed_handshake_directory_cleanup(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_close_keeps_failed_handshake_directory_cleanup_owned() {
+    failed_handshake_directory_cleanup(true).await;
+}
+
+async fn failed_handshake_directory_cleanup(cancel_close: bool) {
+    struct ClockHold(tokio::task::JoinHandle<()>);
+    impl Drop for ClockHold {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _clock = ClockHold(tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    }));
+    let scenario = async {
+        let scratch = Scratch::new("mcp-failed-handshake-retry");
+        let dir = std::fs::canonicalize(scratch.path()).unwrap();
+        let bad_init = INIT_REPLY.replace("2025-06-18", "unsupported");
+        let client = race_client_with_session(
+            &dir,
+            &[
+                format!(
+                    r#"{{"initialize":[{bad_init}],"stdin-end":[{{"wait_file":"old-exit"}}]}}"#
+                ),
+                format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+            ],
+            None,
+            true,
+        );
+        assert!(
+            client
+                .start()
+                .await
+                .unwrap_err()
+                .message()
+                .contains("not supported")
+        );
+        while !logged(&dir, 0, "stdin-end") {
+            tokio::task::yield_now().await;
+        }
+        let old = logged_session_dir(&dir, 0);
+        if cancel_close {
+            let mut close = Box::pin(client.close());
+            tokio::select! {
+                biased;
+                () = &mut close => panic!("close must wait for the gated old process"),
+                () = tokio::task::yield_now() => {}
+            }
+            drop(close);
+            assert!(
+                old.exists(),
+                "cancelling close must not delete a live child's directory"
+            );
+            open_gate(&dir, "old-exit");
+            while !logged(&dir, 0, "exit") || old.exists() {
+                tokio::task::yield_now().await;
+            }
+            return;
+        }
+        client.start().await.unwrap();
+        let new = logged_session_dir(&dir, 1);
+        assert_ne!(old, new);
+        assert!(!logged(&dir, 0, "exit"), "old process is gated before exit");
+        let old_survived_grace = old.exists();
+        assert!(new.exists());
+        // Model a last write by the still-running old process during grace.
+        if old_survived_grace {
+            std::fs::write(old.join("last-write"), "during close").unwrap();
+        }
+        open_gate(&dir, "old-exit");
+        while !logged(&dir, 0, "exit") || old.exists() {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            new.exists(),
+            "old cleanup must leave the retry directory alone"
+        );
+        client.close().await;
+        assert!(!new.exists());
+        // Assert the observation after releasing the child so even an
+        // intentionally broken cleanup in a negative control is reaped.
+        assert!(
+            old_survived_grace,
+            "old directory must survive the close grace period"
+        );
+    };
+    // Wall-time failure bound only; virtual time never advances to the TERM
+    // or KILL grace deadlines, so file gates determine the whole ordering.
+    let watchdog = async {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::select! {
+        () = scenario => {}
+        () = watchdog => panic!("failed-handshake retry exceeded its wall-time bound"),
+    }
+}
+
 /// Two real request timers on W1 expire on opposite sides of W2 publishing
 /// its handshake. Virtual time moves only at the explicit advance calls;
 /// file events establish that each process/request reached the right point.
