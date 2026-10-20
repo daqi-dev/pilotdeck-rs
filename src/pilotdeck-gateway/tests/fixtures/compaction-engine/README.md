@@ -5,10 +5,13 @@
 `createDurableContextRuntime` 和真实 transcript writer；模型是固定流式 mock，
 未复制 TS 实现，也不调用外部模型。
 
-共 69 个案例：41 engine、1 media strip、7 truncate、6 budget projection、
-11 manual durable、3 configured budget。回放精确断言条数，以保序 JSON 字节比较
+共 75 个案例：46 engine、1 media strip、7 truncate、6 budget projection、
+12 manual durable、3 configured budget。回放精确断言条数，以保序 JSON 字节比较
 请求、结果、生命周期、事件，以原始 JSONL 字节比较替换前后的 transcript。
 冷却使用固定时钟；entry / operation / compaction 各有独立确定性 ID。
+中止案例覆盖默认 reason、显式字符串 reason、空字符串 reason、流中中止，以及冷却期内的
+第二次调用（其错误文本必须仍是首次中止的文本）；manual durable 的
+`abort-throw` 案例锁定 failed 记录里的同一文本。
 
 运行：
 
