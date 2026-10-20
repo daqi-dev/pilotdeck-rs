@@ -17,14 +17,15 @@ use pilotdeck_gateway::{
             ExecutableTool, ToolCancellation, ToolRunContext,
             builtin::web::{
                 CustomProviderConfig, HtmlToMarkdown, MissingTurndown, SecondaryModel,
-                SecondaryModelEvent, UrlFetcher, WebFetchModelPort, WebFetchTool,
+                SecondaryModelEvent, SecondaryStream, UrlFetcher, WebFetchModelPort, WebFetchTool,
                 WebFetchToolOptions, WebSearchOptions, WebSearchTool,
                 cache::{FetchedEntry, UrlCache},
                 fetch_tool::{
-                    make_secondary_prompt, validate_web_fetch_input, web_fetch_permission,
+                    SecondaryNext, make_secondary_prompt, validate_web_fetch_input,
+                    web_fetch_permission,
                 },
                 fetcher::shared_cache,
-                preapproved_hosts::is_preapproved_url,
+                preapproved_hosts::{PREAPPROVED_ENTRIES, is_preapproved_url},
                 search::web_search_permission,
                 url_validation::{is_permitted_redirect, upgrade_http_to_https, validate_url},
             },
@@ -42,7 +43,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const ORACLE: &str = include_str!("fixtures/web-tools/oracle.json");
@@ -83,6 +84,8 @@ fn object(entries: Vec<(&str, JsValue)>) -> JsValue {
 struct Exchange {
     replies: Vec<JsValue>,
     requests: Vec<JsValue>,
+    /// Set after the response headers were flushed (body-cancellation tests).
+    headers_sent: bool,
     /// Negative control: overrides every reason phrase.
     reason_override: Option<String>,
 }
@@ -247,11 +250,19 @@ fn serve(
         "content-length: {}\r\nconnection: close\r\n\r\n",
         bytes.len()
     ));
-    // The client may stop reading an oversized body; that is not an error here.
+    // Test-only: send the headers, keep the connection open without body
+    // bytes for a while (body-cancellation tests). The oracle replay never
+    // sets this field.
+    let hold_ms = get(&reply, "holdAfterHeadersMs").as_number();
     let _ = socket
         .write_all(head.as_bytes())
-        .and_then(|()| socket.write_all(&bytes))
         .and_then(|()| socket.flush());
+    exchange.lock().unwrap().headers_sent = true;
+    if let Some(ms) = hold_ms {
+        thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+    }
+    // The client may stop reading an oversized body; that is not an error here.
+    let _ = socket.write_all(&bytes).and_then(|()| socket.flush());
 }
 
 fn tls_material() -> (rustls::RootCertStore, Arc<rustls::ServerConfig>) {
@@ -347,6 +358,7 @@ impl Harness {
         let mut exchange = self.exchange.lock().unwrap();
         exchange.replies = items(&self.real(get(spec, "replies"))).to_vec();
         exchange.requests.clear();
+        exchange.headers_sent = false;
         exchange.reason_override = reason_override.map(str::to_string);
     }
     fn requests(&self) -> JsValue {
@@ -460,7 +472,8 @@ impl SecondaryModel for ScriptedModel {
     fn stream(
         &self,
         request: JsValue,
-    ) -> pilotdeck_gateway::runtime::tools::builtin::web::fetch_tool::SecondaryStream {
+        _signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
         self.requests.lock().unwrap().push(request);
         // The generator aborts before yielding each event; the tool checks the
         // signal on every event it receives.
@@ -499,7 +512,21 @@ impl SecondaryModel for ScriptedModel {
                 }
             });
         }
-        Box::pin(async move { out })
+        Box::new(VecStream {
+            events: out.into_iter(),
+        })
+    }
+}
+
+/// The scripted model's async iterable: one event per `next()`.
+struct VecStream {
+    events: std::vec::IntoIter<SecondaryModelEvent>,
+}
+
+impl SecondaryStream for VecStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        let next = self.events.next();
+        Box::pin(async move { next })
     }
 }
 
@@ -654,7 +681,7 @@ async fn real_ts_web_fetch_and_web_search_over_loopback() {
     let h = Harness::new();
     let fetches = items(get(&h.oracle, "fetches"));
     let searches = items(get(&h.oracle, "searches"));
-    assert_eq!((fetches.len(), searches.len()), (40, 39), "scenario counts");
+    assert_eq!((fetches.len(), searches.len()), (41, 39), "scenario counts");
     let mut requests = 0;
     for spec in fetches {
         let name = text(get(spec, "name"));
@@ -680,7 +707,7 @@ async fn real_ts_web_fetch_and_web_search_over_loopback() {
         assert_eq!(result, expect(spec, "result"), "{name}: result");
         requests += items(get(spec, "requests")).len();
     }
-    assert_eq!(requests, 89, "total scripted requests");
+    assert_eq!(requests, 90, "total scripted requests");
 }
 
 #[test]
@@ -729,6 +756,20 @@ fn real_ts_pure_helpers_tools_and_cache() {
             JsValue::Bool(is_preapproved_url(&url)),
             *get(case, "preapproved"),
             "{url}"
+        );
+    }
+    // The whole table, not a sample: any transcribed drift is a false PASS.
+    let entries = items(get(&oracle, "preapprovedEntries"));
+    assert_eq!(entries.len(), PREAPPROVED_ENTRIES.len(), "entry count");
+    for (entry, expected) in PREAPPROVED_ENTRIES.iter().zip(entries) {
+        assert_eq!(entry.host, text(get(expected, "host")));
+        assert_eq!(
+            entry.path_prefix.map(str::to_string),
+            opt_text(get(expected, "pathPrefix"))
+        );
+        assert_eq!(
+            entry.allow_subdomains,
+            matches!(get(expected, "allowSubdomains"), JsValue::Bool(true)),
         );
     }
     let prompts = items(get(&oracle, "prompts"));
@@ -913,4 +954,237 @@ async fn negative_control_reason_phrase_is_detected() {
     assert_eq!(requests, expect(spec, "requests"));
     assert_ne!(results, expect(spec, "results"));
     assert!(results.contains("400 Mock"), "{results}");
+}
+
+// ---- body cancellation / secondary stream (fix round 1) --------------------
+
+/// One reply that sends the headers and then holds the body back for two
+/// seconds. Not used by the oracle replay.
+fn hold_spec() -> JsValue {
+    object(vec![(
+        "replies",
+        JsValue::Array(vec![object(vec![
+            ("status", JsValue::Number(200.0)),
+            ("reason", JsValue::from("OK")),
+            (
+                "headers",
+                object(vec![("content-type", JsValue::from("text/markdown"))]),
+            ),
+            ("body", JsValue::from("late")),
+            ("holdAfterHeadersMs", JsValue::Number(2_000.0)),
+        ])]),
+    )])
+}
+
+fn plain_fetcher(h: &Harness) -> UrlFetcher {
+    UrlFetcher {
+        transport: h.transport.clone(),
+        cache: Arc::new(UrlCache::new(None)),
+        html: Arc::new(MissingTurndown),
+        random: random(),
+    }
+}
+
+fn empty_env() -> JsValue {
+    JsValue::Object(JsObject::new())
+}
+
+/// Cancel only after the mock flushed its headers: the cancellation then
+/// hits the body read, not the send.
+async fn cancel_after_headers(h: &Harness, signal: &ToolCancellation) {
+    for _ in 0..400 {
+        if h.exchange.lock().unwrap().headers_sent {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            signal.cancel();
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("mock never sent response headers");
+}
+
+/// The body read races the parent signal: a server that sent headers and then
+/// stalls must not hold the tool call after the user cancels.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_fetch_body_read_observes_parent_cancellation() {
+    let h = Harness::new();
+    h.begin(&hold_spec(), None);
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher: plain_fetcher(&h),
+    });
+    let signal = ToolCancellation::default();
+    let context = context(None, empty_env(), Some(signal.clone()));
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/hold")),
+        ("mode", JsValue::from("raw")),
+    ]));
+    let started = Instant::now();
+    let (result, ()) = tokio::join!(
+        run(&tool, input, context),
+        cancel_after_headers(&h, &signal)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "body read ignored the parent signal: {:?}",
+        started.elapsed()
+    );
+    // The request was recorded, i.e. the headers had already arrived; the
+    // cancellation therefore hit the body read, not the send.
+    assert_eq!(items(&h.requests()).len(), 1, "headers reached the mock");
+    let error = get(&result, "error");
+    assert_eq!(text(get(error, "code")), "tool_execution_failed");
+    assert!(
+        text(get(error, "message")).contains("Network request aborted by parent signal."),
+        "{}",
+        json(&result)
+    );
+}
+
+/// Negative control for the test above: without a cancellation the very same
+/// reply keeps the tool waiting, so the prompt return above is the signal's
+/// doing and not a body that the mock had already finished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn negative_control_body_stall_without_cancellation() {
+    let h = Harness::new();
+    h.begin(&hold_spec(), None);
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher: plain_fetcher(&h),
+    });
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/hold")),
+        ("mode", JsValue::from("raw")),
+    ]));
+    let result = tokio::time::timeout(
+        Duration::from_millis(400),
+        run(&tool, input, context(None, empty_env(), None)),
+    )
+    .await;
+    assert!(result.is_err(), "the mock must still be holding the body");
+}
+
+/// `web_search` reads its body through the same helper; cancelling mid-body
+/// must settle the provider call too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_search_body_read_observes_parent_cancellation() {
+    let h = Harness::new();
+    h.begin(&hold_spec(), None);
+    let options = h.real(&object(vec![
+        ("provider", JsValue::from("glm")),
+        ("apiKey", JsValue::from("k")),
+        ("endpoint", JsValue::from("$PLAIN/hold")),
+    ]));
+    let tool = WebSearchTool::new(search_options(h.transport.clone(), &options));
+    let signal = ToolCancellation::default();
+    let context = context(None, empty_env(), Some(signal.clone()));
+    let started = Instant::now();
+    let (result, ()) = tokio::join!(
+        run(&tool, object(vec![("query", JsValue::from("q"))]), context),
+        cancel_after_headers(&h, &signal)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "body read ignored the parent signal: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(items(&h.requests()).len(), 1, "headers reached the mock");
+    let error = get(&result, "error");
+    assert_eq!(text(get(error, "code")), "tool_execution_failed");
+    assert!(
+        text(get(error, "message")).contains("Network request aborted by parent signal."),
+        "{}",
+        json(&result)
+    );
+}
+
+/// A model whose async iterable never yields: the tool must pass the call's
+/// signal through and race `next()` against it.
+struct PendingModel {
+    signal_seen: Arc<Mutex<Option<bool>>>,
+    started: Arc<tokio::sync::Notify>,
+}
+struct PendingStream;
+impl SecondaryModel for PendingModel {
+    fn stream(
+        &self,
+        _request: JsValue,
+        signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
+        *self.signal_seen.lock().unwrap() = Some(signal.is_some());
+        self.started.notify_one();
+        Box::new(PendingStream)
+    }
+}
+impl SecondaryStream for PendingStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secondary_stream_receives_signal_and_cancels_pending_next() {
+    let h = Harness::new();
+    h.begin(
+        &object(vec![(
+            "replies",
+            JsValue::Array(vec![object(vec![
+                ("status", JsValue::Number(200.0)),
+                ("reason", JsValue::from("OK")),
+                (
+                    "headers",
+                    object(vec![("content-type", JsValue::from("text/plain"))]),
+                ),
+                ("body", JsValue::from("doc body")),
+            ])]),
+        )]),
+        None,
+    );
+    let signal_seen = Arc::new(Mutex::new(None));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let model: Arc<dyn SecondaryModel> = Arc::new(PendingModel {
+        signal_seen: signal_seen.clone(),
+        started: started.clone(),
+    });
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: Some(model),
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher: plain_fetcher(&h),
+    });
+    let signal = ToolCancellation::default();
+    let context = context(None, empty_env(), Some(signal.clone()));
+    let cancel = signal.clone();
+    let wait_started = started.clone();
+    tokio::spawn(async move {
+        wait_started.notified().await;
+        cancel.cancel();
+    });
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/doc")),
+        ("prompt", JsValue::from("Q")),
+    ]));
+    let started = Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(2), run(&tool, input, context))
+        .await
+        .expect("a pending model stream must be interruptible");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(*signal_seen.lock().unwrap(), Some(true), "signal passed");
+    let error = get(&result, "error");
+    assert_eq!(text(get(error, "code")), "tool_aborted");
+    assert_eq!(
+        text(get(error, "message")),
+        "web_fetch aborted before completion."
+    );
 }

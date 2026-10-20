@@ -36,7 +36,7 @@ const { createWebFetchTool } = await import(src('tool/builtin/webFetch.ts'));
 const masked = await import(`${src('tool/builtin/webFetch.ts')}?no-turndown`);
 const { createWebSearchTool } = await import(src('tool/builtin/webSearch.ts'));
 const { validateURL, upgradeHttpToHttps, isPermittedRedirect } = await import(src('tool/builtin/web/urlValidation.ts'));
-const { isPreapprovedUrl } = await import(src('tool/builtin/web/preapprovedHosts.ts'));
+const { isPreapprovedUrl, PREAPPROVED_ENTRIES } = await import(src('tool/builtin/web/preapprovedHosts.ts'));
 const { makeSecondaryModelPrompt } = await import(src('tool/builtin/web/secondaryPrompt.ts'));
 const { URL_CACHE, WebFetchUrlCache, clearWebFetchCache } = await import(src('tool/builtin/web/urlContentCache.ts'));
 const { normalizeToolError } = await import(src('tool/protocol/errors.ts'));
@@ -226,10 +226,15 @@ const oracle = {
   }),
   redirects: cases.redirects.map(([from, to]: [string, string]) => ({ from, to, permitted: isPermittedRedirect(from, to) })),
   preapproved: cases.preapproved.map((url: string) => ({ url, preapproved: isPreapprovedUrl(url) })),
+  preapprovedEntries: PREAPPROVED_ENTRIES.map((entry) => ({
+    host: entry.host,
+    pathPrefix: entry.pathPrefix,
+    allowSubdomains: entry.allowSubdomains,
+  })),
   prompts: cases.prompts.map(([md, prompt, pre]: [string, string, boolean]) => ({ md, prompt, pre, text: makeSecondaryModelPrompt(md, prompt, pre) })),
   validations, availability, cacheOps, fetches, searches,
 };
-assert.equal(fetches.length, 40);
+assert.equal(fetches.length, 41);
 assert.equal(searches.length, 39);
 assert.equal(cacheOps.length, 17);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n', { flag: 'wx' });

@@ -14,7 +14,8 @@ use super::{
     super::{field, object, schema, string},
     ask_permission,
     network::{
-        FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions, network_fetch, read_body,
+        BodyError, FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions, network_fetch,
+        read_body,
     },
 };
 use crate::{
@@ -653,10 +654,16 @@ fn json_text(value: &JsValue) -> String {
 }
 
 /// `response.text()` (UTF-8 with the BOM stripped, as `TextDecoder`).
-async fn response_text(response: &mut HttpResponse) -> Result<String, ()> {
-    let body = read_body(&mut response.body, crate::runtime::model::MAX_STRING_LENGTH)
-        .await
-        .map_err(|_| ())?;
+async fn response_text(
+    response: &mut HttpResponse,
+    context: &ToolRunContext,
+) -> Result<String, BodyError> {
+    let body = read_body(
+        &mut response.body,
+        crate::runtime::model::MAX_STRING_LENGTH,
+        Some(context),
+    )
+    .await?;
     let text = String::from_utf8_lossy(&body).into_owned();
     Ok(text
         .strip_prefix('\u{FEFF}')
@@ -666,10 +673,18 @@ async fn response_text(response: &mut HttpResponse) -> Result<String, ()> {
 
 /// `response.json()`: `Err` is the thrown message (`TypeError: terminated`
 /// or V8's `SyntaxError`).
-async fn response_json(response: &mut HttpResponse) -> Result<JsValue, String> {
-    let text = response_text(response)
+async fn response_json(
+    response: &mut HttpResponse,
+    context: &ToolRunContext,
+) -> Result<JsValue, String> {
+    let text = response_text(response, context)
         .await
-        .map_err(|()| "terminated".to_string())?;
+        .map_err(|error| match error {
+            // The parent signal fired mid-body; `send` reports the same
+            // `network_abort` message before the headers.
+            BodyError::Aborted => "Network request aborted by parent signal.".to_string(),
+            BodyError::Terminated | BodyError::TooLarge => "terminated".to_string(),
+        })?;
     if let Some(message) = pilotdeck_protocol::json_syntax::parse_error(&text) {
         return Err(message);
     }
@@ -696,15 +711,26 @@ async fn send(
         },
         random: Arc::clone(&options.random),
     };
-    tokio::select! {
-        biased;
-        () = tokio::time::sleep(Duration::from_secs_f64(timeout_ms.max(0.0) / 1000.0)) => Err(None),
-        result = network_fetch(options.transport.as_ref(), request, &fetch) => match result {
+    // `options.timeoutMs && options.timeoutMs > 0` in the baseline: a
+    // non-positive value disables the local timer rather than arming one
+    // that fires immediately.
+    let timed = async {
+        let result = network_fetch(options.transport.as_ref(), request, &fetch).await;
+        match result {
             Ok(response) => Ok(response),
             // `isLocalTimeout`: a parent abort is never a timeout.
             Err(error) if error.code == "network_timeout" && !context.is_aborted() => Err(None),
             Err(error) => Err(Some(error)),
-        },
+        }
+    };
+    if timeout_ms > 0.0 {
+        tokio::select! {
+            biased;
+            () = tokio::time::sleep(Duration::from_secs_f64(timeout_ms / 1000.0)) => Err(None),
+            result = timed => result,
+        }
+    } else {
+        timed.await
     }
 }
 
@@ -820,10 +846,10 @@ fn post_json(url: String, headers: Vec<(&str, String)>, body: &JsValue) -> HttpR
 }
 
 /// The text of a non-OK body, or `statusText` when it cannot be read.
-async fn error_detail(response: &mut HttpResponse) -> String {
-    match response_text(response).await {
+async fn error_detail(response: &mut HttpResponse, context: &ToolRunContext) -> String {
+    match response_text(response, context).await {
         Ok(text) => text,
-        Err(()) => response.status_text.clone(),
+        Err(_) => response.status_text.clone(),
     }
 }
 
@@ -884,13 +910,13 @@ async fn structured_search(
         Err(Some(error)) => return Err(request_failed(&label, &error.message)),
     };
     if !response.ok() {
-        let detail = error_detail(&mut response).await;
+        let detail = error_detail(&mut response, context).await;
         return Err(failed(concat(&[
             &units(&format!("{provider} API error ({}): ", response.status)),
             truncate(&detail, 500).units(),
         ])));
     }
-    let raw = response_json(&mut response)
+    let raw = response_json(&mut response, context)
         .await
         .map_err(|message| failed(message.as_str()))?;
     let results = if provider == "brave" {
@@ -947,13 +973,13 @@ async fn tavily_search(
         Err(Some(error)) => return Err(request_failed(label, &error.message)),
     };
     if !response.ok() {
-        let detail = error_detail(&mut response).await;
+        let detail = error_detail(&mut response, context).await;
         return Err(failed(concat(&[
             &units(&format!("Tavily API error ({}): ", response.status)),
             truncate(&detail, 500).units(),
         ])));
     }
-    let raw = response_json(&mut response)
+    let raw = response_json(&mut response, context)
         .await
         .map_err(|message| failed(message.as_str()))?;
     let mut organic = Vec::new();
@@ -1024,13 +1050,13 @@ async fn glm_search(
         Err(Some(error)) => return Err(request_failed("web_search (glm)", &error.message)),
     };
     if !response.ok() {
-        let detail = error_detail(&mut response).await;
+        let detail = error_detail(&mut response, context).await;
         return Err(failed(concat(&[
             &units(&format!("GLM web search error ({}): ", response.status)),
             truncate(&detail, 500).units(),
         ])));
     }
-    let raw = response_json(&mut response)
+    let raw = response_json(&mut response, context)
         .await
         .map_err(|message| failed(message.as_str()))?;
     if let JsValue::String(error) = prop(&raw, "error")?
@@ -1134,13 +1160,13 @@ async fn custom_search(
         Err(Some(error)) => return Err(request_failed(label, &error.message)),
     };
     if !response.ok() {
-        let detail = error_detail(&mut response).await;
+        let detail = error_detail(&mut response, context).await;
         return Err(failed(concat(&[
             &units(&format!("Custom web search error ({}): ", response.status)),
             truncate(&detail, 500).units(),
         ])));
     }
-    let raw = response_json(&mut response)
+    let raw = response_json(&mut response, context)
         .await
         .map_err(|message| failed(message.as_str()))?;
     if let JsValue::String(error) = prop(&raw, "error")?
@@ -1369,11 +1395,7 @@ pub fn additional_search_results(
             "Search API response is missing its result list.",
         ));
     };
-    let count = if limit.is_nan() || limit <= 0.0 {
-        0
-    } else {
-        limit.trunc() as usize
-    };
+    let count = take_count(limit);
     Ok(items
         .iter()
         .filter(|item| is_record(item))
@@ -1500,14 +1522,19 @@ async fn additional_search(
         Err(Some(error)) => return Err(fail(error.message)),
     };
     if !response.ok() {
-        let detail = response_text(&mut response)
+        let detail = response_text(&mut response, context)
             .await
-            .map_err(|()| fail(JsString::from("terminated")))?;
+            .map_err(|error| {
+                fail(JsString::from(match error {
+                    BodyError::Aborted => "Network request aborted by parent signal.",
+                    BodyError::Terminated | BodyError::TooLarge => "terminated",
+                }))
+            })?;
         return Err(fail(JsString::from(
             format!("API error ({}): {detail}", response.status).as_str(),
         )));
     }
-    let raw = response_json(&mut response)
+    let raw = response_json(&mut response, context)
         .await
         .map_err(|message| fail(JsString::from(message.as_str())))?;
     let organic = additional_search_results(provider, &raw, limit).map_err(fail)?;
