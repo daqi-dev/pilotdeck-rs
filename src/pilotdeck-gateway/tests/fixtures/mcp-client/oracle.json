@@ -3312,6 +3312,1455 @@
           }
         ]
       ]
+    },
+    {
+      "id": "same-chunk",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"p1\",\"method\":\"ping\"}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"r1\",\"method\":\"roots/list\"}"
+              },
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"p2\",\"method\":\"ping\"}"
+              }
+            ],
+            "tools/call:x": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "same chunk"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"p3\",\"method\":\"ping\"}"
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"r2\",\"method\":\"sampling/createMessage\"}"
+              }
+            ],
+            "tools/call:y": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "next"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "x",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "same chunk"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "y",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "next"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"jsonrpc\":\"2.0\",\"id\":\"r1\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":\"p1\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":\"p2\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"jsonrpc\":\"2.0\",\"id\":\"r2\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":\"p3\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/call\",\"params\":{\"name\":\"y\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "same-chunk-failed-handshake",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"p1\",\"method\":\"ping\"}"
+              },
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "1999-01-01",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "error": {
+                    "code": -32603,
+                    "message": "nope"
+                  }
+                }
+              },
+              {
+                "line": "{\"jsonrpc\":\"2.0\",\"id\":\"p2\",\"method\":\"ping\"}"
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: Server's protocol version is not supported: 1999-01-01"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: MCP error -32603: nope"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ],
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "http-json",
+      "spec": {
+        "id": "mock",
+        "transport": "streamable_http",
+        "url": "http://<host>/mcp",
+        "headers": {
+          "X-Api-Key": "k"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {
+          "initialize": [
+            {
+              "headers": {
+                "mcp-session-id": "sess-1"
+              },
+              "json": {
+                "jsonrpc": "2.0",
+                "id": "$id",
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {}
+                  },
+                  "serverInfo": {
+                    "name": "mock-http",
+                    "version": "1.0.0"
+                  }
+                }
+              }
+            }
+          ],
+          "tools/list": [
+            {
+              "json": {
+                "jsonrpc": "2.0",
+                "id": "$id",
+                "result": {
+                  "tools": [
+                    {
+                      "zzz": "stripped",
+                      "name": "a.b",
+                      "description": "hello‮evil​",
+                      "inputSchema": {
+                        "b": 1,
+                        "type": "object",
+                        "properties": {
+                          "q": {
+                            "type": "string"
+                          }
+                        },
+                        "a": 2
+                      },
+                      "annotations": {
+                        "extra": 1,
+                        "readOnlyHint": true,
+                        "title": "T"
+                      },
+                      "_meta": {
+                        "k‍": "v﻿"
+                      }
+                    },
+                    {
+                      "name": "a b",
+                      "inputSchema": {
+                        "type": "object"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "tools/call:echo": [
+            {
+              "json": {
+                "jsonrpc": "2.0",
+                "id": "$id",
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "over http"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "a.b",
+              "wireName": "mcp__mock__a_b",
+              "description": "helloevil",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "b": 1,
+                "a": 2
+              },
+              "annotations": {
+                "title": "T",
+                "readOnlyHint": true
+              },
+              "meta": {
+                "k": "v"
+              }
+            },
+            {
+              "serverId": "mock",
+              "toolName": "a b",
+              "wireName": "mcp__mock__a_b",
+              "description": "",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over http"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "http-sse",
+      "spec": {
+        "id": "mock",
+        "transport": "streamable_http",
+        "url": "http://<host>/mcp"
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {
+          "initialize": [
+            {
+              "sse": [
+                "id: e1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-http\",\"version\":\"1.0.0\"}}}\n\n"
+              ]
+            }
+          ],
+          "GET /mcp": [
+            {
+              "sse": [
+                "retry: 50\n\n"
+              ],
+              "hold": true
+            }
+          ],
+          "tools/call:echo": [
+            {
+              "sse": [
+                ": comment\n\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":77,\"method\":\"ping\"}\n\n",
+                "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"data\":\"x\"}}\n\n",
+                "event: other\ndata: ignored\n\n",
+                "data: not json\n\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\ndata: \"result\":{\"content\":[{\"type\":\"text\",\"text\":\"multi\\u200bline\"}]}}\r\n\r\n"
+              ]
+            }
+          ],
+          "tools/call:batch": [
+            {
+              "json": [
+                {
+                  "jsonrpc": "2.0",
+                  "method": "notifications/message",
+                  "params": {}
+                },
+                {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "batched"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "multiline"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "batch",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "batched"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"batch\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":77}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "http-errors",
+      "spec": {
+        "id": "mock",
+        "transport": "streamable_http",
+        "url": "http://<host>/mcp"
+      },
+      "options": {
+        "callTimeoutMs": 5000
+      },
+      "script": {
+        "procs": [],
+        "http": {
+          "initialize": [
+            {
+              "status": 500,
+              "text": "boom"
+            },
+            {
+              "json": {
+                "jsonrpc": "2.0",
+                "id": "$id",
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {}
+                  },
+                  "serverInfo": {
+                    "name": "mock-http",
+                    "version": "1.0.0"
+                  }
+                }
+              }
+            }
+          ],
+          "tools/call:contentType": [
+            {
+              "headers": {
+                "content-type": "text/plain"
+              },
+              "text": "x"
+            }
+          ],
+          "tools/call:badJson": [
+            {
+              "headers": {
+                "content-type": "application/json"
+              },
+              "text": "not json"
+            }
+          ],
+          "tools/call:badMessage": [
+            {
+              "json": {
+                "jsonrpc": "1.0",
+                "id": "$id",
+                "result": {}
+              }
+            }
+          ],
+          "tools/call:rejected": [
+            {
+              "status": 400,
+              "text": "bad request"
+            }
+          ],
+          "tools/call:expired": [
+            {
+              "status": 404,
+              "text": "Session expired"
+            },
+            {
+              "json": {
+                "jsonrpc": "2.0",
+                "id": "$id",
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "after reconnect"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: Streamable HTTP error: Error POSTing to endpoint: boom"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "contentType",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Streamable HTTP error: Unexpected content type: text/plain"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badJson",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Unexpected token 'o', \"not json\" is not valid JSON"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "badMessage",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): [\n  {\n    \"code\": \"invalid_union\",\n    \"errors\": [\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"2.0\"\n          ],\n          \"path\": [\n            \"jsonrpc\"\n          ],\n          \"message\": \"Invalid input: expected \\\"2.0\\\"\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"method\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"code\": \"unrecognized_keys\",\n          \"keys\": [\n            \"result\"\n          ],\n          \"path\": [],\n          \"message\": \"Unrecognized key: \\\"result\\\"\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"2.0\"\n          ],\n          \"path\": [\n            \"jsonrpc\"\n          ],\n          \"message\": \"Invalid input: expected \\\"2.0\\\"\"\n        },\n        {\n          \"expected\": \"string\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"method\"\n          ],\n          \"message\": \"Invalid input: expected string, received undefined\"\n        },\n        {\n          \"code\": \"unrecognized_keys\",\n          \"keys\": [\n            \"id\",\n            \"result\"\n          ],\n          \"path\": [],\n          \"message\": \"Unrecognized keys: \\\"id\\\", \\\"result\\\"\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"2.0\"\n          ],\n          \"path\": [\n            \"jsonrpc\"\n          ],\n          \"message\": \"Invalid input: expected \\\"2.0\\\"\"\n        }\n      ],\n      [\n        {\n          \"code\": \"invalid_value\",\n          \"values\": [\n            \"2.0\"\n          ],\n          \"path\": [\n            \"jsonrpc\"\n          ],\n          \"message\": \"Invalid input: expected \\\"2.0\\\"\"\n        },\n        {\n          \"expected\": \"object\",\n          \"code\": \"invalid_type\",\n          \"path\": [\n            \"error\"\n          ],\n          \"message\": \"Invalid input: expected object, received undefined\"\n        },\n        {\n          \"code\": \"unrecognized_keys\",\n          \"keys\": [\n            \"result\"\n          ],\n          \"path\": [],\n          \"message\": \"Unrecognized key: \\\"result\\\"\"\n        }\n      ]\n    ],\n    \"path\": [],\n    \"message\": \"Invalid input\"\n  }\n]"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "rejected",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Streamable HTTP error: Error POSTing to endpoint: bad request"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "expired",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "after reconnect"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": ""
+        },
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badJson\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"badMessage\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":3}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"contentType\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"expired\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"expired\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":5}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"rejected\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":4}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "http-refused",
+      "spec": {
+        "id": "mock",
+        "transport": "streamable_http",
+        "url": "http://<refused>/mcp"
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {}
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: fetch failed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": []
+    },
+    {
+      "id": "sse-legacy",
+      "spec": {
+        "id": "mock",
+        "transport": "sse",
+        "url": "http://<host>/sse",
+        "headers": {
+          "x-api-key": "k"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {
+          "GET /sse": [
+            {
+              "sse": [
+                ": hello\n\n",
+                "event: endpoint\ndata: /messages?session=abc\n\n"
+              ],
+              "channel": true
+            }
+          ],
+          "initialize": [
+            {
+              "status": 202,
+              "push": [
+                "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-http\",\"version\":\"1.0.0\"}}}\n\n"
+              ]
+            }
+          ],
+          "tools/list": [
+            {
+              "status": 202,
+              "push": [
+                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"tools\":[]}}\n\n"
+              ]
+            }
+          ],
+          "tools/call:echo": [
+            {
+              "status": 202,
+              "push": [
+                "data: {\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"ping\"}\n\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"legacy\"}]}}\n\n"
+              ]
+            }
+          ],
+          "tools/call:rejected": [
+            {
+              "status": 500,
+              "text": "nope"
+            }
+          ]
+        }
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "legacy"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "rejected",
+            "args": {}
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): Error POSTing to endpoint (HTTP 500): nope"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": [
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"rejected\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":3}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":5}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "sse-legacy-errors",
+      "spec": {
+        "id": "mock",
+        "transport": "sse",
+        "url": "http://<host>/sse"
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {
+          "GET /sse": [
+            {
+              "status": 500
+            },
+            {
+              "sse": [
+                "event: endpoint\ndata: http://other.example/x\n\n"
+              ],
+              "hold": true
+            },
+            {
+              "headers": {
+                "content-type": "text/plain"
+              },
+              "text": "x"
+            },
+            {
+              "status": 204
+            }
+          ]
+        }
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: Non-200 status code (500)"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: Endpoint origin does not match connection origin: http://other.example"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: Invalid content type, expected \"text/event-stream\""
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: Server sent HTTP 204, not reconnecting"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": [
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream"
+          },
+          "body": ""
+        },
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream"
+          },
+          "body": ""
+        },
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream"
+          },
+          "body": ""
+        },
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream"
+          },
+          "body": ""
+        }
+      ]
+    },
+    {
+      "id": "sse-legacy-refused",
+      "spec": {
+        "id": "mock",
+        "transport": "sse",
+        "url": "http://<refused>/sse"
+      },
+      "options": {},
+      "script": {
+        "procs": [],
+        "http": {}
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED <refused>"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [],
+      "http": []
     }
   ],
   "pure": {

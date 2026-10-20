@@ -28,8 +28,8 @@ use std::{
 };
 
 const ORACLE: &str = include_str!("fixtures/mcp-client/oracle.json");
-const SCENARIOS: usize = 17;
-const STEPS: usize = 77;
+const SCENARIOS: usize = 26;
+const STEPS: usize = 115;
 
 fn mock_path() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -88,28 +88,40 @@ fn map_strings(value: &JsValue, map: &dyn Fn(&str) -> String) -> JsValue {
         other => other.clone(),
     }
 }
-fn fill(value: &JsValue, dir: &str) -> JsValue {
+/// Per-run HTTP endpoints as `(text, placeholder)`.
+type Hosts = Vec<(String, &'static str)>;
+
+fn fill(value: &JsValue, dir: &str, hosts: &Hosts) -> JsValue {
     let mock = mock_path();
     map_strings(value, &|text| {
-        text.replace("<dir>", dir).replace("<mock>", &mock)
+        let mut out = text.replace("<dir>", dir).replace("<mock>", &mock);
+        for (host, placeholder) in hosts {
+            out = out.replace(placeholder, host);
+        }
+        out
     })
 }
-fn scrub(value: &JsValue, dir: &str) -> JsValue {
+fn scrub(value: &JsValue, dir: &str, hosts: &Hosts) -> JsValue {
     let temp = regex::Regex::new(r"(pilotdeck-mcp-[^/]*-)[A-Za-z0-9]{6}").unwrap();
     // Only strings that are valid UTF-16 survive the lossy round trip; the
     // corpus keeps lone surrogates out of scrubbed strings.
     let scrubbed = |text: &str| {
-        temp.replace_all(&text.replace(dir, "<dir>"), "${1}XXXXXX")
-            .into_owned()
+        let mut out = text.replace(dir, "<dir>");
+        for (host, placeholder) in hosts {
+            out = out.replace(host.as_str(), placeholder);
+        }
+        temp.replace_all(&out, "${1}XXXXXX").into_owned()
     };
     match value {
         JsValue::String(text) if text.to_utf8().is_err() => value.clone(),
         JsValue::String(_) => map_strings(value, &scrubbed),
-        JsValue::Array(items) => JsValue::Array(items.iter().map(|v| scrub(v, dir)).collect()),
+        JsValue::Array(items) => {
+            JsValue::Array(items.iter().map(|v| scrub(v, dir, hosts)).collect())
+        }
         JsValue::Object(entries) => {
             let mut out = JsObject::new();
             for (key, item) in entries.own_entries() {
-                out.insert(key.clone(), scrub(item, dir));
+                out.insert(key.clone(), scrub(item, dir, hosts));
             }
             JsValue::Object(out)
         }
@@ -129,7 +141,20 @@ fn pairs(value: &JsValue) -> Option<Vec<(String, String)>> {
 }
 
 fn spec(value: &JsValue) -> McpServerSpec {
-    assert_eq!(string(field(value, "transport"), "transport"), "stdio");
+    let transport = string(field(value, "transport"), "transport");
+    if transport != "stdio" {
+        let url = string(field(value, "url"), "url");
+        let headers = pairs(field(value, "headers"));
+        return McpServerSpec {
+            id: string(field(value, "id"), "id"),
+            transport: match transport.as_str() {
+                "streamable_http" => McpTransportSpec::StreamableHttp { url, headers },
+                "sse" => McpTransportSpec::Sse { url, headers },
+                other => panic!("unknown transport {other}"),
+            },
+            call_timeout_ms: field(value, "callTimeoutMs").as_number(),
+        };
+    }
     let args = match field(value, "args") {
         JsValue::Undefined => None,
         args => Some(
@@ -275,6 +300,57 @@ async fn settle(dir: &Path, orphan: bool) {
     panic!("mock processes did not settle in {}", dir.display());
 }
 
+/// The mock in `--http` mode; dropping it ends its stdin and kills it.
+struct HttpMock {
+    child: tokio::process::Child,
+    port: u16,
+}
+impl HttpMock {
+    async fn start(dir: &Path) -> Self {
+        use tokio::io::AsyncBufReadExt;
+        let mut child = tokio::process::Command::new("node")
+            .arg(mock_path())
+            .arg("--http")
+            .env("MOCK_DIR", dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn HTTP mock");
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let line = lines
+            .next_line()
+            .await
+            .unwrap()
+            .expect("HTTP mock port line");
+        let port = line
+            .strip_prefix("PORT ")
+            .expect("PORT line")
+            .parse()
+            .unwrap();
+        Self { child, port }
+    }
+}
+
+/// A port nothing listens on.
+fn refused_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
+/// `http.jsonl`, scrubbed and sorted by text like the generator.
+fn read_http_log(dir: &Path, hosts: &Hosts) -> Vec<String> {
+    let text = std::fs::read_to_string(dir.join("http.jsonl")).unwrap_or_default();
+    let dir_text = dir.to_string_lossy();
+    let mut entries: Vec<String> = text
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| self::text(&scrub(&parse_json(line).unwrap(), &dir_text, hosts)))
+        .collect();
+    entries.sort();
+    entries
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replays_ts_mcp_client_against_the_scripted_server() {
     // The scripted server is plain Node ESM; fail loudly rather than report
@@ -297,8 +373,21 @@ async fn replays_ts_mcp_client_against_the_scripted_server() {
         std::fs::create_dir_all(dir.join("work")).unwrap();
         std::fs::write(dir.join("script.json"), text(field(scenario, "script"))).unwrap();
         let dir_text = dir.to_string_lossy().into_owned();
+        let http = !field(field(scenario, "script"), "http").is_undefined();
+        let mock = if http {
+            Some(HttpMock::start(&dir).await)
+        } else {
+            None
+        };
+        let hosts: Hosts = match &mock {
+            Some(mock) => vec![
+                (format!("127.0.0.1:{}", mock.port), "<host>"),
+                (format!("127.0.0.1:{}", refused_port()), "<refused>"),
+            ],
+            None => Vec::new(),
+        };
         let client = McpClient::new(
-            spec(&fill(field(scenario, "spec"), &dir_text)),
+            spec(&fill(field(scenario, "spec"), &dir_text, &hosts)),
             options(field(scenario, "options")),
         );
         let expected_steps = array(field(scenario, "steps"), "steps");
@@ -307,7 +396,7 @@ async fn replays_ts_mcp_client_against_the_scripted_server() {
             let mut fields = vec![("step", op.clone())];
             fields.extend(run_op(client.clone(), op, dir.clone()).await);
             fields.push(("status", JsValue::String(client.status().as_str().into())));
-            let actual = scrub(&object(fields), &dir_text);
+            let actual = scrub(&object(fields), &dir_text, &hosts);
             assert_eq!(
                 text(&actual),
                 text(expected),
@@ -315,10 +404,35 @@ async fn replays_ts_mcp_client_against_the_scripted_server() {
             );
             steps_seen += 1;
         }
-        settle(&dir, field(scenario, "orphan").as_bool().unwrap_or(false)).await;
+        if let Some(mut mock) = mock {
+            let expected: Vec<String> = array(field(scenario, "http"), "http")
+                .iter()
+                .map(text)
+                .collect();
+            // Detached posts (ping replies) may still be in flight.
+            let mut actual = read_http_log(&dir, &hosts);
+            for _ in 0..200 {
+                if actual.len() >= expected.len() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                actual = read_http_log(&dir, &hosts);
+            }
+            assert_eq!(actual, expected, "scenario {id} HTTP requests differ");
+            drop(mock.child.stdin.take());
+            let _ = mock.child.wait().await;
+        } else {
+            settle(&dir, field(scenario, "orphan").as_bool().unwrap_or(false)).await;
+        }
         let processes: Vec<JsValue> = read_logs(&dir)
             .into_iter()
-            .map(|log| JsValue::Array(log.iter().map(|entry| scrub(entry, &dir_text)).collect()))
+            .map(|log| {
+                JsValue::Array(
+                    log.iter()
+                        .map(|entry| scrub(entry, &dir_text, &hosts))
+                        .collect(),
+                )
+            })
             .collect();
         let expected = array(field(scenario, "processes"), "processes");
         assert_eq!(
@@ -415,7 +529,7 @@ fn replays_ts_naming_sanitize_truncate_and_config() {
             std::fs::create_dir(home.join("mcp.json")).unwrap();
         }
         let result = load_mcp_server_config(&project, &home, &FixedEnvironment).unwrap();
-        let output = scrub(&result.to_value(), &dir.to_string_lossy());
+        let output = scrub(&result.to_value(), &dir.to_string_lossy(), &Vec::new());
         assert_eq!(
             text(&output),
             text(field(case, "output")),
