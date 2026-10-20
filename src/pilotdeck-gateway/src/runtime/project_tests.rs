@@ -543,6 +543,29 @@ async fn factory_panic_rolls_back_and_does_not_poison_registry() {
     }
 }
 
+/// Node `path.resolve` ignores `process.cwd()` for absolute inputs, so an
+/// absolute project key must resolve even when the host cwd is gone. The
+/// cwd getter is a parameter here precisely so the test can prove it is not
+/// called without mutating the process-wide cwd (which other tests share).
+#[test]
+fn absolute_project_keys_do_not_read_cwd() {
+    let resolved = super::resolve_path_with_cwd(Path::new("/tmp/a/../b/./c"), || {
+        Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+    })
+    .expect("absolute project key must not need cwd");
+    assert_eq!(resolved, PathBuf::from("/tmp/b/c"));
+
+    let error = super::resolve_path_with_cwd(Path::new("rel/../key"), || {
+        Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+    })
+    .expect_err("relative project key still needs cwd");
+    assert!(
+        error.message.contains("No such file"),
+        "unexpected cwd error: {}",
+        error.message
+    );
+}
+
 /// Regenerates the oracle from the real TS registry and compares bytes,
 /// matching the sibling `*_fixtures_regenerate_identically_from_ts` tests.
 #[test]

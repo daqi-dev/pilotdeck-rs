@@ -549,7 +549,22 @@ impl ProjectRuntimeRegistry {
 // Node path.resolve is lexical and does not require the project to exist.
 // The normalization itself is shared with the config/session path seams.
 fn resolve_path(path: &Path) -> Result<PathBuf, RuntimeError> {
-    let cwd = std::env::current_dir().map_err(|error| RuntimeError::new(error.to_string()))?;
+    resolve_path_with_cwd(path, std::env::current_dir)
+}
+
+/// Node `path.resolve` only consults `process.cwd()` for a relative input
+/// (libuv's posix resolve reaches `cwd()` only when no absolute segment was
+/// seen). A deleted working directory must therefore still resolve absolute
+/// project keys. The getter is injected so the test can prove it is untouched
+/// without mutating the process-wide cwd.
+fn resolve_path_with_cwd(
+    path: &Path,
+    cwd: impl FnOnce() -> std::io::Result<PathBuf>,
+) -> Result<PathBuf, RuntimeError> {
+    if path.is_absolute() {
+        return Ok(crate::metadata::resolve_path(Path::new("/"), path));
+    }
+    let cwd = cwd().map_err(|error| RuntimeError::new(error.to_string()))?;
     Ok(crate::metadata::resolve_path(&cwd, path))
 }
 

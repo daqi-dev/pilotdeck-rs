@@ -418,11 +418,26 @@ fn fs_error(method: &str, error: io::Error, operation: &str, path: &Path) -> Err
     crate::node_io::diagnostic(&error, operation, Some(&path.to_string_lossy()))
         .unwrap_or(("NODE_IO_REQUIRED", String::new()))
 }
+const FILE_INDEX_DEADLINE: Duration = Duration::from_secs(5);
+
 fn list<F: Files>(
     metadata: &Metadata<F>,
     params: &JsValue,
     project: &str,
     query: &str,
+) -> Result<JsValue> {
+    list_with_deadline(metadata, params, project, query, FILE_INDEX_DEADLINE)
+}
+
+/// The scan deadline is a parameter so the 100k disappearing-entry replay can
+/// prove the counter does not fail closed without racing a real 5 s wall clock
+/// under parallel cargo load (#346).
+fn list_with_deadline<F: Files>(
+    metadata: &Metadata<F>,
+    params: &JsValue,
+    project: &str,
+    query: &str,
+    deadline: Duration,
 ) -> Result<JsValue> {
     let registered = registered(metadata, project, false)?;
     let root = metadata.files.canonical(&registered).map_err(|e| {
@@ -509,6 +524,7 @@ fn list<F: Files>(
         locale: locale.id,
         include_dirs,
         started: Instant::now(),
+        deadline,
         count: 0,
         visited: HashSet::from([root.clone()]),
         entries: Vec::new(),
@@ -579,13 +595,14 @@ struct Scan<'a, F> {
     locale: LanguageIdentifier,
     include_dirs: bool,
     started: Instant,
+    deadline: Duration,
     count: usize,
     visited: HashSet<PathBuf>,
     entries: Vec<JsValue>,
 }
 impl<F: Files> Scan<'_, F> {
     fn walk(&mut self, directory: &Path, depth: usize) -> Result<()> {
-        if depth > 64 || self.count >= 100_000 || self.started.elapsed() > Duration::from_secs(5) {
+        if depth > 64 || self.count >= 100_000 || self.started.elapsed() > self.deadline {
             return Err(index_limit());
         }
         let mut children = self
@@ -596,7 +613,7 @@ impl<F: Files> Scan<'_, F> {
         children.sort_by(|a, b| self.collator.compare(&a.0, &b.0));
         for (name, is_directory) in children {
             self.count += 1;
-            if self.count > 100_000 || self.started.elapsed() > Duration::from_secs(5) {
+            if self.count > 100_000 || self.started.elapsed() > self.deadline {
                 return Err(index_limit());
             }
             if is_directory && EXCLUDED.contains(&name.as_str()) {

@@ -408,6 +408,30 @@ mod tests {
         );
     }
 
+    /// V8 switches escape diagnostics at U+0100: units below 0x100 report
+    /// "Bad escaped character", 0x100 and above become "Unexpected token".
+    /// Messages measured on Node v22.22.0; this pins the protocol-level rule
+    /// shared by count_json, the CLI SDK and workspace_snapshot (#317/#293).
+    #[test]
+    fn backslash_escape_unicode_boundary_matches_node22() {
+        for unit in [0x7f, 0x80, 0xff] {
+            let source = [0x22, 0x5c, unit, 0x22];
+            let message = super::parse_error_units(&source).unwrap();
+            assert_eq!(
+                message.to_utf8().unwrap(),
+                "Bad escaped character in JSON at position 2 (line 1 column 3)",
+                "U+{unit:04X}"
+            );
+        }
+        let source = [0x22, 0x5c, 0x100, 0x22];
+        let message = super::parse_error_units(&source).unwrap();
+        assert_eq!(
+            message.to_utf8().unwrap(),
+            "Unexpected token '\u{100}', \"\"\\\u{100}\"\" is not valid JSON",
+            "U+0100"
+        );
+    }
+
     #[test]
     fn eos_and_token_messages() {
         assert_eq!(

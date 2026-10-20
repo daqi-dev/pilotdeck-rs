@@ -495,7 +495,17 @@ fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
         .map(|i| serde_json::json!([format!("gone-{i}"), false]))
         .collect();
     metadata.files.files.get_mut(&root).unwrap()["entries"] = Value::Array(entries);
-    let value = list(&metadata, &object([]), root.to_str().unwrap(), "").unwrap();
+    // The success half is about the counter, not the wall clock: an unbounded
+    // deadline keeps 100k stat calls deterministic under parallel cargo load.
+    // The 5 s deadline is pinned by the explicitly expired Scan below.
+    let value = list_with_deadline(
+        &metadata,
+        &object([]),
+        root.to_str().unwrap(),
+        "",
+        Duration::MAX,
+    )
+    .unwrap();
     assert_eq!(encode(value.get("items").unwrap()), "[]");
     metadata.files.files.get_mut(&root).unwrap()["entries"]
         .as_array_mut()
@@ -515,6 +525,7 @@ fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
         locale: "und".parse().unwrap(),
         include_dirs: true,
         started: Instant::now() - Duration::from_secs(6),
+        deadline: FILE_INDEX_DEADLINE,
         count: 0,
         visited: HashSet::new(),
         entries: Vec::new(),
