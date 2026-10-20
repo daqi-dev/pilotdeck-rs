@@ -83,6 +83,14 @@ globalThis.RegExp = nativeRegExp;
 const cases = [];
 const add = (id, schema, data) => cases.push({id, schema, data});
 const addCompile = (id, schema) => cases.push({id, schema, data: null});
+const addPatternCompile = (id, schema, detail) => cases.push({
+  id,
+  schema,
+  data: null,
+  compileErrorPrefix: 'Invalid regular expression',
+  compileErrorDetail: detail,
+  exactCompileError: true,
+});
 
 // --- compile-time throws ---------------------------------------------------
 addCompile('compile/type-unknown', {type: 'foo'});
@@ -215,6 +223,19 @@ const invalidPatterns = [
   ['edge/class-negated-empty-then-bracket', '[^]]', 'Lone quantifier brackets'],
   ['edge/class-empty-then-literal', '[]a]', 'Lone quantifier brackets'],
   ['edge/class-negated-empty-then-literal', '[^]a]', 'Lone quantifier brackets'],
+  // Property names are the ECMAScript property list, not Rust's looser
+  // Unicode tables. `${...}` is a valid escape spelling but not a valid name.
+  ['property/lone-unknown', '\\p{Foo}', 'Invalid property name', true],
+  ['property/lone-script', '\\p{Latin}', 'Invalid property name', true],
+  ['property/class-unknown', '[\\p{Foo}]', 'Invalid property name in character class', true],
+  ['property/lowercase-key', '\\p{script=Han}', 'Invalid property name', true],
+  ['property/unknown-key', '\\p{Foo=Bar}', 'Invalid property name', true],
+  ['property/binary-with-value', '\\p{Alphabetic=Y}', 'Invalid property name', true],
+  ['property/spaced', '\\p{Script = Han}', 'Invalid property name', true],
+  ['group-name-euro', '(?<€>a)', 'Invalid capture group name', true],
+  ['group-name-arabic-digit', '(?<١>a)', 'Invalid capture group name', true],
+  ['group-name-escaped-euro', '(?<\\u{20AC}>a)', 'Invalid capture group name', true],
+  ['group-name-escape-q', '(?<\\q>a)', 'Invalid capture group name', true],
 ];
 for (const [name, pattern, detail, exact] of invalidPatterns) {
   cases.push({
@@ -399,6 +420,104 @@ for (const [id, pattern, data] of [
 ]) {
   add(`escape/${id}`, {type: 'string', pattern}, data);
 }
+
+// Common patterns the real SDK accepts. These are compiled and evaluated by
+// the port (not merely accepted): a false "unsupported" here would hide real
+// tools from `tools/list`, exactly the r4 regression.
+for (const [name, pattern, values] of [
+  ['unicode-bmp', '^\\u00e9$', ['é', 'e']],
+  ['unicode-cjk-range', '^[\\u4e00-\\u9fa5]+$', ['中文', 'abc']],
+  ['unicode-no-controls', '^[^\\u0000-\\u001f]*$', ['ok', 'a\u0001b']],
+  ['unicode-brace', '^\\u{1F600}$', ['😀', '😁']],
+  ['unicode-surrogate-pair', '^\\uD83D\\uDE00$', ['😀', 'x']],
+  ['hex-escape', '^\\x41$', ['A', 'B']],
+  ['control-escape', '^\\cJ$', ['\n', 'J']],
+  ['nul-escape', '^\\0$', ['\0', '0']],
+  ['named-groups', '^(?<year>\\d{4})-(?<month>\\d{2})$', ['2026-10', '2026-1']],
+  ['named-group-single', '^(?<y>a)$', ['a', 'b']],
+  ['property-letter', '^\\p{L}+$', ['abc', '123']],
+  ['property-letter-class', '^[\\p{L}]+$', ['中文', '12']],
+  ['property-script', '^\\p{Script=Han}+$', ['中文', 'abc']],
+  ['property-categories', '^\\p{Lu}\\p{Ll}+$', ['Hello', 'hello']],
+  ['word-hyphen', '^[\\w-]+$', ['a-b_1', 'a b']],
+  ['word-dot-hyphen', '^[\\w.-]+$', ['a.b-c', 'a/b']],
+  ['letters-space', '^[a-z\\s]+$', ['a b\tc', 'a1']],
+  ['digits-space', '^[0-9\\s]+$', ['12 3', '12a']],
+  ['dash-digit-left', '^[-\\d]+$', ['-12', 'a1']],
+  ['dash-digit-right', '^[\\d-]+$', ['1-2', 'a1']],
+  ['word-space-hyphen', '^[\\w\\s-]+$', ['a b-c', 'a.b']],
+  ['escaped-hyphen-class', '^[a-zA-Z0-9_\\-]+$', ['a-b', 'a.b']],
+  ['cjk-and-word', '^[\\u4e00-\\u9fa5\\w]+$', ['中文a_1', '中文 a']],
+  ['non-ascii', '^[^\\u0000-\\u007F]+$', ['é中', 'abc']],
+  ['emoji-range-brace', '^\\u{1F600}-\\u{1F64F}$', ['😀-🙏', 'a']],
+  ['emoji-class', '^[😀-😁]$', ['😀', '😁']],
+  ['max-code-point', '^\\u{10FFFF}$', [String.fromCodePoint(0x10FFFF), 'x']],
+  ['noncapturing', '^(?:foo|bar)$', ['foo', 'baz']],
+  ['bounded-quantifier', '^\\d{2,4}$', ['123', '1']],
+  ['optional-hyphen', '^[\\-]?\\d+$', ['-42', '--42']],
+  ['escaped-slash', '^\\/[a-z]+$', ['/abc', 'abc']],
+  ['escaped-dot', '^\\.$', ['.', 'x']],
+  ['escaped-anchors', '^\\$\\^$', ['$^', 'a']],
+  ['named-word', '^(?<word>[A-Za-z]+)$', ['hello', 'hello1']],
+  ['regional-indicator-range', '^\\u{1F1E6}-\\u{1F1FF}$', ['🇦-🇿', 'A']],
+  ['mix-property-class', '^[\\p{Script=Han}\\p{L}]+$', ['中文abc', '123']],
+  ['property-emoji', '^\\p{Emoji}$', ['😀', 'a']],
+  ['named-group-unicode', '^(?<é>x)$', ['x', 'y']],
+]) {
+  for (const [index, data] of values.entries()) {
+    add(`positive-pattern/${name}-${index}`, {type: 'string', pattern}, data);
+  }
+}
+
+// `patternProperties` compiles a key only when the keyword actually runs.
+// All-always-valid children make Ajv's codegen return before `usePattern`
+// unless a non-trivial `additionalProperties` compiles the keys again.
+add(
+  'pattern-properties/always-valid-invalid-key',
+  {type: 'object', patternProperties: {'\\-': {}}},
+  {x: 1},
+);
+add(
+  'pattern-properties/always-valid-js-only-key',
+  {type: 'object', patternProperties: {'(?=a)': {}}},
+  {x: 1},
+);
+add(
+  'pattern-properties/always-valid-true-child',
+  {type: 'object', patternProperties: {'\\-': true}},
+  {x: 1},
+);
+add(
+  'pattern-properties/always-valid-metadata-child',
+  {type: 'object', patternProperties: {'\\-': {title: 'x'}}},
+  {x: 1},
+);
+add(
+  'pattern-properties/always-valid-additional-true',
+  {type: 'object', patternProperties: {'\\-': {}}, additionalProperties: true},
+  {x: 1},
+);
+add(
+  'pattern-properties/always-valid-additional-empty',
+  {type: 'object', patternProperties: {'\\-': {}}, additionalProperties: {}},
+  {x: 1},
+);
+addPatternCompile(
+  'pattern-properties/always-valid-additional-false',
+  {type: 'object', patternProperties: {'\\-': {}}, additionalProperties: false},
+  'Invalid escape',
+);
+addPatternCompile(
+  'pattern-properties/mixed-child',
+  {type: 'object', patternProperties: {'\\-': {}, x: {type: 'number'}}},
+  'Invalid escape',
+);
+addPatternCompile(
+  'pattern-properties/always-valid-additional-schema',
+  {type: 'object', patternProperties: {'\\-': {}}, additionalProperties: {type: 'number'}},
+  'Invalid escape',
+);
+
 add('type/array-mismatch', {type: ['string', 'number']}, false);
 for (const [format, name, values] of [
   ['hostname', 'label-length', ['a'.repeat(63), 'a'.repeat(64)]],
@@ -412,6 +531,71 @@ for (const [format, name, values] of [
 ]) {
   values.forEach((data, index) => add(`format-edge/${format}-${name}-${index}`, {type: 'string', format}, data));
 }
+
+// `ajv-formats` `regex` is `new RegExp(str)` without `/u`, plus the literal
+// `/[^\\]\\Z/` guard. These are the divergence shapes observed in review:
+// JS-invalid patterns Rust accepts and JS-valid Annex B patterns Rust rejects.
+for (const [name, value] of [
+  ['anchored', '^a+$'],
+  ['unterminated-class', '['],
+  ['lookahead', '(?=a)'],
+  ['identity-hyphen', '\\-'],
+  ['lone-close-bracket', 'a]'],
+  ['identity-angle', '\\<a'],
+  ['inline-flags', '(?i:a)'],
+  ['double-quantifier', 'a**'],
+  ['double-range-quantifier', 'x{2}{3}'],
+  ['open-lower-quantifier', 'a{,5}'],
+  ['control-j', '\\cJ'],
+  ['nul', '\\0'],
+  ['bare-k', '\\k'],
+  ['anchor-z', '\\Z'],
+  ['anchor-z-after', 'a\\Z'],
+  ['literal-z-after', 'a\\\\Z'],
+  ['property-without-u', '\\p{L}'],
+  ['named-group', '(?<x>a)'],
+  ['named-backreference', '(?<x>a)\\k<x>'],
+  ['unknown-named-backreference', '(?<x>a)\\k<y>'],
+  ['reversed-range', 'a{2,1}'],
+  ['literal-open-brace', 'a{2x}'],
+  ['spaced-brace', 'a{2, 3}'],
+  ['empty-group', '()'],
+  ['empty-class', '[]'],
+  ['negated-empty-class', '[^]'],
+  ['empty-class-close', '[]]'],
+  ['class-shorthand-range-right', '[a-\\w]'],
+  ['class-shorthand-range-left', '[\\w-a]'],
+  ['identity-eight', '\\8'],
+  ['identity-two', '\\2'],
+  ['backreference-two', '(a)\\2'],
+  ['short-hex', '\\x'],
+  ['short-hex-one', '\\x1'],
+  ['short-unicode', '\\u'],
+  ['short-unicode-one', '\\u1'],
+  ['brace-unicode-without-u', '\\u{41}'],
+  ['control-digit', '\\c1'],
+  ['control-class', '\\c['],
+  ['trailing-backslash', '\\'],
+  ['quantified-lookbehind', '(?<=a)*'],
+  ['lookbehind-literal-open-lower', '(?<=a){,3}'],
+  ['lookbehind-literal-open-brace', '(?<=a){2x}'],
+  ['lookbehind', '(?<=a)'],
+  ['quantified-lookahead', '(?=a)*'],
+  ['rust-named-group', '(?P<x>a)'],
+  ['digit-group-name', '(?<1a>x)'],
+  ['astral-class-range', '[😀-😁]'],
+  ['double-dash-order', '[a--b]'],
+  ['double-dash-start', '[--a]'],
+  ['standalone-named-reference', '\\k<x>'],
+  ['empty-named-reference', '\\k<>'],
+  ['empty-named-reference-with-group', '(?<x>a)\\k<>'],
+  ['identity-q', '\\q'],
+  ['class-identity-q', '[\\q]'],
+  ['literal-brace-after-star', 'a*{x}'],
+  ['quantifier-after-star', 'a*{2}'],
+  ['lazy-star', 'a*?'],
+  ['lazy-range', 'a{2,3}?'],
+]) add(`format-regex/${name}`, {type: 'string', format: 'regex'}, value);
 
 // Ambiguous Rust-only class operators and JavaScript-only regex constructs
 // are explicitly unsupported by the port. Keep the real Ajv result as
@@ -433,15 +617,7 @@ for (const [id, schema, data] of [
   ['backreference-two-groups', {pattern: '(a)(b)\\2'}, 'ab'],
   ['named-group', {pattern: '(?<x>a)\\k<x>'}, 'a'],
   ['named-forward-reference', {pattern: '\\k<x>(?<x>a)'}, 'a'],
-  ['named-group-nonascii', {pattern: '(?<é>x)'}, 'x'],
-  ['unicode-escape', {pattern: '\\u0041'}, 'A'],
-  ['unicode-brace-escape', {pattern: '\\u{1F600}'}, '😀'],
   ['lone-surrogate-escape', {pattern: '\\uD83D'}, '\uD83D'],
-  ['surrogate-pair-escape', {pattern: '\\uD83D\\uDE00'}, '😀'],
-  ['property-escape', {pattern: '\\p{L}'}, 'a'],
-  ['property-escape-in-class', {pattern: '[\\p{L}]'}, 'a'],
-  ['property-name-not-validated', {pattern: '\\p{NotAProperty}'}, 'a'],
-  ['property-name-not-validated-in-class', {pattern: '[\\p{NotAProperty}]'}, 'a'],
   ['huge-quantifier', {pattern: 'a{1000000000}'}, 'a'],
 ]) cases.push({id: `unsupported-pattern/${id}`, schema, data, portUnsupported: true});
 add('length/astral-max-equal', {type: 'string', maxLength: 1}, '😀');

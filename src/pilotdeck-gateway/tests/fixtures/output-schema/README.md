@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **379** cases. Each case is either:
+count of **526** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -30,10 +30,22 @@ Ajv feeds both `pattern` and every `patternProperties` key to
 the complete V8 message.
 
 `portUnsupported: true` leaves the real Ajv result intact, but requires Rust
-to return an explicit unsupported error for JavaScript-only regex syntax or
-class syntax that it cannot translate. These twenty-five cases are never counted
-as equal validation results, and the replay also asserts that
-`check_schema` rejects them.
+to accept the schema (Ajv compiles it) and to return an explicit unsupported
+error only when the pattern is used. These seventeen cases are never counted as
+equal validation results. Valid `/u` syntax is no longer a compile error:
+lookarounds, backreferences, named groups, `\u` escapes and `\p{...}` names
+all pass `check_schema`; the ones Rust can translate are evaluated normally.
+
+`positive-pattern/*` is the r4 regression set: 38 common patterns the real SDK
+accepts (`\uXXXX`, `\u{...}`, named groups, `\p{L}`, `\p{Script=Han}`,
+`[\w-]`, `[\w.-]`, `[a-z\s]`, `[-\d]`, `[\d-]`, CJK ranges, astral classes,
+…) with matching and non-matching data. They are normal cases, so the replay
+checks both `check_schema` and the exact Ajv validation result.
+
+`format-regex/*` exercises ajv-formats' non-`/u` `regex` format (59 cases),
+including repeated quantifiers, Annex B identity/octal escapes, `\Z`, named
+groups and class ranges. `validate` returns `ValidationError::Unsupported` if
+the port cannot decide a value, never a silent pass.
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck LANG=en_US.UTF-8
@@ -58,9 +70,10 @@ exercised both as a value pattern and as a property-name pattern.
 
 | feature | this port |
 |---|---|
-| ECMAScript `/u` syntax V8 rejects (`\-`, lone `]`/`}`, `a**`, `\<a`, incomplete/duplicate quantifiers, bad escapes/ranges) in `pattern`/`patternProperties` | `SchemaError` with V8's `Invalid regular expression: /…/u: <reason>` during `tools/list`; never falls through to Rust's more permissive parser |
-| JavaScript-only regex (lookarounds, backreferences, named groups, `\u` / `\p` / `\P` escapes) in `pattern`/`patternProperties` | `SchemaError` prefixed with `unsupported` during `tools/list`; `validate` projects it as `ValidationError::Unsupported` |
+| ECMAScript `/u` syntax V8 rejects (`\-`, lone `]`/`}`, `a**`, `\<a`, incomplete/duplicate quantifiers, bad escapes/ranges, invalid `\p{...}` names) in `pattern`/`patternProperties` | `SchemaError` with V8's `Invalid regular expression: /…/u: <reason>` during `tools/list`; never falls through to Rust's more permissive parser |
+| valid `/u` regex Rust cannot evaluate (lookarounds, backreferences, some `\p{...}` values) in `pattern`/`patternProperties` | `check_schema` accepts it, matching Ajv; `validate` returns `ValidationError::Unsupported` when the pattern is used, never a silent pass |
 | relative/remote `$ref` that needs an `$id` base | `check_schema` error (`can't resolve reference … from id #`), same as Ajv when there is no base |
 | schema nesting > 256 for the compile check | explicit `SchemaError`; Ajv throws `RangeError` at ~600 nested schemas |
 | validation nesting > 10000 `check` frames (~5000 data levels) | explicit `ValidationError::Threw`; Ajv handles 4000 data levels (measured) and throws above its own V8 limit |
-| classes with nested `[`, `&&` / `~~` / `--`, or empty classes | explicit `unsupported` schema compilation error; preserve real Ajv success/failure in the oracle |
+| classes with nested `[`, `&&` / `~~` / `--`, or empty classes | accepted at compile time; using the pattern returns `ValidationError::Unsupported` (the real Ajv result is preserved in the oracle) |
+| `patternProperties` whose children are all always-valid and whose sibling `additionalProperties` is absent/always-valid | Ajv's `patternProperties` codegen early-returns without compiling the keys; both `check_schema` and validation skip them (`alwaysValid` early-exit, r4 GLM P1) |
