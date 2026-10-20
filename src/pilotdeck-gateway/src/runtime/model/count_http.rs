@@ -1,4 +1,5 @@
-//! Async count transport. TLS is supplied by the provider transport in A6.4-pr5.
+//! Async count transport. HTTPS uses the provider transport's rustls connector
+//! (`super::http::https_connector`, A6.4-pr5).
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{HeaderMap, Method, Request, Response, body::Body};
@@ -32,13 +33,24 @@ pub trait ProviderCountTransport: Send + Sync {
 
 #[derive(Clone)]
 pub struct HyperCountTransport {
-    client: Client<HttpConnector, Full<Bytes>>,
+    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>,
 }
+impl HyperCountTransport {
+    /// Trust exactly `roots` (tests use a throwaway CA).
+    pub fn with_roots(roots: rustls::RootCertStore) -> Self {
+        Self::from_config(super::http::rooted_client_config(roots))
+    }
+    fn from_config(config: rustls::ClientConfig) -> Self {
+        Self {
+            client: Client::builder(TokioExecutor::new())
+                .build(super::http::https_connector(config)),
+        }
+    }
+}
+/// Mozilla roots, like the stream transport.
 impl Default for HyperCountTransport {
     fn default() -> Self {
-        Self {
-            client: Client::builder(TokioExecutor::new()).build_http(),
-        }
+        Self::from_config(super::http::webpki_client_config())
     }
 }
 impl ProviderCountTransport for HyperCountTransport {

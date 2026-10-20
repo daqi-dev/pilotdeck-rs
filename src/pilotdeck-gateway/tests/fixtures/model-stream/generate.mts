@@ -37,7 +37,7 @@ type Reply = { status?: number; headers?: Record<string, string>; chunks?: Chunk
 type Spec = {
   name: string; target?: 'mock' | 'closed' | 'tls-trusted' | 'tls-untrusted'; url?: string;
   request?: Record<string, unknown>; provider?: Record<string, unknown>; replies: Reply[];
-  abortAfterTextDeltas?: number; streamTimeoutMs?: number;
+  abortAfterTextDeltas?: number; streamTimeoutMs?: number; bodyTimeoutMs?: number;
 };
 
 const sse = (event: Record<string, unknown>, name = String(event.type)) =>
@@ -51,6 +51,10 @@ const end = (stop = 'end_turn') => [
   sse({ type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 7 } }),
   sse({ type: 'message_stop' }),
 ];
+const toolStart = (index: number, id: string) =>
+  sse({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name: 'lookup', input: {} } });
+const toolDelta = (index: number, partial_json: string) =>
+  sse({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json } });
 const short = (text = 'ok'): Reply => ({ chunks: [messageStart, textStart(), textDelta(text), blockStop(), ...end()] });
 const errorEvent = (type: string, message: string) => sse({ type: 'error', error: { type, message } });
 const utf8Hex = (text: string) => Buffer.from(text, 'utf8').toString('hex');
@@ -118,6 +122,18 @@ const specs: Spec[] = [
   { name: 'request-validation', request: { provider: 'missing-provider' }, replies: [] },
   { name: 'tls-trusted', target: 'tls-trusted', replies: [short('secure')] },
   { name: 'tls-untrusted', target: 'tls-untrusted', provider: { retry: { streamMaxRetries: 0 } }, replies: [] },
+  // Repair round 1: jsonrepair and deferred tool-argument failures in a stream.
+  { name: 'tool-args-repaired', replies: [{ chunks: [messageStart, toolStart(0, 'toolu_r'),
+    toolDelta(0, "{q: 'ab', n: [1 2,],"), blockStop(0), ...end('tool_use')] }] },
+  { name: 'tool-args-truncated-max-tokens', replies: [{ chunks: [messageStart, toolStart(0, 'toolu_t'),
+    toolDelta(0, '{"q":"ab'), toolDelta(0, 'c"} x'), blockStop(0), ...end('max_tokens')] }] },
+  { name: 'tool-args-invalid-message-stop', replies: [{ chunks: [messageStart, toolStart(0, 'toolu_i'),
+    toolDelta(0, '{:1}'), blockStop(0), sse({ type: 'message_stop' })] }] },
+  // Error body: headers flushed, half a body, then silence until bodyTimeout.
+  { name: 'error-body-stall', bodyTimeoutMs: 150, replies: [{ status: 500, headers: { 'content-type': 'application/json' },
+    chunks: [{ text: '{"type":"error","error":{"type":"api_error",' }], end: 'hold' }] },
+  // 204: fetch exposes a null body -> "Missing response body." error event.
+  { name: 'no-content', replies: [{ status: 204, headers: {} }] },
 ];
 
 const request = {
@@ -245,6 +261,7 @@ for (const spec of specs) {
   const controller = new AbortController();
   const previous = undici.getGlobalDispatcher();
   if (target === 'tls-trusted') undici.setGlobalDispatcher(new undici.Agent({ connect: { ca: caPem } }));
+  if (spec.bodyTimeoutMs !== undefined) undici.setGlobalDispatcher(new undici.Agent({ bodyTimeout: spec.bodyTimeoutMs }));
   try {
     let textDeltas = 0;
     for await (const event of streamModel(caseRequest, config, {
@@ -259,7 +276,7 @@ for (const spec of specs) {
   } catch (error) {
     timeline.push({ thrown: thrownRecord(error) });
   } finally {
-    if (target === 'tls-trusted') undici.setGlobalDispatcher(previous);
+    if (target === 'tls-trusted' || spec.bodyTimeoutMs !== undefined) undici.setGlobalDispatcher(previous);
   }
   // Let a held reply observe the client close before reading its record.
   for (let i = 0; i < 400 && spec.replies.some((r) => r.end === 'hold') && current.requests.some((r) => !('clientClosed' in r)); i++) {
@@ -269,7 +286,7 @@ for (const spec of specs) {
   requestCount += current.requests.length;
   cases.push(scrub({ name: spec.name, target, url: spec.url, request: spec.request, provider: spec.provider,
     replies: spec.replies, abortAfterTextDeltas: spec.abortAfterTextDeltas, streamTimeoutMs: spec.streamTimeoutMs,
-    requests: current.requests, timeline }));
+    bodyTimeoutMs: spec.bodyTimeoutMs, requests: current.requests, timeline }));
 }
 http.close();
 tls.close();
@@ -280,6 +297,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, undici: JSON.parse(readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version,
   locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 20);
+assert.equal(cases.length, 25);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));

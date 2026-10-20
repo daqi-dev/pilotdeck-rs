@@ -261,11 +261,7 @@ fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsVal
         if disabled {
             return Ok(object([("type", "disabled".into())]));
         }
-        let old_model = regex::Regex::new(
-            r"claude-(?:3|haiku-3|haiku-4|(?:sonnet|opus)-4(?:[.-][0-5](?:\D|$)|-20|$))",
-        )
-        .expect("static regex")
-        .is_match(&text(field(model, "id")));
+        let old_model = budget_only_model(&text(field(model, "id")));
         if old_model {
             if effort.is_some() {
                 return Err(fail(
@@ -284,6 +280,20 @@ fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsVal
             JsValue::Undefined
         })
     }
+}
+/// `thinking/registry.ts` budget-only Claude models. The TS regex has no `u`
+/// flag, so `\D` is "not an ASCII digit": `[^0-9]`, not Rust's Unicode `\D`.
+/// Shared by the count and stream request builders.
+pub(super) fn budget_only_model(model_id: &str) -> bool {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PATTERN
+        .get_or_init(|| {
+            regex::Regex::new(
+                r"claude-(?:3|haiku-3|haiku-4|(?:sonnet|opus)-4(?:[.-][0-5](?:[^0-9]|$)|-20|$))",
+            )
+            .expect("static regex")
+        })
+        .is_match(model_id)
 }
 pub(super) fn tool_choice(choice: &JsValue, anthropic: bool) -> JsValue {
     if !truthy(choice) {

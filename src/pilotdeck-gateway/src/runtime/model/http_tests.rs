@@ -148,3 +148,153 @@ fn unported_protocols_fail_before_http() {
         matches!(error, ModelStreamError::Request { ref code, .. } if code.equals_str("protocol_not_ported"))
     );
 }
+
+/// Scripted transport: one response per call, body frames served in order;
+/// a frame of `None` stalls forever.
+/// Status and body frames (`None` stalls) of one scripted response.
+type Reply = (u16, Vec<Option<&'static [u8]>>);
+struct Scripted(std::sync::Mutex<Vec<Reply>>);
+impl ModelHttpTransport for Scripted {
+    fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
+        let (status, frames) = self.0.lock().unwrap().remove(0);
+        let stream = futures_body(frames);
+        Box::pin(async move { Ok(Response::builder().status(status).body(stream).unwrap()) })
+    }
+}
+fn futures_body(frames: Vec<Option<&'static [u8]>>) -> ModelBody {
+    struct Frames(std::collections::VecDeque<Option<&'static [u8]>>);
+    impl hyper::body::Body for Frames {
+        type Data = Bytes;
+        type Error = BodyFailure;
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
+            match self.0.pop_front() {
+                None => std::task::Poll::Ready(None),
+                Some(None) => {
+                    self.0.push_front(None);
+                    std::task::Poll::Pending
+                }
+                Some(Some(bytes)) => std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(
+                    Bytes::from_static(bytes),
+                )))),
+            }
+        }
+    }
+    Frames(frames.into_iter().collect()).boxed()
+}
+fn stream_config() -> (JsValue, JsValue) {
+    let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
+    let config = parse_json(
+        r#"{"providers":{"p":{"id":"p","protocol":"anthropic","url":"http://127.0.0.1:8080/v1","apiKey":"k","headers":{},
+        "retry":{"baseDelayMs":1,"maxDelayMs":1},
+        "models":{"m":{"id":"m","capabilities":{"supportsStreaming":true,"maxOutputTokens":8},"multimodal":{"input":["text"]}}}}}}"#,
+    )
+    .unwrap();
+    (request, config)
+}
+
+#[tokio::test]
+async fn undelimited_sse_buffer_over_the_v8_limit_throws_range_error() {
+    SSE_LIMIT.with(|limit| limit.set(64));
+    let (request, config) = stream_config();
+    // Valid events are consumed; then 65 units without "\n\n" overflow.
+    let transport = Scripted(std::sync::Mutex::new(vec![(
+        200,
+        vec![
+            Some(b"data: {\"type\":\"message_start\"}\n\n".as_slice()),
+            Some(b"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"".as_slice()),
+            Some(b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".as_slice()),
+        ],
+    )]));
+    let mut events = Vec::new();
+    let mut sink = |output: StreamOutput| {
+        if let StreamOutput::Event(event) = output {
+            events.push(event);
+        }
+    };
+    let error = stream_model(
+        &transport,
+        &request,
+        &config,
+        &StreamOptions::default(),
+        &mut sink,
+    )
+    .await
+    .unwrap_err();
+    SSE_LIMIT.with(|limit| limit.set(super::super::count_http::MAX_STRING_LENGTH));
+    assert!(error.name().equals_str("RangeError"), "{error:?}");
+    assert!(error.message().equals_str("Invalid string length"));
+    assert_eq!(events.len(), 2, "request_started + message_start, no retry");
+}
+
+#[tokio::test]
+async fn stalled_error_body_hits_the_body_timeout() {
+    let (request, config) = stream_config();
+    // Headers of a 500, half a JSON body, then silence.
+    let transport = Scripted(std::sync::Mutex::new(vec![(
+        500,
+        vec![Some(b"{\"type\":\"error\",".as_slice()), None],
+    )]));
+    let options = StreamOptions {
+        body_timeout_ms: 50.0,
+        ..StreamOptions::default()
+    };
+    let mut sink = |_: StreamOutput| {};
+    let started = std::time::Instant::now();
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        stream_model(&transport, &request, &config, &options, &mut sink),
+    )
+    .await
+    .expect("must not hang without an abort signal")
+    .unwrap_err();
+    assert!(error.name().equals_str("TypeError") && error.message().equals_str("terminated"));
+    assert!(started.elapsed() >= Duration::from_millis(50));
+}
+
+#[test]
+fn imf_fixdate_ranges_follow_date_parse() {
+    // node probe (r1/probe-r1.out.txt): 32 Oct / 00 / 25:00 / 07:60 /
+    // 24:00:01 -> NaN; 31 Feb rolls over; 24:00:00 is next midnight; a
+    // second >= 60 reads as :00.
+    let at = |text: &str| errors::retry_after_header(Some(text), 0.0);
+    assert_eq!(
+        at("Wed, 21 Oct 2015 07:28:00 GMT"),
+        Some(1_445_412_480_000.0)
+    );
+    assert_eq!(at("Wed, 32 Oct 2015 07:28:00 GMT"), None);
+    assert_eq!(at("Wed, 00 Oct 2015 07:28:00 GMT"), None);
+    assert_eq!(at("Wed, 21 Oct 2015 25:00:00 GMT"), None);
+    assert_eq!(at("Wed, 21 Oct 2015 07:60:00 GMT"), None);
+    assert_eq!(at("Wed, 21 Oct 2015 24:00:01 GMT"), None);
+    assert_eq!(at("Wed, 99999999999999999999 Oct 2015 07:28:00 GMT"), None);
+    assert_eq!(
+        at("Wed, 31 Feb 2015 07:28:00 GMT"),
+        Some(1_425_367_680_000.0)
+    );
+    assert_eq!(
+        at("Wed, 21 Oct 2015 24:00:00 GMT"),
+        Some(1_445_472_000_000.0)
+    );
+    assert_eq!(
+        at("Wed, 1 Oct 2015 07:28:00 GMT"),
+        Some(1_443_684_480_000.0)
+    );
+    assert_eq!(
+        at("Wed, 21 Oct 2015 07:28:61 GMT"),
+        Some(1_445_412_480_000.0)
+    );
+    assert_eq!(at("Wed, 21 Oct 275761 07:28:00 GMT"), None);
+}
+
+#[test]
+fn abort_message_on_provider_errors_is_not_retryable() {
+    let mut canonical = JsObject::new();
+    canonical.insert("message".into(), "request aborted by upstream".into());
+    canonical.insert("retryable".into(), JsValue::Bool(true));
+    assert!(!is_retryable_stream_error(&ModelStreamError::Provider(
+        canonical
+    )));
+}

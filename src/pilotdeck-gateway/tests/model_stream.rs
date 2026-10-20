@@ -195,7 +195,13 @@ fn serve(mut socket: impl Socket, exchange: &Mutex<Exchange>, excluded: &[String
             }
             None => head.push_str("content-type: text/event-stream\r\n"),
         }
-        head.push_str("transfer-encoding: chunked\r\n\r\n");
+        // Null-body statuses carry no framing at all (keep-alive stays valid).
+        let no_body = status == 204.0 || status == 205.0;
+        head.push_str(if no_body {
+            "\r\n"
+        } else {
+            "transfer-encoding: chunked\r\n\r\n"
+        });
         if socket
             .write_all(head.as_bytes())
             .and_then(|()| socket.flush())
@@ -258,6 +264,7 @@ fn serve(mut socket: impl Socket, exchange: &Mutex<Exchange>, excluded: &[String
                     .insert("clientClosed".into(), JsValue::Bool(closed));
                 return;
             }
+            _ if no_body => {}
             _ => {
                 if socket
                     .write_all(b"0\r\n\r\n")
@@ -344,7 +351,7 @@ async fn real_ts_stream_model_over_loopback_http_and_tls() {
     };
 
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 20);
+    assert_eq!(cases.len(), 25);
     let mut request_count = 0;
     let mut names = std::collections::HashSet::new();
     for case in cases {
@@ -396,6 +403,9 @@ async fn real_ts_stream_model_over_loopback_http_and_tls() {
         let options = StreamOptions {
             abort: Some(abort.clone()),
             stream_timeout_ms: get(case, "streamTimeoutMs").as_number(),
+            body_timeout_ms: get(case, "bodyTimeoutMs")
+                .as_number()
+                .unwrap_or(StreamOptions::default().body_timeout_ms),
             random: Arc::new(move || random),
             ..StreamOptions::default()
         };
@@ -466,5 +476,56 @@ async fn real_ts_stream_model_over_loopback_http_and_tls() {
         assert_eq!(requests, expected, "{name}: request records");
         request_count += requests.len();
     }
-    assert_eq!(request_count, 25);
+    assert_eq!(request_count, 30);
+}
+
+/// The production count transport shares the stream transport's rustls
+/// connector: an HTTPS count call to a local self-signed provider succeeds
+/// with the test CA and fails (`fetch failed`) without it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_transport_speaks_https_with_the_shared_connector() {
+    use pilotdeck_gateway::runtime::model::{
+        CountHttpRequest, HyperCountTransport, ProviderCountTransport,
+    };
+    let (roots, server_config) = tls_material();
+    let exchange = Arc::new(Mutex::new(Exchange::default()));
+    let reply = parse_json(
+        r#"{"status":200,"headers":{"content-type":"application/json"},"chunks":[{"text":"{\"input_tokens\":73}"}]}"#,
+    )
+    .unwrap();
+    exchange.lock().unwrap().replies = vec![reply];
+    let https = start_mock(
+        exchange.clone(),
+        vec!["host".into(), "content-length".into()],
+        Some(server_config),
+    );
+    let request = |origin: &str| CountHttpRequest {
+        url: format!("{origin}/v1/messages/count_tokens"),
+        headers: JsObject::new(),
+        body: parse_json(r#"{"model":"m"}"#).unwrap(),
+    };
+    let value = HyperCountTransport::with_roots(roots)
+        .post(request(&https.origin))
+        .await
+        .unwrap();
+    assert_eq!(get(&value, "input_tokens").as_number(), Some(73.0));
+    {
+        let exchange = exchange.lock().unwrap();
+        assert_eq!(exchange.requests.len(), 1);
+        assert_eq!(
+            json(&JsValue::Object(exchange.requests[0].clone())),
+            r#"{"method":"POST","path":"/v1/messages/count_tokens","headers":[],"body":"{\"model\":\"m\"}"}"#
+        );
+    }
+    // Mozilla roots do not trust the throwaway CA: the handshake fails.
+    let error = HyperCountTransport::default()
+        .post(request(&https.origin))
+        .await
+        .unwrap_err();
+    assert_eq!(error.module_error.unwrap().message, "fetch failed".into());
+    assert_eq!(
+        exchange.lock().unwrap().requests.len(),
+        1,
+        "no request after a failed handshake"
+    );
 }

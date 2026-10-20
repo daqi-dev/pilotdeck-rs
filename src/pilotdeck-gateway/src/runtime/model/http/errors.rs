@@ -132,26 +132,42 @@ pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64
 }
 
 fn imf_fixdate(text: &str) -> Option<f64> {
-    // e.g. "Wed, 21 Oct 2015 07:28:00 GMT"
+    // e.g. "Wed, 21 Oct 2015 07:28:00 GMT". Field ranges follow V8's legacy
+    // `Date.parse` (node probe, RESULT 修复轮 1): day 1..=31 with month
+    // overflow (31 Feb = 3 Mar), hour 0..=24 (24 only as 24:00:00), minute
+    // 0..=59, a second >= 60 reads as 0, results beyond ±8.64e15 ms are NaN.
     let parts: Vec<&str> = text.split(' ').collect();
     let [_, day, month, year, time, "GMT"] = parts.as_slice() else {
         return None;
+    };
+    // Short digit runs only: no overflow in the arithmetic below.
+    let number = |digits: &str| -> Option<i64> {
+        (!digits.is_empty() && digits.len() <= 9 && digits.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| digits.parse().ok())
+            .flatten()
     };
     let month = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ]
     .iter()
     .position(|m| m == month)? as i64;
-    let day: i64 = day.parse().ok()?;
-    let year: i64 = year.parse().ok()?;
-    let hms: Vec<i64> = time
-        .split(':')
-        .map(|p| p.parse().ok())
-        .collect::<Option<_>>()?;
+    let day = number(day).filter(|d| (1..=31).contains(d))?;
+    let year = number(year)?;
+    let hms: Vec<i64> = time.split(':').map(number).collect::<Option<_>>()?;
     let [h, mi, s] = hms.as_slice() else {
         return None;
     };
-    // Days from civil (Howard Hinnant), proleptic Gregorian.
+    let s = if *s >= 60 { 0 } else { *s };
+    if *h > 24 || *mi > 59 || (*h == 24 && (*mi != 0 || s != 0)) {
+        return None;
+    }
+    let days = days_from_civil(year, month, 1) + day - 1;
+    let ms = ((days * 86_400 + h * 3600 + mi * 60 + s) * 1000) as f64;
+    (ms.abs() <= 8.64e15).then_some(ms)
+}
+
+/// Days since 1970-01-01 (Howard Hinnant), proleptic Gregorian; month 0-based.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let (y, m) = if month < 2 {
         (year - 1, month + 10)
     } else {
@@ -161,8 +177,7 @@ fn imf_fixdate(text: &str) -> Option<f64> {
     let yoe = y - era * 400;
     let doy = (153 * m + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(((days * 86_400 + h * 3600 + mi * 60 + s) * 1000) as f64)
+    era * 146_097 + doe - 719_468
 }
 
 /// `NetworkFetchError` of `network/fetch.ts`.
