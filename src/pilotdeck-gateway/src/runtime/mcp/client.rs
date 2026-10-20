@@ -59,6 +59,8 @@
 //! before the connect task is first polled also aborts it, and `close()`'s
 //! tail never marks a newer attempt idle. A handshake that succeeds after
 //! the handshake timeout is closed rather than left unowned.
+//! A timed-out request can recycle only the connection it ran on; a second
+//! timeout from an old connection leaves the newer handshake and client alone.
 
 use super::http::{HttpKind, HttpLink, parse_endpoint};
 use super::naming::{
@@ -977,7 +979,7 @@ impl McpClient {
         Fut: Future<Output = Result<T, McpClientError>>,
     {
         let current = self.state().client.clone();
-        let error = match call(current).await {
+        let error = match call(current.clone()).await {
             Ok(value) => return Ok(value),
             Err(error) => error,
         };
@@ -1006,7 +1008,7 @@ impl McpClient {
         let id = self.id();
         if error.code == Some(McpErrorCode::Number(-32001.0)) || is_timeout_message(&error.message)
         {
-            self.recycle_transport_after_timeout();
+            self.recycle_transport_after_timeout(current.as_ref());
             return Err(McpClientError::client(
                 McpClientErrorCode::CallTimeout,
                 format!("MCP call timed out (server={id}): {}", error.message),
@@ -1022,9 +1024,20 @@ impl McpClient {
 
     /// M5b — drop the wedged transport synchronously; close it and remove
     /// the per-session directory in the background.
-    fn recycle_transport_after_timeout(&self) {
+    fn recycle_transport_after_timeout(&self, timed_out: Option<&Arc<SdkClient>>) {
         let (client, dir) = {
             let mut state = self.state();
+            // A second request on an already retired connection can time out
+            // during its close grace period. It owns neither a newer client
+            // nor the published handshake slot.
+            if !state
+                .client
+                .as_ref()
+                .zip(timed_out)
+                .is_some_and(|(current, timed_out)| Arc::ptr_eq(current, timed_out))
+            {
+                return;
+            }
             let client = state.client.take();
             state.connect = None;
             state.list_tools_cache = None;
