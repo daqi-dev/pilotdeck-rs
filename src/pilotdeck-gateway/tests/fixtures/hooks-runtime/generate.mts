@@ -446,7 +446,17 @@ const server = createServer((req, res) => {
   let body = '';
   req.on('data', chunk => body += chunk);
   req.on('end', () => {
-    requests.push({ method: req.method, path: req.url, headers: selectHeaders(req.headers), body });
+    // req.headers folds duplicates (content-type keeps the first), so also
+    // record every raw line of the selected names to catch a split header.
+    const headerLines: Record<string, string[]> = {};
+    for (const name of selectedHeaders) {
+      const values: string[] = [];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        if (req.rawHeaders[i].toLowerCase() === name) values.push(req.rawHeaders[i + 1]);
+      }
+      if (values.length > 0) headerLines[name] = values;
+    }
+    requests.push({ method: req.method, path: req.url, headers: selectHeaders(req.headers), headerLines, body });
     if (req.url === '/bad') {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end('{"continue":false,"reason":"bad"}');
@@ -558,6 +568,11 @@ await httpCase({
 await httpCase({ name: 'pre-aborted', target: '<url>/ok', abortAtMs: 0 });
 await httpCase({ name: 'abort-during', target: '<url>/slow', abortAtMs: 500 });
 await httpCase({ name: 'refused', target: '<refused>/x' });
+// fetch builds Headers from the spread object: names that differ only in case
+// are appended into one header (first spelling, ", "-joined values).
+await httpCase({ name: 'header-content-type-case', target: '<url>/echo', headers: { 'Content-Type': 'text/x-custom' } });
+await httpCase({ name: 'header-same-name-case', target: '<url>/echo', headers: { 'X-A': 'a', 'x-a': 'b' } });
+await httpCase({ name: 'header-content-type-exact', target: '<url>/echo', headers: { 'content-type': 'z' } });
 server.closeAllConnections();
 await new Promise<void>(resolve => server.close(() => resolve()));
 
