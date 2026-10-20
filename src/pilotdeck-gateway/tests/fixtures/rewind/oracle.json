@@ -1892,7 +1892,376 @@
         }
       ],
       "treeBefore": []
+    },
+    {
+      "name": "entry-tracked-backups-null-element",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "trackedFileBackups": [
+            null
+          ],
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"Cannot read properties of null (reading 'backupFileName')\"}",
+          "treeAfter": []
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"Cannot read properties of null (reading 'backupFileName')\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "entry-tracked-backups-null-value",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/a.txt": null
+          },
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"Cannot read properties of null (reading 'backupFileName')\"}",
+          "treeAfter": []
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"Cannot read properties of null (reading 'backupFileName')\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "success-astral-path",
+      "initialFiles": [
+        {
+          "path": "😀.txt",
+          "base64": "YWxwaGEKYmV0YQo=",
+          "mode": 420
+        }
+      ],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/😀.txt": {
+              "backupFileName": "<backup:😀.txt>@v1",
+              "version": 1,
+              "mode": 33188,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "update",
+          "messageId": "msg-1",
+          "trackedFileBackups": {
+            "<root>/😀.txt": {
+              "backupFileName": "<backup:😀.txt>@v1",
+              "version": 1,
+              "mode": 33188,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "expectedFileStates": {
+            "<root>/😀.txt": {
+              "exists": true,
+              "sha256": "69726aa4696684f51191101c90b115e8cf6e01d6339e158d01b69ca692562fbf",
+              "mode": 420
+            }
+          },
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0002",
+          "parentEntryId": "entry-0001"
+        }
+      ],
+      "backups": [
+        {
+          "name": "<backup:😀.txt>@v1",
+          "base64": "YWxwaGEKYmV0YQo=",
+          "mode": 420
+        }
+      ],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":true,\"insertions\":1,\"deletions\":1}",
+          "treeAfter": [
+            {
+              "name": "😀.txt",
+              "base64": "YWxwaGEKQkVUQQo=",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":true,\"filesChanged\":[\"<root>/😀.txt\"],\"insertions\":1,\"deletions\":1}",
+          "treeAfter": [
+            {
+              "name": "😀.txt",
+              "base64": "YWxwaGEKYmV0YQo=",
+              "mode": 420
+            }
+          ]
+        }
+      ],
+      "treeBefore": [
+        {
+          "name": "😀.txt",
+          "base64": "YWxwaGEKQkVUQQo=",
+          "mode": 420
+        }
+      ]
+    },
+    {
+      "name": "entry-tracked-backups-string-astral",
+      "initialFiles": [],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-1",
+          "trackedFileBackups": "😀",
+          "sessionId": "session-1",
+          "turnId": "msg-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-1",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":true,\"insertions\":0,\"deletions\":0}",
+          "treeAfter": []
+        },
+        {
+          "userMessageId": "msg-1",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received undefined\"}",
+          "treeAfter": []
+        }
+      ],
+      "treeBefore": []
+    },
+    {
+      "name": "entry-backup-file-name-types",
+      "initialFiles": [
+        {
+          "path": "a.txt",
+          "base64": "YWxwaGEK",
+          "mode": 420
+        }
+      ],
+      "mutations": [],
+      "transcript": [
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-number",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": 5,
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "sessionId": "session-1",
+          "turnId": "msg-number",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0001",
+          "parentEntryId": null
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-bool",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": true,
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "sessionId": "session-1",
+          "turnId": "msg-bool",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0002",
+          "parentEntryId": "entry-0001"
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-object",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": {},
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "sessionId": "session-1",
+          "turnId": "msg-object",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0003",
+          "parentEntryId": "entry-0002"
+        },
+        {
+          "type": "file_snapshot_recorded",
+          "snapshotKind": "create",
+          "messageId": "msg-false",
+          "trackedFileBackups": {
+            "<root>/a.txt": {
+              "backupFileName": false,
+              "version": 1,
+              "backupTime": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          "sessionId": "session-1",
+          "turnId": "msg-false",
+          "sequence": 4,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "entryId": "entry-0004",
+          "parentEntryId": "entry-0003"
+        }
+      ],
+      "backups": [],
+      "missingBackups": [],
+      "calls": [
+        {
+          "userMessageId": "msg-number",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received type number (5)\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt",
+              "base64": "YWxwaGEK",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-bool",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received type boolean (true)\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt",
+              "base64": "YWxwaGEK",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-object",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received an instance of Object\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt",
+              "base64": "YWxwaGEK",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-false",
+          "dryRun": true,
+          "resultJson": "{\"canRewind\":true,\"insertions\":2,\"deletions\":0}",
+          "treeAfter": [
+            {
+              "name": "a.txt",
+              "base64": "YWxwaGEK",
+              "mode": 420
+            }
+          ]
+        },
+        {
+          "userMessageId": "msg-false",
+          "dryRun": false,
+          "resultJson": "{\"canRewind\":false,\"error\":\"The \\\"path\\\" argument must be of type string. Received type boolean (false)\"}",
+          "treeAfter": [
+            {
+              "name": "a.txt",
+              "base64": "YWxwaGEK",
+              "mode": 420
+            }
+          ]
+        }
+      ],
+      "treeBefore": [
+        {
+          "name": "a.txt",
+          "base64": "YWxwaGEK",
+          "mode": 420
+        }
+      ]
     }
   ],
-  "sha256": "cc899872ae58d930d8d16972c9353fb3a0b6db97e7b9a1d1393d75a155766942"
+  "sha256": "ffaed416c51a64aed49ec731b920c0b347549b8ac16a28140b487564842a3334"
 }

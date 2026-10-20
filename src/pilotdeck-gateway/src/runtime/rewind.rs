@@ -187,10 +187,10 @@ fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
         Some(value) => object_entries(value)?,
         None => return Err("Cannot convert undefined or null to object".to_string()),
     };
-    let tracked_file_backups = backups
-        .into_iter()
-        .map(|(path, backup)| (text(&path), recorded_backup(&backup)))
-        .collect();
+    let mut tracked_file_backups = Vec::with_capacity(backups.len());
+    for (path, backup) in backups {
+        tracked_file_backups.push((text(&path), recorded_backup(&backup)?));
+    }
     let mut expected_file_states = Vec::new();
     if let Some(expected) = entry.get("expectedFileStates").and_then(JsValue::as_object) {
         for (path, state) in expected.own_entries() {
@@ -246,16 +246,34 @@ fn object_entries(value: &JsValue) -> Result<Vec<(JsString, JsValue)>, String> {
     }
 }
 
-fn recorded_backup(backup: &JsValue) -> RecordedBackup {
-    RecordedBackup {
-        // TS keeps `undefined` distinct from `null`: only the latter unlinks,
-        // while `path.join(dir, undefined)` throws inside `restoreBackup`.
-        // Property access on a primitive backup value is also `undefined`.
-        backup_file_name: match backup.get("backupFileName") {
+fn recorded_backup(backup: &JsValue) -> Result<RecordedBackup, String> {
+    // TS `replayFromTranscript` reads `backup.backupFileName` before it copies
+    // anything. `Object.entries` can yield a `null` element (`[null]`) or
+    // `null` value (`{x: null}`); property access on it throws V8's TypeError
+    // and the SDK catch returns that message. An absent JSON value cannot be
+    // `undefined`, but keep the matching text for an in-memory wire value.
+    let backup_file_name = match backup {
+        JsValue::Null => {
+            return Err("Cannot read properties of null (reading 'backupFileName')".to_string());
+        }
+        JsValue::Undefined => {
+            return Err(
+                "Cannot read properties of undefined (reading 'backupFileName')".to_string(),
+            );
+        }
+        // Property access on a primitive (string/number/boolean) is
+        // `undefined`, not an error; only null/undefined throw.
+        value => match value.get("backupFileName") {
             Some(JsValue::Null) => BackupFileName::Null,
             Some(JsValue::String(value)) => BackupFileName::Named(text(value)),
-            Some(_) | None => BackupFileName::Undefined,
+            Some(JsValue::Undefined) | None => BackupFileName::Undefined,
+            // `getDiffStats`/`restoreBackup` pass a truthy non-string to
+            // `path.join`, whose TypeError text depends on the value's type.
+            Some(other) => BackupFileName::Other(other.clone()),
         },
+    };
+    Ok(RecordedBackup {
+        backup_file_name,
         version: backup
             .get("version")
             .and_then(JsValue::as_number)
@@ -270,7 +288,7 @@ fn recorded_backup(backup: &JsValue) -> RecordedBackup {
             .get("mode")
             .and_then(JsValue::as_number)
             .map(|value| value as u32),
-    }
+    })
 }
 
 fn expected_state(state: &JsValue) -> ExpectedFileState {
