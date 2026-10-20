@@ -1439,7 +1439,9 @@ async fn web_search_parent_abort_is_not_overwritten_by_overdue_timers() {
         }
         tokio::time::advance(Duration::from_millis(120)).await;
         if abort_after_block {
-            signal.cancel();
+            // Explicitly model JS abort() in the blocked call stack, not a
+            // later timer callback. Timestamp alone cannot distinguish them.
+            signal.cancel_synchronously();
         }
         let result = pending.await;
         let error = get(&result, "error");
@@ -1627,6 +1629,363 @@ async fn web_search_queued_microtask_precedes_overdue_timer() {
         json(get(get(&result, "ok"), "data")),
         r#"{"query":"q","organic":[]}"#
     );
+}
+
+// ---- round 5: timestamped parent events vs synchronous abort ---------------
+
+/// Oracle: probes/r5-parent-order.out (actual TS search + networkFetch).
+/// Parent timer is registered after the response/local timers, including ties.
+/// Both operations remain unpolled while every event becomes due.
+async fn parent_event_case(budget: f64, response_ms: u64, parent_ms: u64, expected: &str) {
+    let (tool, calls) = delayed_search(budget, Duration::from_millis(response_ms));
+    let signal = ToolCancellation::default();
+    let started = tokio::time::Instant::now();
+    let mut pending = Box::pin(run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), Some(signal.clone())),
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel_at(started + Duration::from_millis(parent_ms));
+    let result = pending.await;
+    match expected {
+        "success" => assert_eq!(
+            json(get(get(&result, "ok"), "data")),
+            r#"{"query":"q","organic":[]}"#
+        ),
+        "timeout" => {
+            assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+            assert_eq!(
+                text(get(get(&result, "error"), "message")),
+                format!("web_search timed out after {budget}ms.")
+            );
+        }
+        "abort" => {
+            assert_eq!(
+                text(get(get(&result, "error"), "code")),
+                "tool_execution_failed"
+            );
+            assert_eq!(
+                text(get(get(&result, "error"), "message")),
+                "web_search (glm) request failed: Network request aborted by parent signal."
+            );
+        }
+        _ => panic!("unknown oracle case"),
+    }
+    assert_eq!(*calls.lock().unwrap(), 1);
+
+    let transport = DelayedTransport {
+        delay: Duration::from_millis(response_ms),
+        calls: Arc::new(Mutex::new(0)),
+    };
+    let request = HttpRequest {
+        method: "GET",
+        url: "https://example.com/".into(),
+        headers: Vec::new(),
+        body: None,
+    };
+    let signal = ToolCancellation::default();
+    let ctx = context(None, empty_env(), Some(signal.clone()));
+    let mut options = network_fetch_options(budget);
+    options.parent = Some(&ctx);
+    let started = tokio::time::Instant::now();
+    let mut pending = Box::pin(network_fetch(&transport, &request, &options));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel_at(started + Duration::from_millis(parent_ms));
+    match pending.await {
+        Ok(mut response) => {
+            assert_eq!(expected, "success");
+            assert_eq!(response.status, 200);
+            assert_eq!(
+                response.read_body(1024, Some(&ctx)).await.unwrap(),
+                br#"{"search_result":[]}"#
+            );
+        }
+        Err(error) => {
+            let (code, message) = if expected == "timeout" {
+                (
+                    "network_timeout",
+                    format!("Network request timed out after {budget}ms."),
+                )
+            } else {
+                assert_eq!(expected, "abort");
+                (
+                    "network_abort",
+                    "Network request aborted by parent signal.".into(),
+                )
+            };
+            assert_eq!(error.code, code);
+            assert_eq!(error.message.to_utf8().unwrap(), message);
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_before_response() {
+    parent_event_case(100.0, 60, 30, "abort").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_equal_response() {
+    parent_event_case(100.0, 60, 60, "success").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_after_response() {
+    parent_event_case(100.0, 60, 110, "success").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_before_timeout() {
+    parent_event_case(60.0, 100, 30, "abort").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_equal_timeout() {
+    parent_event_case(60.0, 100, 60, "timeout").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_after_timeout() {
+    parent_event_case(60.0, 100, 110, "timeout").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_all_equal() {
+    parent_event_case(60.0, 60, 60, "timeout").await;
+}
+
+/// The exact reported sequence uses cancel(), whose event time is now=120.
+#[tokio::test(start_paused = true)]
+async fn parent_event_cancel_records_now_before_repoll() {
+    for (budget, success) in [(100.0, true), (30.0, false)] {
+        let (tool, _) = delayed_search(budget, Duration::from_millis(60));
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), Some(signal.clone())),
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        signal.cancel();
+        assert_eq!(signal.cancelled_at(), Some(tokio::time::Instant::now()));
+        let result = pending.await;
+        if success {
+            assert_eq!(
+                json(get(get(&result, "ok"), "data")),
+                r#"{"query":"q","organic":[]}"#
+            );
+        } else {
+            assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_first_cancellation_is_retained() {
+    let signal = ToolCancellation::default();
+    let clone = signal.clone();
+    let first = tokio::time::Instant::now();
+    signal.cancel();
+    tokio::time::advance(Duration::from_millis(120)).await;
+    clone.cancel();
+    clone.cancel_synchronously();
+    assert_eq!(clone.cancelled_at(), Some(first));
+    assert!(signal.is_cancelled());
+    signal.cancelled().await;
+
+    // A repeated synchronous call must not change an already ordered event.
+    let (tool, _) = delayed_search(100.0, Duration::from_millis(60));
+    let signal = ToolCancellation::default();
+    let mut pending = Box::pin(run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), Some(signal.clone())),
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel();
+    signal.cancel_synchronously();
+    assert!(get(&pending.await, "ok").as_object().is_some());
+}
+
+struct PendingBody(Arc<AtomicBool>);
+impl hyper::body::Body for PendingBody {
+    type Data = Bytes;
+    type Error = BodyFailure;
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
+        if self.0.load(Ordering::SeqCst) {
+            std::task::Poll::Ready(None)
+        } else {
+            std::task::Poll::Pending
+        }
+    }
+}
+
+struct PendingBodyTransport(Arc<AtomicBool>);
+impl ModelHttpTransport for PendingBodyTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::after(
+            Duration::from_millis(60),
+            Ok(hyper::Response::new(PendingBody(self.0.clone()).boxed())),
+        )
+    }
+}
+
+/// Ready body frames belong to the earlier response's continuation, but a
+/// Pending body yields to cancellation. No loopback listener is required.
+#[tokio::test(start_paused = true)]
+async fn parent_event_later_abort_still_cancels_pending_body() {
+    let mut options = WebSearchOptions::new(Arc::new(PendingBodyTransport(Arc::new(
+        AtomicBool::new(false),
+    ))));
+    options.provider = Some("glm".into());
+    options.api_key = Some("k".into());
+    options.timeout_ms = Some(100.0);
+    let tool = WebSearchTool::new(options);
+    let signal = ToolCancellation::default();
+    let mut pending = Box::pin(run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), Some(signal.clone())),
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel();
+    let result = pending.await;
+    assert_eq!(
+        text(get(get(&result, "error"), "code")),
+        "tool_execution_failed"
+    );
+    assert!(
+        text(get(get(&result, "error"), "message"))
+            .contains("Network request aborted by parent signal.")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_body_continuation_is_consumed_once() {
+    let ready = Arc::new(AtomicBool::new(false));
+    let transport = PendingBodyTransport(ready.clone());
+    let request = HttpRequest {
+        method: "GET",
+        url: "https://example.com/".into(),
+        headers: Vec::new(),
+        body: None,
+    };
+    let signal = ToolCancellation::default();
+    let ctx = context(None, empty_env(), Some(signal.clone()));
+    let mut options = network_fetch_options(100.0);
+    options.parent = Some(&ctx);
+    let mut pending = Box::pin(network_fetch(&transport, &request, &options));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel();
+    let mut response = pending.await.unwrap();
+    assert_eq!(
+        response.read_body(1024, Some(&ctx)).await,
+        Err(pilotdeck_gateway::runtime::tools::builtin::web::network::BodyError::Aborted)
+    );
+    ready.store(true, Ordering::SeqCst);
+    assert_eq!(
+        response.read_body(1024, Some(&ctx)).await,
+        Err(pilotdeck_gateway::runtime::tools::builtin::web::network::BodyError::Aborted)
+    );
+}
+
+async fn parent_event_during_overdue_retry(delayed_second: bool) {
+    let calls = Arc::new(Mutex::new(0));
+    let mut options = WebSearchOptions::new(Arc::new(RetryTransport {
+        calls: calls.clone(),
+        delayed_second,
+    }));
+    options.provider = Some("glm".into());
+    options.api_key = Some("k".into());
+    options.timeout_ms = Some(100.0);
+    options.random = random();
+    let tool = WebSearchTool::new(options);
+    let signal = ToolCancellation::default();
+    let mut pending = Box::pin(run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), Some(signal.clone())),
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    signal.cancel();
+    let result = pending.await;
+    if delayed_second {
+        assert_eq!(text(get(get(&result, "error"), "code")), "tool_timeout");
+    } else {
+        assert_eq!(
+            json(get(get(&result, "ok"), "data")),
+            r#"{"query":"q","organic":[]}"#
+        );
+    }
+    assert_eq!(*calls.lock().unwrap(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_after_retry_preserves_immediate_response() {
+    parent_event_during_overdue_retry(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn parent_event_after_retry_preserves_earlier_outer_timeout() {
+    parent_event_during_overdue_retry(true).await;
+}
+
+/// web_fetch's 60 s hop timer must participate in the same arbitration.
+#[tokio::test(start_paused = true)]
+async fn web_fetch_parent_event_preserves_response_before_overdue_hop_timeout() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut fetcher = UrlFetcher::new(Arc::new(DelayedTransport {
+        delay: Duration::from_millis(60),
+        calls: calls.clone(),
+    }));
+    fetcher.cache = Arc::new(UrlCache::default());
+    let signal = ToolCancellation::default();
+    let ctx = context(None, empty_env(), Some(signal.clone()));
+    let mut pending =
+        Box::pin(fetcher.get_url_markdown_content("https://example.com/r5-response", Some(&ctx)));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_secs(70)).await;
+    signal.cancel();
+    assert!(matches!(
+        pending.await.unwrap(),
+        pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchResult::Fetched { .. }
+    ));
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn web_fetch_parent_event_preserves_hop_timeout_before_late_response() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut fetcher = UrlFetcher::new(Arc::new(DelayedTransport {
+        delay: Duration::from_secs(65),
+        calls: calls.clone(),
+    }));
+    fetcher.cache = Arc::new(UrlCache::default());
+    let signal = ToolCancellation::default();
+    let ctx = context(None, empty_env(), Some(signal.clone()));
+    let mut pending =
+        Box::pin(fetcher.get_url_markdown_content("https://example.com/r5-timeout", Some(&ctx)));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_secs(70)).await;
+    signal.cancel();
+    assert_eq!(
+        pending.await.unwrap_err(),
+        pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other(
+            "Network request aborted by parent signal.".into()
+        )
+    );
+    assert_eq!(*calls.lock().unwrap(), 1);
 }
 
 fn doc_harness() -> Harness {

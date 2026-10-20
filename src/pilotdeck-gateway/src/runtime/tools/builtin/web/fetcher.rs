@@ -12,7 +12,10 @@
 //! callers do not change.
 use super::{
     cache::{FetchedEntry, UrlCache},
-    network::{BodyError, FetchOptions, HttpRequest, Random, WEB_RETRY, network_fetch, read_body},
+    network::{
+        BodyError, FetchOptions, HttpRequest, Random, WEB_RETRY,
+        network_fetch_with_parent_deadline, node_timer_duration,
+    },
     url_validation::{is_permitted_redirect, parse_with_base, upgrade_http_to_https, validate_url},
 };
 use crate::runtime::{
@@ -20,10 +23,7 @@ use crate::runtime::{
     tools::ToolRunContext,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::{
-    sync::{Arc, LazyLock},
-    time::Duration,
-};
+use std::sync::{Arc, LazyLock};
 
 pub const MAX_HTTP_CONTENT_LENGTH: usize = 10 * 1024 * 1024;
 pub const FETCH_TIMEOUT_MS: f64 = 60_000.0;
@@ -260,13 +260,14 @@ impl UrlFetcher {
         };
         // The hop's own 60 s timer aborts the request as a parent signal, and
         // it is armed before `networkFetch`'s equal timeout, so it wins.
-        let response = tokio::select! {
-            biased;
-            () = tokio::time::sleep(Duration::from_secs_f64(FETCH_TIMEOUT_MS / 1000.0)) => {
-                return Err(other("Network request aborted by parent signal."));
-            }
-            response = network_fetch(self.transport.as_ref(), &request, &options) => response?,
-        };
+        let deadline = tokio::time::Instant::now() + node_timer_duration(FETCH_TIMEOUT_MS);
+        let response = network_fetch_with_parent_deadline(
+            self.transport.as_ref(),
+            &request,
+            &options,
+            deadline,
+        )
+        .await?;
         Ok(HttpOutcome(response))
     }
 
@@ -321,7 +322,7 @@ impl UrlFetcher {
                     .unwrap_or_default();
                 return Err(other(&text));
             }
-            let body = match read_body(&mut response.body, MAX_HTTP_CONTENT_LENGTH, parent).await {
+            let body = match response.read_body(MAX_HTTP_CONTENT_LENGTH, parent).await {
                 Ok(body) => body,
                 Err(BodyError::Terminated) => return Err(other("terminated")),
                 // The parent signal fired mid-body; the baseline's message for
