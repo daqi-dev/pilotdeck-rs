@@ -5,12 +5,16 @@
 //!   wire/config types and tool naming.
 //! - [`sdk`] (A6.5-pr11): SDK MCP configuration state; it talks to a resolved
 //!   project runtime through injected ports and never connects to a server.
-//!
-//! The runtime and tool bridge on top of [`client`] are A6.5-pr10b.
+//! - [`runtime`], [`bridge`], [`registry`] (A6.5-pr10b): the multi-server
+//!   runtime, the MCP-to-tool bridge, and project/session ownership.
 
+pub mod bridge;
 pub mod client;
 mod http;
 pub mod naming;
+mod output_schema;
 pub mod protocol;
+pub mod registry;
+pub mod runtime;
 pub mod sdk;
 mod wire;

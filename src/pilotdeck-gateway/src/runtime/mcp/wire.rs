@@ -25,7 +25,7 @@
 //! no lock is held across a pipe write (a server blocked on a full stdout
 //! pipe can never stall the reader).
 
-use super::client::McpClientError;
+use super::client::{McpClientError, McpErrorCode};
 use super::http::HttpLink;
 use super::protocol::{Inbound, ResultSchema, parse_inbound, parse_result};
 use crate::js_value;
@@ -45,6 +45,51 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
 };
 
+/// `signal.reason.message` of an aborted `AbortController`.
+const ABORT_MESSAGE: &str = "This operation was aborted";
+/// `String(signal.reason)`.
+const ABORT_REASON: &str = "AbortError: This operation was aborted";
+
+/// Caller-side cancellation for one request (`options.signal`).
+pub trait McpAbort: Send + Sync {
+    fn is_aborted(&self) -> bool;
+    /// Resolves once aborted; never resolves otherwise.
+    fn aborted(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+}
+
+/// A shareable [`McpAbort`].
+#[derive(Clone)]
+pub struct McpAbortSignal(Arc<dyn McpAbort>);
+impl McpAbortSignal {
+    pub fn new(signal: Arc<dyn McpAbort>) -> Self {
+        Self(signal)
+    }
+    pub fn is_aborted(&self) -> bool {
+        self.0.is_aborted()
+    }
+    pub async fn aborted(&self) {
+        self.0.aborted().await;
+    }
+}
+impl std::fmt::Debug for McpAbortSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpAbortSignal")
+            .field("aborted", &self.is_aborted())
+            .finish()
+    }
+}
+
+/// Removes a pending request whose caller went away.
+struct Forget<'a> {
+    wire: &'a Wire,
+    id: i64,
+}
+impl Drop for Forget<'_> {
+    fn drop(&mut self) {
+        lock(&self.wire.state).pending.remove(&self.id);
+    }
+}
+
 /// `DEFAULT_INHERITED_ENV_VARS` (non-Windows).
 const DEFAULT_INHERITED_ENV_VARS: [&str; 6] = ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"];
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
@@ -55,7 +100,8 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-/// A Node `setTimeout` delay: out-of-range or `NaN` becomes 1 ms.
+/// A Node `setTimeout` delay: out-of-range or `NaN` becomes 1 ms, and
+/// fractional milliseconds truncate (`async_hooks::timer_delay_ms`).
 pub(crate) fn node_delay(ms: f64) -> Duration {
     crate::runtime::network::node_timer_duration(ms)
 }
@@ -433,7 +479,17 @@ impl Wire {
         timeout_ms: f64,
         schema: ResultSchema,
         hook: Option<SettledHook>,
+        signal: Option<&McpAbortSignal>,
     ) -> Result<JsValue, McpClientError> {
+        // `options.signal.throwIfAborted()` throws the signal's reason, a
+        // DOMException named AbortError (code 20).
+        if signal.is_some_and(McpAbortSignal::is_aborted) {
+            return Err(McpClientError::with_code(
+                "AbortError",
+                McpErrorCode::Number(20.0),
+                ABORT_MESSAGE.into(),
+            ));
+        }
         let (id, reply) = {
             let mut state = lock(&self.state);
             if !state.connected {
@@ -458,6 +514,8 @@ impl Wire {
         entries.push(("jsonrpc", "2.0".into()));
         entries.push(("id", JsValue::Number(id as f64)));
         let message = object(entries);
+        // Dropping this future (a cancelled caller) forgets the request.
+        let _forget = Forget { wire: self, id };
         match &self.link {
             Link::Stdio(_) => {
                 if let Err(error) = self.send(message).await {
@@ -473,14 +531,31 @@ impl Wire {
                 });
             }
         }
-        match tokio::time::timeout(node_delay(timeout_ms), reply).await {
+        let aborted = async {
+            match signal {
+                Some(signal) => signal.aborted().await,
+                None => std::future::pending().await,
+            }
+        };
+        let outcome = tokio::select! {
+            outcome = tokio::time::timeout(node_delay(timeout_ms), reply) => outcome.map_err(|_| "Request timed out"),
+            () = aborted => Err(ABORT_REASON),
+        };
+        match outcome {
             Ok(Ok(Ok(raw))) => parse_result(schema, &raw)
                 .map_err(|message| McpClientError::plain("ZodError", message)),
             Ok(Ok(Err(error))) => Err(error),
             Ok(Err(_)) => Err(McpClientError::connection_closed()),
-            Err(_) => {
+            Err(reason) => {
+                // `cancel(reason)`: forget the request, tell the server, and
+                // reject with an McpError(RequestTimeout, String(reason)).
                 lock(&self.state).pending.remove(&id);
-                let error = McpClientError::rpc(-32001.0, "Request timed out");
+                let error = McpClientError::rpc(-32001.0, reason);
+                let reason = if reason == ABORT_REASON {
+                    reason.to_owned()
+                } else {
+                    format!("McpError: {}", error.message())
+                };
                 self.send_detached(object(vec![
                     ("jsonrpc", "2.0".into()),
                     ("method", "notifications/cancelled".into()),
@@ -488,10 +563,7 @@ impl Wire {
                         "params",
                         object(vec![
                             ("requestId", JsValue::Number(id as f64)),
-                            (
-                                "reason",
-                                JsValue::String(format!("McpError: {}", error.message()).into()),
-                            ),
+                            ("reason", JsValue::String(reason.into())),
                         ]),
                     ),
                 ]));
@@ -605,6 +677,7 @@ mod tests {
             node_delay(2_147_483_647.0),
             Duration::from_millis(2_147_483_647)
         );
+        assert_eq!(node_delay(1500.7), Duration::from_millis(1500));
     }
 
     #[test]

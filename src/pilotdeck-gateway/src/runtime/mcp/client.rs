@@ -40,25 +40,23 @@
 //!
 //! ## Not covered
 //!
-//! - `https:` URLs (no TLS dependency yet): `mcp_unsupported_transport`.
-//! - Output-schema validation of `structuredContent` (the SDK compiles the
-//!   tool's `outputSchema` with Ajv): presence is enforced, the contents are
-//!   accepted unvalidated.
-//! - `callTool`'s `AbortSignal` option; OAuth (`authProvider` is never set by
-//!   the baseline).
+//! - `https:` URLs (not wired to the shared TLS connector): `mcp_unsupported_transport`.
+//! - OAuth (`authProvider` is never set by the baseline).
+//! - Remaining output-schema gaps are listed in `output_schema.rs`.
 //!
-//! ## Intentional difference
+//! ## Intentional difference (gate2 P1-1, #361)
 //!
 //! `close()` while a handshake is in flight: the baseline installs the late
 //! connection and reports `ready`, and a `start()` racing it opens a second
 //! one; the loser's child is never closed. Here `close()` bumps an epoch: the
 //! late connection is closed and that `start()` fails with
 //! `mcp_handshake_failed` ("MCP handshake aborted: client closed during
-//! connect"), so at most one connection is live. The epoch is taken when an
-//! attempt is published (`start()` / `reconnect()`), so a `close()` that runs
-//! before the connect task is first polled also aborts it, and `close()`'s
-//! tail never marks a newer attempt idle. A handshake that succeeds after
-//! the handshake timeout is closed rather than left unowned.
+//! connect"), so at most one connection is live; status stays as `close()`
+//! left it. The epoch is taken when an attempt is published (`start()` /
+//! `reconnect()`), so a `close()` that runs before the connect task is first
+//! polled also aborts it, and `close()`'s tail never marks a newer attempt
+//! idle. A handshake that succeeds after the handshake timeout is closed
+//! rather than left unowned.
 //! A timed-out request can recycle only the connection it ran on; a second
 //! timeout from an old connection leaves the newer handshake and client alone.
 
@@ -71,9 +69,11 @@ use super::protocol::{
     LATEST_PROTOCOL_VERSION, McpServerSpec, McpStatus, McpToolSpec, McpTransportSpec, ResultSchema,
     SUPPORTED_PROTOCOL_VERSIONS, errno_text, parse_result,
 };
+pub use super::wire::{McpAbort, McpAbortSignal};
 use super::wire::{Reply, Settled, Wire, lock, node_delay};
 use crate::js_value;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::collections::HashMap;
 use std::{
     collections::HashSet,
     fmt,
@@ -192,6 +192,16 @@ impl McpClientError {
             message: message.into(),
         }
     }
+    /// An arbitrary thrown value in the `{ name, code, message }` shape (for
+    /// injected runtime ports).
+    pub fn new(name: &'static str, code: Option<McpErrorCode>, message: impl Into<String>) -> Self {
+        Self {
+            name,
+            code,
+            server_id: None,
+            message: message.into(),
+        }
+    }
     pub(super) fn with_code(name: &'static str, code: McpErrorCode, message: String) -> Self {
         Self {
             name,
@@ -281,9 +291,12 @@ pub struct McpClientOptions {
 }
 
 /// `callTool` options.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct McpCallOptions {
     pub timeout_ms: Option<f64>,
+    /// `options.signal`: aborting rejects the pending request and sends
+    /// `notifications/cancelled`, like an `AbortSignal` passed to the SDK.
+    pub signal: Option<McpAbortSignal>,
 }
 
 /// `{ content, isError? }` returned by `callTool`.
@@ -307,7 +320,8 @@ impl McpToolCallResult {
 /// `callTool`.
 struct SdkClient {
     wire: Arc<Wire>,
-    output_schema_tools: Mutex<HashSet<JsString>>,
+    /// Tool name → `outputSchema` (`_cachedToolOutputValidators`).
+    output_schemas: Mutex<HashMap<JsString, JsValue>>,
     required_task_tools: Mutex<HashSet<JsString>>,
 }
 
@@ -323,7 +337,7 @@ impl SdkClient {
         }
         let client = Arc::new(Self {
             wire,
-            output_schema_tools: Mutex::new(HashSet::new()),
+            output_schemas: Mutex::new(HashMap::new()),
             required_task_tools: Mutex::new(HashSet::new()),
         });
         match client.initialize().await {
@@ -354,6 +368,7 @@ impl SdkClient {
                 DEFAULT_REQUEST_TIMEOUT_MS,
                 ResultSchema::Initialize,
                 Some(initialize_settled),
+                None,
             )
             .await?;
         let version = supported_version(&result)?;
@@ -368,7 +383,11 @@ impl SdkClient {
         self.wire.notification("notifications/initialized").await
     }
 
-    async fn list_tools(&self, timeout_ms: f64) -> Result<JsValue, McpClientError> {
+    async fn list_tools(
+        &self,
+        timeout_ms: f64,
+        server_id: &str,
+    ) -> Result<JsValue, McpClientError> {
         let result = self
             .wire
             .request(
@@ -377,18 +396,30 @@ impl SdkClient {
                 timeout_ms,
                 ResultSchema::ListTools,
                 None,
+                None,
             )
             .await?;
         // `cacheToolMetadata(result.tools)`.
-        let mut output = HashSet::new();
+        let mut output = HashMap::new();
         let mut required = HashSet::new();
         if let Some(JsValue::Array(tools)) = result.get("tools") {
             for tool in tools {
                 let Some(name) = tool.get("name").and_then(JsValue::as_string) else {
                     continue;
                 };
-                if tool.get("outputSchema").is_some() {
-                    output.insert(name.clone());
+                if let Some(schema) = tool.get("outputSchema") {
+                    // The SDK compiles every outputSchema while caching
+                    // `tools/list` (`cacheToolMetadata`); a bad schema
+                    // rejects the whole list instead of silently turning
+                    // into a permissive validator later.
+                    if let Err(error) = super::output_schema::check_schema(schema) {
+                        return Err(McpClientError::client(
+                            McpClientErrorCode::CallFailed,
+                            format!("MCP call failed (server={server_id}): {}", error.0),
+                            server_id,
+                        ));
+                    }
+                    output.insert(name.clone(), schema.clone());
                 }
                 let support = tool
                     .get("execution")
@@ -399,7 +430,7 @@ impl SdkClient {
                 }
             }
         }
-        *lock(&self.output_schema_tools) = output;
+        *lock(&self.output_schemas) = output;
         *lock(&self.required_task_tools) = required;
         Ok(result)
     }
@@ -409,6 +440,7 @@ impl SdkClient {
         name: &JsString,
         arguments: JsValue,
         timeout_ms: f64,
+        signal: Option<&McpAbortSignal>,
     ) -> Result<JsValue, McpClientError> {
         let display = String::from_utf16_lossy(name.units());
         if lock(&self.required_task_tools).contains(name) {
@@ -430,18 +462,48 @@ impl SdkClient {
                 timeout_ms,
                 ResultSchema::CallTool,
                 None,
+                signal,
             )
             .await?;
-        if lock(&self.output_schema_tools).contains(name) {
-            let structured = result.get("structuredContent").is_some();
+        let schema = lock(&self.output_schemas).get(name).cloned();
+        if let Some(schema) = schema {
+            let structured = result.get("structuredContent");
             let is_error = matches!(result.get("isError"), Some(JsValue::Bool(true)));
-            if !structured && !is_error {
+            if structured.is_none() && !is_error {
                 return Err(McpClientError::rpc(
                     -32600.0,
                     &format!(
                         "Tool {display} has an output schema but did not return structured content"
                     ),
                 ));
+            }
+            if let Some(structured) = structured {
+                match super::output_schema::validate(&schema, structured) {
+                    Ok(None) => {}
+                    Ok(Some(message)) => {
+                        return Err(McpClientError::rpc(
+                            -32602.0,
+                            &format!(
+                                "Structured content does not match the tool's output schema: {message}"
+                            ),
+                        ));
+                    }
+                    Err(super::output_schema::ValidationError::Threw) => {
+                        return Err(McpClientError::rpc(
+                            -32602.0,
+                            &format!(
+                                "Failed to validate structured content: {}",
+                                CallStackExceeded::MESSAGE
+                            ),
+                        ));
+                    }
+                    Err(super::output_schema::ValidationError::Unsupported(message)) => {
+                        return Err(McpClientError::rpc(
+                            -32602.0,
+                            &format!("Failed to validate structured content: {message}"),
+                        ));
+                    }
+                }
             }
         }
         Ok(result)
@@ -759,9 +821,13 @@ impl McpClient {
                 // baseline's race loser is not cancelled). This attempt has
                 // already failed, so a connection that still lands is owned
                 // by nobody: close it so its child process is reaped.
+                let late_dir = dir.take();
                 tokio::spawn(async move {
                     if let Ok(Ok(late)) = handshake.await {
                         late.close().await;
+                    }
+                    if let Some(dir) = late_dir {
+                        let _ = std::fs::remove_dir_all(dir);
                     }
                 });
                 Err(McpClientError::client(
@@ -789,10 +855,10 @@ impl McpClient {
         };
         let mut state = self.state();
         if state.epoch != epoch {
-            // gate2 P1-1: `close()` ran during this handshake. The baseline
-            // still installs the connection (and a racing `start()` could
-            // install a second one); here the late connection is closed and
-            // the attempt fails, so at most one connection is ever live.
+            // gate2 P1-1 / #361: `close()` ran during this handshake. The
+            // baseline still installs the connection (and a racing `start()`
+            // could install a second one); here the late connection is closed
+            // and the attempt fails, so at most one connection is ever live.
             drop(state);
             tokio::spawn(async move {
                 if let Ok(client) = outcome {
@@ -807,7 +873,11 @@ impl McpClient {
         // Installed under the epoch-checked lock, so `close()` either takes
         // it or this attempt was superseded and removed it above.
         if dir.is_some() {
-            state.per_session_dir = dir;
+            // A previous failed (non-timeout) attempt may still own a
+            // directory. Replacing the slot must not lose that ownership.
+            if let Some(old) = std::mem::replace(&mut state.per_session_dir, dir) {
+                let _ = std::fs::remove_dir_all(old);
+            }
         }
         match outcome {
             Ok(client) => {
@@ -905,11 +975,15 @@ impl McpClient {
             return Err(self.not_connected());
         }
         let timeout = self.call_timeout_ms(None);
+        let server_id = self.id().to_owned();
         let result = self
-            .call_with_reconnect(|client| async move {
-                match client {
-                    Some(client) => client.list_tools(timeout).await,
-                    None => Err(null_property("listTools")),
+            .call_with_reconnect(|client| {
+                let server_id = server_id.clone();
+                async move {
+                    match client {
+                        Some(client) => client.list_tools(timeout, &server_id).await,
+                        None => Err(null_property("listTools")),
+                    }
                 }
             })
             .await?;
@@ -947,9 +1021,14 @@ impl McpClient {
         let result = self
             .call_with_reconnect(|client| {
                 let arguments = arguments.clone();
+                let options = &options;
                 async move {
                     match client {
-                        Some(client) => client.call_tool(tool_name, arguments, timeout).await,
+                        Some(client) => {
+                            client
+                                .call_tool(tool_name, arguments, timeout, options.signal.as_ref())
+                                .await
+                        }
                         None => Err(null_property("callTool")),
                     }
                 }
@@ -1061,16 +1140,24 @@ impl McpClient {
     /// attempt still in flight. If another caller published an attempt while
     /// the old connection closed, `start()` joins it instead of adding one.
     async fn reconnect(&self) -> Result<(), McpClientError> {
-        let client = {
+        let (client, dir) = {
             let mut state = self.state();
             state.status = McpStatus::Connecting;
             state.list_tools_cache = None;
             state.connect = None;
-            state.client.take()
+            (state.client.take(), state.per_session_dir.take())
         };
-        if let Some(client) = client {
-            client.close().await;
-        }
+        // Own both resources in a detached task even if the reconnect caller
+        // is cancelled during the close grace period.
+        let _ = tokio::spawn(async move {
+            if let Some(client) = client {
+                client.close().await;
+            }
+            if let Some(dir) = dir {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        })
+        .await;
         self.start().await
     }
 

@@ -1,0 +1,2174 @@
+//! `structuredContent` validation against a tool's `outputSchema`, as the
+//! SDK's `AjvJsonSchemaValidator` does it (Ajv 8.20, draft-07,
+//! `{ strict: false, validateSchema: false, allErrors: true,
+//! validateFormats: true }` plus `ajv-formats` defaults). The result is
+//! `ajv.errorsText(errors)`: `data<instancePath> <message>` joined with
+//! `", "`.
+//!
+//! Measured against the real provider in
+//! `_tmp/20261020-a65-pr10b/probes/sdk-ajv*.out`: `ajv-formats` defaults to
+//! its **full** formats here (`addFormats(ajv)` with no `mode`), `nullable`
+//! is a first-class Ajv keyword, `$id` fragment anchors resolve, and invalid
+//! schemas throw while Ajv compiles them (the SDK does that inside
+//! `tools/list`, so [`check_schema`] is called from `McpClient::list_tools`).
+//!
+//! Ajv evaluates keywords in rule groups — untyped, then number, string,
+//! array, object — each in vocabulary order (measured:
+//! `_tmp/20261020-a65-pr10b/probes/ajv-rules.out`). A schema's `type` is
+//! checked up front unless it names exactly one group type the schema has
+//! rules for; then a mismatch is reported in that group's `else` branch.
+//!
+//! Covered: `type`, `nullable`, `$ref` (local JSON pointers and `$id`
+//! fragment anchors), `const`, `enum`, `not`, `anyOf`, `oneOf`, `allOf`,
+//! `if`/`then`/`else`, number limits and `multipleOf`, string lengths (code
+//! points), `pattern`, every `ajv-formats` full format, array limits,
+//! `items`, `additionalItems`, `contains`, `uniqueItems`, object limits,
+//! `required`, `propertyNames`, `additionalProperties`, `dependencies`,
+//! `properties`, `patternProperties`.
+//!
+//! Explicit gaps (they fail instead of silently passing; see the review and
+//! `_tmp/20261020-a65-pr10b/RESULT.md`): JavaScript-only regular-expression
+//! syntax in `pattern`/`patternProperties` (lookarounds, backreferences,
+//! `\u` / Unicode property escapes) is reported as unsupported when compiling;
+//! relative/remote `$ref`s that need an `$id` base are reported as
+//! unresolvable; validation nesting deeper than [`MAX_DEPTH`] is reported as
+//! [`ValidationError::Threw`] with an explicit message. User patterns use
+//! the SDK's JavaScript `/u` character classes: `\d`/`\w` and word boundaries
+//! are ASCII, whitespace includes BOM but excludes NEL, and dot excludes
+//! all four JavaScript line terminators.
+
+#[cfg(test)]
+use crate::test_baseline as baseline;
+
+use crate::js_value;
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+/// Validation recursion bound. V8/Ajv handles recursive data at depth 4000
+/// (`probes/sdk-ajv3.out`); the recursive `$ref` in that shape costs two
+/// `check` frames per data level, so the bound allows roughly 5000 data
+/// levels. [`validate`] runs on a dedicated 64 MiB stack. Exceeding the bound
+/// is an explicit error, never a silent pass.
+const MAX_DEPTH: usize = 10_000;
+
+/// Schema-structure recursion bound for [`check_schema`], which runs on the
+/// caller's (2 MiB) worker stack. Ajv itself throws `RangeError` on a
+/// 600-level nested schema (`probes/sdk-ajv2.out`), so an explicit error here
+/// is the same shape of failure.
+const MAX_SCHEMA_DEPTH: usize = 256;
+
+/// The validator threw instead of returning errors, or hit a schema feature
+/// this port cannot evaluate exactly.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ValidationError {
+    /// Ajv/V8 `RangeError: Maximum call stack size exceeded`.
+    Threw,
+    /// A schema feature this port refuses to guess about.
+    Unsupported(String),
+}
+
+/// The schema could not be compiled; the message mirrors Ajv's throw text for
+/// the checks this port implements, and is prefixed with `unsupported` for
+/// port-only limitations.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SchemaError(pub String);
+
+/// `None` when valid, otherwise `ajv.errorsText(errors)`.
+pub(crate) fn validate(
+    schema: &JsValue,
+    data: &JsValue,
+) -> Result<Option<String>, ValidationError> {
+    // Deeply nested recursive data is valid in Ajv (depth 4000 measured).
+    // Tokio's worker stacks are 2 MiB, so run the recursive walk on a larger
+    // dedicated stack instead of lowering the schema port's depth.
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn_scoped(scope, || validate_inner(schema, data))
+            .expect("spawn output-schema validator");
+        match handle.join() {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
+fn validate_inner(schema: &JsValue, data: &JsValue) -> Result<Option<String>, ValidationError> {
+    check_schema(schema).map_err(|SchemaError(message)| ValidationError::Unsupported(message))?;
+    let refs = SchemaRefs::new(schema);
+    let mut validator = Validator {
+        refs,
+        errors: Vec::new(),
+        depth: 0,
+        seen: HashSet::new(),
+    };
+    validator.check(schema, data, "")?;
+    if validator.errors.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        validator
+            .errors
+            .iter()
+            .map(|(path, message)| format!("data{path} {message}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Schema compile checks (`AjvJsonSchemaValidator.getValidator` throws)
+// ---------------------------------------------------------------------------
+
+/// Rejects the invalid/unsupported schemas Ajv would throw on while
+/// compiling. The SDK compiles every `outputSchema` during `tools/list`, so
+/// the client calls this there; [`validate`] calls it again defensively.
+pub(crate) fn check_schema(schema: &JsValue) -> Result<(), SchemaError> {
+    let mut checker = SchemaChecker {
+        refs: SchemaRefs::new(schema),
+        visited: HashSet::new(),
+        depth: 0,
+    };
+    checker.check(schema)
+}
+
+struct SchemaRefs<'a> {
+    root: &'a JsValue,
+    anchors: HashMap<String, Vec<&'a JsValue>>,
+}
+
+impl<'a> SchemaRefs<'a> {
+    fn new(root: &'a JsValue) -> Self {
+        let mut anchors = HashMap::new();
+        collect_anchors(root, &mut anchors);
+        Self { root, anchors }
+    }
+
+    fn resolve(&self, reference: &str) -> Result<&'a JsValue, SchemaError> {
+        let Some(fragment) = reference.strip_prefix('#') else {
+            return Err(SchemaError(format!(
+                "can't resolve reference {reference} from id #"
+            )));
+        };
+        if fragment.is_empty() {
+            return Ok(self.root);
+        }
+        if !fragment.starts_with('/') {
+            return match self.anchors.get(fragment) {
+                Some(nodes) if nodes.len() == 1 => Ok(nodes[0]),
+                Some(_) => Err(SchemaError(format!(
+                    "reference \"#{fragment}\" resolves to more than one schema"
+                ))),
+                None => Err(SchemaError(format!(
+                    "can't resolve reference {reference} from id #"
+                ))),
+            };
+        }
+        let mut node = self.root;
+        for raw in fragment.split('/').skip(1) {
+            let segment = raw.replace("~1", "/").replace("~0", "~");
+            node = match node {
+                JsValue::Object(object) => object.get(&segment).ok_or_else(|| {
+                    SchemaError(format!("can't resolve reference {reference} from id #"))
+                })?,
+                JsValue::Array(items) => items
+                    .get(segment.parse::<usize>().ok().ok_or_else(|| {
+                        SchemaError(format!("can't resolve reference {reference} from id #"))
+                    })?)
+                    .ok_or_else(|| {
+                        SchemaError(format!("can't resolve reference {reference} from id #"))
+                    })?,
+                _ => {
+                    return Err(SchemaError(format!(
+                        "can't resolve reference {reference} from id #"
+                    )));
+                }
+            };
+        }
+        Ok(node)
+    }
+}
+
+/// Every `$id` fragment anchor in the document. Ajv registers these while
+/// parsing the schema; only anchors actually referenced are compiled.
+fn collect_anchors<'a>(schema: &'a JsValue, anchors: &mut HashMap<String, Vec<&'a JsValue>>) {
+    // This pass precedes SchemaChecker's depth guard, so it must not consume
+    // one native stack frame per untrusted subschema.
+    let mut pending = vec![schema];
+    while let Some(schema) = pending.pop() {
+        let JsValue::Object(object) = schema else {
+            continue;
+        };
+        if let Some(JsValue::String(id)) = object.get("$id")
+            && let Ok(id) = id.to_utf8()
+            && let Some(fragment) = id.strip_prefix('#')
+            && !fragment.is_empty()
+        {
+            anchors.entry(fragment.to_owned()).or_default().push(schema);
+        }
+        pending.extend(schema_children(object).into_iter().rev());
+    }
+}
+
+/// Subschema positions Ajv walks. `const`/`enum`/`default`/`examples` hold
+/// data, not schemas, so an `$id` inside them is not an anchor.
+fn schema_children(object: &JsObject) -> Vec<&JsValue> {
+    let mut out = Vec::new();
+    for keyword in [
+        "not",
+        "if",
+        "then",
+        "else",
+        "contains",
+        "additionalProperties",
+        "additionalItems",
+        "propertyNames",
+    ] {
+        if let Some(value) = object.get(keyword)
+            && is_schema(value)
+        {
+            out.push(value);
+        }
+    }
+    for keyword in [
+        "properties",
+        "patternProperties",
+        "definitions",
+        "$defs",
+        "dependentSchemas",
+    ] {
+        if let Some(JsValue::Object(map)) = object.get(keyword) {
+            out.extend(
+                map.entries()
+                    .iter()
+                    .map(|(_, value)| value)
+                    .filter(|v| is_schema(v)),
+            );
+        }
+    }
+    if let Some(JsValue::Object(map)) = object.get("dependencies") {
+        out.extend(
+            map.entries()
+                .iter()
+                .map(|(_, value)| value)
+                .filter(|v| is_schema(v)),
+        );
+    }
+    for keyword in ["allOf", "anyOf", "oneOf"] {
+        if let Some(JsValue::Array(items)) = object.get(keyword) {
+            out.extend(items.iter().filter(|v| is_schema(v)));
+        }
+    }
+    match object.get("items") {
+        Some(JsValue::Array(items)) => out.extend(items.iter().filter(|v| is_schema(v))),
+        Some(value) if is_schema(value) => out.push(value),
+        _ => {}
+    }
+    out
+}
+
+fn is_schema(value: &JsValue) -> bool {
+    matches!(value, JsValue::Object(_) | JsValue::Bool(_))
+}
+
+struct SchemaChecker<'a> {
+    refs: SchemaRefs<'a>,
+    visited: HashSet<usize>,
+    depth: usize,
+}
+
+impl<'a> SchemaChecker<'a> {
+    fn check(&mut self, schema: &JsValue) -> Result<(), SchemaError> {
+        let JsValue::Object(object) = schema else {
+            return match schema {
+                JsValue::Bool(_) => Ok(()),
+                _ => Err(SchemaError("schema must be object or boolean".into())),
+            };
+        };
+        // Recursive `$ref` graphs are legal; check each node once.
+        if !self.visited.insert(schema as *const JsValue as usize) {
+            return Ok(());
+        }
+        if self.depth >= MAX_SCHEMA_DEPTH {
+            return Err(SchemaError(format!(
+                "schema nesting is deeper than this port supports ({MAX_SCHEMA_DEPTH})"
+            )));
+        }
+        self.depth += 1;
+        let result = self.check_object(object);
+        self.depth -= 1;
+        result
+    }
+
+    fn check_object(&mut self, object: &JsObject) -> Result<(), SchemaError> {
+        let declared = match object.get("type") {
+            Some(value) => json_types(value)?,
+            None => Vec::new(),
+        };
+        let mut effective = declared.clone();
+        if let Some(nullable) = object.get("nullable") {
+            let JsValue::Bool(flag) = nullable else {
+                return Err(SchemaError("nullable value must be [\"boolean\"]".into()));
+            };
+            if effective.iter().any(|name| name == "null") {
+                if !flag {
+                    return Err(SchemaError("type: null contradicts nullable: false".into()));
+                }
+            } else if effective.is_empty() {
+                return Err(SchemaError(
+                    "\"nullable\" cannot be used without \"type\"".into(),
+                ));
+            } else if *flag {
+                effective.push("null".into());
+            }
+        }
+
+        if let Some(reference) = object.get("$ref") {
+            let JsValue::String(reference) = reference else {
+                return Err(SchemaError("$ref value must be [\"string\"]".into()));
+            };
+            let reference = utf8(reference, "$ref")?;
+            let target = self.refs.resolve(&reference)?;
+            self.check(target)?;
+        }
+
+        if let Some(JsValue::String(id)) = object.get("$id") {
+            utf8(id, "$id")?;
+        } else if object.get("$id").is_some() {
+            // Ajv 8.20 calls `id.replace(...)` without a type check first.
+            return Err(SchemaError("id.replace is not a function".into()));
+        }
+
+        if let Some(enumeration) = object.get("enum") {
+            let JsValue::Array(values) = enumeration else {
+                return Err(SchemaError("enum value must be [\"array\"]".into()));
+            };
+            if values.is_empty() {
+                return Err(SchemaError("enum must have non-empty array".into()));
+            }
+        }
+
+        for keyword in [
+            "maximum",
+            "minimum",
+            "exclusiveMaximum",
+            "exclusiveMinimum",
+            "multipleOf",
+            "maxLength",
+            "minLength",
+            "maxItems",
+            "minItems",
+            "maxProperties",
+            "minProperties",
+        ] {
+            if let Some(value) = object.get(keyword)
+                && !matches!(value, JsValue::Number(_))
+            {
+                return Err(SchemaError(format!("{keyword} value must be [\"number\"]")));
+            }
+        }
+
+        if let Some(pattern) = object.get("pattern") {
+            let JsValue::String(pattern) = pattern else {
+                return Err(SchemaError("pattern value must be [\"string\"]".into()));
+            };
+            match js_regex(&utf8(pattern, "pattern")?) {
+                JsRegex::Compiled(_) => {}
+                JsRegex::JsOnly => {
+                    return Err(SchemaError(format!(
+                        "unsupported JavaScript regular-expression pattern \"{}\"",
+                        String::from_utf16_lossy(pattern.units())
+                    )));
+                }
+                JsRegex::Invalid => {
+                    return Err(SchemaError(format!(
+                        "Invalid regular expression: /{}/u",
+                        String::from_utf16_lossy(pattern.units())
+                    )));
+                }
+            }
+        }
+        if let Some(format) = object.get("format")
+            && !matches!(format, JsValue::String(_))
+        {
+            return Err(SchemaError("format value must be [\"string\"]".into()));
+        }
+        if let Some(unique) = object.get("uniqueItems")
+            && !matches!(unique, JsValue::Bool(_))
+        {
+            return Err(SchemaError(
+                "uniqueItems value must be [\"boolean\"]".into(),
+            ));
+        }
+        if let Some(required) = object.get("required")
+            && !matches!(required, JsValue::Array(_))
+        {
+            return Err(SchemaError("required value must be [\"array\"]".into()));
+        }
+
+        if let Some(properties) = object.get("properties") {
+            let JsValue::Object(properties) = properties else {
+                return Err(SchemaError("properties value must be [\"object\"]".into()));
+            };
+            for (_, child) in properties.entries() {
+                if !is_schema(child) {
+                    return Err(SchemaError(
+                        "properties value must be [\"object\",\"boolean\"]".into(),
+                    ));
+                }
+                self.check(child)?;
+            }
+        }
+        if let Some(patterns) = object.get("patternProperties") {
+            let JsValue::Object(patterns) = patterns else {
+                return Err(SchemaError(
+                    "patternProperties value must be [\"object\"]".into(),
+                ));
+            };
+            for (pattern, child) in patterns.entries() {
+                match js_regex(&utf8(pattern, "patternProperties")?) {
+                    JsRegex::Compiled(_) => {}
+                    JsRegex::JsOnly => {
+                        return Err(SchemaError(format!(
+                            "unsupported JavaScript regular-expression pattern \"{}\"",
+                            String::from_utf16_lossy(pattern.units())
+                        )));
+                    }
+                    JsRegex::Invalid => {
+                        return Err(SchemaError(format!(
+                            "Invalid regular expression: /{}/u",
+                            String::from_utf16_lossy(pattern.units())
+                        )));
+                    }
+                }
+                if !is_schema(child) {
+                    return Err(SchemaError(
+                        "patternProperties value must be [\"object\",\"boolean\"]".into(),
+                    ));
+                }
+                self.check(child)?;
+            }
+        }
+        if let Some(additional) = object.get("additionalProperties") {
+            match additional {
+                JsValue::Bool(_) => {}
+                JsValue::Object(_) => self.check(additional)?,
+                _ => {
+                    return Err(SchemaError(
+                        "additionalProperties value must be [\"boolean\",\"object\"]".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(items) = object.get("items") {
+            match items {
+                JsValue::Array(schemas) => {
+                    for child in schemas {
+                        if !is_schema(child) {
+                            return Err(SchemaError(
+                                "items value must be [\"object\",\"array\",\"boolean\"]".into(),
+                            ));
+                        }
+                        self.check(child)?;
+                    }
+                }
+                JsValue::Bool(_) | JsValue::Object(_) => self.check(items)?,
+                _ => {
+                    return Err(SchemaError(
+                        "items value must be [\"object\",\"array\",\"boolean\"]".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(additional) = object.get("additionalItems") {
+            match additional {
+                JsValue::Bool(_) | JsValue::Object(_) => self.check(additional)?,
+                _ => {
+                    return Err(SchemaError(
+                        "additionalItems value must be [\"object\",\"boolean\"]".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(dependencies) = object.get("dependencies") {
+            let JsValue::Object(dependencies) = dependencies else {
+                return Err(SchemaError(
+                    "dependencies value must be [\"object\"]".into(),
+                ));
+            };
+            for (_, child) in dependencies.entries() {
+                if is_schema(child) {
+                    self.check(child)?;
+                }
+            }
+        }
+        for keyword in ["not", "contains", "if", "then", "else", "propertyNames"] {
+            if let Some(child) = object.get(keyword) {
+                match child {
+                    JsValue::Bool(_) | JsValue::Object(_) => self.check(child)?,
+                    _ => {
+                        return Err(SchemaError(format!(
+                            "{keyword} value must be [\"object\",\"boolean\"]"
+                        )));
+                    }
+                }
+            }
+        }
+        for keyword in ["allOf", "anyOf", "oneOf"] {
+            if let Some(options) = object.get(keyword) {
+                let JsValue::Array(options) = options else {
+                    return Err(SchemaError(format!("{keyword} value must be [\"array\"]")));
+                };
+                for option in options {
+                    if is_schema(option) {
+                        self.check(option)?;
+                    } else {
+                        return Err(SchemaError(format!("{keyword} value must be [\"array\"]")));
+                    }
+                }
+            }
+        }
+        for keyword in ["definitions", "$defs"] {
+            if let Some(map) = object.get(keyword)
+                && !matches!(map, JsValue::Object(_))
+            {
+                return Err(SchemaError(format!("{keyword} value must be [\"object\"]")));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn json_types(value: &JsValue) -> Result<Vec<String>, SchemaError> {
+    // Ajv's `getJSONTypes` treats falsy `type` values as "no type", then its
+    // keyword schemaType check rejects null/false/0 with a different message.
+    match value {
+        JsValue::Undefined => return Ok(Vec::new()),
+        JsValue::Null | JsValue::Bool(false) => {
+            return Err(SchemaError(
+                "type value must be [\"string\",\"array\"]".into(),
+            ));
+        }
+        JsValue::Number(number) if *number == 0.0 => {
+            return Err(SchemaError(
+                "type value must be [\"string\",\"array\"]".into(),
+            ));
+        }
+        JsValue::String(name) if name.units().is_empty() => return Ok(Vec::new()),
+        _ => {}
+    }
+    let values: Vec<&JsValue> = match value {
+        JsValue::String(_) => vec![value],
+        JsValue::Array(items) => items.iter().collect(),
+        other => vec![other],
+    };
+    let rendered = values
+        .iter()
+        .map(|v| js_text(v))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut types = Vec::new();
+    for value in values {
+        let JsValue::String(name) = value else {
+            return Err(SchemaError(format!(
+                "type must be JSONType or JSONType[]: {rendered}"
+            )));
+        };
+        let name = String::from_utf16_lossy(name.units());
+        if !matches!(
+            name.as_str(),
+            "null" | "boolean" | "object" | "array" | "number" | "string" | "integer"
+        ) {
+            return Err(SchemaError(format!(
+                "type must be JSONType or JSONType[]: {rendered}"
+            )));
+        }
+        types.push(name);
+    }
+    Ok(types)
+}
+
+fn js_text(value: &JsValue) -> String {
+    js_value::display(value).unwrap_or_default()
+}
+
+fn utf8(value: &JsString, keyword: &str) -> Result<String, SchemaError> {
+    value.to_utf8().map_err(|_| {
+        SchemaError(format!(
+            "unsupported {keyword}: string contains an unpaired surrogate"
+        ))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+struct Validator<'a> {
+    refs: SchemaRefs<'a>,
+    errors: Vec<(String, String)>,
+    depth: usize,
+    /// `(schema, data)` pairs on the current recursion path. Re-entering one
+    /// is Ajv's `Maximum call stack size exceeded` without consuming data
+    /// (the `{$ref:"#"}` probe), so report it immediately instead of walking
+    /// to the depth bound.
+    seen: HashSet<(usize, usize)>,
+}
+
+const NUMBER_RULES: [&str; 6] = [
+    "maximum",
+    "minimum",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "multipleOf",
+    "format",
+];
+const STRING_RULES: [&str; 4] = ["maxLength", "minLength", "pattern", "format"];
+const ARRAY_RULES: [&str; 6] = [
+    "maxItems",
+    "minItems",
+    "additionalItems",
+    "items",
+    "contains",
+    "uniqueItems",
+];
+const OBJECT_RULES: [&str; 8] = [
+    "maxProperties",
+    "minProperties",
+    "required",
+    "propertyNames",
+    "additionalProperties",
+    "dependencies",
+    "properties",
+    "patternProperties",
+];
+
+fn pointer_segment(key: &JsString) -> String {
+    String::from_utf16_lossy(key.units())
+        .replace('~', "~0")
+        .replace('/', "~1")
+}
+
+fn data_type_matches(name: &str, data: &JsValue) -> bool {
+    match name {
+        "number" => matches!(data, JsValue::Number(_)),
+        "integer" => matches!(data, JsValue::Number(n) if n.is_finite() && n.fract() == 0.0),
+        "string" => matches!(data, JsValue::String(_)),
+        "boolean" => matches!(data, JsValue::Bool(_)),
+        "null" => matches!(data, JsValue::Null),
+        "array" => matches!(data, JsValue::Array(_)),
+        "object" => matches!(data, JsValue::Object(_)),
+        _ => false,
+    }
+}
+
+/// fast-deep-equal over JSON values (object key order is irrelevant).
+fn deep_equal(left: &JsValue, right: &JsValue) -> bool {
+    let mut pending = vec![(left, right)];
+    while let Some((a, b)) = pending.pop() {
+        match (a, b) {
+            (JsValue::Array(x), JsValue::Array(y)) => {
+                if x.len() != y.len() {
+                    return false;
+                }
+                pending.extend(x.iter().zip(y));
+            }
+            (JsValue::Object(x), JsValue::Object(y)) => {
+                if x.len() != y.len() {
+                    return false;
+                }
+                for (key, value) in x.entries() {
+                    match y.get_key(key) {
+                        Some(other) => pending.push((value, other)),
+                        None => return false,
+                    }
+                }
+            }
+            (JsValue::Number(x), JsValue::Number(y)) => {
+                if x != y && !(x.is_nan() && y.is_nan()) {
+                    return false;
+                }
+            }
+            (x, y) => {
+                if x != y {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn number(value: Option<&JsValue>) -> Option<f64> {
+    value.and_then(JsValue::as_number)
+}
+
+fn code_points(text: &JsString) -> usize {
+    char::decode_utf16(text.units().iter().copied()).count()
+}
+
+enum JsRegex {
+    Compiled(Regex),
+    /// Syntax this port cannot safely translate; refused as schema patterns.
+    JsOnly,
+    /// Rejected by JavaScript's `RegExp` too.
+    Invalid,
+}
+
+fn js_regex(pattern: &str) -> JsRegex {
+    if has_rust_only_syntax(pattern) {
+        return JsRegex::Invalid;
+    }
+    if has_ambiguous_class_syntax(pattern) {
+        return JsRegex::JsOnly;
+    }
+    match Regex::new(&translate_js_regex(pattern)) {
+        Ok(regex) => JsRegex::Compiled(regex),
+        Err(_) if has_js_only_syntax(pattern) => JsRegex::JsOnly,
+        Err(_) => JsRegex::Invalid,
+    }
+}
+
+// Rust's nested classes/set operations are not JS `/u` character classes.
+// Refuse combinations we do not translate, including shorthand range ends,
+// rather than silently narrowing a patternProperties match.
+fn has_ambiguous_class_syntax(pattern: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+    let (mut in_class, mut shorthand, mut dash) = (false, false, false);
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                if let Some(escaped) = chars.next() {
+                    // Rust and JS accept different property-name spellings.
+                    // Do not let Rust silently accept a non-JS property.
+                    if matches!(escaped, 'p' | 'P') {
+                        return true;
+                    }
+                    if in_class && matches!(escaped, 'w' | 'W' | 'd' | 'D' | 's' | 'S') {
+                        shorthand = true;
+                    }
+                }
+            }
+            '[' if in_class => return true,
+            '[' => {
+                in_class = true;
+                shorthand = false;
+                dash = false;
+                if matches!(chars.peek(), Some(']'))
+                    || (chars.peek() == Some(&'^') && chars.clone().nth(1) == Some(']'))
+                {
+                    return true;
+                }
+            }
+            ']' => {
+                if shorthand && dash {
+                    return true;
+                }
+                in_class = false;
+            }
+            '-' if in_class => {
+                if chars.peek() == Some(&'-') {
+                    return true;
+                }
+                dash = true;
+            }
+            '&' | '~' if in_class && chars.peek() == Some(&ch) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Translate the character atoms whose meanings differ between JS `/u`
+/// and Rust's Unicode regex mode. Consume escapes together: `\\w` matches
+/// a literal backslash followed by `w`, not a word character. Inside a
+/// class, dot is literal and `\b` is backspace rather than a boundary.
+fn translate_js_regex(pattern: &str) -> String {
+    const SPACE: &str = r"\x09-\x0d\x20\xa0\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}";
+    let mut output = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    let mut in_class = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some('w') => output.push_str("[A-Za-z0-9_]"),
+                Some('W') => output.push_str("[^A-Za-z0-9_]"),
+                Some('d') => output.push_str("[0-9]"),
+                Some('D') => output.push_str("[^0-9]"),
+                Some('s') => output.push_str(&format!("[{SPACE}]")),
+                Some('S') => output.push_str(&format!("[^{SPACE}]")),
+                Some('b') if in_class => output.push_str(r"\x08"),
+                Some('b') => output.push_str(r"(?-u:\b)"),
+                Some('B') if !in_class => output.push_str(r"(?-u:\B)"),
+                Some(escaped) => {
+                    output.push('\\');
+                    output.push(escaped);
+                }
+                None => output.push('\\'),
+            },
+            '[' => {
+                in_class = true;
+                output.push(ch);
+            }
+            ']' => {
+                in_class = false;
+                output.push(ch);
+            }
+            '.' if !in_class => output.push_str(r"[^\r\n\x{2028}\x{2029}]"),
+            _ => output.push(ch),
+        }
+    }
+    output
+}
+
+fn has_js_only_syntax(pattern: &str) -> bool {
+    [
+        "(?=", "(?!", "(?<", "\\1", "\\2", "\\3", "\\4", "\\5", "\\6", "\\7", "\\8", "\\9", "\\k<",
+        "\\u",
+    ]
+    .iter()
+    .any(|needle| pattern.contains(needle))
+}
+
+fn has_rust_only_syntax(pattern: &str) -> bool {
+    // Consume escapes, so a literal `\\A` is not mistaken for Rust's anchor.
+    // Inline flags (including combinations) and (?P<...) are not JS /u.
+    let mut chars = pattern.chars().peekable();
+    let mut in_class = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some('A' | 'z' | 'Z' | 'a' | 'e') => return true,
+                Some('x') if chars.peek() == Some(&'{') => return true,
+                _ => {}
+            },
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '(' if !in_class
+                && chars.peek() == Some(&'?')
+                && chars
+                    .clone()
+                    .nth(1)
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '-') =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn regex_matches(pattern: &JsString, text: &JsString) -> Result<bool, ValidationError> {
+    let pattern_text = String::from_utf16_lossy(pattern.units());
+    let text = text.to_utf8().map_err(|_| {
+        ValidationError::Unsupported(
+            "pattern cannot be applied to a string with an unpaired surrogate".into(),
+        )
+    })?;
+    match js_regex(&pattern_text) {
+        JsRegex::Compiled(regex) => Ok(regex.is_match(&text)),
+        JsRegex::JsOnly => Err(ValidationError::Unsupported(format!(
+            "pattern \"{pattern_text}\" uses JavaScript regular-expression syntax this port does not implement"
+        ))),
+        JsRegex::Invalid => Err(ValidationError::Unsupported(format!(
+            "Invalid regular expression: /{pattern_text}/u"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ajv-formats (full mode, the SDK default)
+// ---------------------------------------------------------------------------
+
+struct Formats {
+    time: Regex,
+    uri: Regex,
+    uri_reference: Regex,
+    uri_template: Regex,
+    email: Regex,
+    ipv6: Regex,
+    json_pointer: Regex,
+    json_pointer_uri_fragment: Regex,
+    relative_json_pointer: Regex,
+    byte: Regex,
+}
+
+fn formats() -> &'static Formats {
+    static FORMATS: OnceLock<Formats> = OnceLock::new();
+    FORMATS.get_or_init(|| Formats {
+        time: Regex::new(
+            r"^([0-9]{2}):([0-9]{2}):([0-9]{2}(?:\.[0-9]+)?)(?:([zZ])|([+-])([0-9]{2})(?::?([0-9]{2}))?)?$",
+        )
+        .expect("time format"),
+        uri: Regex::new(
+            r#"^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
+        )
+        .expect("uri format"),
+        uri_reference: Regex::new(
+            r#"^(?:[a-z][a-z0-9+\-.]*:)?(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'"()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
+        )
+        .expect("uri-reference format"),
+        uri_template: Regex::new(
+            r#"^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$"#,
+        )
+        .expect("uri-template format"),
+        email: Regex::new(
+            r#"^(?i)[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"#,
+        )
+        .expect("email format"),
+        ipv6: Regex::new(
+            r#"(?i)^((([0-9a-f]{1,4}:){7}([0-9a-f]{1,4}|:))|(([0-9a-f]{1,4}:){6}(:[0-9a-f]{1,4}|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3})|:))|(([0-9a-f]{1,4}:){5}(((:[0-9a-f]{1,4}){1,2})|:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3})|:))|(([0-9a-f]{1,4}:){4}(((:[0-9a-f]{1,4}){1,3})|((:[0-9a-f]{1,4})?:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))|:))|(([0-9a-f]{1,4}:){3}(((:[0-9a-f]{1,4}){1,4})|((:[0-9a-f]{1,4}){0,2}:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))|:))|(([0-9a-f]{1,4}:){2}(((:[0-9a-f]{1,4}){1,5})|((:[0-9a-f]{1,4}){0,3}:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))|:))|(([0-9a-f]{1,4}:){1}(((:[0-9a-f]{1,4}){1,6})|((:[0-9a-f]{1,4}){0,4}:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))|:))|(:(((:[0-9a-f]{1,4}){1,7})|((:[0-9a-f]{1,4}){0,5}:((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}))|:)))$"#,
+        )
+        .expect("ipv6 format"),
+        json_pointer: Regex::new(r"^(?:/(?:[^~/]|~0|~1)*)*$").expect("json-pointer format"),
+        json_pointer_uri_fragment: Regex::new(
+            r"(?i)^#(?:/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$",
+        )
+        .expect("json-pointer-uri-fragment format"),
+        relative_json_pointer: Regex::new(
+            r"^(?:0|[1-9][0-9]*)(?:#|(?:/(?:[^~/]|~0|~1)*)*)$",
+        )
+        .expect("relative-json-pointer format"),
+        byte: Regex::new(
+            r"(?m)^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+        )
+        .expect("byte format"),
+    })
+}
+
+fn string_format_valid(format: &str, text: &str) -> Option<bool> {
+    let regexes = formats();
+    Some(match format {
+        "date" => date_valid(text),
+        "time" => time_valid(text, true),
+        "date-time" => date_time_valid(text, true),
+        "iso-time" => time_valid(text, false),
+        "iso-date-time" => date_time_valid(text, false),
+        "duration" => duration_valid(text),
+        "uri" => (text.contains('/') || text.contains(':')) && regexes.uri.is_match(text),
+        "uri-reference" => regexes.uri_reference.is_match(text),
+        "uri-template" => regexes.uri_template.is_match(text),
+        "url" => url_valid(text),
+        "email" => regexes.email.is_match(text),
+        "hostname" => hostname_valid(text),
+        "ipv4" => ipv4_valid(text),
+        "ipv6" => regexes.ipv6.is_match(text),
+        "regex" => regex_format_valid(text),
+        "uuid" => uuid_valid(text),
+        "json-pointer" => regexes.json_pointer.is_match(text),
+        "json-pointer-uri-fragment" => regexes.json_pointer_uri_fragment.is_match(text),
+        "relative-json-pointer" => regexes.relative_json_pointer.is_match(text),
+        "byte" => regexes.byte.is_match(text),
+        "password" | "binary" => true,
+        "int32" | "int64" | "float" | "double" => return None,
+        _ => return None,
+    })
+}
+
+fn number_format_valid(format: &str, value: f64) -> Option<bool> {
+    Some(match format {
+        "int32" => {
+            value.is_finite()
+                && value.fract() == 0.0
+                && (-2_147_483_648.0..=2_147_483_647.0).contains(&value)
+        }
+        "int64" => value.is_finite() && value.fract() == 0.0,
+        "float" | "double" => true,
+        _ => return None,
+    })
+}
+
+fn date_valid(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || ![0, 1, 2, 3, 5, 6, 8, 9]
+            .iter()
+            .all(|i| bytes[*i].is_ascii_digit())
+    {
+        return false;
+    }
+    let year: u32 = text[..4].parse().unwrap();
+    let month: u32 = text[5..7].parse().unwrap();
+    let day: u32 = text[8..].parse().unwrap();
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days = [
+        0,
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    (1..=12).contains(&month) && day >= 1 && day <= days[month as usize]
+}
+
+fn time_valid(text: &str, strict_time_zone: bool) -> bool {
+    let Some(captures) = formats().time.captures(text) else {
+        return false;
+    };
+    let hour: i32 = captures[1].parse().unwrap();
+    let minute: i32 = captures[2].parse().unwrap();
+    let second: f64 = captures[3].parse().unwrap();
+    let time_zone = captures.get(4).is_some() || captures.get(5).is_some();
+    let sign = if captures.get(5).is_some_and(|m| m.as_str() == "-") {
+        -1
+    } else {
+        1
+    };
+    let zone_hour: i32 = captures.get(6).map_or(0, |m| m.as_str().parse().unwrap());
+    let zone_minute: i32 = captures.get(7).map_or(0, |m| m.as_str().parse().unwrap());
+    if zone_hour > 23 || zone_minute > 59 || (strict_time_zone && !time_zone) {
+        return false;
+    }
+    if hour <= 23 && minute <= 59 && second < 60.0 {
+        return true;
+    }
+    let utc_minute = minute - zone_minute * sign;
+    let utc_hour = hour - zone_hour * sign - if utc_minute < 0 { 1 } else { 0 };
+    (utc_hour == 23 || utc_hour == -1) && (utc_minute == 59 || utc_minute == -1) && second < 61.0
+}
+
+fn date_time_valid(text: &str, strict_time_zone: bool) -> bool {
+    let parts: Vec<&str> = text
+        .split(|c: char| c == 't' || c == 'T' || c.is_whitespace())
+        .collect();
+    parts.len() == 2 && date_valid(parts[0]) && time_valid(parts[1], strict_time_zone)
+}
+
+fn duration_valid(text: &str) -> bool {
+    static MAIN: OnceLock<Regex> = OnceLock::new();
+    static WEEK: OnceLock<Regex> = OnceLock::new();
+    // `^P(?!$)` in ajv-formats: the bare "P" is invalid.
+    if text.len() <= 1 {
+        return false;
+    }
+    let main = MAIN.get_or_init(|| {
+        Regex::new(
+            r"^P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H(?:[0-9]+M)?(?:[0-9]+S)?|[0-9]+M(?:[0-9]+S)?|[0-9]+S))?$",
+        )
+        .unwrap()
+    });
+    let week = WEEK.get_or_init(|| Regex::new(r"^P[0-9]+W$").unwrap());
+    main.is_match(text) || week.is_match(text)
+}
+
+fn hostname_valid(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let body = lower.strip_suffix('.').unwrap_or(&lower);
+    let label = |label: &str| {
+        (1..=63).contains(&label.len())
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    };
+    (1..=253).contains(&body.len()) && body.split('.').all(label)
+}
+
+fn ipv4_valid(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('.').collect();
+    parts.len() == 4
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.len() <= 3
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'))
+                && part.parse::<u16>().is_ok_and(|n| n <= 255)
+        })
+}
+
+fn uuid_valid(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let body = lower.strip_prefix("urn:uuid:").unwrap_or(&lower);
+    let groups: Vec<&str> = body.split('-').collect();
+    groups.len() == 5
+        && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+            group.len() == length && group.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+}
+
+fn regex_format_valid(text: &str) -> bool {
+    if text.contains("\\Z") {
+        return false;
+    }
+    match js_regex(text) {
+        JsRegex::Compiled(_) | JsRegex::JsOnly => true,
+        JsRegex::Invalid => false,
+    }
+}
+
+fn is_uri_host_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || ('\u{a1}'..='\u{ffff}').contains(&c)
+}
+
+fn is_tld_char(c: char) -> bool {
+    c.is_ascii_alphabetic() || ('\u{a1}'..='\u{ffff}').contains(&c)
+}
+
+/// `url` from ajv-formats: scheme, optional userinfo/port/path, then a public
+/// IPv4 or a domain with a 2+ character alphabetic TLD. The original regex
+/// excludes 10/127/169.254/192.168/172.16-31 hosts.
+fn url_valid(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .or_else(|| lower.strip_prefix("ftp://"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, Some(path)),
+        None => (rest, None),
+    };
+    if authority.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if let Some(path) = path
+        && path.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    let host_port = match authority.rsplit_once('@') {
+        Some((user, host)) => {
+            if user.is_empty() {
+                return false;
+            }
+            host
+        }
+        None => authority,
+    };
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && !port.is_empty() => (host, Some(port)),
+        _ => (host_port, None),
+    };
+    if host.contains(':') {
+        return false;
+    }
+    if let Some(port) = port
+        && (!(2..=5).contains(&port.len()) || !port.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return false;
+    }
+    if public_ipv4(host) {
+        return true;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    for label in &labels {
+        if label.is_empty()
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| is_uri_host_char(c) || c == '-')
+        {
+            return false;
+        }
+    }
+    let tld = labels.last().unwrap();
+    tld.chars().count() >= 2 && tld.chars().all(is_tld_char)
+}
+
+fn public_ipv4(host: &str) -> bool {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut octets = [0u32; 4];
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || part.len() > 3 || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        octets[index] = part.parse().unwrap();
+    }
+    // First octet: [1-9]digits? | 1dd | 2[01]d | 22[0-3] -> 1..=223, no leading zero.
+    if (parts[0].len() > 1 && parts[0].starts_with('0')) || !(1..=223).contains(&octets[0]) {
+        return false;
+    }
+    // Middle octets: 1?d{1,2} | 2[0-4]d | 25[0-5] -> 0..=255, 3 digits only from 1xx/2xx.
+    for part in [parts[1], parts[2]] {
+        if part.len() == 3 && !part.starts_with('1') && !part.starts_with('2') {
+            return false;
+        }
+    }
+    if octets[1] > 255 || octets[2] > 255 {
+        return false;
+    }
+    // Last octet: 1..=254, no leading zero.
+    if (parts[3].len() > 1 && parts[3].starts_with('0')) || !(1..=254).contains(&octets[3]) {
+        return false;
+    }
+    if octets[0] == 10 || octets[0] == 127 {
+        return false;
+    }
+    if octets[0] == 169 && octets[1] == 254 {
+        return false;
+    }
+    if octets[0] == 192 && octets[1] == 168 {
+        return false;
+    }
+    if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+        return false;
+    }
+    true
+}
+
+impl<'a> Validator<'a> {
+    fn fail(&mut self, path: &str, message: impl Into<String>) {
+        self.errors.push((path.to_owned(), message.into()));
+    }
+
+    /// Validates into a scratch error list; returns validity and the errors.
+    fn trial(
+        &mut self,
+        schema: &JsValue,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(bool, Vec<(String, String)>), ValidationError> {
+        let saved = std::mem::take(&mut self.errors);
+        let result = self.check(schema, data, path);
+        let errors = std::mem::replace(&mut self.errors, saved);
+        let valid = result?;
+        Ok((valid, errors))
+    }
+
+    /// Returns whether `data` is valid; errors are appended.
+    fn check(
+        &mut self,
+        schema: &JsValue,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<bool, ValidationError> {
+        let start = self.errors.len();
+        let schema = match schema {
+            JsValue::Bool(true) => return Ok(true),
+            JsValue::Bool(false) => {
+                self.fail(path, "boolean schema is false");
+                return Ok(false);
+            }
+            JsValue::Object(object) => object,
+            _ => return Ok(true),
+        };
+        if self.depth >= MAX_DEPTH {
+            return Err(ValidationError::Threw);
+        }
+        let pair = (
+            schema as *const JsObject as usize,
+            data as *const JsValue as usize,
+        );
+        if !self.seen.insert(pair) {
+            return Err(ValidationError::Threw);
+        }
+        self.depth += 1;
+        let result = self.keywords(schema, data, path);
+        self.depth -= 1;
+        self.seen.remove(&pair);
+        result?;
+        Ok(self.errors.len() == start)
+    }
+
+    fn keywords(
+        &mut self,
+        schema: &JsObject,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        let declared: Vec<String> = match schema.get("type") {
+            // Ajv treats a falsy `type` (notably `""`) as "no type".
+            Some(JsValue::String(name)) if !name.units().is_empty() => {
+                vec![String::from_utf16_lossy(name.units())]
+            }
+            Some(JsValue::Array(names)) => names
+                .iter()
+                .filter_map(|n| n.as_string().map(|n| String::from_utf16_lossy(n.units())))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut types = declared.clone();
+        if let Some(JsValue::Bool(true)) = schema.get("nullable")
+            && !types.iter().any(|name| name == "null")
+        {
+            types.push("null".into());
+        }
+        let group_rules = |group: &str| -> &'static [&'static str] {
+            match group {
+                "number" => &NUMBER_RULES,
+                "string" => &STRING_RULES,
+                "array" => &ARRAY_RULES,
+                "object" => &OBJECT_RULES,
+                _ => &[],
+            }
+        };
+        let has_rules = |group: &str| group_rules(group).iter().any(|k| schema.get(k).is_some());
+        let check_types = !types.is_empty() && !(types.len() == 1 && has_rules(&types[0]));
+        let type_message = format!("must be {}", declared.join(","));
+        if check_types && !types.iter().any(|t| data_type_matches(t, data)) {
+            self.fail(path, type_message.clone());
+        }
+        self.untyped(schema, data, path)?;
+        for group in ["number", "string", "array", "object"] {
+            if !has_rules(group) {
+                continue;
+            }
+            if data_type_matches(group, data) {
+                match group {
+                    "number" => self.number_rules(schema, data, path),
+                    "string" => self.string_rules(schema, data, path)?,
+                    "array" => self.array_rules(schema, data, path)?,
+                    _ => self.object_rules(schema, data, path)?,
+                }
+            } else if !check_types && types.len() == 1 && types[0] == group {
+                self.fail(path, type_message.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn untyped(
+        &mut self,
+        schema: &JsObject,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        if let Some(JsValue::String(reference)) = schema.get("$ref") {
+            let reference = reference.to_utf8().map_err(|_| {
+                ValidationError::Unsupported("$ref contains an unpaired surrogate".into())
+            })?;
+            let target = self
+                .refs
+                .resolve(&reference)
+                .map_err(|SchemaError(message)| ValidationError::Unsupported(message))?;
+            self.check(target, data, path)?;
+        }
+        if let Some(expected) = schema.get("const")
+            && !deep_equal(expected, data)
+        {
+            self.fail(path, "must be equal to constant");
+        }
+        if let Some(JsValue::Array(allowed)) = schema.get("enum")
+            && !allowed.iter().any(|value| deep_equal(value, data))
+        {
+            self.fail(path, "must be equal to one of the allowed values");
+        }
+        if let Some(not) = schema.get("not") {
+            let (valid, _) = self.trial(not, data, path)?;
+            if valid {
+                self.fail(path, "must NOT be valid");
+            }
+        }
+        if let Some(JsValue::Array(options)) = schema.get("anyOf") {
+            let mut collected = Vec::new();
+            let mut any = false;
+            for option in options {
+                let (valid, errors) = self.trial(option, data, path)?;
+                any |= valid;
+                collected.extend(errors);
+            }
+            if !any {
+                self.errors.extend(collected);
+                self.fail(path, "must match a schema in anyOf");
+            }
+        }
+        if let Some(JsValue::Array(options)) = schema.get("oneOf") {
+            let mut collected = Vec::new();
+            let mut passing = 0;
+            for option in options {
+                let (valid, errors) = self.trial(option, data, path)?;
+                passing += usize::from(valid);
+                collected.extend(errors);
+            }
+            if passing != 1 {
+                if passing == 0 {
+                    self.errors.extend(collected);
+                }
+                self.fail(path, "must match exactly one schema in oneOf");
+            }
+        }
+        if let Some(JsValue::Array(parts)) = schema.get("allOf") {
+            for part in parts {
+                self.check(part, data, path)?;
+            }
+        }
+        if let Some(condition) = schema.get("if") {
+            let (valid, _) = self.trial(condition, data, path)?;
+            let (branch, name) = if valid {
+                ("then", "then")
+            } else {
+                ("else", "else")
+            };
+            if let Some(next) = schema.get(branch)
+                && !self.check(next, data, path)?
+            {
+                self.fail(path, format!("must match \"{name}\" schema"));
+            }
+        }
+        Ok(())
+    }
+
+    fn number_rules(&mut self, schema: &JsObject, data: &JsValue, path: &str) {
+        let value = data.as_number().unwrap_or(f64::NAN);
+        let text = js_value::number_string;
+        if let Some(max) = number(schema.get("maximum"))
+            && value.partial_cmp(&max).is_none_or(|o| o.is_gt())
+        {
+            self.fail(path, format!("must be <= {}", text(max)));
+        }
+        if let Some(min) = number(schema.get("minimum"))
+            && value.partial_cmp(&min).is_none_or(|o| o.is_lt())
+        {
+            self.fail(path, format!("must be >= {}", text(min)));
+        }
+        if let Some(max) = number(schema.get("exclusiveMaximum"))
+            && value.partial_cmp(&max).is_none_or(|o| o.is_ge())
+        {
+            self.fail(path, format!("must be < {}", text(max)));
+        }
+        if let Some(min) = number(schema.get("exclusiveMinimum"))
+            && value.partial_cmp(&min).is_none_or(|o| o.is_le())
+        {
+            self.fail(path, format!("must be > {}", text(min)));
+        }
+        if let Some(divisor) = number(schema.get("multipleOf"))
+            && (value / divisor) % 1.0 != 0.0
+        {
+            self.fail(path, format!("must be multiple of {}", text(divisor)));
+        }
+        if let Some(format) = schema.get("format").and_then(JsValue::as_string) {
+            let name = String::from_utf16_lossy(format.units());
+            if number_format_valid(&name, value) == Some(false) {
+                self.fail(path, format!("must match format \"{name}\""));
+            }
+        }
+    }
+
+    fn string_rules(
+        &mut self,
+        schema: &JsObject,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        let Some(text) = data.as_string() else {
+            return Ok(());
+        };
+        let length = code_points(text) as f64;
+        if let Some(max) = number(schema.get("maxLength"))
+            && length > max
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have more than {} characters",
+                    js_value::number_string(max)
+                ),
+            );
+        }
+        if let Some(min) = number(schema.get("minLength"))
+            && length < min
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have fewer than {} characters",
+                    js_value::number_string(min)
+                ),
+            );
+        }
+        if let Some(pattern) = schema.get("pattern").and_then(JsValue::as_string)
+            && !regex_matches(pattern, text)?
+        {
+            self.fail(
+                path,
+                format!(
+                    "must match pattern \"{}\"",
+                    String::from_utf16_lossy(pattern.units())
+                ),
+            );
+        }
+        if let Some(format) = schema.get("format").and_then(JsValue::as_string) {
+            let name = String::from_utf16_lossy(format.units());
+            let value = String::from_utf16_lossy(text.units());
+            if string_format_valid(&name, &value) == Some(false) {
+                self.fail(path, format!("must match format \"{name}\""));
+            }
+        }
+        Ok(())
+    }
+
+    fn array_rules(
+        &mut self,
+        schema: &JsObject,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        let JsValue::Array(items) = data else {
+            return Ok(());
+        };
+        let length = items.len() as f64;
+        if let Some(max) = number(schema.get("maxItems"))
+            && length > max
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have more than {} items",
+                    js_value::number_string(max)
+                ),
+            );
+        }
+        if let Some(min) = number(schema.get("minItems"))
+            && length < min
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have fewer than {} items",
+                    js_value::number_string(min)
+                ),
+            );
+        }
+        let child = |index: usize| format!("{path}/{index}");
+        if let Some(JsValue::Array(tuple)) = schema.get("items") {
+            match schema.get("additionalItems") {
+                Some(JsValue::Bool(false)) if items.len() > tuple.len() => {
+                    self.fail(
+                        path,
+                        format!("must NOT have more than {} items", tuple.len()),
+                    );
+                }
+                Some(extra @ JsValue::Object(_)) => {
+                    for (index, item) in items.iter().enumerate().skip(tuple.len()) {
+                        self.check(extra, item, &child(index))?;
+                    }
+                }
+                _ => {}
+            }
+            for (index, (item, item_schema)) in items.iter().zip(tuple).enumerate() {
+                self.check(item_schema, item, &child(index))?;
+            }
+        } else if let Some(item_schema) = schema.get("items") {
+            for (index, item) in items.iter().enumerate() {
+                self.check(item_schema, item, &child(index))?;
+            }
+        }
+        if let Some(contains) = schema.get("contains") {
+            let mut collected = Vec::new();
+            let mut any = false;
+            for (index, item) in items.iter().enumerate() {
+                let (valid, errors) = self.trial(contains, item, &child(index))?;
+                any |= valid;
+                collected.extend(errors);
+            }
+            if !any {
+                self.errors.extend(collected);
+                self.fail(path, "must contain at least 1 valid item(s)");
+            }
+        }
+        if matches!(schema.get("uniqueItems"), Some(JsValue::Bool(true))) {
+            self.unique_items(schema, items, path)?;
+        }
+        Ok(())
+    }
+
+    fn unique_items(
+        &mut self,
+        schema: &JsObject,
+        items: &[JsValue],
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        // Ajv has two code paths (`uniqueItems.js`): with a typed `items`
+        // schema of primitive type it walks from the end and reports
+        // `(items ## later and earlier)`; otherwise it walks nested loops and
+        // reports `(items ## earlier and later)`. Measured in
+        // `probes/sdk-ajv*.out`.
+        let item_schema = schema.get("items").and_then(JsValue::as_object);
+        let mut item_types: Vec<String> = item_schema
+            .and_then(|items| items.get("type"))
+            .map(|value| match value {
+                JsValue::String(name) => vec![String::from_utf16_lossy(name.units())],
+                JsValue::Array(names) => names
+                    .iter()
+                    .filter_map(|n| n.as_string().map(|n| String::from_utf16_lossy(n.units())))
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .unwrap_or_default();
+        if item_schema.is_some_and(|items| {
+            matches!(items.get("nullable"), Some(JsValue::Bool(true)))
+                && !item_types.iter().any(|name| name == "null")
+        }) {
+            item_types.push("null".into());
+        }
+        let optimized = !item_types.is_empty()
+            && !item_types
+                .iter()
+                .any(|name| name == "object" || name == "array");
+        if optimized {
+            let mut seen: HashMap<String, usize> = HashMap::new();
+            for index in (0..items.len()).rev() {
+                if !item_types
+                    .iter()
+                    .any(|name| data_type_matches(name, &items[index]))
+                {
+                    continue;
+                }
+                let mut key = js_text(&items[index]);
+                if item_types.len() > 1 && matches!(items[index], JsValue::String(_)) {
+                    key.push('_');
+                }
+                if let Some(other) = seen.get(&key) {
+                    self.fail(
+                        path,
+                        format!(
+                            "must NOT have duplicate items (items ## {other} and {index} are identical)"
+                        ),
+                    );
+                    return Ok(());
+                }
+                seen.insert(key, index);
+            }
+        } else {
+            'outer: for i in (0..items.len()).rev() {
+                for j in (0..i).rev() {
+                    if deep_equal(&items[i], &items[j]) {
+                        self.fail(
+                            path,
+                            format!(
+                                "must NOT have duplicate items (items ## {j} and {i} are identical)"
+                            ),
+                        );
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn object_rules(
+        &mut self,
+        schema: &JsObject,
+        data: &JsValue,
+        path: &str,
+    ) -> Result<(), ValidationError> {
+        let JsValue::Object(object) = data else {
+            return Ok(());
+        };
+        let entries = object.own_entries();
+        let count = entries.len() as f64;
+        let child = |key: &JsString| format!("{path}/{}", pointer_segment(key));
+        if let Some(max) = number(schema.get("maxProperties"))
+            && count > max
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have more than {} properties",
+                    js_value::number_string(max)
+                ),
+            );
+        }
+        if let Some(min) = number(schema.get("minProperties"))
+            && count < min
+        {
+            self.fail(
+                path,
+                format!(
+                    "must NOT have fewer than {} properties",
+                    js_value::number_string(min)
+                ),
+            );
+        }
+        if let Some(JsValue::Array(required)) = schema.get("required") {
+            for name in required {
+                let text = js_text(name);
+                let key = JsString::from(text.clone());
+                if object.get_key(&key).is_none_or(JsValue::is_undefined) {
+                    self.fail(path, format!("must have required property '{text}'"));
+                }
+            }
+        }
+        if let Some(names) = schema.get("propertyNames") {
+            for (key, _) in &entries {
+                if !self.check(names, &JsValue::String((*key).clone()), path)? {
+                    self.fail(path, "property name must be valid");
+                }
+            }
+        }
+        let properties = schema.get("properties").and_then(JsValue::as_object);
+        let patterns: Vec<(&JsString, &JsValue)> = schema
+            .get("patternProperties")
+            .and_then(JsValue::as_object)
+            .map(|p| p.own_entries())
+            .unwrap_or_default();
+        if let Some(additional) = schema.get("additionalProperties") {
+            for (key, value) in &entries {
+                let declared = properties.is_some_and(|p| p.get_key(key).is_some());
+                let mut patterned = false;
+                for (pattern, _) in &patterns {
+                    if regex_matches(pattern, key)? {
+                        patterned = true;
+                        break;
+                    }
+                }
+                if declared || patterned {
+                    continue;
+                }
+                match additional {
+                    JsValue::Bool(false) => self.fail(path, "must NOT have additional properties"),
+                    JsValue::Object(_) => {
+                        self.check(additional, value, &child(key))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(JsValue::Object(dependencies)) = schema.get("dependencies") {
+            for (name, dependency) in dependencies.own_entries() {
+                if object.get_key(name).is_none_or(JsValue::is_undefined) {
+                    continue;
+                }
+                match dependency {
+                    JsValue::Array(needed) => {
+                        let names: Vec<String> = needed.iter().map(js_text).collect();
+                        let noun = if names.len() == 1 {
+                            "property"
+                        } else {
+                            "properties"
+                        };
+                        for missing in needed {
+                            let key = JsString::from(js_text(missing));
+                            if object.get_key(&key).is_none_or(JsValue::is_undefined) {
+                                self.fail(
+                                    path,
+                                    format!(
+                                        "must have {noun} {} when property {} is present",
+                                        names.join(", "),
+                                        String::from_utf16_lossy(name.units())
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    other => {
+                        self.check(other, data, path)?;
+                    }
+                }
+            }
+        }
+        if let Some(properties) = properties {
+            for (name, property) in properties.own_entries() {
+                if let Some(value) = object.get_key(name).filter(|v| !v.is_undefined()) {
+                    self.check(property, value, &child(name))?;
+                }
+            }
+        }
+        for (pattern, property) in patterns {
+            for (key, value) in &entries {
+                if regex_matches(pattern, key)? {
+                    self.check(property, value, &child(key))?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+
+    /// Expected strings are Ajv 8.20 output recorded in
+    /// `_tmp/20261020-a65-pr10b/probes/ajv.out` and re-generated in
+    /// `tests/fixtures/output-schema/ajv-oracle.json`.
+    #[test]
+    fn matches_ajv_errors_text() {
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                r#"{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}"#,
+                r#"{"a":1}"#,
+                "data/a must be string",
+            ),
+            (
+                r#"{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}},"required":["a","b","c"],"additionalProperties":false}"#,
+                r#"{"a":1,"z":2,"b":"x"}"#,
+                "data must have required property 'c', data must NOT have additional properties, data/a must be string, data/b must be number",
+            ),
+            (
+                r#"{"type":"object","required":["a"],"properties":{"a":{"type":["string","null"],"minLength":3,"maxLength":1,"pattern":"^z"}}}"#,
+                r#"{"a":"xy"}"#,
+                "data/a must NOT have more than 1 characters, data/a must NOT have fewer than 3 characters, data/a must match pattern \"^z\"",
+            ),
+            (
+                r#"{"type":"object","properties":{"n":{"type":"integer","minimum":2,"maximum":0,"exclusiveMinimum":5,"exclusiveMaximum":0,"multipleOf":3}}}"#,
+                r#"{"n":1.5}"#,
+                "data/n must be integer, data/n must be <= 0, data/n must be >= 2, data/n must be < 0, data/n must be > 5, data/n must be multiple of 3",
+            ),
+            (
+                r#"{"type":"object","properties":{"l":{"type":"array","items":{"type":"string"},"minItems":3,"maxItems":1,"uniqueItems":true}}}"#,
+                r#"{"l":[1,"a","a"]}"#,
+                "data/l must NOT have more than 1 items, data/l/0 must be string, data/l must NOT have duplicate items (items ## 2 and 1 are identical)",
+            ),
+            (
+                r#"{"type":"object","properties":{"e":{"enum":["a","b"]},"c":{"const":5}}}"#,
+                r#"{"e":"z","c":4}"#,
+                "data/e must be equal to one of the allowed values, data/c must be equal to constant",
+            ),
+            (
+                r#"{"type":"object","properties":{"u":{"anyOf":[{"type":"string"},{"type":"number"}]},"o":{"oneOf":[{"type":"number"},{"minimum":0}]},"x":{"not":{"type":"string"}},"al":{"allOf":[{"type":"number"},{"minimum":3}]}}}"#,
+                r#"{"u":true,"o":5,"x":"s","al":1}"#,
+                "data/u must be string, data/u must be number, data/u must match a schema in anyOf, data/o must match exactly one schema in oneOf, data/x must NOT be valid, data/al must be >= 3",
+            ),
+            (
+                r#"{"type":"object","properties":{"a/b~c":{"type":"string"}},"minProperties":5,"maxProperties":1}"#,
+                r#"{"a/b~c":1}"#,
+                "data must NOT have fewer than 5 properties, data/a~1b~0c must be string",
+            ),
+            (
+                r#"{"type":"object","additionalProperties":{"type":"number"},"properties":{"k":{}}}"#,
+                r#"{"k":1,"q":"x","r":2}"#,
+                "data/q must be number",
+            ),
+            (
+                r#"{"type":"object","properties":{"s":{"type":"string","format":"email"}}}"#,
+                r#"{"s":"nope"}"#,
+                "data/s must match format \"email\"",
+            ),
+            (
+                r#"{"type":"object","properties":{"d":{"type":"object","properties":{"e":{"type":"boolean"}},"required":["f"]}}}"#,
+                r#"{"d":{"e":"x"}}"#,
+                "data/d must have required property 'f', data/d/e must be boolean",
+            ),
+            (
+                r#"{"type":"object","properties":{"t":{"type":"number"}}}"#,
+                r#"{"t":"a"}"#,
+                "data/t must be number",
+            ),
+            (
+                r#"{"type":"object","properties":{"t":{"type":"string","enum":["a"]}}}"#,
+                r#"{"t":5}"#,
+                "data/t must be string, data/t must be equal to one of the allowed values",
+            ),
+            (
+                r#"{"type":"object","properties":{"i":{"items":[{"type":"string"}],"additionalItems":false}}}"#,
+                r#"{"i":[1,2]}"#,
+                "data/i must NOT have more than 1 items, data/i/0 must be string",
+            ),
+            (
+                r##"{"type":"object","properties":{"r":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}"##,
+                r#"{"r":1}"#,
+                "data/r must be string",
+            ),
+            (
+                r#"{"type":"object","patternProperties":{"^p":{"type":"string"}}}"#,
+                r#"{"p1":1}"#,
+                "data/p1 must be string",
+            ),
+            (
+                r#"{"type":"object","propertyNames":{"maxLength":2}}"#,
+                r#"{"abc":1}"#,
+                "data must NOT have more than 2 characters, data property name must be valid",
+            ),
+            (
+                r#"{"type":"object","dependencies":{"a":["b"]}}"#,
+                r#"{"a":1}"#,
+                "data must have property b when property a is present",
+            ),
+            (
+                r#"{"type":"object","if":{"required":["a"]},"then":{"required":["b"]}}"#,
+                r#"{"a":1}"#,
+                "data must have required property 'b', data must match \"then\" schema",
+            ),
+            (
+                r#"{"type":"object","properties":{"c":{"contains":{"type":"string"}}}}"#,
+                r#"{"c":[1]}"#,
+                "data/c/0 must be string, data/c must contain at least 1 valid item(s)",
+            ),
+            (
+                r#"{"type":"object","properties":{"n":{"type":"number","minimum":0.5}}}"#,
+                r#"{"n":0.25}"#,
+                "data/n must be >= 0.5",
+            ),
+        ];
+        for (schema, data, expected) in cases {
+            let schema = parse_json(schema).unwrap();
+            let data = parse_json(data).unwrap();
+            assert_eq!(
+                validate(&schema, &data).unwrap().as_deref(),
+                Some(*expected),
+                "{schema:?}"
+            );
+        }
+        let schema =
+            parse_json(r#"{"type":"object","properties":{"a":{"type":"string"}}}"#).unwrap();
+        assert_eq!(
+            validate(&schema, &parse_json(r#"{"a":"x"}"#).unwrap()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn self_referencing_schemas_are_bounded() {
+        let schema = parse_json(r##"{"$ref":"#"}"##).unwrap();
+        assert_eq!(
+            validate(&schema, &JsValue::Null),
+            Err(ValidationError::Threw)
+        );
+    }
+
+    #[test]
+    fn deep_recursive_data_matches_ajv_at_4000() {
+        // `probes/sdk-ajv3.out`: Ajv accepts a 4000-deep recursive object.
+        // `validate` runs on a dedicated 64 MiB stack for exactly this case.
+        let mut data = JsValue::Object(JsObject::new());
+        for _ in 0..4000 {
+            let mut object = JsObject::new();
+            object.insert("a".into(), data);
+            data = JsValue::Object(object);
+        }
+        let schema = parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
+        assert_eq!(validate(&schema, &data).unwrap(), None);
+    }
+
+    #[test]
+    fn nullable_and_anchor_refs_match_ajv() {
+        let schema = parse_json(r#"{"type":"string","nullable":true}"#).unwrap();
+        assert_eq!(validate(&schema, &JsValue::Null).unwrap(), None);
+        assert_eq!(
+            validate(&schema, &parse_json("5").unwrap())
+                .unwrap()
+                .as_deref(),
+            Some("data must be string")
+        );
+
+        let schema = parse_json(
+            r##"{"type":"object","properties":{"a":{"$ref":"#foo"}},"definitions":{"x":{"$id":"#foo","type":"string"}}}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            validate(&schema, &parse_json(r#"{"a":1}"#).unwrap())
+                .unwrap()
+                .as_deref(),
+            Some("data/a must be string")
+        );
+    }
+
+    #[test]
+    fn compile_errors_are_explicit() {
+        for (schema, expected) in [
+            (
+                r#"{"type":"foo"}"#,
+                "type must be JSONType or JSONType[]: foo",
+            ),
+            (r#"{"enum":[]}"#, "enum must have non-empty array"),
+            (
+                r#"{"$ref":"https://example.com/schema"}"#,
+                "can't resolve reference https://example.com/schema from id #",
+            ),
+            (r#"{"maximum":"5"}"#, "maximum value must be [\"number\"]"),
+            (r#"{"type":"string","nullable":false,"x":1}"#, ""),
+        ] {
+            if expected.is_empty() {
+                assert!(check_schema(&parse_json(schema).unwrap()).is_ok());
+            } else {
+                assert_eq!(
+                    check_schema(&parse_json(schema).unwrap()),
+                    Err(SchemaError(expected.into())),
+                    "{schema}"
+                );
+            }
+        }
+        let error =
+            check_schema(&parse_json(r#"{"type":"string","pattern":"["}"#).unwrap()).unwrap_err();
+        assert!(
+            error.0.starts_with("Invalid regular expression"),
+            "{error:?}"
+        );
+        let error = check_schema(&parse_json(r##"{"$ref":"#foo"}"##).unwrap()).unwrap_err();
+        assert_eq!(error.0, "can't resolve reference #foo from id #");
+    }
+
+    #[test]
+    fn deep_schema_anchor_collection_is_safe_on_a_worker_stack() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let source = format!("{}true{}", "{\"not\":".repeat(10_000), "}".repeat(10_000));
+                let schema = parse_json(&source).unwrap();
+                let error = check_schema(&schema).unwrap_err();
+                assert!(error.0.contains("schema nesting is deeper"), "{error:?}");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn unsupported_patterns_fail_instead_of_passing() {
+        let schema = parse_json(r#"{"type":"string","pattern":"^(?=a)"}"#).unwrap();
+        assert!(
+            check_schema(&schema)
+                .unwrap_err()
+                .0
+                .starts_with("unsupported")
+        );
+        let error = validate(&schema, &parse_json(r#""a""#).unwrap()).unwrap_err();
+        assert!(
+            matches!(&error, ValidationError::Unsupported(message) if message.contains("JavaScript")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn formats_follow_ajv_formats() {
+        for (format, value, expected) in [
+            ("date", "2024-02-29", Some(true)),
+            ("date", "2023-02-29", Some(false)),
+            ("date", "2024-13-01", Some(false)),
+            ("date-time", "2024-02-29T12:00:00Z", Some(true)),
+            ("date-time", "2024-02-29 12:00:00Z", Some(true)),
+            ("date-time", "nope", Some(false)),
+            ("time", "12:00:00", Some(false)),
+            ("time", "23:59:60Z", Some(true)),
+            ("iso-time", "12:00:00", Some(true)),
+            ("duration", "P1Y2M3DT4H5M6S", Some(true)),
+            ("duration", "P", Some(false)),
+            ("uri", "https://example.com/a", Some(true)),
+            ("uri", "not a uri", Some(false)),
+            ("uri-reference", "/a/b", Some(true)),
+            ("uri-template", "{var}", Some(true)),
+            ("url", "https://example.com/a?b=1", Some(true)),
+            ("url", "http://192.168.1.1/x", Some(false)),
+            ("email", "a.b@example.com", Some(true)),
+            ("email", "User@Example.com", Some(true)),
+            ("email", "a..b@example.com", Some(false)),
+            ("email", "a@localhost", Some(false)),
+            ("hostname", "a-b.example.", Some(true)),
+            ("hostname", "-a.example", Some(false)),
+            ("ipv4", "192.168.0.1", Some(true)),
+            ("ipv4", "01.1.1.1", Some(false)),
+            ("ipv4", "256.1.1.1", Some(false)),
+            ("ipv6", "::1", Some(true)),
+            ("ipv6", "1.2.3.4", Some(false)),
+            (
+                "uuid",
+                "urn:uuid:123e4567-e89b-12d3-a456-426614174000",
+                Some(true),
+            ),
+            ("uuid", "123e4567e89b12d3a456426614174000", Some(false)),
+            ("json-pointer", "/a~1b", Some(true)),
+            ("relative-json-pointer", "0/a", Some(true)),
+            ("byte", "aGVsbG8=", Some(true)),
+            ("byte", "aGVsbG8", Some(false)),
+            ("regex", "^a+$", Some(true)),
+            ("regex", "[", Some(false)),
+            ("regex", "(?=a)", Some(true)),
+            ("password", "anything", Some(true)),
+            ("binary", "anything", Some(true)),
+            ("int32", "3000000000", None),
+            ("uri", "x", Some(false)),
+        ] {
+            assert_eq!(
+                string_format_valid(format, value),
+                expected,
+                "{format} {value}"
+            );
+        }
+        assert_eq!(string_format_valid("whatever", "x"), None);
+        assert_eq!(number_format_valid("int32", 42.0), Some(true));
+        assert_eq!(number_format_valid("int32", 3_000_000_000.0), Some(false));
+        assert_eq!(number_format_valid("int64", 1.5), Some(false));
+        assert_eq!(number_format_valid("float", 1.5e300), Some(true));
+    }
+
+    /// Generated by `tests/fixtures/output-schema/generate.mjs` against the
+    /// real SDK 1.29.0 `AjvJsonSchemaValidator`.
+    #[test]
+    fn replays_the_ajv_oracle() {
+        let oracle = super::baseline::oracle(include_str!(
+            "../../../tests/fixtures/output-schema/ajv-oracle.json"
+        ));
+        let cases = match oracle.get("cases").unwrap() {
+            JsValue::Array(cases) => cases,
+            other => panic!("cases must be an array: {other:?}"),
+        };
+        assert_eq!(cases.len(), 244);
+        for (key, expected) in [
+            ("sdk", "1.29.0"),
+            ("ajv", "8.20.0"),
+            ("ajvFormats", "3.0.1"),
+        ] {
+            assert!(
+                oracle
+                    .get(key)
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .equals_str(expected),
+                "{key}"
+            );
+        }
+        for key in ["providerSha256", "ajvSha256", "formatsSha256"] {
+            let hash = oracle
+                .get(key)
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap();
+            assert!(
+                hash.len() == 64 && hash.bytes().all(|ch| ch.is_ascii_hexdigit()),
+                "{key}"
+            );
+        }
+        for case in cases {
+            let id = case.get("id").unwrap().as_string().unwrap();
+            let id = String::from_utf16_lossy(id.units());
+            let schema = case.get("schema").unwrap();
+            let data = case.get("data").unwrap();
+            if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
+                assert!(
+                    matches!(validate(schema, data), Err(ValidationError::Unsupported(_))),
+                    "{id}"
+                );
+                continue;
+            }
+            if let Some(message) = case.get("compileError").and_then(JsValue::as_string) {
+                assert_eq!(
+                    check_schema(schema),
+                    Err(SchemaError(String::from_utf16_lossy(message.units()))),
+                    "{id}"
+                );
+                continue;
+            }
+            if let Some(prefix) = case.get("compileErrorPrefix").and_then(JsValue::as_string) {
+                let error = check_schema(schema).unwrap_err();
+                assert!(
+                    error
+                        .0
+                        .starts_with(&String::from_utf16_lossy(prefix.units())),
+                    "{id}: {error:?}"
+                );
+                continue;
+            }
+            let expected = case
+                .get("errorText")
+                .and_then(JsValue::as_string)
+                .map(|s| String::from_utf16_lossy(s.units()));
+            assert_eq!(validate(schema, data).unwrap(), expected, "{id}");
+        }
+    }
+}
