@@ -13,13 +13,15 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **526** cases. Each case is either:
+count of **563** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
   regex text); `compileErrorDetail` additionally checks the reason suffix and
   `exactCompileError` compares the whole `actualCompileError` string;
 - `errorText`: `ajv.errorsText(validator(data).errors)`;
+- `validationThrow`: compilation succeeded, but executing the validator
+  threw; kept with `portUnsupported` for deep patterns this port refuses;
 - no error field: valid.
 
 The `invalid-pattern/*` cases are ECMAScript `/u` syntax rejected by V8.
@@ -31,7 +33,7 @@ the complete V8 message.
 
 `portUnsupported: true` leaves the real Ajv result intact, but requires Rust
 to accept the schema (Ajv compiles it) and to return an explicit unsupported
-error only when the pattern is used. These seventeen cases are never counted as
+error only when the pattern is used. These cases are never counted as
 equal validation results. Valid `/u` syntax is no longer a compile error:
 lookarounds, backreferences, named groups, `\u` escapes and `\p{...}` names
 all pass `check_schema`; the ones Rust can translate are evaluated normally.
@@ -46,6 +48,26 @@ checks both `check_schema` and the exact Ajv validation result.
 including repeated quantifiers, Annex B identity/octal escapes, `\Z`, named
 groups and class ranges. `validate` returns `ValidationError::Unsupported` if
 the port cannot decide a value, never a silent pass.
+
+`deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
+cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
+plus the capture boundary at 32767 / 32768. Node 22.22.0 (V8 12.4) constructs
+32767 captures in both modes and rejects 32768 with `Too many captures`.
+Noncapturing groups still construct at depth 100000. The syntax checker uses
+an explicit heap stack; the capture-count limit also applies to flat groups.
+Rust's regex engine may still reject valid deep patterns, in which case
+schema compilation succeeds and validation returns `Unsupported`. Deep
+captures/lookaheads can compile in V8 but throw `Stack overflow` when first
+matched, recorded as `validationThrow` rather than `compileError`.
+The worker-stack tests run both `check_schema` and `validate_inner` directly
+on 2 MiB, as well as the public `validate` wrapper.
+
+`named-group/*` checks matching and nonmatching data for `$`, escaped, and
+Unicode group names. Names without backreferences become ordinary captures;
+patterns with backreferences remain explicitly unsupported.
+`format-regex-named/*` also covers forward named references and the Annex B
+identity `\k`: without named groups only `k` is escaped, and subsequent
+`<...>` must not hide nested groups from syntax checks or the capture limit.
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck LANG=en_US.UTF-8

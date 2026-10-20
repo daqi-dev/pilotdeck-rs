@@ -641,6 +641,60 @@ add(
 // --- required stringifies non-strings --------------------------------------
 add('required/nonstring', {required: [5]}, {});
 
+// r5: group nesting must not consume the Rust worker stack. V8's parser
+// limit is 32767 captures, not group depth: even 100000 noncapturing groups
+// construct successfully. Matching deep captures/lookaheads may throw later;
+// record that separately from a schema compile failure.
+for (const [kind, open] of [
+  ['capture', '('],
+  ['noncapture', '(?:'],
+  ['lookahead', '(?='],
+]) {
+  for (const depth of [10000, 100000]) {
+    const pattern = open.repeat(depth) + ')'.repeat(depth);
+    const unsupported = kind !== 'capture' || depth <= 32767;
+    cases.push({
+      id: `deep-pattern/${kind}-${depth}`,
+      schema: {pattern}, data: '',
+      ...(unsupported ? {portUnsupported: true} : {}),
+    });
+    cases.push({
+      id: `deep-pattern-properties/${kind}-${depth}`,
+      schema: {patternProperties: {[pattern]: {type: 'number'}}}, data: {x: 1},
+      ...(unsupported ? {portUnsupported: true} : {}),
+    });
+    add(`deep-format-regex/${kind}-${depth}`, {type: 'string', format: 'regex'}, pattern);
+  }
+}
+for (const depth of [32767, 32768]) {
+  const pattern = '('.repeat(depth) + ')'.repeat(depth);
+  cases.push({
+    id: `deep-pattern/capture-${depth}`, schema: {pattern}, data: '',
+    ...(depth === 32767 ? {portUnsupported: true} : {}),
+  });
+  add(`deep-format-regex/capture-${depth}`, {type: 'string', format: 'regex'}, pattern);
+  add(`deep-format-regex/identity-k-${depth}`, {type: 'string', format: 'regex'}, `\\k<${pattern}>`);
+}
+for (const [name, pattern] of [
+  ['identity-unclosed-group', '\\k<(>'],
+  ['identity-class', '\\k<[]>'],
+  ['forward-reference', '\\k<x>(?<x>a)'],
+  ['missing-forward-reference', '\\k<y>(?<x>a)'],
+  ['class-before-named-group', '[\\k](?<x>a)'],
+  ['class-after-named-group', '(?<x>a)[\\k]'],
+  ['invalid-reference-name', '\\k<(?<x>a)>'],
+]) add(`format-regex-named/${name}`, {type: 'string', format: 'regex'}, pattern);
+
+for (const [name, pattern] of [
+  ['dollar', '^(?<$>x)$'],
+  ['escaped', '^(?<\\u0061>x)$'],
+  ['unicode', '^(?<中>x)$'],
+]) {
+  for (const data of ['x', 'y']) {
+    add(`named-group/${name}-${data}`, {pattern}, data);
+  }
+}
+
 const oracle = {
   sourceCommit, sourceSha256, regexCompilation,
   sdk: sdkPackage.version,
@@ -662,6 +716,9 @@ const oracle = {
         ? {...entry}
         : {...entry, errorText: result.errorMessage};
     } catch (error) {
+      if (compiled && entry.portUnsupported) {
+        return {...entry, validationThrow: {name: error.name, message: error.message}};
+      }
       if (entry.compileErrorPrefix) {
         if (compiled) throw error;
         assert.ok(error.message.startsWith(entry.compileErrorPrefix), `${id}: ${error.message}`);
