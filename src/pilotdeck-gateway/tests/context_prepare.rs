@@ -373,6 +373,7 @@ async fn prepare_for_model_matches_real_ts() {
             platform: Some(platform.clone()),
             node_version: Some(node_version.clone()),
             locale: Some("en-US".into()),
+            ..Options::default()
         });
         for (index, step) in array(field(case, "steps")).iter().enumerate() {
             *clock.lock().unwrap() = number(field(step, "clockMs"));

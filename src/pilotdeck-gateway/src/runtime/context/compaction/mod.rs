@@ -12,6 +12,7 @@
 //! `String(value)`, JSON serialization and trimming keep the JS semantics from
 //! `crate::js_value` / `crate::metadata`.
 
+pub mod engine;
 mod micro;
 mod snip;
 pub mod tool_pair;

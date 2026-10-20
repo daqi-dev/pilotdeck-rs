@@ -1,8 +1,10 @@
 //! Context dispatch and request-level compaction budgeting (TS dispatcher:308-376).
 //! Runtime implementations must use cooperative futures, like the budget ports.
+mod durable;
 mod request;
 use super::{budget, model, tool_context::ContextRequestIdentity, wire};
 use crate::host::{HostError, HostFuture, JsObject, JsValue, ModuleError};
+pub use durable::compact_with_recorder;
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -74,6 +76,7 @@ fn unsupported(operation: Operation) -> HostFuture<JsValue> {
 
 #[derive(Default)]
 pub struct Handler {
+    recorder: Option<Arc<crate::storage::recorder::Recorder>>,
     runtime: Option<Arc<dyn ContextRuntime>>,
     identity: Option<ContextRequestIdentity>,
     config: JsObject,
@@ -87,11 +90,18 @@ impl Handler {
         signal: Option<watch::Receiver<bool>>,
     ) -> Self {
         Self {
+            recorder: None,
             runtime: Some(runtime),
             identity: Some(identity),
             config,
             signal,
         }
+    }
+    /// Session-owned durable compaction bracket. Completion is deferred until
+    /// the existing turn persistence callback commits the replacement.
+    pub fn with_recorder(mut self, recorder: Arc<crate::storage::recorder::Recorder>) -> Self {
+        self.recorder = Some(recorder);
+        self
     }
     pub fn methods(&self) -> Vec<&'static str> {
         self.runtime.as_ref().map_or_else(Vec::new, |runtime| {
@@ -128,6 +138,7 @@ impl Handler {
         let config = self.config.clone();
         let signal = self.signal.clone();
         let runtime = self.runtime.clone();
+        let recorder = self.recorder.clone();
         let budget = budget
             .ports
             .as_ref()
@@ -256,7 +267,10 @@ impl Handler {
                     runtime.capture_turn(input).await?;
                     JsValue::Null
                 }
-                Operation::TryAutoCompact => runtime.try_auto_compact(input).await?,
+                Operation::TryAutoCompact => match recorder {
+                    Some(recorder) => compact_with_recorder(runtime, recorder, input).await?,
+                    None => runtime.try_auto_compact(input).await?,
+                },
             };
             Ok(object([("result", result)]))
         })
