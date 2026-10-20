@@ -1,0 +1,3278 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/errors/normalizeModelError.ts": "3ded965a305c5aef92f33f83e72b8a8cbe14cfe230677f3127ccc75d90f15f0e",
+  "src/model/errors/tokenLimitParsing.ts": "78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959",
+  "src/model/normalizeProviderBaseUrl.ts": "4c27bda64fedb25d251f667a87680f72fb23ca56e5337fd383cfe38dda7a46af",
+  "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+  "src/model/policy/index.ts": "bc84e59059667b7dda7aeb420bff8b0ca6238880dcd008fdba62f787a14c70fc",
+  "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+  "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+  "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+  "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+  "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+  "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
+  "src/model/providerEndpoint.ts": "cd3d939c85bffdfa0fc8dc68c21cc421b16bb50736986d0ddfb0871fd247780c",
+  "src/model/providers/anthropic/request.ts": "8c0b30a2e016eede29e52282a1caf846895c320615d4298eaf61e2d180cb2907",
+  "src/model/providers/anthropic/response.ts": "834768ac8a1f3143f395cd8a238e8d445539c57dbc13b8ed66717436b4fa1b24",
+  "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+  "src/model/providers/google/client.ts": "327d14c1490f818e1ce95b303ec1d05d1157afb3f3f913639a7d9d69d04ece35",
+  "src/model/providers/google/modelId.ts": "fd4c83c9ca441e9d338c2c70e3eb900e9522e7e6c8ec2ac82c19051a8808d2b4",
+  "src/model/providers/google/request.ts": "129a7d684b6e8f653c74b62bed0cec315f97f8f78a4985e1e18f72c431f5f8ef",
+  "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+  "src/model/providers/google/schema.ts": "18128ea10abc57de9ff8c46723fa912d1e5f2b52f5681ac708a535de96e623e7",
+  "src/model/providers/google/stream.ts": "7d4a8209ba268d6920dea983e8fd162a17feba9b618b8d8c7399d57a694c11ba",
+  "src/model/providers/openai-responses/request.ts": "fc38d980ec728dc4651338760a964e4804f6b15c405af8a102f3930e9285aaad",
+  "src/model/providers/openai-responses/response.ts": "143623aad10247603c7d631ccd3abdc095b67a7df85f3cc56b26d769a5d87f37",
+  "src/model/providers/openai-responses/stream.ts": "dfeaf49e020b53785220d082d29fe7082a8b7067d62fd86620c02a0f381b9c85",
+  "src/model/providers/openai/request.ts": "e38de6a30cfc9e53e853d98218d342f80649cea5b3f5f8b608b6499a3f95352d",
+  "src/model/providers/openai/response.ts": "cc87c3284caed18f5a2b2c43c661e75d7578d41b197200918c29ea78038ee802",
+  "src/model/providers/openai/schema.ts": "cbcda4de9900b85e28e9e8f83f8a679b27cd64f3962cc695468d1e72698750b4",
+  "src/model/providers/openai/stream.ts": "8110c06e89b80ea9af8def4cb04b7a454f17a0c08101b175be7febb1ac9e9898",
+  "src/model/providers/toolResultReferenceText.ts": "7a279eda547943dee2878eca1fda3a350b514a40b78a0e229b5384a681253a7d",
+  "src/model/request/buildModelRequest.ts": "bf7e8e2a0684f64c30e456bc3dd66742231171faee106a230223709f98a63999",
+  "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa",
+  "src/model/request/speedMapping.ts": "ab5cad0b0529d882cf0e8e04d3859c6ce406dcc49930204f2b04fb4f71fa839f",
+  "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+  "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+  "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+  "src/model/response/parseModelResponse.ts": "22c792123e3822c694ebd15fbe14f2af7c7c57dc7479231d7e2a0a189a58ed8e",
+  "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+  "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662",
+  "src/model/streaming/normalizeStreamEvent.ts": "e12249c29b111f7e8341fa540e2d145ddb5fbbe1b2d0ba445d07b2db24e37dd7",
+  "src/model/streaming/requestFingerprint.ts": "3b90e1a600f57158cb7e43b171cff11b680809e234a9bb491c9c210d0656cb77",
+  "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+  "src/model/thinking/registry.ts": "ad0df7187839dfbf5e39acdc93141020acde65e9dbff664638a4aada0227ad7f",
+  "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05",
+  "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+  "src/storage/invocationStorage.ts": "9d24114a71fd71177b36c05363559f3fd174d2b3b59f8dd58e31c933be6f3875"
+ },
+ "node": "v22.22.0",
+ "v8": "12.4.254.21-node.33",
+ "undici": "8.3.0",
+ "locale": "en-US",
+ "random": 0.5,
+ "transportHeaders": [
+  "host",
+  "connection",
+  "content-length",
+  "user-agent",
+  "accept",
+  "accept-language",
+  "sec-fetch-mode",
+  "accept-encoding",
+  "transfer-encoding",
+  "keep-alive"
+ ],
+ "request": {
+  "provider": "responses-fixture",
+  "model": "gpt-5",
+  "systemPrompt": "You are terse.",
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Hi 你好"
+     },
+     {
+      "type": "image",
+      "source": "base64",
+      "mimeType": "image/png",
+      "data": "iVBORw0K",
+      "detail": "low"
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "prior thought"
+     },
+     {
+      "type": "text",
+      "text": "Calling"
+     },
+     {
+      "type": "tool_call",
+      "id": "call_prev",
+      "name": "lookup",
+      "input": {
+       "q": "x",
+       "deep": [
+        1,
+        {
+         "a": null
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "tool_result",
+      "toolCallId": "call_prev",
+      "content": [
+       {
+        "type": "text",
+        "text": "result"
+       },
+       {
+        "type": "image",
+        "source": "url",
+        "mimeType": "image/jpeg",
+        "data": "https://img.example/a.jpg"
+       }
+      ]
+     },
+     {
+      "type": "text",
+      "text": "And now?"
+     }
+    ]
+   }
+  ],
+  "tools": [
+   {
+    "name": "lookup",
+    "description": "Look up",
+    "inputSchema": {
+     "type": "object",
+     "properties": {
+      "q": {
+       "type": "string"
+      },
+      "ids": {
+       "type": "array"
+      }
+     }
+    }
+   },
+   {
+    "name": "fetch",
+    "inputSchema": {
+     "type": "object",
+     "properties": {
+      "url": {
+       "const": "x"
+      }
+     }
+    }
+   }
+  ],
+  "toolChoice": "auto",
+  "maxOutputTokens": 256,
+  "metadata": {
+   "user_id": "u-1",
+   "trace": "t"
+  },
+  "thinking": {
+   "mode": "high"
+  },
+  "speed": 0.8
+ },
+ "provider": {
+  "id": "responses-fixture",
+  "protocol": "openai-responses",
+  "url": "$MOCK/v1",
+  "apiKey": "  sk-fixture  ",
+  "headers": {
+   "x-fixture": "1",
+   "OpenAI-Beta": "responses=v1"
+  },
+  "extraBody": {
+   "temperature": 0.2,
+   "truncation": "auto"
+  },
+  "speedMapping": "openai_service_tier",
+  "retry": {
+   "baseDelayMs": 2,
+   "maxDelayMs": 30,
+   "streamMaxRetries": 2
+  },
+  "models": {
+   "gpt-5": {
+    "id": "gpt-5",
+    "thinking": {
+     "state": "enabled",
+     "efforts": [
+      "low",
+      "high"
+     ],
+     "format": "provider"
+    },
+    "capabilities": {
+     "supportsStreaming": true,
+     "supportsSystemPrompt": true,
+     "supportsToolUse": true,
+     "supportsSpeed": true,
+     "maxOutputTokens": 32768
+    },
+    "multimodal": {
+     "input": [
+      "text",
+      "image",
+      "pdf"
+     ]
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "text-stream",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": ": keep-alive\n\n"
+      },
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"Hello\"}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\" 世界😀\"}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"\"}\n\n"
+      },
+      {
+       "text": "event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_1\",\"text\":\"Hello 世界😀\"}\n\n"
+      },
+      {
+       "text": "event: response.unknown_future_event\ndata: {\"type\":\"response.unknown_future_event\",\"foo\":1}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Hello",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "Hello"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " 世界😀",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": " 世界😀"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "interleaved-function-calls",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp:x y/1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_a\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_b\",\"name\":\"fetch\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"q\\\":\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"output_index\":1,\"delta\":\"{\\\"url\\\":\\\"htt\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"\\\"天气\\\"}\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"output_index\":1,\"delta\":\"ps://x\\\"}\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":\"{\\\"q\\\":\\\"天气\\\"}\"}\n\n"
+      },
+      {
+       "text": "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_a\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"天气\\\"}\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_b\",\"name\":\"fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://x\\\"}\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"type\":\"function_call\",\"id\":\"fc_3\",\"call_id\":\"call_a\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_3\",\"output_index\":2,\"arguments\":\"{}\"}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":3,\"item\":{\"type\":\"function_call\",\"id\":\"fc_4\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_4\",\"output_index\":3,\"delta\":\"{\\\"n\\\":1}\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp:x y/1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_a",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 0,
+       "item": {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_a",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_b",
+      "name": "fetch",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 1,
+       "item": {
+        "type": "function_call",
+        "id": "fc_2",
+        "call_id": "call_b",
+        "name": "fetch",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_a",
+      "delta": "{\"q\":",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_1",
+       "output_index": 0,
+       "delta": "{\"q\":"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_b",
+      "delta": "{\"url\":\"htt",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_2",
+       "output_index": 1,
+       "delta": "{\"url\":\"htt"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_a",
+      "delta": "\"天气\"}",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_1",
+       "output_index": 0,
+       "delta": "\"天气\"}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_b",
+      "delta": "ps://x\"}",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_2",
+       "output_index": 1,
+       "delta": "ps://x\"}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_a",
+       "name": "lookup",
+       "input": {
+        "q": "天气"
+       },
+       "raw": {
+        "type": "response.function_call_arguments.done",
+        "item_id": "fc_1",
+        "output_index": 0,
+        "arguments": "{\"q\":\"天气\"}"
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.function_call_arguments.done",
+       "item_id": "fc_1",
+       "output_index": 0,
+       "arguments": "{\"q\":\"天气\"}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_b",
+       "name": "fetch",
+       "input": {
+        "url": "https://x"
+       },
+       "raw": {
+        "type": "response.output_item.done",
+        "output_index": 1,
+        "item": {
+         "type": "function_call",
+         "id": "fc_2",
+         "call_id": "call_b",
+         "name": "fetch",
+         "arguments": "{\"url\":\"https://x\"}"
+        }
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.output_item.done",
+       "output_index": 1,
+       "item": {
+        "type": "function_call",
+        "id": "fc_2",
+        "call_id": "call_b",
+        "name": "fetch",
+        "arguments": "{\"url\":\"https://x\"}"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_resp_x_y_1_2",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 2,
+       "item": {
+        "type": "function_call",
+        "id": "fc_3",
+        "call_id": "call_a",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_resp_x_y_1_2",
+       "name": "lookup",
+       "input": {},
+       "raw": {
+        "type": "response.function_call_arguments.done",
+        "item_id": "fc_3",
+        "output_index": 2,
+        "arguments": "{}"
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.function_call_arguments.done",
+       "item_id": "fc_3",
+       "output_index": 2,
+       "arguments": "{}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "fc_4",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 3,
+       "item": {
+        "type": "function_call",
+        "id": "fc_4",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "fc_4",
+      "delta": "{\"n\":1}",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_4",
+       "output_index": 3,
+       "delta": "{\"n\":1}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "fc_4",
+       "name": "lookup",
+       "input": {
+        "n": 1
+       },
+       "raw": {
+        "type": "response.completed",
+        "response": {
+         "id": "resp_1",
+         "status": "completed",
+         "usage": {
+          "input_tokens": 20,
+          "input_tokens_details": {
+           "cached_tokens": 5
+          },
+          "output_tokens": 9,
+          "output_tokens_details": {
+           "reasoning_tokens": 3
+          },
+          "total_tokens": 29
+         }
+        }
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "tool_call",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "reasoning",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"delta\":\"Plan: \"}\n\n"
+      },
+      {
+       "text": "event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"item_id\":\"rs_1\",\"delta\":\"think\"}\n\n"
+      },
+      {
+       "text": "event: response.reasoning.delta\ndata: {\"type\":\"response.reasoning.delta\",\"delta\":\"...\"}\n\n"
+      },
+      {
+       "text": "event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"\"}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"Answer\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":1,\"cache_write_tokens\":2},\"cost\":0.25}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "Plan: ",
+      "raw": {
+       "type": "response.reasoning_summary_text.delta",
+       "item_id": "rs_1",
+       "delta": "Plan: "
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "think",
+      "raw": {
+       "type": "response.reasoning_text.delta",
+       "item_id": "rs_1",
+       "delta": "think"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "...",
+      "raw": {
+       "type": "response.reasoning.delta",
+       "delta": "..."
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Answer",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "Answer"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 4,
+       "outputTokens": 2,
+       "cacheReadTokens": 1,
+       "cacheWriteTokens": 2,
+       "totalTokens": 9,
+       "nativeCost": 0.25
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "prompt_tokens": 7,
+         "completion_tokens": 2,
+         "prompt_tokens_details": {
+          "cached_tokens": 1,
+          "cache_write_tokens": 2
+         },
+         "cost": 0.25
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "prompt_tokens": 7,
+         "completion_tokens": 2,
+         "prompt_tokens_details": {
+          "cached_tokens": 1,
+          "cache_write_tokens": 2
+         },
+         "cost": 0.25
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "incomplete-max-output",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"Partial\"}\n\n"
+      },
+      {
+       "text": "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Partial",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "Partial"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "length",
+      "raw": {
+       "type": "response.incomplete",
+       "response": {
+        "id": "resp_1",
+        "status": "incomplete",
+        "incomplete_details": {
+         "reason": "max_output_tokens"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "response-failed",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"The model failed.\"}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "The model failed.",
+      "error": {
+       "provider": "openai-responses",
+       "protocol": "openai-responses",
+       "code": "server_error",
+       "message": "The model failed.",
+       "retryable": false,
+       "raw": {
+        "type": "response.failed",
+        "response": {
+         "id": "resp_1",
+         "status": "failed",
+         "error": {
+          "code": "server_error",
+          "message": "The model failed."
+         }
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "error-event",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: error\ndata: {\"type\":\"error\",\"code\":\"x\",\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"Slow down. Please try again in 20ms.\"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "Slow down. Please try again in 20ms.",
+      "error": {
+       "provider": "openai-responses",
+       "protocol": "openai-responses",
+       "code": "rate_limit_exceeded",
+       "message": "Slow down. Please try again in 20ms.",
+       "retryable": false,
+       "raw": {
+        "type": "error",
+        "code": "x",
+        "error": {
+         "code": "rate_limit_exceeded",
+         "message": "Slow down. Please try again in 20ms."
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "error-event-empty",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"so far\"}\n\n"
+      },
+      {
+       "text": "event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"  \",\"message\":\"\"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "so far",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "so far"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "OpenAI Responses request failed.",
+      "error": {
+       "provider": "openai-responses",
+       "protocol": "openai-responses",
+       "code": "provider_error",
+       "message": "OpenAI Responses request failed.",
+       "retryable": false,
+       "raw": {
+        "type": "error",
+        "error": {
+         "code": "  ",
+         "message": ""
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-400-error-body",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 400,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"error\":{\"message\":\"Invalid value for 'input'.\",\"type\":\"invalid_request_error\",\"param\":\"input\",\"code\":\"invalid_value\"}}"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "responses-fixture",
+       "protocol": "openai-responses",
+       "code": "invalid_value",
+       "status": 400,
+       "message": "Invalid value for 'input'.",
+       "retryable": false,
+       "raw": {
+        "error": {
+         "message": "Invalid value for 'input'.",
+         "type": "invalid_request_error",
+         "param": "input",
+         "code": "invalid_value"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-429-retry-after",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 429,
+     "headers": {
+      "content-type": "application/json",
+      "retry-after": "0.015"
+     },
+     "chunks": [
+      {
+       "text": "{\"error\":{\"message\":\"Rate limit reached for requests\",\"type\":\"requests\",\"code\":\"rate_limit_exceeded\"}}"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"after 429\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 15,
+      "provider": "responses-fixture",
+      "model": "gpt-5"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "after 429",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "after 429"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "connection-interrupted",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"cut here\"}\n\n"
+      }
+     ],
+     "end": "destroy"
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "cut here",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "cut here"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "TypeError",
+      "message": "terminated"
+     }
+    }
+   ]
+  },
+  {
+   "name": "cancel",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"first\"}\n\n"
+      }
+     ],
+     "end": "hold"
+    }
+   ],
+   "abortAfterTextDeltas": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}",
+     "clientClosed": true
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "first",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "first"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "AbortError",
+      "message": "This operation was aborted"
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool-args-repaired",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_r\",\"call_id\":\"call_r\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_r\",\"output_index\":0,\"delta\":\"{q: 'x', n: [1 2,],\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_r\",\"output_index\":0,\"arguments\":\"{q: 'x', n: [1 2,],\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_r",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 0,
+       "item": {
+        "type": "function_call",
+        "id": "fc_r",
+        "call_id": "call_r",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_r",
+      "delta": "{q: 'x', n: [1 2,],",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_r",
+       "output_index": 0,
+       "delta": "{q: 'x', n: [1 2,],"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_r",
+       "name": "lookup",
+       "input": {
+        "q": "x",
+        "n": [
+         1,
+         2
+        ]
+       },
+       "raw": {
+        "type": "response.function_call_arguments.done",
+        "item_id": "fc_r",
+        "output_index": 0,
+        "arguments": "{q: 'x', n: [1 2,],"
+       }
+      },
+      "wasRepaired": true,
+      "raw": {
+       "type": "response.function_call_arguments.done",
+       "item_id": "fc_r",
+       "output_index": 0,
+       "arguments": "{q: 'x', n: [1 2,],"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "tool_call",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool-args-invalid",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_i\",\"call_id\":\"call_i\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_i\",\"output_index\":0,\"delta\":\"{:1}\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_i\",\"output_index\":0,\"arguments\":\"{:1}\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_i",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 0,
+       "item": {
+        "type": "function_call",
+        "id": "fc_i",
+        "call_id": "call_i",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_i",
+      "delta": "{:1}",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_i",
+       "output_index": 0,
+       "delta": "{:1}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "openai-responses",
+       "protocol": "openai-responses",
+       "code": "invalid_tool_arguments",
+       "message": "OpenAI Responses stream tool call arguments are not valid JSON.",
+       "retryable": true,
+       "raw": {
+        "type": "response.function_call_arguments.done",
+        "item_id": "fc_i",
+        "output_index": 0,
+        "arguments": "{:1}"
+       },
+       "streamInterruption": {
+        "phase": "tool_call",
+        "activeToolCalls": [
+         {
+          "id": "call_i",
+          "name": "lookup",
+          "argumentChars": 4
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "completed-flushes-open-calls",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_o\",\"call_id\":\"call_o\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_o\",\"output_index\":0,\"delta\":\"{\\\"open\\\":\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_o\",\"output_index\":0,\"delta\":\"true}\"}\n\n"
+      },
+      {
+       "text": "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"call_id\":\"call_late\",\"delta\":\"\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_o",
+      "name": "lookup",
+      "raw": {
+       "type": "response.output_item.added",
+       "output_index": 0,
+       "item": {
+        "type": "function_call",
+        "id": "fc_o",
+        "call_id": "call_o",
+        "name": "lookup",
+        "arguments": ""
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_o",
+      "delta": "{\"open\":",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_o",
+       "output_index": 0,
+       "delta": "{\"open\":"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_o",
+      "delta": "true}",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "item_id": "fc_o",
+       "output_index": 0,
+       "delta": "true}"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_late",
+      "delta": "",
+      "raw": {
+       "type": "response.function_call_arguments.delta",
+       "call_id": "call_late",
+       "delta": ""
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_o",
+       "name": "lookup",
+       "input": {
+        "open": true
+       },
+       "raw": {
+        "type": "response.completed",
+        "response": {
+         "id": "resp_1",
+         "status": "completed",
+         "usage": {
+          "input_tokens": 20,
+          "input_tokens_details": {
+           "cached_tokens": 5
+          },
+          "output_tokens": 9,
+          "output_tokens_details": {
+           "reasoning_tokens": 3
+          },
+          "total_tokens": 29
+         }
+        }
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "call_late",
+       "name": "",
+       "input": {},
+       "raw": {
+        "type": "response.completed",
+        "response": {
+         "id": "resp_1",
+         "status": "completed",
+         "usage": {
+          "input_tokens": 20,
+          "input_tokens_details": {
+           "cached_tokens": 5
+          },
+          "output_tokens": 9,
+          "output_tokens_details": {
+           "reasoning_tokens": 3
+          },
+          "total_tokens": 29
+         }
+        }
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "tool_call",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "incomplete-stream-continuation",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"Half\"}\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\" rest\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"Half\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Half",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "Half"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "continuation",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "responses-fixture",
+      "model": "gpt-5"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "febb3ab4f272cc0a5fa7f243bf78edd74cc45dd800927d21b71490479903a32e",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " rest",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": " rest"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "body-variants",
+   "target": "mock",
+   "request": {
+    "toolChoice": {
+     "type": "function",
+     "name": "lookup"
+    },
+    "systemPrompt": "",
+    "speed": 0.2,
+    "metadata": {
+     "n": 1,
+     "o": {
+      "a": 1
+     },
+     "arr": [
+      1,
+      [
+       2,
+       3
+      ],
+      null
+     ],
+     "nul": null,
+     "b": false
+    },
+    "outputSchema": {
+     "name": "answer",
+     "description": "Answer shape",
+     "strict": false,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "tags": {
+        "type": [
+         "string",
+         "array"
+        ]
+       },
+       "kind": {
+        "enum": [
+         "a",
+         "b"
+        ]
+       },
+       "n": {
+        "enum": [
+         1,
+         2.5
+        ]
+       }
+      }
+     }
+    }
+   },
+   "provider": {
+    "models": {
+     "gpt-5": {
+      "id": "gpt-5",
+      "thinking": {
+       "state": "disabled",
+       "efforts": [],
+       "format": "provider"
+      },
+      "capabilities": {
+       "supportsStreaming": true,
+       "supportsSystemPrompt": true,
+       "supportsToolUse": true,
+       "supportsSpeed": true,
+       "maxOutputTokens": 4096
+      },
+      "multimodal": {
+       "input": [
+        "text",
+        "image",
+        "pdf"
+       ]
+      }
+     }
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"ok\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":{\"type\":\"function\",\"name\":\"lookup\"},\"stream\":true,\"metadata\":{\"n\":\"1\",\"o\":\"[object Object]\",\"arr\":\"1,2,3,\",\"nul\":\"null\",\"b\":\"false\"},\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"text\":{\"format\":{\"type\":\"json_schema\",\"name\":\"answer\",\"description\":\"Answer shape\",\"schema\":{\"type\":\"object\",\"properties\":{\"tags\":{\"type\":[\"string\",\"array\"],\"items\":{}},\"kind\":{\"enum\":[\"a\",\"b\"],\"type\":\"string\"},\"n\":{\"enum\":[1,2.5],\"type\":\"number\"}}},\"strict\":false}},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "cff4b8f25a2237371c86621b39b60b9f51d653352dbe0e02b0b768c22389eb86",
+      "metadata": {
+       "n": 1,
+       "o": {
+        "a": 1
+       },
+       "arr": [
+        1,
+        [
+         2,
+         3
+        ],
+        null
+       ],
+       "nul": null,
+       "b": false
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "ok"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "body-thinking-patch",
+   "target": "mock",
+   "provider": {
+    "models": {
+     "gpt-5": {
+      "id": "gpt-5",
+      "thinking": {
+       "state": "enabled",
+       "efforts": [
+        "high"
+       ],
+       "format": "qwen-cloud"
+      },
+      "capabilities": {
+       "supportsStreaming": true,
+       "supportsSystemPrompt": true,
+       "supportsToolUse": true,
+       "supportsSpeed": true
+      },
+      "multimodal": {
+       "input": [
+        "text",
+        "image",
+        "pdf"
+       ]
+      }
+     }
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"ok\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"enable_thinking\":true,\"reasoning_effort\":\"high\",\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "ok"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "unsupported-thinking",
+   "target": "mock",
+   "provider": {
+    "models": {
+     "gpt-5": {
+      "id": "gpt-5",
+      "thinking": {
+       "state": "enabled",
+       "efforts": [
+        "low"
+       ],
+       "format": "provider"
+      },
+      "capabilities": {
+       "supportsStreaming": true,
+       "supportsSystemPrompt": true,
+       "supportsToolUse": true,
+       "supportsSpeed": true,
+       "maxOutputTokens": 64
+      },
+      "multimodal": {
+       "input": [
+        "text",
+        "image",
+        "pdf"
+       ]
+      }
+     }
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelRequestError",
+      "message": "gpt-5: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+      "code": "unsupported_thinking"
+     }
+    }
+   ]
+  },
+  {
+   "name": "endpoint-fallback",
+   "target": "mock",
+   "url": "$MOCK",
+   "replies": [
+    {
+     "status": 404,
+     "chunks": [
+      {
+       "text": "no v1 here"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"status\":\"in_progress\"}}\n\n"
+      },
+      {
+       "text": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"fallback\"}\n\n"
+      },
+      {
+       "text": "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":20,\"input_tokens_details\":{\"cached_tokens\":5},\"output_tokens\":9,\"output_tokens_details\":{\"reasoning_tokens\":3},\"total_tokens\":29}}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/responses",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "openai-beta",
+       "responses=v1"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Hi 你好\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\",\"detail\":\"low\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"input_text\",\"text\":\"prior thought\"},{\"type\":\"input_text\",\"text\":\"Calling\"}]},{\"type\":\"function_call\",\"call_id\":\"call_prev\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\",\\\"deep\\\":[1,{\\\"a\\\":null}]}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_prev\",\"output\":\"result\\n[Image: image/jpeg, https://img.example/a.jpg]\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"input_image\",\"image_url\":\"https://img.example/a.jpg\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"And now?\"}]}],\"instructions\":\"You are terse.\",\"max_output_tokens\":256,\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"},\"ids\":{\"type\":\"array\",\"items\":{}}}},\"strict\":true},{\"type\":\"function\",\"name\":\"fetch\",\"parameters\":{\"type\":\"object\",\"properties\":{\"url\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":true}],\"tool_choice\":\"auto\",\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"trace\":\"t\"},\"store\":false,\"reasoning\":{\"effort\":\"high\"},\"truncation\":\"auto\"}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "bcf91bf3a3b27c90e909e8458f3f4fbdb5dcd6771f20506b82319ec89f4c08d7",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "response.created",
+       "response": {
+        "id": "resp_1",
+        "status": "in_progress"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "fallback",
+      "raw": {
+       "type": "response.output_text.delta",
+       "item_id": "msg_1",
+       "output_index": 0,
+       "delta": "fallback"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 15,
+       "outputTokens": 9,
+       "cacheReadTokens": 5,
+       "totalTokens": 29
+      },
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "response.completed",
+       "response": {
+        "id": "resp_1",
+        "status": "completed",
+        "usage": {
+         "input_tokens": 20,
+         "input_tokens_details": {
+          "cached_tokens": 5
+         },
+         "output_tokens": 9,
+         "output_tokens_details": {
+          "reasoning_tokens": 3
+         },
+         "total_tokens": 29
+        }
+       }
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -8,7 +8,7 @@ use super::super::count_body::{
     tool_choice, truthy,
 };
 use crate::runtime::model::http::{ModelStreamError, retry_after_from_message};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 /// `buildAnthropicRequest(request, model, provider)`.
 pub(crate) fn build_request(
@@ -256,7 +256,7 @@ impl StreamState {
 fn number_key(index: f64) -> JsValue {
     JsValue::String(crate::js_value::number_string(index).as_str().into())
 }
-fn event<const N: usize>(entries: [(&str, JsValue); N]) -> JsValue {
+pub(super) fn event<const N: usize>(entries: [(&str, JsValue); N]) -> JsValue {
     // Event objects keep `undefined` members (dropped only by JSON).
     let mut out = JsObject::new();
     for (key, value) in entries {
@@ -389,19 +389,12 @@ pub(crate) fn normalize_stream_event(
             let Some(call) = state.get(index) else {
                 return Ok(Vec::new());
             };
-            // `JSON.parse(rawInput)`, then `JSON.parse(jsonrepair(rawInput))`.
-            let parse = |units: &[u16]| parse_json(&super::json_text(units)).ok();
             let (input, was_repaired) = if call.input_buffer.is_empty() {
                 (Some(JsValue::Object(JsObject::new())), false)
-            } else if let Some(input) = parse(&call.input_buffer) {
-                (Some(input), false)
             } else {
-                match crate::runtime::model::jsonrepair::jsonrepair(&call.input_buffer) {
-                    Ok(repaired) => match parse(&repaired) {
-                        Some(input) => (Some(input), true),
-                        None => (None, false),
-                    },
-                    Err(_) => (None, false),
+                match super::parse_tool_arguments(&call.input_buffer) {
+                    Some((input, repaired)) => (Some(input), repaired),
+                    None => (None, false),
                 }
             };
             let call = state.delete(index).expect("present");

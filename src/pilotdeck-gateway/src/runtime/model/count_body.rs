@@ -168,7 +168,7 @@ pub(super) fn count_request(
         )
     };
     let request = JsValue::Object(request.clone());
-    let thinking = thinking(&request, model, anthropic)?;
+    let thinking = thinking(&request, provider, model, anthropic)?;
     let body = if anthropic {
         anthropic_body(&request, thinking, prototype)?
     } else {
@@ -197,89 +197,37 @@ pub(super) fn count_request(
     Ok(Some(CountHttpRequest { url, headers, body }))
 }
 
-fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsValue, HostError> {
-    let settings = field(model, "thinking");
-    let state = field(settings, "state");
-    if !present(state) || is(state, "default") {
-        return Ok(JsValue::Undefined);
-    }
-    let disabled = is(state, "disabled");
-    let mode = field(field(request, "thinking"), "mode");
-    let effort = if !disabled
-        && ["low", "medium", "high", "xhigh", "max"]
-            .iter()
-            .any(|e| is(mode, e))
-    {
-        Some(text(mode))
-    } else {
-        None
+/// The thinking field of the count bodies, through the shared
+/// `resolveThinkingPlan` port (`providers::thinking`). `countAnthropic` calls
+/// `buildAnthropicRequest` without a provider (TS default
+/// `{ id: "anthropic", protocol: "anthropic" }`); the Responses count passes
+/// the configured provider and keeps only `reasoning`.
+fn thinking(
+    request: &JsValue,
+    provider: &JsValue,
+    model: &JsValue,
+    anthropic: bool,
+) -> Result<JsValue, HostError> {
+    let to_host = |error: super::http::ModelStreamError| -> HostError {
+        ModuleError::new(error.message()).into()
     };
-    let fail = |message: String| -> HostError {
-        // `model.id` may contain lone surrogates; keep its UTF-16 units.
-        let mut units = crate::js_value::to_string_units(field(model, "id")).unwrap_or_default();
-        units.extend(": ".encode_utf16());
-        units.extend(message.encode_utf16());
-        ModuleError::new(JsString::from_utf16(units)).into()
-    };
-    if let Some(effort) = &effort {
-        let supported = match field(settings, "efforts") {
-            JsValue::Array(efforts) => efforts.iter().any(|e| is(e, effort)),
-            JsValue::String(efforts) => {
-                let needle: Vec<_> = effort.encode_utf16().collect();
-                efforts.units().windows(needle.len()).any(|s| s == needle)
-            }
-            value @ (JsValue::Null | JsValue::Undefined) => {
-                let receiver = if matches!(value, JsValue::Null) {
-                    "null"
-                } else {
-                    "undefined"
-                };
-                return Err(ModuleError::new(format!(
-                    "Cannot read properties of {receiver} (reading 'includes')"
-                ))
-                .into());
-            }
-            _ => {
-                return Err(
-                    ModuleError::new("settings?.efforts.includes is not a function").into(),
-                );
-            }
-        };
-        if !supported {
-            return Err(fail(format!(
-                "Reasoning effort '{effort}' is not configured. Select Default or configure the model's supported efforts."
-            )));
-        }
-    }
-    if is(field(settings, "format"), "server-default") {
-        if disabled || effort.is_some() {
-            return Err(fail("This parameter format only supports the server default. Choose a thinking parameter format in model settings.".into()));
-        }
-        return Ok(JsValue::Undefined);
-    }
-    if anthropic {
-        if disabled {
-            return Ok(object([("type", "disabled".into())]));
-        }
-        let old_model = budget_only_model(&text(field(model, "id")));
-        if old_model {
-            if effort.is_some() {
-                return Err(fail(
-                    "This model requires a thinking budget; only Default is supported.".into(),
-                ));
-            }
-            return Ok(JsValue::Undefined);
-        }
-        Ok(object([("type", "adaptive".into())]))
+    let default_provider = object([("id", "anthropic".into()), ("protocol", "anthropic".into())]);
+    let provider = if anthropic {
+        &default_provider
     } else {
-        Ok(if disabled {
-            object([("effort", "none".into())])
-        } else if let Some(effort) = effort {
-            object([("effort", effort.as_str().into())])
-        } else {
-            JsValue::Undefined
-        })
-    }
+        provider
+    };
+    let plan = super::providers::thinking::resolve(request, provider, model).map_err(to_host)?;
+    super::providers::thinking::throw_if_unsupported(&plan).map_err(to_host)?;
+    Ok(if anthropic {
+        plan.thinking_type
+            .map_or(JsValue::Undefined, |kind| object([("type", kind.into())]))
+    } else {
+        match (plan.use_openai_reasoning, plan.effort) {
+            (true, Some(effort)) => object([("effort", JsValue::String(effort))]),
+            _ => JsValue::Undefined,
+        }
+    })
 }
 /// `thinking/registry.ts` budget-only Claude models. The TS regex has no `u`
 /// flag, so `\D` is "not an ASCII digit": `[^0-9]`, not Rust's Unicode `\D`.
@@ -561,74 +509,7 @@ fn responses_body(
     reasoning: JsValue,
     prototype: bool,
 ) -> Result<JsValue, HostError> {
-    let mut input = Vec::new();
-    for message in array(field(request, "messages")) {
-        let mut content = Vec::new();
-        for block in array(field(message, "content")) {
-            let tag = text(field(block, "type"));
-            if ["tool_call", "tool_result", "tool_result_reference"].contains(&tag.as_str()) {
-                flush(&mut input, &mut content, field(message, "role"));
-                if tag == "tool_call" {
-                    let args = field(block, "input");
-                    let args = if present(args) {
-                        args.clone()
-                    } else {
-                        object([])
-                    };
-                    input.push(object([
-                        ("type", "function_call".into()),
-                        ("call_id", field(block, "id").clone()),
-                        ("name", field(block, "name").clone()),
-                        (
-                            "arguments",
-                            stringify_json(&args)
-                                .map_err(|e| ModuleError::new(e.to_string()))?
-                                .unwrap_or_default()
-                                .as_str()
-                                .into(),
-                        ),
-                    ]));
-                } else {
-                    let output = if tag == "tool_result_reference" {
-                        reference_text(block)
-                    } else {
-                        crate::host::modules::budget::flatten_result(block)?
-                    };
-                    input.push(object([
-                        ("type", "function_call_output".into()),
-                        ("call_id", field(block, "toolCallId").clone()),
-                        ("output", output),
-                    ]));
-                    let visual: Vec<_> = (if tag == "tool_result" {
-                        array(field(block, "content"))
-                    } else {
-                        &[]
-                    })
-                    .iter()
-                    .filter(|b| is(field(b, "type"), "image") || is(field(b, "type"), "pdf"))
-                    .map(responses_part)
-                    .collect();
-                    if !visual.is_empty() {
-                        let mut parts = vec![object([
-                            ("type", "input_text".into()),
-                            ("text", "[Visual content from tool result]".into()),
-                        ])];
-                        parts.extend(visual);
-                        input.push(object([
-                            ("role", "user".into()),
-                            ("content", JsValue::Array(parts)),
-                        ]));
-                    }
-                }
-            } else {
-                let part = responses_part(block);
-                if !part.is_undefined() {
-                    content.push(part);
-                }
-            }
-        }
-        flush(&mut input, &mut content, field(message, "role"));
-    }
+    let input = responses_input(request)?;
     // `buildOpenAIResponsesRequest` evaluates `input` (messages) first, then
     // `max_output_tokens`, then `request.tools?.map(...)`, then service_tier.
     if prototype && !present(field(request, "maxOutputTokens")) {
@@ -699,6 +580,80 @@ fn responses_body(
         ),
         ("reasoning", reasoning),
     ]))
+}
+/// `request.messages.flatMap(toResponsesInputItems)` of
+/// `providers/openai-responses/request.ts`; shared by the count projection
+/// and the streaming request builder.
+pub(super) fn responses_input(request: &JsValue) -> Result<Vec<JsValue>, HostError> {
+    let mut input = Vec::new();
+    for message in array(field(request, "messages")) {
+        let mut content = Vec::new();
+        for block in array(field(message, "content")) {
+            let tag = text(field(block, "type"));
+            if ["tool_call", "tool_result", "tool_result_reference"].contains(&tag.as_str()) {
+                flush(&mut input, &mut content, field(message, "role"));
+                if tag == "tool_call" {
+                    let args = field(block, "input");
+                    let args = if present(args) {
+                        args.clone()
+                    } else {
+                        object([])
+                    };
+                    input.push(object([
+                        ("type", "function_call".into()),
+                        ("call_id", field(block, "id").clone()),
+                        ("name", field(block, "name").clone()),
+                        (
+                            "arguments",
+                            stringify_json(&args)
+                                .map_err(|e| ModuleError::new(e.to_string()))?
+                                .unwrap_or_default()
+                                .as_str()
+                                .into(),
+                        ),
+                    ]));
+                } else {
+                    let output = if tag == "tool_result_reference" {
+                        reference_text(block)
+                    } else {
+                        crate::host::modules::budget::flatten_result(block)?
+                    };
+                    input.push(object([
+                        ("type", "function_call_output".into()),
+                        ("call_id", field(block, "toolCallId").clone()),
+                        ("output", output),
+                    ]));
+                    let visual: Vec<_> = (if tag == "tool_result" {
+                        array(field(block, "content"))
+                    } else {
+                        &[]
+                    })
+                    .iter()
+                    .filter(|b| is(field(b, "type"), "image") || is(field(b, "type"), "pdf"))
+                    .map(responses_part)
+                    .collect();
+                    if !visual.is_empty() {
+                        let mut parts = vec![object([
+                            ("type", "input_text".into()),
+                            ("text", "[Visual content from tool result]".into()),
+                        ])];
+                        parts.extend(visual);
+                        input.push(object([
+                            ("role", "user".into()),
+                            ("content", JsValue::Array(parts)),
+                        ]));
+                    }
+                }
+            } else {
+                let part = responses_part(block);
+                if !part.is_undefined() {
+                    content.push(part);
+                }
+            }
+        }
+        flush(&mut input, &mut content, field(message, "role"));
+    }
+    Ok(input)
 }
 fn flush(input: &mut Vec<JsValue>, content: &mut Vec<JsValue>, role: &JsValue) {
     if !content.is_empty() {
@@ -831,5 +786,32 @@ fn literal_type(value: &JsValue) -> Option<&'static str> {
         JsValue::Array(_) => Some("array"),
         JsValue::Object(_) => Some("object"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+
+    /// node probe (pr7 `r2/probe-r2.out.txt`, `buildOpenAIResponsesRequest`):
+    /// the Responses count keeps `reasoning` only for the OpenAI reasoning
+    /// format; an effort carried by another format never becomes reasoning.
+    #[test]
+    fn responses_count_reasoning_follows_the_shared_thinking_plan() {
+        let request = parse_json(r#"{"thinking":{"mode":"high"}}"#).unwrap();
+        let provider = parse_json(r#"{"id":"p","protocol":"openai-responses"}"#).unwrap();
+        let reasoning = |format: &str| {
+            let model = parse_json(&format!(
+                r#"{{"id":"gpt-x","thinking":{{"state":"enabled","efforts":["high"],"format":"{format}"}}}}"#
+            ))
+            .unwrap();
+            stringify_json(&thinking(&request, &provider, &model, false).unwrap())
+                .unwrap()
+                .unwrap_or_default()
+        };
+        assert_eq!(reasoning("anthropic"), "");
+        assert_eq!(reasoning("openai"), r#"{"effort":"high"}"#);
+        assert_eq!(reasoning("qwen-cloud"), "");
     }
 }
