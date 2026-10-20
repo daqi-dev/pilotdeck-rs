@@ -33,3 +33,9 @@
 - [glm-concurrency](20261018-glm-concurrency.md) — ZAI key 全局并发≈10、超限立即 429 并被退避拖成超时；四角色闸门同时最多 2 个，GLM 评审另留余量
 - [gate-oracle-exclusion](20261018-gate-oracle-exclusion.md) — 闸门 --paths 排除 oracle.json 会招来「oracle 未入库」误报；PR 里预先写明并贴 ls-tree
 - [dsh 绕沙箱搬 gitdir](20261020-dsh-gitlocal.md) — dsh/codex 不做 git rebase/commit，协调者在主仓侧做；出现 .git-local 的恢复步骤
+
+- [merge-email-exposure](20261020-merge-email-exposure.md) — 服务端生成的提交用账号主邮箱；公开仓库每次合入后核 %ae %ce，不假定账号已设隐私
+- [delete-branch-worktree](20261020-delete-branch-worktree.md) — --delete-branch 会连带删 worktree 与未入库 _tmp/ 证据；合并不加，证据放主仓 _tmp/
+- [rebase-conflict-merge](20261020-rebase-conflict-merge.md) — 状态文件冲突可取 main 侧；代码测试逐块真合并，#142 机械取侧丢 8 测试
+- [arbitration-runtime-test](20261020-arbitration-runtime-test.md) — 仲裁结论依赖运行时/标准库行为时必须最小实测贴输出（readdir 排序误判）
+- [ruler-real-data](20261020-ruler-real-data.md) — 尺子/装置改动用真实数据复算；对照全过不证明真实输入可用（#35、F2）
