@@ -5,6 +5,10 @@
 //! attachment block (A6.6-pr5b) and without prompt-cache generation (cache
 //! owner). Prompt contributions are session-owned and injected as a registry.
 use super::{
+    compaction::{
+        is_direct_tool_result, is_media_reference_with_id, is_real_user_request_message,
+        is_tool_result_only,
+    },
     instructions::{InstructionDiscovery, Layer},
     prompt::{
         ContributionContext, ExtensionResolver, PromptAssembler, PromptContributionRegistry,
@@ -15,7 +19,6 @@ use super::{
 use crate::host::modules::context::{ContextInput, ContextRuntime, Operation};
 use crate::host::{Cancellation, HostError, HostFuture, ModuleError};
 use crate::js_value::{MAX_ARRAY_DEPTH, StackOverflow};
-use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
 use std::{
@@ -815,7 +818,7 @@ fn repair_tool_result_pairing(messages: Vec<JsValue>, warnings: &mut Vec<Warning
         let mut seen: Vec<JsString> = Vec::new();
         let mut media_refs: Vec<JsString> = Vec::new();
         for block in message_content(&message) {
-            if is_direct_tool_result_block(block) {
+            if is_direct_tool_result(block) {
                 if let Some(id) = object_string(block, "toolCallId")
                     && !seen.contains(id)
                 {
@@ -833,7 +836,7 @@ fn repair_tool_result_pairing(messages: Vec<JsValue>, warnings: &mut Vec<Warning
         if has_orphans {
             let mut kept = Vec::new();
             for block in message_content(&message) {
-                let direct_orphan = is_direct_tool_result_block(block)
+                let direct_orphan = is_direct_tool_result(block)
                     && object_string(block, "toolCallId")
                         .is_some_and(|id| !pending_set.contains(id));
                 let media_orphan =
@@ -1045,48 +1048,6 @@ fn insert_before_latest_user_request(
     output
 }
 
-const CONTINUATION_TEXT: &str =
-    "[system: the conversation above has been compacted. please continue with the current task.]";
-const INTERNAL_USER_TEXT_PREFIXES: [&str; 5] = [
-    "<compact-boundary",
-    "<snip-boundary",
-    "<memory-context>",
-    "<internal-compaction-control",
-    "<hook_context",
-];
-fn is_real_user_request_message(message: &JsValue) -> bool {
-    if !is_role(message, "user") {
-        return false;
-    }
-    if message
-        .as_object()
-        .and_then(|message| message.get("metadata"))
-        .and_then(JsValue::as_object)
-        .and_then(|metadata| metadata.get("synthetic"))
-        .is_some_and(|synthetic| matches!(synthetic, JsValue::Bool(true)))
-    {
-        return false;
-    }
-    message_content(message).iter().any(|block| {
-        if is_direct_tool_result_block(block) || media_reference_id(block).is_some() {
-            return false;
-        }
-        if !is_block_type(block, "text") {
-            return true;
-        }
-        let Some(text) = object_string(block, "text") else {
-            return false;
-        };
-        let text = String::from_utf16_lossy(text.units());
-        let trimmed = js_trim(&text);
-        !trimmed.is_empty()
-            && trimmed != CONTINUATION_TEXT
-            && !INTERNAL_USER_TEXT_PREFIXES
-                .iter()
-                .any(|prefix| trimmed.starts_with(prefix))
-    })
-}
-
 fn is_runtime_context_message(message: &JsValue) -> bool {
     message
         .as_object()
@@ -1103,21 +1064,10 @@ fn collect_tool_call_ids(message: &JsValue) -> Vec<JsString> {
         .filter_map(|block| object_string(block, "id").cloned())
         .collect()
 }
-fn is_tool_result_only(message: &JsValue) -> bool {
-    let content = message_content(message);
-    !content.is_empty()
-        && content
-            .iter()
-            .all(|block| is_direct_tool_result_block(block) || media_reference_id(block).is_some())
-}
-fn is_direct_tool_result_block(block: &JsValue) -> bool {
-    is_block_type(block, "tool_result") || is_block_type(block, "tool_result_reference")
-}
 fn media_reference_id(block: &JsValue) -> Option<&JsString> {
-    is_block_type(block, "media_reference")
+    is_media_reference_with_id(block)
         .then(|| object_string(block, "toolCallId"))
         .flatten()
-        .filter(|id| !id.is_empty())
 }
 fn is_assistant(message: &JsValue) -> bool {
     is_role(message, "assistant")

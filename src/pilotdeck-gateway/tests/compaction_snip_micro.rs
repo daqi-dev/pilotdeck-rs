@@ -6,7 +6,7 @@ mod baseline;
 
 use pilotdeck_gateway::runtime::context::compaction::{
     MicroCompactionEngine, MicroCompactionEngineOptions, MicroCompactionInput, SnipCallOptions,
-    SnipEngine, SnipEngineOptions, is_snip_boundary_message,
+    SnipEngine, SnipEngineOptions, is_snip_boundary_message, tool_pair,
 };
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 
@@ -153,6 +153,40 @@ fn run(scenario: &JsValue) -> JsValue {
                 ),
             ])
         }
+        "toolPair" => {
+            let ids = |set: &tool_pair::IdSet| {
+                JsValue::Array(set.iter().cloned().map(JsValue::String).collect())
+            };
+            let call_ids = tool_pair::collect_tool_call_ids(input);
+            let result_ids = tool_pair::collect_tool_result_ids(input);
+            object([
+                (
+                    "realUserRequest",
+                    JsValue::Array(
+                        input
+                            .iter()
+                            .map(|message| {
+                                JsValue::Bool(tool_pair::is_real_user_request_message(message))
+                            })
+                            .collect(),
+                    ),
+                ),
+                ("toolCallIds", ids(&call_ids)),
+                ("toolResultIds", ids(&result_ids)),
+                (
+                    "withoutUnpairedCalls",
+                    JsValue::Array(tool_pair::strip_unpaired_tool_calls(input, &result_ids)),
+                ),
+                (
+                    "withoutUnpairedResults",
+                    JsValue::Array(tool_pair::strip_unpaired_tool_results(input, &call_ids)),
+                ),
+                (
+                    "trailing",
+                    JsValue::Array(tool_pair::ensure_trailing_user_message(input.to_vec())),
+                ),
+            ])
+        }
         other => panic!("unknown engine {other}"),
     }
 }
@@ -162,7 +196,7 @@ fn real_ts_snip_and_micro_scenarios_match_byte_for_byte() {
     let oracle = baseline::oracle(ORACLE);
     assert_eq!(s(field(&oracle, "locale")), "en-US");
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 60, "scenario count");
+    assert_eq!(scenarios.len(), 64, "scenario count");
     let mut seen = std::collections::HashSet::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));

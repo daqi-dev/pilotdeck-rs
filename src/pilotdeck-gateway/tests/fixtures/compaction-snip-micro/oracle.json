@@ -17072,6 +17072,1418 @@
         ],
         "appliedTrigger": "time_based"
       }
+    },
+    {
+      "name": "real-user-request-predicate",
+      "engine": "toolPair",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "real request"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<compact-boundary turns=\"1\" />"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<snip-boundary turns=\"2\" />"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<memory-context>remember</memory-context>"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<internal-compaction-control kind=\"x\" />"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<hook_context>h</hook_context>"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "  \t[system: the conversation above has been compacted. please continue with the current task.]\n"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "﻿ <compact-boundary />"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "　 "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": ""
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<compact-boundaryX is still internal by prefix"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": " <hook_contex near miss"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "\ud800 lone surrogate"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic request"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "string synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": "true"
+          }
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image",
+              "source": "base64",
+              "data": "AA==",
+              "mimeType": "image/png"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "media_reference",
+              "toolCallId": "",
+              "mediaId": "m"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "media_reference",
+              "toolCallId": "c9",
+              "mediaId": "m"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result_reference",
+              "toolCallId": "c1",
+              "preview": "p"
+            },
+            {
+              "type": "text",
+              "text": "<snip-boundary />"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "c1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ok"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "follow-up"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "<compact-boundary from assistant"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "realUserRequest": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false
+        ],
+        "toolCallIds": [],
+        "toolResultIds": [
+          "c1"
+        ],
+        "withoutUnpairedCalls": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "real request"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary turns=\"1\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<snip-boundary turns=\"2\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<memory-context>remember</memory-context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<internal-compaction-control kind=\"x\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<hook_context>h</hook_context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "  \t[system: the conversation above has been compacted. please continue with the current task.]\n"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "﻿ <compact-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "　 "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundaryX is still internal by prefix"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": " <hook_contex near miss"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "\ud800 lone surrogate"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "synthetic request"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "string synthetic"
+              }
+            ],
+            "metadata": {
+              "synthetic": "true"
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "data": "AA==",
+                "mimeType": "image/png"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "c9",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result_reference",
+                "toolCallId": "c1",
+                "preview": "p"
+              },
+              {
+                "type": "text",
+                "text": "<snip-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ok"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "follow-up"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary from assistant"
+              }
+            ]
+          }
+        ],
+        "withoutUnpairedResults": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "real request"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary turns=\"1\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<snip-boundary turns=\"2\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<memory-context>remember</memory-context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<internal-compaction-control kind=\"x\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<hook_context>h</hook_context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "  \t[system: the conversation above has been compacted. please continue with the current task.]\n"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "﻿ <compact-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "　 "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundaryX is still internal by prefix"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": " <hook_contex near miss"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "\ud800 lone surrogate"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "synthetic request"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "string synthetic"
+              }
+            ],
+            "metadata": {
+              "synthetic": "true"
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "data": "AA==",
+                "mimeType": "image/png"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<snip-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "follow-up"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary from assistant"
+              }
+            ]
+          }
+        ],
+        "trailing": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "real request"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary turns=\"1\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<snip-boundary turns=\"2\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<memory-context>remember</memory-context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<internal-compaction-control kind=\"x\" />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<hook_context>h</hook_context>"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "  \t[system: the conversation above has been compacted. please continue with the current task.]\n"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "﻿ <compact-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "　 "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundaryX is still internal by prefix"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": " <hook_contex near miss"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "\ud800 lone surrogate"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "synthetic request"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "string synthetic"
+              }
+            ],
+            "metadata": {
+              "synthetic": "true"
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "data": "AA==",
+                "mimeType": "image/png"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "c9",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result_reference",
+                "toolCallId": "c1",
+                "preview": "p"
+              },
+              {
+                "type": "text",
+                "text": "<snip-boundary />"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ok"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "follow-up"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "<compact-boundary from assistant"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "strip-unpaired-and-trailing",
+      "engine": "toolPair",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "request"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "calling"
+            },
+            {
+              "type": "tool_call",
+              "id": "c1",
+              "name": "bash",
+              "input": {}
+            },
+            {
+              "type": "tool_call",
+              "id": "c2",
+              "name": "grep",
+              "input": {}
+            },
+            {
+              "type": "tool_call",
+              "id": "c1",
+              "name": "bash",
+              "input": {}
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "c1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "one"
+                }
+              ]
+            },
+            {
+              "type": "tool_result",
+              "toolCallId": "c3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "orphan"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_call",
+              "id": "c4",
+              "name": "read_file",
+              "input": {}
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "media_reference",
+              "toolCallId": "c5",
+              "mediaId": "m"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "media_reference",
+              "toolCallId": "",
+              "mediaId": "m2"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": []
+        },
+        {
+          "role": "system",
+          "content": []
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "realUserRequest": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false
+        ],
+        "toolCallIds": [
+          "c1",
+          "c2",
+          "c4"
+        ],
+        "toolResultIds": [
+          "c1",
+          "c3"
+        ],
+        "withoutUnpairedCalls": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "request"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "calling"
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "one"
+                  }
+                ]
+              },
+              {
+                "type": "tool_result",
+                "toolCallId": "c3",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "orphan"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "c5",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m2"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ]
+          }
+        ],
+        "withoutUnpairedResults": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "request"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "calling"
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "id": "c2",
+                "name": "grep",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "one"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "c4",
+                "name": "read_file",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m2"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ]
+          }
+        ],
+        "trailing": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "request"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "calling"
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "id": "c2",
+                "name": "grep",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "bash",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c1",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "one"
+                  }
+                ]
+              },
+              {
+                "type": "tool_result",
+                "toolCallId": "c3",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "orphan"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "c4",
+                "name": "read_file",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "c5",
+                "mediaId": "m"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "media_reference",
+                "toolCallId": "",
+                "mediaId": "m2"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": []
+          },
+          {
+            "role": "system",
+            "content": []
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-and-user-tail",
+      "engine": "toolPair",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "only request"
+            }
+          ]
+        }
+      ],
+      "result": {
+        "realUserRequest": [
+          true
+        ],
+        "toolCallIds": [],
+        "toolResultIds": [],
+        "withoutUnpairedCalls": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "only request"
+              }
+            ]
+          }
+        ],
+        "withoutUnpairedResults": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "only request"
+              }
+            ]
+          }
+        ],
+        "trailing": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "only request"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-messages",
+      "engine": "toolPair",
+      "input": [],
+      "result": {
+        "realUserRequest": [],
+        "toolCallIds": [],
+        "toolResultIds": [],
+        "withoutUnpairedCalls": [],
+        "withoutUnpairedResults": [],
+        "trailing": []
+      }
     }
   ]
 }

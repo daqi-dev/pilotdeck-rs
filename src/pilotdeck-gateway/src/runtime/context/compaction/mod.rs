@@ -14,6 +14,7 @@
 
 mod micro;
 mod snip;
+pub mod tool_pair;
 
 pub use micro::{
     COMPACTABLE_TOOL_NAMES, MICROCOMPACT_CLEARED, MICROCOMPACT_FAILURES_FOLDED,
@@ -34,6 +35,12 @@ use pilotdeck_protocol::{
     },
 };
 use std::collections::{HashMap, HashSet};
+
+pub(crate) use tool_pair::{
+    IdSet, collect_tool_call_ids, collect_tool_result_ids, ensure_trailing_user_message,
+    is_direct_tool_result, is_media_reference_with_id, is_real_user_request_message,
+    strip_unpaired_tool_calls, strip_unpaired_tool_results,
+};
 
 /// TS `DEFAULT_PROTECTED_TOOL_RESULT_NAMES` (`protectedContext.ts`).
 pub(crate) const DEFAULT_PROTECTED_TOOL_RESULT_NAMES: &[&str] = &[
@@ -58,17 +65,6 @@ pub(crate) const DEFAULT_PROTECTED_TOOL_RESULT_NAMES: &[&str] = &[
     "TaskWait",
     "task_stop",
     "TaskStop",
-];
-
-pub(crate) const CONTINUATION_TEXT: &str =
-    "[system: the conversation above has been compacted. please continue with the current task.]";
-
-pub(crate) const INTERNAL_USER_TEXT_PREFIXES: &[&str] = &[
-    "<compact-boundary",
-    "<snip-boundary",
-    "<memory-context>",
-    "<internal-compaction-control",
-    "<hook_context",
 ];
 
 pub(crate) static UNDEFINED: JsValue = JsValue::Undefined;
@@ -230,129 +226,6 @@ pub(crate) fn collect_tool_names_by_call_id(messages: &[JsValue]) -> HashMap<JsS
     names
 }
 
-/// JS `Set` with insertion order retained for `Array.from(set)`.
-#[derive(Default)]
-pub(crate) struct IdSet {
-    order: Vec<JsString>,
-    seen: HashSet<JsString>,
-}
-
-impl IdSet {
-    pub(crate) fn insert(&mut self, id: JsString) {
-        if self.seen.insert(id.clone()) {
-            self.order.push(id);
-        }
-    }
-
-    pub(crate) fn contains(&self, id: &JsString) -> bool {
-        self.seen.contains(id)
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &JsString> {
-        self.order.iter()
-    }
-}
-
-pub(crate) fn collect_tool_call_ids(messages: &[JsValue]) -> IdSet {
-    let mut ids = IdSet::default();
-    for message in messages {
-        if !is_role(message, "assistant") {
-            continue;
-        }
-        for block in content(message) {
-            if is_block(block, "tool_call")
-                && let Some(id) = string_field(block, "id")
-            {
-                ids.insert(id.clone());
-            }
-        }
-    }
-    ids
-}
-
-pub(crate) fn is_direct_tool_result(block: &JsValue) -> bool {
-    is_block(block, "tool_result") || is_block(block, "tool_result_reference")
-}
-
-pub(crate) fn is_media_reference_with_id(block: &JsValue) -> bool {
-    is_block(block, "media_reference")
-        && string_field(block, "toolCallId").is_some_and(|id| !id.is_empty())
-}
-
-pub(crate) fn collect_tool_result_ids(messages: &[JsValue]) -> IdSet {
-    let mut ids = IdSet::default();
-    for message in messages {
-        if !is_role(message, "user") {
-            continue;
-        }
-        for block in content(message) {
-            if is_direct_tool_result(block)
-                && let Some(id) = string_field(block, "toolCallId")
-            {
-                ids.insert(id.clone());
-            }
-        }
-    }
-    ids
-}
-
-/// TS `stripUnpairedToolCalls`: drop tool calls without results, then drop
-/// every message with empty content. The trailing `.filter` runs over all
-/// roles and also removes messages that already had `content: []` before this
-/// pass, not only the ones this pass emptied.
-pub(crate) fn strip_unpaired_tool_calls(messages: &[JsValue], paired: &IdSet) -> Vec<JsValue> {
-    messages
-        .iter()
-        .map(|message| {
-            if !is_role(message, "assistant") {
-                return message.clone();
-            }
-            let blocks = content(message);
-            let filtered: Vec<JsValue> = blocks
-                .iter()
-                .filter(|block| {
-                    !is_block(block, "tool_call")
-                        || string_field(block, "id").is_some_and(|id| paired.contains(id))
-                })
-                .cloned()
-                .collect();
-            if filtered.len() == blocks.len() {
-                return message.clone();
-            }
-            replace_content(message, filtered)
-        })
-        .filter(|message| !content(message).is_empty())
-        .collect()
-}
-
-/// TS `stripUnpairedToolResults`: drop tool results / media references whose
-/// call is gone, then drop every message with empty content (see
-/// `strip_unpaired_tool_calls`).
-pub(crate) fn strip_unpaired_tool_results(messages: &[JsValue], paired: &IdSet) -> Vec<JsValue> {
-    messages
-        .iter()
-        .map(|message| {
-            if !is_role(message, "user") {
-                return message.clone();
-            }
-            let blocks = content(message);
-            let filtered: Vec<JsValue> = blocks
-                .iter()
-                .filter(|block| {
-                    (!is_direct_tool_result(block) && !is_media_reference_with_id(block))
-                        || string_field(block, "toolCallId").is_some_and(|id| paired.contains(id))
-                })
-                .cloned()
-                .collect();
-            if filtered.len() == blocks.len() {
-                return message.clone();
-            }
-            replace_content(message, filtered)
-        })
-        .filter(|message| !content(message).is_empty())
-        .collect()
-}
-
 pub(crate) fn replace_content(message: &JsValue, blocks: Vec<JsValue>) -> JsValue {
     let mut copy = match message {
         JsValue::Object(object) => object.clone(),
@@ -360,24 +233,6 @@ pub(crate) fn replace_content(message: &JsValue, blocks: Vec<JsValue>) -> JsValu
     };
     copy.insert("content".into(), JsValue::Array(blocks));
     JsValue::Object(copy)
-}
-
-/// TS `ensureTrailingUserMessage`: providers that reject assistant prefill get
-/// a plain continuation user message.
-pub(crate) fn ensure_trailing_user_message(mut messages: Vec<JsValue>) -> Vec<JsValue> {
-    if messages.is_empty() {
-        return messages;
-    }
-    if is_role(messages.last().expect("non-empty"), "assistant") {
-        messages.push(object([
-            ("role", JsValue::String("user".into())),
-            (
-                "content",
-                JsValue::Array(vec![text_block(JsString::from(CONTINUATION_TEXT))]),
-            ),
-        ]));
-    }
-    messages
 }
 
 /// TS `isToolResultOnly` from `SnipEngine.ts` (media references with a call id
@@ -403,33 +258,6 @@ pub(crate) fn is_tool_result_only_strict(message: &JsValue) -> bool {
     blocks
         .iter()
         .all(|block| is_block(block, "tool_result") || is_block(block, "tool_result_reference"))
-}
-
-pub(crate) fn is_real_user_request_message(message: &JsValue) -> bool {
-    if !is_role(message, "user") {
-        return false;
-    }
-    if field(message, "metadata").get("synthetic") == Some(&JsValue::Bool(true)) {
-        return false;
-    }
-    content(message).iter().any(|block| {
-        if is_direct_tool_result(block) || is_media_reference_with_id(block) {
-            return false;
-        }
-        if !is_block(block, "text") {
-            return true;
-        }
-        let text = string_field(block, "text").map(trim).unwrap_or_default();
-        if text.is_empty() {
-            return false;
-        }
-        if text.equals_str(CONTINUATION_TEXT) {
-            return false;
-        }
-        !INTERNAL_USER_TEXT_PREFIXES
-            .iter()
-            .any(|prefix| starts_with(&text, prefix))
-    })
 }
 
 pub(crate) fn has_memory_context(message: &JsValue) -> bool {
