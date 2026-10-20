@@ -8,7 +8,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The fields of `ThinkingPlan` the ported request builders consume.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct ThinkingPlan {
     pub(crate) body_patch: Option<JsValue>,
     pub(crate) thinking_type: Option<&'static str>,
@@ -93,7 +93,13 @@ pub(crate) fn resolve(
                 let needle: Vec<u16> = effort.units().to_vec();
                 efforts.units().windows(needle.len()).any(|s| s == needle)
             }
-            JsValue::Undefined | JsValue::Null => {
+            JsValue::Null => {
+                return Err(ModelStreamError::Thrown {
+                    name: "TypeError".into(),
+                    message: "Cannot read properties of null (reading 'includes')".into(),
+                });
+            }
+            JsValue::Undefined => {
                 return Err(type_error("includes"));
             }
             _ => {
@@ -288,5 +294,59 @@ pub(crate) fn throw_if_unsupported(plan: &ThinkingPlan) -> Result<(), ModelStrea
             message: reason.clone(),
         }),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+
+    fn resolve_model(model_json: &str) -> Result<ThinkingPlan, ModelStreamError> {
+        let request = parse_json(r#"{"thinking":{"mode":"high"}}"#).unwrap();
+        let provider = parse_json(r#"{"id":"openai-fixture","protocol":"openai"}"#).unwrap();
+        let model = parse_json(model_json).unwrap();
+        resolve(&request, &provider, &model)
+    }
+    fn message(error: &ModelStreamError) -> String {
+        String::from_utf16_lossy(error.message().units())
+    }
+
+    /// node probe (`fix1-probe-thinking.mts`): `settings?.efforts.includes`
+    /// distinguishes null from undefined, accepts a string by substring, and
+    /// reports a non-string receiver as "not a function".
+    #[test]
+    fn efforts_edge_types_match_the_typescript_receiver() {
+        let null = resolve_model(
+            r#"{"id":"m","thinking":{"state":"enabled","efforts":null,"format":"provider"}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            message(&null),
+            "Cannot read properties of null (reading 'includes')"
+        );
+        let undefined =
+            resolve_model(r#"{"id":"m","thinking":{"state":"enabled","format":"provider"}}"#)
+                .unwrap_err();
+        assert_eq!(
+            message(&undefined),
+            "Cannot read properties of undefined (reading 'includes')"
+        );
+        let number = resolve_model(
+            r#"{"id":"m","thinking":{"state":"enabled","efforts":3,"format":"provider"}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            message(&number),
+            "settings?.efforts.includes is not a function"
+        );
+        let substring = resolve_model(
+            r#"{"id":"m","thinking":{"state":"enabled","efforts":"xx-high-xx","format":"provider"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            substring.effort.as_ref().unwrap().to_utf8().unwrap(),
+            "high"
+        );
     }
 }

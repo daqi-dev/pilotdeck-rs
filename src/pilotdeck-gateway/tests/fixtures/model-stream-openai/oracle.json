@@ -2813,6 +2813,790 @@
    ]
   },
   {
+   "name": "stream-error-shapes",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"before\"},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"error\":{}}\n\n"
+      },
+      {
+       "text": "data: {\"error\":\"boom\"}\n\n"
+      },
+      {
+       "text": "data: {\"error\":[]}\n\n"
+      },
+      {
+       "text": "data: {\"error\":[\"boom\"]}\n\n"
+      },
+      {
+       "text": "data: {\"error\":null}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "before"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "before",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "before"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-rate-limit-hint",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down, try again in 1.5s\"}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"after rate limit\"},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "openai-fixture",
+      "model": "gpt-5.4"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "after rate limit"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "after rate limit",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "after rate limit"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 9,
+       "outputTokens": 2,
+       "totalTokens": 11
+      },
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-rate-limit-hint-fatal",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down, try again in 1.5s\"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "openai",
+       "protocol": "openai",
+       "code": "rate_limit_error",
+       "message": "slow down, try again in 1.5s",
+       "retryable": true,
+       "raw": {
+        "error": {
+         "type": "rate_limit_error",
+         "message": "slow down, try again in 1.5s"
+        }
+       },
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-overloaded",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"after overload\"},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "openai-fixture",
+      "model": "gpt-5.4"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "after overload"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "after overload",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "after overload"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 9,
+       "outputTokens": 2,
+       "totalTokens": 11
+      },
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-whitespace-fallbacks",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"   \",\"choices\":[{\"index\":\"1\",\"delta\":{\"content\":\"w\"}}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":\"0\",\"id\":\"call_ws\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"error\":{\"type\":\"   \",\"message\":\"   \"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "   ",
+       "choices": [
+        {
+         "index": "1",
+         "delta": {
+          "content": "w"
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "w",
+      "raw": {
+       "id": "   ",
+       "choices": [
+        {
+         "index": "1",
+         "delta": {
+          "content": "w"
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_ws",
+      "name": "lookup",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "tool_calls": [
+           {
+            "index": "0",
+            "id": "call_ws",
+            "function": {
+             "name": "lookup",
+             "arguments": "{}"
+            }
+           }
+          ]
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_ws",
+      "delta": "{}",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "tool_calls": [
+           {
+            "index": "0",
+            "id": "call_ws",
+            "function": {
+             "name": "lookup",
+             "arguments": "{}"
+            }
+           }
+          ]
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "OpenAI stream request failed.",
+      "error": {
+       "provider": "openai",
+       "protocol": "openai",
+       "code": "provider_error",
+       "message": "OpenAI stream request failed.",
+       "retryable": false,
+       "raw": {
+        "error": {
+         "type": "   ",
+         "message": "   "
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "http-429-retry-after",
    "target": "mock",
    "replies": [
@@ -3822,6 +4606,190 @@
    ]
   },
   {
+   "name": "tool-call-invalid-json",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad2\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{{\"}}]},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1f6773028b81b537cb7ac44c86ab4a50b54b5d4a55139187263f8cb59d3e9268",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "tool_calls": [
+           {
+            "index": 0,
+            "id": "call_bad2",
+            "function": {
+             "name": "lookup",
+             "arguments": "{{"
+            }
+           }
+          ]
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "call_bad2",
+      "name": "lookup",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "tool_calls": [
+           {
+            "index": 0,
+            "id": "call_bad2",
+            "function": {
+             "name": "lookup",
+             "arguments": "{{"
+            }
+           }
+          ]
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "call_bad2",
+      "delta": "{{",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "tool_calls": [
+           {
+            "index": 0,
+            "id": "call_bad2",
+            "function": {
+             "name": "lookup",
+             "arguments": "{{"
+            }
+           }
+          ]
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "openai",
+       "protocol": "openai",
+       "code": "invalid_tool_arguments",
+       "message": "OpenAI stream tool call arguments are not valid JSON.",
+       "retryable": true,
+       "raw": {
+        "id": "chatcmpl-fixture",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "gpt-5.4",
+        "choices": [
+         {
+          "index": 0,
+          "delta": {},
+          "finish_reason": "tool_calls"
+         }
+        ]
+       },
+       "streamInterruption": {
+        "phase": "tool_call",
+        "activeToolCalls": [
+         {
+          "id": "call_bad2",
+          "name": "lookup",
+          "argumentChars": 2
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "tool-call-jsonrepair",
    "target": "mock",
    "replies": [
@@ -4596,6 +5564,187 @@
          "delta": {
           "role": "assistant",
           "content": "paired"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 9,
+       "outputTokens": 2,
+       "totalTokens": 11
+      },
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ],
+       "usage": {
+        "prompt_tokens": 9,
+        "completion_tokens": 2,
+        "total_tokens": 11
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "request-tool-id-whitespace",
+   "target": "mock",
+   "request": {
+    "messages": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "   ",
+        "name": "lookup",
+        "input": {}
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "   ",
+        "content": [
+         {
+          "type": "text",
+          "text": "ok"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ws\"},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"chatcmpl-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_0_0\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"call_0_0\",\"content\":\"ok\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Look up\",\"parameters\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}},{\"type\":\"function\",\"function\":{\"name\":\"calc\",\"description\":\"Calculate\",\"parameters\":{\"type\":\"array\",\"items\":{}}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"description\":\"Final answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"text\":{\"const\":\"x\",\"type\":\"string\"}}},\"strict\":false}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "openai-fixture",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "1d0fb0301ed59ffd9e4debcf4235bf465ccb4f28760adfb1c75e1e26c74dcd57",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "ws"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ws",
+      "raw": {
+       "id": "chatcmpl-fixture",
+       "object": "chat.completion.chunk",
+       "created": 1700000000,
+       "model": "gpt-5.4",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "ws"
          },
          "finish_reason": null
         }

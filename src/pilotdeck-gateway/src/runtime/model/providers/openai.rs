@@ -1205,8 +1205,15 @@ pub(crate) fn normalize_stream_event(
     state: &mut StreamState,
 ) -> Result<Vec<JsValue>, ModelStreamError> {
     let chunk = as_record(raw);
+    // Baseline cc7c4e6: `const error = asRecord(chunk.error);
+    // if (Object.keys(error).length > 0)`. This is deliberately not
+    // `if (chunk.error)`: `{}`, `"boom"`, `[]` and `null` are swallowed by TS
+    // too (node probe `fix1-probe.mts`; fixtures `stream-error-shapes`).
     let error = as_record(field(chunk, "error"));
     if error.as_object().is_some_and(|error| !error.is_empty()) {
+        // No `retryAfterMs`: only anthropic/stream.ts parses a hint out of the
+        // message. openai/stream.ts does not, so the retry loop uses the
+        // header/default backoff (`stream-error-rate-limit-hint` pins it).
         let code = read_non_empty_string(field(error, "type"))
             .or_else(|| read_non_empty_string(field(error, "code")))
             .unwrap_or_else(|| "provider_error".into());
@@ -1326,12 +1333,20 @@ mod tests {
     fn chunk(value: &str) -> JsValue {
         parse_json(value).unwrap()
     }
-    fn set_limit(limit: usize) {
-        crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.set(limit));
+    /// Restores the previous `STRING_LIMIT` on drop, including on panic: a
+    /// leaked tiny limit would make later tests in this thread fail spuriously.
+    struct LimitGuard(usize);
+    impl LimitGuard {
+        fn set(limit: usize) -> Self {
+            let previous = crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.get());
+            crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.set(limit));
+            Self(previous)
+        }
     }
-    fn reset_limit() {
-        crate::runtime::model::http::STRING_LIMIT
-            .with(|cell| cell.set(crate::runtime::model::count_http::MAX_STRING_LENGTH));
+    impl Drop for LimitGuard {
+        fn drop(&mut self) {
+            crate::runtime::model::http::STRING_LIMIT.with(|cell| cell.set(self.0));
+        }
     }
     fn tool_key() -> JsString {
         tool_call_key(0.0, 0.0)
@@ -1349,10 +1364,10 @@ mod tests {
         let second = chunk(
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"lookup2","arguments":"d"}}]}}]}"#,
         );
-        set_limit(3);
+        let _limit = LimitGuard::set(3);
         normalize_stream_event(&first, &mut state).unwrap();
         let error = normalize_stream_event(&second, &mut state).unwrap_err();
-        reset_limit();
+
         assert!(error.name().equals_str("RangeError"), "{error:?}");
         assert!(error.message().equals_str("Invalid string length"));
         let call = state.get(&tool_key()).expect("call survives the throw");
@@ -1373,10 +1388,10 @@ mod tests {
         let mut state = StreamState::default();
         let first = chunk(r#"{"choices":[{"index":0,"delta":{"reasoning_content":"abc"}}]}"#);
         let second = chunk(r#"{"choices":[{"index":0,"delta":{"reasoning_content":"d"}}]}"#);
-        set_limit(3);
+        let _limit = LimitGuard::set(3);
         normalize_stream_event(&first, &mut state).unwrap();
         let error = normalize_stream_event(&second, &mut state).unwrap_err();
-        reset_limit();
+
         assert!(error.name().equals_str("RangeError"), "{error:?}");
         assert!(error.message().equals_str("Invalid string length"));
         assert_eq!(
