@@ -3,6 +3,7 @@
 //! under `resources/PilotDeck/src/tool/builtin`; filesystem paths are resolved
 //! lexically in UTF-16 first so path identity and state keys keep the original
 //! wire spelling, and only the OS boundary uses an `OsStr`.
+pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
 pub mod glob;
