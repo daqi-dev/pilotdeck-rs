@@ -1,6 +1,6 @@
 # Compaction snip / micro TS fixtures
 
-固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。被测 TS 入口：`src/context/compaction/SnipEngine.ts` 与 `src/context/compaction/MicroCompactionEngine.ts`，连同 `toolPairIntegrity.ts`、`protectedContext.ts`、`TokenBudgetManager.ts`、`tokenizer.ts` 与 `model/protocol/toolResultContent.ts` 的 import 传递闭包。`oracle.json` 记录整棵 `src` 的来源守卫（`bindSourceTree`）、闭包内每个文件的 SHA-256、en-US locale 断言、探针原值，以及 60 个场景的真实 TS 输入/输出。
+固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。被测 TS 入口：`src/context/compaction/SnipEngine.ts` 与 `src/context/compaction/MicroCompactionEngine.ts`，连同 `toolPairIntegrity.ts`、`protectedContext.ts`、`TokenBudgetManager.ts`、`tokenizer.ts` 与 `model/protocol/toolResultContent.ts` 的 import 传递闭包。`oracle.json` 记录整棵 `src` 的来源守卫（`bindSourceTree`）、闭包内每个文件的 SHA-256、en-US locale 断言、探针原值，以及 64 个场景的真实 TS 输入/输出。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -14,7 +14,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction_snip_micro
 
 生成器先跑 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`（显式 Git 绝对路径、HEAD 固定、已跟踪树干净、整棵 `src` 逐 blob 比对），再按 import 传递闭包复算 `sourceSha256`。每次运行在输出目录下 `mkdtemp` 一个 `.generate-*` 临时目录，`oracle.json.tmp` 写在该目录内再 rename 到 `oracle.json`（同一文件系统）；清理前先用 `assertOwnedScratch` 确认目标是本次的直接 `.generate-*` 目录。生成器连跑两次逐字节一致（没有随机值；token 数与消息字节都来自真实 TS）。
 
-`oracle.json.scenarios[]`（60 组，Rust 逐场景按序序列化比较）：
+`oracle.json.scenarios[]`（64 组，Rust 逐场景按序序列化比较）：
 
 | 场景 | 覆盖 |
 |---|---|
@@ -45,6 +45,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction_snip_micro
 | target-tokens-quirks / target-total-tokens-quirks | targetTokens 的 NaN、0、-5、+Infinity、2.7 与 targetTotalTokens 的 NaN、2.7、-3、+Infinity：NaN/Infinity 经 `Math.max` 保持不约束，0/负数/小数走 constrained 裁剪 |
 | unknown-item-target-quirks | tool_result 含未知 `audio` item 时（原始 JsValue，超出 canonical typed 消息可达范围），targetTokens 取 10/14/15/16/17/18/20/24 的 8 个尾部裁剪结果 |
 | micro-budget-quirks | trimToTokens=NaN、trimToBytes=NaN（各重写 2 条）、keepLatest=NaN / -Infinity（重写 3 条） |
+| real-user-request-predicate / strip-unpaired-and-trailing / empty-and-user-tail / no-messages | 直接调用 `toolPairIntegrity.ts` 导出（#342：gateway context 范围内只留 `compaction/tool_pair.rs` 一份，snip / prepare 共用；pilotdeck-agent `turn.rs` 另有处理 `ProjectedMessage`/`PortResult` 的 sidecar 侧变体，不在本 PR 范围；session replay 移植的是 `AgentTranscriptProjections` 的私有副本，其 media_reference 规则不同，不在本模块范围）：5 个内部前缀与 continuation 哨兵（含 JS trim 空白、BOM、全角空格、孤立代理项）、`synthetic` 必须是布尔 true、空 toolCallId 的 media_reference、Set 首次插入序、所有角色的空消息被删、末尾 assistant 补哨兵 |
 | idempotent-second-pass / emergency-tighten-preview | 第二次跑不再改；768→256 应急预算可收紧已有 preview |
 
 数值怪异场景只在 `options` / `callOptions` / `inputOptions` 上过 `jsonSafe`，把 NaN/±Infinity 记成 `{$:'NaN'}` / `{$:'Infinity'}` / `{$:'-Infinity'}`；input 与 result 保持原样。Rust 回放只在解析 option 字段时解码这些标签（`optional_f64`），遇到未知标签直接 panic，不会静默退化成 `None`。

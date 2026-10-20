@@ -554,6 +554,94 @@ snip('constrained-custom-head-tail', turns(10), { keepHeadTurns: 1, keepTailTurn
   }
 }
 
+// ------------------------------------------------------- toolPair cases (#342)
+// toolPairIntegrity.ts is the single shared module behind SnipEngine,
+// CompactionEngine and DefaultContextRuntime; Rust keeps one port of it
+// (runtime/context/compaction/tool_pair.rs). These cases call the real TS
+// exports directly so the predicate and the strip helpers are pinned on their
+// own, not only through snip.
+const {
+  collectToolCallIds,
+  collectToolResultIds,
+  ensureTrailingUserMessage,
+  isRealUserRequestMessage,
+  stripUnpairedToolCalls,
+  stripUnpairedToolResults,
+} = await load('src/context/compaction/toolPairIntegrity.ts');
+function toolPair(name: string, input: any[]) {
+  const callIds = collectToolCallIds(input);
+  const resultIds = collectToolResultIds(input);
+  const result = {
+    realUserRequest: input.map((message: any) => isRealUserRequestMessage(message)),
+    toolCallIds: [...callIds],
+    toolResultIds: [...resultIds],
+    withoutUnpairedCalls: stripUnpairedToolCalls(input, resultIds),
+    withoutUnpairedResults: stripUnpairedToolResults(input, callIds),
+    trailing: ensureTrailingUserMessage(input),
+  };
+  scenarios.push({ name, engine: 'toolPair', input, result });
+  return result;
+}
+{
+  const continuation =
+    '[system: the conversation above has been compacted. please continue with the current task.]';
+  const input = [
+    user('real request'),
+    user('<compact-boundary turns="1" />'),
+    user('<snip-boundary turns="2" />'),
+    user('<memory-context>remember</memory-context>'),
+    user('<internal-compaction-control kind="x" />'),
+    user('<hook_context>h</hook_context>'),
+    user(continuation),
+    user(`  \t${continuation}\n`),
+    user('﻿ <compact-boundary />'),
+    user('　 '),
+    user(''),
+    user('<compact-boundaryX is still internal by prefix'),
+    user(' <hook_contex near miss'),
+    user('\ud800 lone surrogate'),
+    synthetic('synthetic request'),
+    { role: 'user', content: [t('string synthetic')], metadata: { synthetic: 'true' } },
+    { role: 'user', content: [{ type: 'image', source: 'base64', data: 'AA==', mimeType: 'image/png' }] },
+    { role: 'user', content: [{ type: 'media_reference', toolCallId: '', mediaId: 'm' }] },
+    { role: 'user', content: [{ type: 'media_reference', toolCallId: 'c9', mediaId: 'm' }] },
+    { role: 'user', content: [{ type: 'tool_result_reference', toolCallId: 'c1', preview: 'p' }, t('<snip-boundary />')] },
+    { role: 'user', content: [result('c1', 'ok'), t('follow-up')] },
+    assistant('<compact-boundary from assistant'),
+  ];
+  const output = toolPair('real-user-request-predicate', input);
+  assert.deepEqual(
+    output.realUserRequest.slice(1, 9),
+    [false, false, false, false, false, false, false, false],
+    'negative control: every internal prefix and the continuation sentinel are not real requests',
+  );
+  assert.equal(output.realUserRequest[0], true, 'negative control: a plain request is real');
+  assert.equal(output.realUserRequest[14], false, 'negative control: synthetic=true is not a real request');
+  assert.equal(output.realUserRequest[15], true, 'negative control: synthetic must be boolean true');
+}
+{
+  const input = [
+    user('request'),
+    { role: 'assistant', content: [t('calling'), call('c1', 'bash'), call('c2', 'grep'), call('c1', 'bash')] },
+    { role: 'user', content: [result('c1', 'one'), result('c3', 'orphan')] },
+    { role: 'assistant', content: [call('c4', 'read_file')] },
+    { role: 'user', content: [{ type: 'media_reference', toolCallId: 'c5', mediaId: 'm' }] },
+    { role: 'user', content: [{ type: 'media_reference', toolCallId: '', mediaId: 'm2' }] },
+    { role: 'assistant', content: [] },
+    { role: 'system', content: [] },
+    assistant('done'),
+  ];
+  const output = toolPair('strip-unpaired-and-trailing', input);
+  assert.deepEqual(output.toolCallIds, ['c1', 'c2', 'c4'], 'negative control: Set keeps first-insertion order');
+  assert.ok(
+    !output.withoutUnpairedCalls.some((message: any) => message.content.length === 0),
+    'negative control: empty messages of every role are dropped',
+  );
+  assert.equal(output.trailing.length, input.length + 1, 'negative control: trailing assistant gets a sentinel');
+}
+toolPair('empty-and-user-tail', [user('only request')]);
+toolPair('no-messages', []);
+
 // ------------------------------------------------------------ probes (RESULT)
 const probes = {
   locale,
