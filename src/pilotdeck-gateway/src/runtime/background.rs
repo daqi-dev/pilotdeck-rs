@@ -32,8 +32,9 @@
 //!   code), fires its completion event and releases its waiters. There is no
 //!   process to signal, so no grace period applies.
 //!
-//! Cancellation: `stop`'s TERM → grace → KILL escalation and the disposal
-//! body run as runtime-owned tasks. Dropping the caller's future (host abort,
+//! Cancellation: `stop` marks the task interrupted and sends SIGTERM before
+//! its first await; the grace → KILL escalation and the disposal body then
+//! run as runtime-owned tasks. Dropping the caller's future (host abort,
 //! operation deadline) does not cancel them, like the baseline's `rt.stop()`
 //! / `dispose()` promises that keep running after the tool call is gone.
 use crate::{
@@ -653,16 +654,19 @@ impl BackgroundTaskRuntime {
         task: BackgroundBashTask,
         spec: StartTaskSpec,
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
-        let new_entry = |task: BackgroundBashTask, never_exits: bool| Entry {
-            state: Mutex::new(EntryState {
-                task,
-                output: OutputStore::new(DEFAULT_MEMORY_BYTES),
-                child: None,
-            }),
-            done: watch::channel(false).0,
-            closed: watch::channel(false).0,
-            never_exits,
-        };
+        // The child state is installed before the entry is published, so a
+        // concurrent `stop` can never observe a running entry with no handle.
+        let new_entry =
+            |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| Entry {
+                state: Mutex::new(EntryState {
+                    task,
+                    output: OutputStore::new(DEFAULT_MEMORY_BYTES),
+                    child,
+                }),
+                done: watch::channel(false).0,
+                closed: watch::channel(false).0,
+                never_exits,
+            };
         let inherited;
         let resolve_env: &[(JsString, JsString)] = match &spec.env {
             Some(env) => env,
@@ -700,11 +704,17 @@ impl BackgroundTaskRuntime {
             Err((true, message)) => {
                 let mut task = task;
                 task.status = TaskStatus::Running;
-                let entry = self.insert(&task_id, new_entry(task, true));
-                entry.state.lock().unwrap().child = Some(ChildState {
-                    pid: None,
-                    exited: false,
-                });
+                let entry = self.insert(
+                    &task_id,
+                    new_entry(
+                        task,
+                        true,
+                        Some(ChildState {
+                            pid: None,
+                            exited: false,
+                        }),
+                    ),
+                );
                 // `start` resolves before the error event lands.
                 let snapshot = entry.snapshot();
                 let text = concat(&[&units("error: "), message.units(), &units("\n")]);
@@ -715,7 +725,7 @@ impl BackgroundTaskRuntime {
                 let mut task = task;
                 task.status = TaskStatus::Failed;
                 task.ended_at = Some((self.inner.now)());
-                let entry = self.insert(&task_id, new_entry(task, false));
+                let entry = self.insert(&task_id, new_entry(task, false, None));
                 let text = concat(&[&units("spawn error: "), message.units(), &units("\n")]);
                 entry.append(String::from_utf16_lossy(text.units()).as_bytes());
                 self.inner.settle(&entry);
@@ -727,11 +737,17 @@ impl BackgroundTaskRuntime {
                 let mut task = task;
                 task.status = TaskStatus::Running;
                 task.pid = pid;
-                let entry = self.insert(&task_id, new_entry(task, false));
-                entry.state.lock().unwrap().child = Some(ChildState {
-                    pid: leader,
-                    exited: false,
-                });
+                let entry = self.insert(
+                    &task_id,
+                    new_entry(
+                        task,
+                        false,
+                        Some(ChildState {
+                            pid: leader,
+                            exited: false,
+                        }),
+                    ),
+                );
                 let stdout = child.stdout.take();
                 let stderr = child.stderr.take();
                 tokio::spawn(supervise(
@@ -778,8 +794,18 @@ impl BackgroundTaskRuntime {
             JsValue::Undefined | JsValue::Null => DEFAULT_GRACE_MS,
             value => js_value::to_number(value).unwrap_or(f64::NAN),
         };
-        // Runtime-owned: the KILL must not depend on this call being polled.
-        let escalation = tokio::spawn(escalate(Arc::clone(&self.inner), entry, grace));
+        if entry.never_exits {
+            // Deliberate deviation (module docs): no exit will ever come.
+            let escalation = tokio::spawn(settle_never_exits(Arc::clone(&self.inner), entry));
+            let _ = escalation.await;
+            return Ok(());
+        }
+        // Like the baseline, TERM is sent while the caller is running; the
+        // grace → KILL escalation then lives in a runtime-owned task, so
+        // dropping this future (host abort / operation deadline) cannot
+        // cancel it.
+        entry.terminate(rustix::process::Signal::TERM);
+        let escalation = tokio::spawn(escalate(entry, grace));
         let _ = escalation.await;
         Ok(())
     }
@@ -870,23 +896,10 @@ impl BackgroundTaskRuntime {
     }
 }
 
-/// The body of `stop` after `interrupted` is set: SIGTERM, wait `grace`,
-/// SIGKILL, then wait for the exit to be recorded.
-async fn escalate(inner: Arc<Inner>, entry: Arc<Entry>, grace: f64) {
-    if entry.never_exits {
-        // Deliberate deviation (module docs): no exit will ever come.
-        {
-            let mut state = entry.state.lock().unwrap();
-            if state.task.status != TaskStatus::Running {
-                return;
-            }
-            state.task.status = TaskStatus::Cancelled;
-            state.task.ended_at = Some((inner.now)());
-        }
-        inner.settle(&entry);
-        return;
-    }
-    entry.terminate(rustix::process::Signal::TERM);
+/// Runtime-owned tail of `stop`: wait `grace`, SIGKILL the group, then wait
+/// for the exit to be recorded. It runs in its own task so dropping the
+/// caller's future cannot cancel the escalation.
+async fn escalate(entry: Arc<Entry>, grace: f64) {
     tokio::select! {
         biased;
         () = entry.wait_done() => {}
@@ -895,6 +908,21 @@ async fn escalate(inner: Arc<Inner>, entry: Arc<Entry>, grace: f64) {
         }
     }
     entry.wait_done().await;
+}
+
+/// Runtime-owned tail of `stop` for a task whose spawn error Node reports
+/// asynchronously: there is no process to signal and no `exit` will ever
+/// arrive, so settle it as cancelled instead of hanging (module docs).
+async fn settle_never_exits(inner: Arc<Inner>, entry: Arc<Entry>) {
+    {
+        let mut state = entry.state.lock().unwrap();
+        if state.task.status != TaskStatus::Running {
+            return;
+        }
+        state.task.status = TaskStatus::Cancelled;
+        state.task.ended_at = Some((inner.now)());
+    }
+    inner.settle(&entry);
 }
 
 impl Inner {
