@@ -120,6 +120,9 @@ pub(crate) fn regenerates_identically(fixture: &str) {
         .arg(fixtures.join("generate.mts"))
         .arg(&scratch)
         .env("PDRS_BASELINE", &baseline)
+        // Generators that pin ICU's default locale (hooks-runtime) need it.
+        .env("LANG", "en_US.UTF-8")
+        .env_remove("LC_ALL")
         .output()
         .unwrap();
     assert!(
@@ -130,7 +133,12 @@ pub(crate) fn regenerates_identically(fixture: &str) {
     );
     let generated = fs::read(scratch.join("oracle.json")).unwrap();
     let committed = fs::read(fixtures.join("oracle.json")).unwrap();
-    assert_eq!(generated, committed, "{fixture}/oracle.json");
+    // Keep the scratch on mismatch so the differing bytes can be inspected.
+    assert!(
+        generated == committed,
+        "{fixture}/oracle.json differs from the regenerated {}",
+        scratch.join("oracle.json").display()
+    );
     assert!(
         !scratch.join("oracle.json.tmp").exists(),
         "generator left a temporary file behind"

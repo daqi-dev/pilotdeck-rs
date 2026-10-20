@@ -1041,3 +1041,10 @@ fn poll_ready_status(
         std::task::Poll::Pending => panic!("synchronous submit must be ready"),
     }
 }
+
+/// Regenerates the oracle from the real TS baseline and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn async_hooks_fixtures_regenerate_identically_from_ts() {
+    baseline::regenerates_identically("async-hooks");
+}

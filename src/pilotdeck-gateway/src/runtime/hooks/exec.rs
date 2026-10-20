@@ -980,12 +980,18 @@ pub struct HttpHookExecutor {
         hyper_util::client::legacy::connect::HttpConnector,
         http_body_util::Full<bytes::Bytes>,
     >,
-    /// Undici's default `headersTimeout`/`bodyTimeout` is 300 s. Tests inject
-    /// a shorter value; production keeps the TS default.
+    /// undici `headersTimeout` (per dispatch, so per redirect hop) and
+    /// `bodyTimeout` (idle gap between body frames). Tests inject a shorter
+    /// value; production keeps the TS value.
     timeout: Duration,
+    body_limit: usize,
 }
-/// TS `fetch` (undici) default header/body timeout.
-pub const HTTP_TIMEOUT: Duration = Duration::from_secs(300);
+/// The TS CLI replaces fetch's global dispatcher at startup
+/// (`cli/pilotdeck.ts:28` → `cli/proxy.ts:108-111,149-160`):
+/// `new undici.Agent({ headersTimeout, bodyTimeout:
+/// UNDICI_TRANSPORT_TIMEOUT_MS })`, i.e. 600 000 ms
+/// (`model/streaming/streamModel.ts:56`), not undici's 300 s default.
+pub const HTTP_TIMEOUT: Duration = Duration::from_secs(600);
 impl Default for HttpHookExecutor {
     fn default() -> Self {
         Self::new()
@@ -999,7 +1005,18 @@ impl HttpHookExecutor {
         let client =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
                 .build_http();
-        Self { client, timeout }
+        Self {
+            client,
+            timeout,
+            body_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
+        }
+    }
+    /// Test hook: a smaller response-body byte limit than Node's
+    /// `MAX_STRING_LENGTH`, so the over-limit path is cheap to exercise.
+    #[doc(hidden)]
+    pub fn with_body_limit(mut self, limit: usize) -> Self {
+        self.body_limit = limit;
+        self
     }
     pub fn timeout(&self) -> Duration {
         self.timeout
@@ -1021,15 +1038,15 @@ impl HttpHookExecutor {
         let url_text = String::from_utf16_lossy(options.url.units());
         let url = url::Url::parse(&url_text)
             .map_err(|_| JsString::from(format!("Failed to parse URL from {url_text}")))?;
-        if url.scheme() != "http" {
-            return Err(JsString::from(format!(
-                "Unsupported HTTP hook URL scheme: {}",
-                url.scheme()
-            )));
+        // https is a known gap (no TLS connector yet, #345). Other schemes
+        // are fetch network errors, reported at send like the TS side.
+        if url.scheme() == "https" {
+            return Err(JsString::from("Unsupported HTTP hook URL scheme: https"));
         }
         // `fetch` builds `Headers` from the plain object (node probes in
-        // _tmp/20261019-a67-pr4/probe-p1/): the WebIDL record conversion makes
-        // every value a ByteString first; then undici's `appendHeader` runs per
+        // _tmp/20261019-a67-pr4/probe-p1/ and probe-r3/headers-*.mjs): the
+        // WebIDL record conversion makes every key, then its value, a
+        // ByteString first (entry by entry, before any append); then undici's `appendHeader` runs per
         // entry in object key order — trim HTTP whitespace, reject an invalid
         // name, reject a value holding NUL/CR/LF, and join a name that differs
         // only in case onto the first one with ", ". All of this happens while
@@ -1037,9 +1054,9 @@ impl HttpHookExecutor {
         // the wire rejects (e.g. 0x01, 0x7f) only fails at send: `fetch failed`.
         let mut entries = Vec::with_capacity(headers.len());
         for (name, value) in headers {
-            entries.push((name, header_value_bytes(&value)?));
+            entries.push((byte_string(&name)?, byte_string(&value)?));
         }
-        let mut merged: Vec<(hyper::header::HeaderName, String, Vec<u8>)> =
+        let mut merged: Vec<(hyper::header::HeaderName, Vec<u8>, Vec<u8>)> =
             Vec::with_capacity(entries.len());
         for (name, bytes) in entries {
             let is_ws = |b: &u8| matches!(b, b'\t' | b'\n' | b'\r' | b' ');
@@ -1049,12 +1066,12 @@ impl HttpHookExecutor {
                 .rposition(|b| !is_ws(b))
                 .map_or(start, |i| i + 1);
             let bytes = &bytes[start..end];
-            let header_name =
-                hyper::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-                    JsString::from(format!(
-                        "Headers.append: \"{name}\" is an invalid header name."
-                    ))
-                })?;
+            let header_name = hyper::header::HeaderName::from_bytes(&name).map_err(|_| {
+                let text: String = name.iter().map(|b| char::from(*b)).collect();
+                JsString::from(format!(
+                    "Headers.append: \"{text}\" is an invalid header name."
+                ))
+            })?;
             if bytes.iter().any(|b| matches!(b, 0 | b'\n' | b'\r')) {
                 let text: String = bytes.iter().map(|b| char::from(*b)).collect();
                 return Err(JsString::from(format!(
@@ -1084,11 +1101,13 @@ impl HttpHookExecutor {
                 .map_err(|_| JsString::from("fetch failed"))?;
             wire_headers.append(name, value);
         }
-        // Default `fetch` follows redirects (undici, 20 hops); every hop shares
-        // the one abort signal and the one headers deadline below. Only plain
-        // http is wired (no TLS connector), so a hop to https reports the same
-        // scheme error as an https hook URL.
+        // Default `fetch` follows redirects (undici, 20 hops). Every hop is its
+        // own dispatch with its own headers timer (undici `headersTimeout`,
+        // probe-r3/timeouts-3s.mjs); the abort signal spans the whole fetch.
+        // Only plain http is wired (no TLS connector), so a hop to https
+        // reports the same scheme error as an https hook URL.
         let client = &self.client;
+        let headers_timeout = self.timeout;
         let send = crate::fetch_redirect::follow(
             url,
             hyper::Method::POST,
@@ -1100,7 +1119,10 @@ impl HttpHookExecutor {
                 let sent = (scheme == "http").then(|| client.request(request));
                 async move {
                     match sent {
-                        Some(sent) => sent.await.map_err(|_| JsString::from("fetch failed")),
+                        Some(sent) => tokio::time::timeout(headers_timeout, sent)
+                            .await
+                            .map_err(|_| JsString::from("fetch failed"))?
+                            .map_err(|_| JsString::from("fetch failed")),
                         None => Err(JsString::from(format!(
                             "Unsupported HTTP hook URL scheme: {scheme}"
                         ))),
@@ -1108,40 +1130,38 @@ impl HttpHookExecutor {
                 }
             },
         );
-        let response = if let Some(signal) = &options.signal {
-            tokio::select! {
-                response = tokio::time::timeout(self.timeout, send) => match response {
-                    Ok(response) => response?,
-                    Err(_) => return Err("fetch failed".into()),
-                },
+        let response = match &options.signal {
+            Some(signal) => tokio::select! {
+                response = send => response?,
                 _ = signal.cancelled() => return Err("This operation was aborted".into()),
-            }
-        } else {
-            tokio::time::timeout(self.timeout, send)
-                .await
-                .map_err(|_| JsString::from("fetch failed"))??
+            },
+            None => send.await?,
         };
         let status = response.status();
         let ok = status.is_success();
-        let body = {
-            use http_body_util::BodyExt;
-            let collect = response.into_body().collect();
-            if let Some(signal) = &options.signal {
-                tokio::select! {
-                    body = tokio::time::timeout(self.timeout, collect) => match body {
-                        Ok(body) => body.map_err(|_| JsString::from("fetch failed"))?,
-                        Err(_) => return Err("fetch failed".into()),
-                    },
-                    _ = signal.cancelled() => return Err("This operation was aborted".into()),
-                }
-            } else {
-                tokio::time::timeout(self.timeout, collect)
-                    .await
-                    .map_err(|_| JsString::from("fetch failed"))?
-                    .map_err(|_| JsString::from("fetch failed"))?
+        // `response.text()`: undici `bodyTimeout` is an idle timer between
+        // frames, and a body failure after the headers is `terminated`
+        // (probe-r3/timeouts-3s.mjs, body-reset.mjs). Node cannot build a
+        // string past MAX_STRING_LENGTH bytes (probe-r3/body-cap.mjs).
+        let read = crate::fetch_redirect::read_body(
+            response.into_body(),
+            self.body_limit,
+            Some(self.timeout),
+        );
+        let body = match &options.signal {
+            Some(signal) => tokio::select! {
+                body = read => body,
+                _ = signal.cancelled() => return Err("This operation was aborted".into()),
+            },
+            None => read.await,
+        }
+        .map_err(|error| match error {
+            crate::fetch_redirect::BodyError::TooLong => {
+                JsString::from(crate::fetch_redirect::STRING_TOO_LONG)
             }
-        };
-        let stdout = String::from_utf8_lossy(&body.to_bytes()).into_owned();
+            crate::fetch_redirect::BodyError::Terminated => JsString::from("terminated"),
+        })?;
+        let stdout = String::from_utf8_lossy(&body).into_owned();
         Ok(ExecutionResult {
             output: parse_hook_output(&stdout),
             stdout: stdout.into(),
@@ -1160,9 +1180,10 @@ impl HttpHookExecutor {
     }
 }
 
-/// Node's `Headers` converts values to ByteStrings: every UTF-16 code unit
-/// must be <= 0xFF, and the wire bytes are those code units (latin1), not UTF-8.
-fn header_value_bytes(value: &JsString) -> Result<Vec<u8>, JsString> {
+/// WebIDL ByteString conversion of a header record key or value: every
+/// UTF-16 code unit must be <= 0xFF (a lone surrogate fails too), and the
+/// wire bytes are those code units (latin1), not UTF-8.
+fn byte_string(value: &JsString) -> Result<Vec<u8>, JsString> {
     let mut bytes = Vec::with_capacity(value.units().len());
     for (index, unit) in value.units().iter().enumerate() {
         if *unit > 0xFF {
@@ -1179,7 +1200,7 @@ fn resolve_headers(
     headers: Option<&JsObject>,
     allowed_env_vars: Option<&[JsString]>,
     env: Option<&JsObject>,
-) -> Result<Vec<(String, JsString)>, JsString> {
+) -> Result<Vec<(JsString, JsString)>, JsString> {
     let owned_env;
     let env = match env {
         Some(env) => env,
@@ -1190,7 +1211,7 @@ fn resolve_headers(
     };
     let allowed = allowed_env_vars.unwrap_or_default();
     let mut output = vec![(
-        "content-type".to_owned(),
+        JsString::from("content-type"),
         JsString::from("application/json"),
     )];
     for (key, value) in headers.into_iter().flat_map(JsObject::entries) {
@@ -1198,21 +1219,18 @@ fn resolve_headers(
             return Err(JsString::from("value.replace is not a function"));
         };
         let resolved = substitute_env(value, allowed, env)?;
-        let key = key
-            .to_utf8()
-            .map_err(|_| JsString::from("Headers.append: invalid header name."))?;
-        if let Some(entry) = output.iter_mut().find(|(name, _)| name == &key) {
+        if let Some(entry) = output.iter_mut().find(|(name, _)| name == key) {
             entry.1 = JsString::from_utf16(resolved);
         } else {
-            output.push((key, JsString::from_utf16(resolved)));
+            output.push((key.clone(), JsString::from_utf16(resolved)));
         }
     }
     // `{ "content-type": …, ...resolved }` is a plain object, so integer-like
     // keys enumerate first in ascending order (JS OrdinaryOwnPropertyKeys).
-    let mut indexed: Vec<(u32, (String, JsString))> = Vec::new();
+    let mut indexed: Vec<(u32, (JsString, JsString))> = Vec::new();
     let mut named = Vec::with_capacity(output.len());
     for entry in output {
-        match JsString::from(entry.0.as_str()).array_index() {
+        match entry.0.array_index() {
             Some(index) => indexed.push((index, entry)),
             None => named.push(entry),
         }
@@ -1698,7 +1716,10 @@ mod replace_tests {
         headers.insert("123".into(), "n".into());
         headers.insert("01".into(), "o".into());
         let resolved = resolve_headers(Some(&headers), None, Some(&JsObject::new())).unwrap();
-        let names: Vec<&str> = resolved.iter().map(|(name, _)| name.as_str()).collect();
+        let names: Vec<String> = resolved
+            .iter()
+            .map(|(name, _)| name.to_utf8().unwrap())
+            .collect();
         assert_eq!(names, ["123", "content-type", "x-z", "01"]);
     }
 }
