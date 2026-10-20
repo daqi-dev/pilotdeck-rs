@@ -133,14 +133,17 @@ pub(crate) fn retry_after_header(value: Option<&str>, now_ms: f64) -> Option<f64
 
 fn imf_fixdate(text: &str) -> Option<f64> {
     // e.g. "Wed, 21 Oct 2015 07:28:00 GMT". Field ranges follow V8's legacy
-    // `Date.parse` (node probe, RESULT 修复轮 1): day 1..=31 with month
+    // `Date.parse` (node probes, RESULT 修复轮 1/2): day 1..=31 with month
     // overflow (31 Feb = 3 Mar), hour 0..=24 (24 only as 24:00:00), minute
-    // 0..=59, a second >= 60 reads as 0, results beyond ±8.64e15 ms are NaN.
+    // 0..=59, a second >= 60 reads as 0, a year below 100 is two-digit
+    // (0..=49 -> 20xx, 50..=99 -> 19xx, whatever its zero padding), results
+    // beyond ±8.64e15 ms are NaN.
     let parts: Vec<&str> = text.split(' ').collect();
     let [_, day, month, year, time, "GMT"] = parts.as_slice() else {
         return None;
     };
-    // Short digit runs only: no overflow in the arithmetic below.
+    // At most 9 digits: every field fits an i64; the millisecond total is
+    // computed in i128 (a 9-digit year overflows i64 milliseconds).
     let number = |digits: &str| -> Option<i64> {
         (!digits.is_empty() && digits.len() <= 9 && digits.bytes().all(|b| b.is_ascii_digit()))
             .then(|| digits.parse().ok())
@@ -152,7 +155,11 @@ fn imf_fixdate(text: &str) -> Option<f64> {
     .iter()
     .position(|m| m == month)? as i64;
     let day = number(day).filter(|d| (1..=31).contains(d))?;
-    let year = number(year)?;
+    let year = match number(year)? {
+        year @ 0..=49 => year + 2000,
+        year @ 50..=99 => year + 1900,
+        year => year,
+    };
     let hms: Vec<i64> = time.split(':').map(number).collect::<Option<_>>()?;
     let [h, mi, s] = hms.as_slice() else {
         return None;
@@ -161,23 +168,10 @@ fn imf_fixdate(text: &str) -> Option<f64> {
     if *h > 24 || *mi > 59 || (*h == 24 && (*mi != 0 || s != 0)) {
         return None;
     }
-    let days = days_from_civil(year, month, 1) + day - 1;
-    let ms = ((days * 86_400 + h * 3600 + mi * 60 + s) * 1000) as f64;
-    (ms.abs() <= 8.64e15).then_some(ms)
-}
-
-/// Days since 1970-01-01 (Howard Hinnant), proleptic Gregorian; month 0-based.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let (y, m) = if month < 2 {
-        (year - 1, month + 10)
-    } else {
-        (year, month - 2)
-    };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * m + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+    // |days| <= ~3.7e11 for a 9-digit year: no i64 overflow here.
+    let days = crate::runtime::tools::builtin::time::days_from_civil(year, month + 1, 1) + day - 1;
+    let ms = (i128::from(days) * 86_400 + i128::from(h * 3600 + mi * 60 + s)) * 1000;
+    (ms.abs() <= 8_640_000_000_000_000).then_some(ms as f64)
 }
 
 /// `NetworkFetchError` of `network/fetch.ts`.
@@ -549,8 +543,9 @@ fn user_hint(result: &mut JsObject, code: &str, message: &str, provider: &JsStri
     }
 }
 
+/// One UTF-16 unit of the shared ES space set (all members are BMP).
 fn is_js_space(unit: u16) -> bool {
-    matches!(unit, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+    char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)
 }
 fn contains_units(haystack: &[u16], needle: &str) -> bool {
     let needle: Vec<u16> = needle.encode_utf16().collect();

@@ -130,7 +130,13 @@ impl SseBuffer {
     }
     /// Stream end: flush the decoder and parse a non-blank remainder.
     pub(crate) fn finish(&mut self) -> Vec<Result<SseEvent, SseError>> {
+        let start = self.buffer.len();
         self.decoder.finish(&mut self.buffer);
+        // `buffer += decoder.decode()` can still add a trailing U+FFFD.
+        self.units += self.buffer[start..].encode_utf16().count();
+        if self.units > self.limit {
+            return vec![Err(SseError::InvalidStringLength)];
+        }
         let mut events = Vec::new();
         let rest = std::mem::take(&mut self.buffer);
         if !crate::metadata::js_trim(&rest).is_empty() {
@@ -214,5 +220,12 @@ mod tests {
         assert_eq!(sse.push(b"data: 1\n\n").len(), 1);
         assert_eq!(sse.push(b"data: 2\n\n").len(), 1);
         assert!(sse.push(b"data:").is_empty());
+        // The decoder flush at EOF counts too: 4 units + a dangling lead byte.
+        let mut sse = SseBuffer::with_limit(4);
+        assert!(sse.push(b"abcd\xE4").is_empty());
+        assert!(matches!(
+            sse.finish().as_slice(),
+            [Err(SseError::InvalidStringLength)]
+        ));
     }
 }

@@ -412,7 +412,10 @@ fn read_number(value: &JsValue) -> Option<f64> {
 }
 
 /// `normalizeAnthropicStreamEvent(raw, state)`.
-pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> Vec<JsValue> {
+pub(crate) fn normalize_stream_event(
+    raw: &JsValue,
+    state: &mut StreamState,
+) -> Result<Vec<JsValue>, ModelStreamError> {
     static EMPTY: JsValue = JsValue::Undefined;
     let record = if matches!(raw, JsValue::Object(_)) {
         raw
@@ -424,7 +427,7 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
         .as_string()
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_default();
-    match tag.as_str() {
+    Ok(match tag.as_str() {
         "message_start" => vec![event([
             ("type", "message_start".into()),
             ("role", "assistant".into()),
@@ -433,7 +436,7 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
         "content_block_start" => {
             let block = field(record, "content_block");
             if !matches!(block, JsValue::Object(_)) || !is(field(block, "type"), "tool_use") {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let index =
                 read_number(field(record, "index")).unwrap_or(state.tool_calls.len() as f64);
@@ -490,11 +493,18 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
                 "input_json_delta" => {
                     let partial = text_of("partial_json");
                     if let Some(index) = index {
+                        // `${inputBuffer}${partial}` throws past V8's limit
+                        // before the Map entry is updated.
                         let mut current = state.take_or_default(index);
-                        if let JsValue::String(p) = &partial {
-                            current.input_buffer.extend_from_slice(p.units());
-                        }
+                        let appended = match &partial {
+                            JsValue::String(p) => crate::runtime::model::http::append_js_string(
+                                &mut current.input_buffer,
+                                p.units(),
+                            ),
+                            _ => Ok(()),
+                        };
                         state.set(current);
+                        appended?;
                     }
                     let id = match index {
                         None => "".into(),
@@ -514,10 +524,10 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
         }
         "content_block_stop" => {
             let Some(index) = read_number(field(record, "index")) else {
-                return Vec::new();
+                return Ok(Vec::new());
             };
             let Some(call) = state.get(index) else {
-                return Vec::new();
+                return Ok(Vec::new());
             };
             // `JSON.parse(rawInput)`, then `JSON.parse(jsonrepair(rawInput))`.
             let parse = |units: &[u16]| parse_json(&json_text(units)).ok();
@@ -616,7 +626,7 @@ pub(crate) fn normalize_stream_event(raw: &JsValue, state: &mut StreamState) -> 
             ])]
         }
         _ => Vec::new(),
-    }
+    })
 }
 
 impl StreamState {

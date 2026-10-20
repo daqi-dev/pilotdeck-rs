@@ -448,7 +448,9 @@ struct Checkpoint {
     active: Vec<(JsString, JsValue, f64)>,
 }
 impl Checkpoint {
-    fn on_event(&mut self, event: &JsValue) {
+    /// `StreamingCheckpointManager.onEvent`; `partialText += text` throws
+    /// past V8's string limit.
+    fn on_event(&mut self, event: &JsValue) -> Result<(), ModelStreamError> {
         let tag = field(event, "type");
         let string = |key: &str| {
             JsString::from_utf16(
@@ -456,7 +458,7 @@ impl Checkpoint {
             )
         };
         if is(tag, "text_delta") {
-            self.partial_text.extend(string("text").units());
+            append_js_string(&mut self.partial_text, string("text").units())?;
         } else if is(tag, "thinking_delta") {
             self.has_reasoning = true;
         } else if is(tag, "tool_call_start") {
@@ -478,6 +480,7 @@ impl Checkpoint {
             );
             self.active.retain(|(k, _, _)| *k != id);
         }
+        Ok(())
     }
     fn set_active(&mut self, id: JsString, name: JsValue, chars: f64) {
         match self.active.iter_mut().find(|(k, _, _)| *k == id) {
@@ -956,27 +959,57 @@ async fn read_frame(
     }
 }
 
+/// V8's string length limit (`MAX_STRING_LENGTH` UTF-16 units), shared by
+/// every cross-event string accumulator of the stream path.
+#[cfg(not(test))]
+pub(crate) fn string_limit() -> usize {
+    super::count_http::MAX_STRING_LENGTH
+}
+#[cfg(test)]
+thread_local! {
+    /// Tests shrink V8's string limit to exercise the cap without 512 MiB.
+    pub(crate) static STRING_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
+}
+#[cfg(test)]
+pub(crate) fn string_limit() -> usize {
+    STRING_LIMIT.with(std::cell::Cell::get)
+}
 #[cfg(not(test))]
 fn sse_limit() -> usize {
     super::count_http::MAX_STRING_LENGTH
 }
 #[cfg(test)]
 thread_local! {
-    /// Tests shrink V8's string limit to exercise the cap without 512 MiB.
-    static SSE_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
+    /// Separate knob so accumulator tests can keep the SSE buffer unbounded.
+    pub(crate) static SSE_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
 }
 #[cfg(test)]
 fn sse_limit() -> usize {
     SSE_LIMIT.with(std::cell::Cell::get)
 }
 
+/// `buffer += more` on a JS string: past V8's limit it throws
+/// `RangeError: Invalid string length` (node probe r2), leaving `buffer`
+/// unchanged. Exactly the limit is still allowed.
+pub(crate) fn append_js_string(
+    buffer: &mut Vec<u16>,
+    more: &[u16],
+) -> Result<(), ModelStreamError> {
+    if buffer.len().saturating_add(more.len()) > string_limit() {
+        return Err(invalid_string_length());
+    }
+    buffer.extend_from_slice(more);
+    Ok(())
+}
+pub(crate) fn invalid_string_length() -> ModelStreamError {
+    ModelStreamError::thrown("RangeError", "Invalid string length")
+}
+
 fn sse_error(error: sse::SseError) -> ModelStreamError {
     match error {
         sse::SseError::Syntax(message) => ModelStreamError::thrown("SyntaxError", message),
         // V8 `RangeError: Invalid string length` (node probe), not retryable.
-        sse::SseError::InvalidStringLength => {
-            ModelStreamError::thrown("RangeError", "Invalid string length")
-        }
+        sse::SseError::InvalidStringLength => invalid_string_length(),
     }
 }
 
@@ -1148,7 +1181,7 @@ pub async fn stream_model(
                         }
                         sse::SseEvent::Data(raw) => raw,
                     };
-                    for event in state.normalize(&raw) {
+                    for event in state.normalize(&raw)? {
                         let tag = field(&event, "type");
                         if tag.as_string().is_some_and(|t| t.equals_str("message_end")) {
                             sentinel = true;
@@ -1159,7 +1192,7 @@ pub async fn stream_model(
                             ))));
                         }
                         guard.observe(&event, (options.clock)())?;
-                        checkpoint.on_event(&event);
+                        checkpoint.on_event(&event)?;
                         sink(StreamOutput::Event(event));
                     }
                 }

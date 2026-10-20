@@ -298,3 +298,136 @@ fn abort_message_on_provider_errors_is_not_retryable() {
         canonical
     )));
 }
+
+fn run_with_limit(
+    limit: usize,
+    frames: Vec<Option<&'static [u8]>>,
+) -> (ModelStreamError, Vec<JsValue>) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    STRING_LIMIT.with(|cell| cell.set(limit));
+    let (request, config) = stream_config();
+    let transport = Scripted(std::sync::Mutex::new(vec![(200, frames)]));
+    let mut events = Vec::new();
+    let mut sink = |output: StreamOutput| {
+        if let StreamOutput::Event(event) = output {
+            events.push(event);
+        }
+    };
+    let error = runtime
+        .block_on(stream_model(
+            &transport,
+            &request,
+            &config,
+            &StreamOptions::default(),
+            &mut sink,
+        ))
+        .unwrap_err();
+    STRING_LIMIT.with(|cell| cell.set(super::super::count_http::MAX_STRING_LENGTH));
+    (error, events)
+}
+fn tags(events: &[JsValue]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| {
+            e.get("type")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap()
+        })
+        .collect()
+}
+
+/// node probe r2: `inputBuffer + partial` past V8's limit throws
+/// `RangeError: Invalid string length` out of the normalizer; streamModel
+/// does not retry it and yields nothing for that SSE event.
+#[test]
+fn tool_input_accumulator_over_the_v8_limit_throws_range_error() {
+    let (error, events) = run_with_limit(
+        12,
+        vec![
+            Some(b"data: {\"type\":\"message_start\"}\n\n".as_slice()),
+            Some(b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"n\"}}\n\n".as_slice()),
+            // 12 units: exactly the limit is still allowed.
+            Some(b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\\\"abcdef\"}}\n\n".as_slice()),
+            Some(b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"x\"}}\n\n".as_slice()),
+        ],
+    );
+    assert!(error.name().equals_str("RangeError"), "{error:?}");
+    assert!(error.message().equals_str("Invalid string length"));
+    assert_eq!(
+        tags(&events),
+        [
+            "request_started",
+            "message_start",
+            "tool_call_start",
+            "tool_call_delta"
+        ],
+        "no retry, no event for the overflowing delta"
+    );
+}
+
+/// `partialText += event.text` in the checkpoint throws after the stream
+/// guard ran and before the event is yielded.
+#[test]
+fn partial_text_accumulator_over_the_v8_limit_throws_range_error() {
+    let (error, events) = run_with_limit(
+        8,
+        vec![
+            Some(b"data: {\"type\":\"message_start\"}\n\n".as_slice()),
+            Some(b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"abcdefgh\"}}\n\n".as_slice()),
+            Some(b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"i\"}}\n\n".as_slice()),
+        ],
+    );
+    assert!(
+        error.name().equals_str("RangeError")
+            && error.message().equals_str("Invalid string length")
+    );
+    assert_eq!(
+        tags(&events),
+        ["request_started", "message_start", "text_delta"]
+    );
+}
+
+#[test]
+fn append_js_string_allows_exactly_the_limit() {
+    STRING_LIMIT.with(|cell| cell.set(3));
+    let mut buffer = vec![1, 2];
+    assert!(append_js_string(&mut buffer, &[3]).is_ok());
+    assert!(append_js_string(&mut buffer, &[4]).is_err());
+    assert_eq!(buffer, [1, 2, 3], "unchanged after the throw");
+    STRING_LIMIT.with(|cell| cell.set(super::super::count_http::MAX_STRING_LENGTH));
+}
+
+/// node probe r2 (`r2/probe-r2.out.txt`): years beyond V8's range are NaN
+/// (no overflow panic for 9 digits), the ±8.64e15 edge is inclusive, and
+/// years below 100 are two-digit whatever their padding.
+#[test]
+fn imf_fixdate_year_edges_follow_date_parse() {
+    let at = |text: &str| errors::retry_after_header(Some(text), 0.0);
+    assert_eq!(at("Fri, 01 Jan 999999999 00:00:00 GMT"), None);
+    assert_eq!(at("Fri, 01 Jan 292278995 00:00:00 GMT"), None);
+    assert_eq!(at("Fri, 01 Jan 1000000 00:00:00 GMT"), None);
+    assert_eq!(at("Fri, 31 Dec 999999999 24:00:00 GMT"), None);
+    assert_eq!(
+        at("Fri, 01 Jan 275760 00:00:00 GMT"),
+        Some(8_639_977_881_600_000.0)
+    );
+    assert_eq!(
+        at("Fri, 13 Sep 275760 00:00:00 GMT"),
+        Some(8_640_000_000_000_000.0)
+    );
+    assert_eq!(at("Fri, 14 Sep 275760 00:00:00 GMT"), None);
+    assert_eq!(at("Fri, 01 Jan 0 00:00:00 GMT"), Some(946_684_800_000.0));
+    assert_eq!(at("Fri, 01 Jan 0000 00:00:00 GMT"), Some(946_684_800_000.0));
+    assert_eq!(at("Wed, 21 Oct 0099 07:28:00 GMT"), Some(940_490_880_000.0));
+    assert_eq!(at("Fri, 01 Jan 2015 999999999:00:00 GMT"), None);
+    assert_eq!(
+        at("Fri, 01 Jan 2015 00:00:999999999 GMT"),
+        Some(1_420_070_400_000.0)
+    );
+}

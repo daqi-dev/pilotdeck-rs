@@ -461,7 +461,8 @@ impl StreamState {
         debug_assert!(is(field(provider, "protocol"), "anthropic"));
         Self::Anthropic(anthropic::StreamState::default())
     }
-    pub(crate) fn normalize(&mut self, raw: &JsValue) -> Vec<JsValue> {
+    /// `Err` is what the TS normalizer throws (V8 string-limit RangeError).
+    pub(crate) fn normalize(&mut self, raw: &JsValue) -> Result<Vec<JsValue>, ModelStreamError> {
         match self {
             Self::Anthropic(state) => anthropic::normalize_stream_event(raw, state),
         }

@@ -72,7 +72,7 @@ fn real_ts_jsonrepair_and_tool_argument_events() {
             } else {
                 parse_json(raw).unwrap()
             };
-            events.extend(normalize_stream_event(&raw, &mut state));
+            events.extend(normalize_stream_event(&raw, &mut state).unwrap());
         }
         let JsValue::Array(expected) = get(case, "events") else {
             panic!("events")
