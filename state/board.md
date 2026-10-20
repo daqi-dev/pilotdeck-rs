@@ -1,16 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 11:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-20 12:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - A6.7-pr4 | impl | ready | #351：Grok P1×2 已修（0edc1eb）；gate6 撞车 P1「不跟随重定向」由 Claude 子代理修（抽 count_http 重定向为共享函数）；合并前须清 #312 #289 #277（前置于本单）
-- A6.5-pr6 | review | ready | rewind_files（wt-a63-pr1，DeepSeek 实现，已推送）；闸门 + Claude/Grok 评审中；合并前须清 #348
-- A6.5-pr7 | review | ready | bash 工具（wt-a66-pr3，Claude 实现，已推送）；闸门 + DeepSeek 评审中
-- A6.5-pr10a | review | ready | MCP 客户端（wt-a6-x0，Claude 实现，已推送）；闸门排队 + DeepSeek 评审中；http/sse 传输移到 pr10b
-- A6.4-pr5 | impl | ready | Provider HTTP + anthropic + rustls（wt-a64-pr11，Claude 子代理）
+- A6.5-pr6 | impl | ready | rewind_files 修复轮 1（DeepSeek）：Grok P1 EISDIR + 清 #348；闸门与 Claude 0/0
+- A6.5-pr7 | impl | ready | bash 修复轮 1（Claude）：闸门 P1 NUL panic + DeepSeek P1 darwin-only 夹具
+- A6.5-pr10a | impl | ready | MCP 客户端修复轮 1（Claude）：补明文 HTTP 传输 + 帧回复顺序 P1；闸门 0/0
+- A6.4-pr5 | impl | ready | 修复轮 1（Claude）：闸门 P1×3（SSE 无上限、错误体无超时、count 未接 TLS）+ jsonrepair 自写移植（决策卡待复核）
+- A6.4-pr6 | impl | ready | openai provider（wt-p2-sweep-4，DeepSeek，叠在 claude/a64-pr5 上）
 - p2-sweep-7 | impl | ready | 15 张过期 P2-跟进清账（wt-a6-recorder，DeepSeek）
 - A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry + http/sse 传输；接 pr10a
 - A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7
-- A6.4-pr6 | impl | ready | openai provider；接 A6.4-pr5 合入后放出（pr7~pr9、A6.5-pr9、A6.6-pr8 同理）
+- A6.4-pr7 | impl | ready | openai-responses；接 A6.4-pr5 合入后放出（pr8~pr9、A6.5-pr9、A6.6-pr8 同理）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
