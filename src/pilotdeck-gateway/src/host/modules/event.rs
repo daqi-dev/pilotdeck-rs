@@ -30,6 +30,12 @@ impl TurnIdentity {
 /// `emit` is synchronous like TS `AgentEventEmitter = (event) => void`
 /// (`agent/protocol/events.ts:151`): an emitter records or hands off the event
 /// without suspending the module callback, so implementations must not block.
+///
+/// Ordering and concurrency: `emit` is called on the host driver task, one
+/// call at a time, in the arrival order of the sidecar's `event.emit` module
+/// calls (the driver constructs each callback future in arrival order and
+/// this handler emits during construction). An implementation may therefore
+/// append to its buffer without its own sequencing.
 /// `drain` mirrors the optional TS port member and
 /// `createAgentEventBuffer().drain`, which removes and returns every buffered
 /// event in emission order (`events.ts:155-162`). Returning an empty vector
@@ -60,23 +66,30 @@ impl Handler {
             ports: Some(Ports { identity, sink }),
         }
     }
+    /// Validates and emits synchronously, before the returned future is
+    /// polled: the host driver calls `module_call` in arrival order, so the
+    /// sink sees events in the order the sidecar sent them even though the
+    /// callback futures then run concurrently (TS: the async handler reaches
+    /// `emit` without an await, in message order).
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
-        let ports = self.ports.clone();
-        Box::pin(async move {
-            let payload = call.get("payload").and_then(JsValue::as_object);
-            let operation = wire::string_field(payload, "operation")?;
-            if !operation.equals_str("emit") {
-                return Err(ModuleError::new("Unsupported sidecar event operation.").into());
-            }
-            let ports =
-                ports.ok_or_else(|| ModuleError::new("Host did not provide an event sink."))?;
-            let event =
-                read_host_emitted_event(payload.and_then(|p| p.get("event")), &ports.identity)?;
-            ports.sink.emit(event)?;
-            let mut response = JsObject::new();
-            response.insert("result".into(), JsValue::Null);
-            Ok(response)
-        })
+        let result = self.emit_now(&call);
+        Box::pin(async move { result })
+    }
+    fn emit_now(&self, call: &JsValue) -> Result<JsObject, HostError> {
+        let payload = call.get("payload").and_then(JsValue::as_object);
+        let operation = wire::string_field(payload, "operation")?;
+        if !operation.equals_str("emit") {
+            return Err(ModuleError::new("Unsupported sidecar event operation.").into());
+        }
+        let ports = self
+            .ports
+            .as_ref()
+            .ok_or_else(|| ModuleError::new("Host did not provide an event sink."))?;
+        let event = read_host_emitted_event(payload.and_then(|p| p.get("event")), &ports.identity)?;
+        ports.sink.emit(event)?;
+        let mut response = JsObject::new();
+        response.insert("result".into(), JsValue::Null);
+        Ok(response)
     }
     /// Hand the buffered host events to the turn loop. Draining is owned by the
     /// client loop and is not an operation of the `event` module.

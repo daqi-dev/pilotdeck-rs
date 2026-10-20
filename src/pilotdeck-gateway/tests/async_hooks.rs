@@ -4,8 +4,8 @@ use pilotdeck_gateway::{
     host::{HostFuture, ModuleError},
     runtime::{
         async_hooks::{
-            AsyncHookClock, AsyncHookRegistration, AsyncHookRegistry, AsyncHookTimer,
-            AsyncHookTurn, timer_delay_ms,
+            AsyncHookClock, AsyncHookRegistration, AsyncHookRegistry, AsyncHookStatus,
+            AsyncHookTimer, AsyncHookTurn, timer_delay_ms,
         },
         steer::{MutationRecorder, SteerMailbox},
     },
@@ -320,7 +320,7 @@ impl Harness {
 async fn replay_real_gateway_async_hooks() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 37);
+    assert_eq!(scenarios.len(), 38);
     let mut count = 0;
     for scenario in scenarios {
         let name = string(field(scenario, "name")).to_utf8().unwrap();
@@ -370,7 +370,7 @@ async fn replay_real_gateway_async_hooks() {
             "{name:?} mutations"
         );
     }
-    assert_eq!(count, 270);
+    assert_eq!(count, 285);
 }
 
 #[tokio::test(start_paused = true)]
@@ -930,4 +930,114 @@ async fn sink_may_reenter_registry_without_deadlock() {
     registry.register(registration("b", 10_000.0)).unwrap();
     clock.advance(10.0, true);
     assert_eq!(*events.lock().unwrap(), ["a", "b"]);
+}
+
+/// Signals each `now_ms` read made on the thread named `b` (its deadline
+/// check, taken after admission and right before the admission lock).
+struct SignalClock {
+    inner: Clock,
+    b_admitted: Mutex<std::sync::mpsc::Sender<()>>,
+}
+impl AsyncHookClock for SignalClock {
+    fn now_ms(&self) -> f64 {
+        if std::thread::current().name() == Some("b") {
+            let _ = self.b_admitted.lock().unwrap().send(());
+        }
+        self.inner.now_ms()
+    }
+    fn schedule(&self, delay: f64, callback: Box<dyn FnOnce() + Send>) -> Box<dyn AsyncHookTimer> {
+        self.inner.schedule(delay, callback)
+    }
+}
+
+#[tokio::test]
+async fn old_run_expiry_event_reaches_sink_after_admission_lock_is_released() {
+    // A's run fence fails while B (same id) has passed admission and waits
+    // for A's per-pending admission lock. The expiry event must reach the
+    // sink only after A released every registry lock, like the delivered
+    // branch: here the sink waits for B to finish, which cannot happen while
+    // A still holds that lock (negative control: flush before drop(in_flight)
+    // turns this into a 2 s timeout).
+    let (admitted_tx, admitted_rx) = std::sync::mpsc::channel();
+    let clock = Arc::new(SignalClock {
+        inner: Clock::default(),
+        b_admitted: Mutex::new(admitted_tx),
+    });
+    let admitted_rx = Mutex::new(admitted_rx);
+    let turn = started_turn();
+    let calls = Arc::new(Mutex::new(0));
+    let own = Arc::new(std::sync::OnceLock::<AsyncHookRegistry>::new());
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<AsyncHookStatus>();
+    let b_thread = Arc::new(Mutex::new(None));
+    let sink_saw_b = Arc::new(Mutex::new(None));
+    let (count, lookup_own, spawned) = (calls.clone(), own.clone(), b_thread.clone());
+    let saw = sink_saw_b.clone();
+    let done_rx = Mutex::new(done_rx);
+    let registry = AsyncHookRegistry::new(
+        clock.clone(),
+        move |_| {
+            let call = {
+                let mut n = count.lock().unwrap();
+                *n += 1;
+                *n
+            };
+            if call != 2 {
+                return Some(turn.clone());
+            }
+            // A's fence lookup (A holds the admission lock): start B and
+            // wait until B is past admission, then report the run as gone.
+            let registry = lookup_own.get().unwrap().clone();
+            let done = done_tx.clone();
+            *spawned.lock().unwrap() = Some(
+                std::thread::Builder::new()
+                    .name("b".into())
+                    .spawn(move || {
+                        let future = registry.submit(
+                            "s".into(),
+                            "a".into(),
+                            JsValue::Object(JsObject::new()),
+                        );
+                        let status = poll_ready_status(future);
+                        let _ = done.send(status);
+                    })
+                    .unwrap(),
+            );
+            admitted_rx.lock().unwrap().recv().unwrap();
+            None
+        },
+        move |_, _| {
+            let status = done_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .ok();
+            *saw.lock().unwrap() = Some(status);
+        },
+    );
+    own.set(registry.clone()).ok().unwrap();
+    registry.register(registration("a", 10_000.0)).unwrap();
+    let a = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    b_thread.lock().unwrap().take().unwrap().join().unwrap();
+    assert_eq!(a.status, AsyncHookStatus::Expired);
+    assert_eq!(
+        *sink_saw_b.lock().unwrap(),
+        Some(Some(AsyncHookStatus::Expired)),
+        "sink ran while A still held the admission lock"
+    );
+}
+
+/// `submit` futures that settle synchronously are already ready.
+fn poll_ready_status(
+    future: HostFuture<pilotdeck_gateway::runtime::async_hooks::AsyncHookResult>,
+) -> AsyncHookStatus {
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    let mut future = future;
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(result) => result.unwrap().status,
+        std::task::Poll::Pending => panic!("synchronous submit must be ready"),
+    }
 }

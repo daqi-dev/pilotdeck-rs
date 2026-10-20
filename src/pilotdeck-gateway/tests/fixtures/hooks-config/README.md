@@ -10,7 +10,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 node src/pilotdeck-gateway/tests/fixtures/hooks-config/generate-identifiers.mjs src/pilotdeck-gateway/src/hooks/identifier_ranges.rs
 ```
 
-第二次生成写入另一目录，用 `cmp` 比较 `oracle.json` 和 `identifier_ranges.rs`。后一份是从同一 Node 运行时录制的 ECMAScript IdentifierStart/Continue 范围，供正则命名捕获使用；Rust regex 自带 Unicode 16 表不能代替 Node 的 Unicode 17。名称范围生成器只读取运行时属性集合，不读取用户配置。
+第二次生成写入另一目录，用 `cmp` 比较 `oracle.json` 和 `identifier_ranges.rs`；`generate-identifiers.mjs <path> --check` 只比对不写入（过期即失败）。忽略测试 `hooks_config_fixtures_regenerate_identically_from_ts` / `identifier_ranges_are_fresh` 在设置 `PDRS_BASELINE` 时分别重生成 `oracle.json` 逐字节比对、以 `--check` 核 `identifier_ranges.rs`；oracle 回放经共享 `common/baseline.rs::oracle` 绑定固定 commit 与源码哈希。后一份是从同一 Node 运行时录制的 ECMAScript IdentifierStart/Continue 范围，供正则命名捕获使用；Rust regex 自带 Unicode 16 表不能代替 Node 的 Unicode 17。名称范围生成器只读取运行时属性集合，不读取用户配置。
 
 `hooks_config.rs` 在默认 `cargo test -p pilotdeck-gateway` 中回放：
 
@@ -28,6 +28,7 @@ node src/pilotdeck-gateway/tests/fixtures/hooks-config/generate-identifiers.mjs 
 | 资源 | Rust 上界 | 度量与超限结果 |
 |---|---:|---|
 | 动态可空重复 | 2,000,000 工作单位 | 每次空体展开的捕获及量词成本；必需的内层重复相乘；空捕获及断言内捕获也计入。分支回溯恢复预算，原子断言退出丢弃内部工作。超限终止整个正则为 false，不能被负向断言反转为 true。普通文字扫描不计入该预算 |
+| 消费型嵌套量词回溯 | 无上界（同 V8） | `/^(a*)*z/`、`/^(a+)+z/` 一类对不匹配输入指数级回溯；V8 irregexp 同样无界（Node v22.22.0 实测 `/^(a*)*z/` 对 20/24/26 个 `a`：48/137/552 ms），Rust 回溯器同阶（release，`/^(a+)+z/` 18/20/22 个 `a`：49 ms/213 ms/1.04 s）。不设步数预算：预算会把 TS 迟到的结果改成提前 false，破坏对拍；matcher 来自用户自己的 hooks 配置。AI 代批待人复核，决策卡由协调者登记（#277） |
 | 条件 JSON 序列化 | 4000 层 | 根数组/对象计 1，混合容器逐层累加，仅访问 own properties。超限返回 `Err(HookConditionError::StackOverflow)`，名称 `RangeError`、文本 `Maximum call stack size exceeded`，由调用方传播 |
 
 静态零宽重复和没有消费来源的自引用仍可压缩十亿次；它们的捕获若位于动态可空体内仍产生保存成本。量词次数不是统一阈值：`(a?)` / `(a*)` 体各需 2 单位，100 万次在预算内；`(?:a?)` 每次 1 单位，200 万次在预算内；8 个空捕获/断言捕获加 `a?` 的体为 10 单位。嵌套 `((a?){1000})` 为 2002 单位，999 次仍在预算内。只在实际执行到空迭代时收费，未进入的断言或早期不匹配不提前拒绝。

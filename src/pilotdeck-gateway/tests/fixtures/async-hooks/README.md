@@ -1,7 +1,7 @@
 # Gateway async hooks · 真实 TS 序列
 
 来源为固定基线 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。
-`generate.mts` 直接 import `InProcessGateway` 与 `SteerMailbox`，运行真实注册、提交、过期、结算、保留清理和 steer 方法；37 个场景、270 个操作的返回值、事件与持久化 mutation 均来自这次 TS 执行。Rust 回放精确断言场景数、操作数和完整输出。
+`generate.mts` 直接 import `InProcessGateway` 与 `SteerMailbox`，运行真实注册、提交、过期、结算、保留清理和 steer 方法；38 个场景、285 个操作的返回值、事件与持久化 mutation 均来自这次 TS 执行。Rust 回放精确断言场景数、操作数和完整输出。
 
 ## 装配取舍
 
@@ -19,13 +19,15 @@
 - `:3516-3548`：deferred output 限制与 context 包装。
 - `agent/session/SteerMailbox.ts:47-74`：持久化前后仍须匹配原 turn。
 
-保留两处容易被“理想化”改错的实测行为：登记只检查 pending，旧 outcome 可以遮住同 ID 的新 pending；尚在持久化的 steer 若先遇 hook 过期、后被接受，会再记 delivered 并从成功时刻重计保留期。空 additionalContext 字符串仍生成包装文本并经过 steer；完全没有 context 则只检查 run，不写 mailbox。
+保留两处容易被“理想化”改错的实测行为：登记只检查 pending，旧 outcome 可以遮住同 ID 的新 pending；尚在持久化的 steer 若先遇 hook 过期、后被接受，会再记 delivered 并从成功时刻重计保留期。`expiry-during-write-reregister-then-accepted` 钉住二者交错：持久化中先过期、同 ID 重登记、旧投递再被接受——TS 按身份删 pending（新登记存活）、按 ID 覆写 outcome（delivered），新计时器到点再过期一次并多发一条 expired 事件。空 additionalContext 字符串仍生成包装文本并经过 steer；完全没有 context 则只检查 run，不写 mailbox。
+
+深度边界（#312）：`hookEventName` 的 `String()` 用共享 `js_value` 的 2000 层上界（`MAX_ARRAY_DEPTH`）。Node v22.22.0 顶层 `String(嵌套数组)` 实测在 2622 层才抛 RangeError（2621 成功），且该阈值随调用栈深度缩小；`(2000, V8 实际阈值)` 是已接受的不可判定带——TS 在此带内报 `INVALID_ASYNC_HOOK_RESULT`「belongs to …」，Rust 报栈溢出。oracle 只录两侧都失败的 5000 层，不录带内点。
 
 ## 覆盖与安全
 
 期限、delivered 保留、expired 保留均覆盖到点前 1 ms、恰好到点、到点后；另测回调未调度、默认/零/负数/小数 timeout（含不推进 timer、只推墙钟时期限被钳到 1 ms）、同轮重登不延期、保留 timer 替换、跨会话 unknown、并发 duplicate、失败共享与重试、旧 run（提交前/持久化中）、关闭 mailbox、按轮过期、事件开关、payload 错误优先级及 UTF-16 字符串。
 
-生成前后调用共享 `bindSourceTree`，校验固定 commit 和整个 tracked src 的实际字节，并断言整棵 tracked 树干净（`git status --porcelain --untracked-files=no` 为空，同 `workspace-snapshot/generate.mts`）；`sourceSha256` 记三个入口的相对 import 传递闭包（650 个文件，均取固定 commit 的 blob 并核工作区字节）。回放经 `common/baseline.rs::oracle`，设置 `PDRS_BASELINE` 时再核本地 checkout。每次生成用 `mkdtemp` 独占目录并切入其中，finally 恢复 cwd/clock/timer；删除前核对临时父目录及所有权前缀。无固定路径清理，也不读用户配置。
+生成前后调用共享 `bindSourceTree`，校验固定 commit 和整个 tracked src 的实际字节，并断言整棵 tracked 树干净（`git status --porcelain --untracked-files=no` 为空，同 `workspace-snapshot/generate.mts`）；`sourceSha256` 经共享 `baseline_source_guard.mjs::sourceClosureSha256` 记三个入口的相对 import 传递闭包（650 个文件，均取固定 commit 的 blob 并核工作区字节）。回放经 `common/baseline.rs::oracle`，设置 `PDRS_BASELINE` 时再核本地 checkout。每次生成用 `mkdtemp` 独占目录并切入其中，finally 恢复 cwd/clock/timer；删除前核对临时父目录及所有权前缀。无固定路径清理，也不读用户配置。
 
 ## 复现
 

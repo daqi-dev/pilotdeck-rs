@@ -98,3 +98,42 @@ fn git(baseline: &Path, args: &[&str]) -> Vec<u8> {
     );
     output.stdout
 }
+
+/// Re-runs `tests/fixtures/<fixture>/generate.mts` against the real TS
+/// baseline (`PDRS_BASELINE`) into a fresh directory and requires a
+/// byte-identical `oracle.json`. Callers are `#[ignore]` tests.
+#[allow(dead_code)]
+pub(crate) fn regenerates_identically(fixture: &str) {
+    let baseline = std::path::PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(fixture);
+    // Every invocation gets its own directory; nothing outside it is removed.
+    let scratch = std::env::temp_dir().join(format!("pdrs-{fixture}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&scratch).unwrap();
+    let output = Command::new("node")
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(fixtures.join("generate.mts"))
+        .arg(&scratch)
+        .env("PDRS_BASELINE", &baseline)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = fs::read(scratch.join("oracle.json")).unwrap();
+    let committed = fs::read(fixtures.join("oracle.json")).unwrap();
+    assert_eq!(generated, committed, "{fixture}/oracle.json");
+    assert!(
+        !scratch.join("oracle.json.tmp").exists(),
+        "generator left a temporary file behind"
+    );
+    let _ = fs::remove_dir_all(&scratch);
+}
