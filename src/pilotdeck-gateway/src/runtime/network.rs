@@ -102,6 +102,47 @@ pub(crate) enum Exchange<T> {
     Timeout,
 }
 
+/// `delay(ms, parentSignal)`, optionally bounded by a surrounding timer.
+/// An already registered retry timer runs its continuation before a later
+/// parent event (including ties), even if both are overdue when polled.
+/// Synchronous aborts have already fired and take precedence over that timer.
+/// As with `exchange`, the response flag preserves the winning continuation
+/// through the next attempt's parent-cancellation precheck.
+pub(crate) async fn delay(
+    duration: Duration,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    outer_deadline: Option<Instant>,
+    continuation_before_abort: bool,
+) -> Exchange<()> {
+    let retry_at = Instant::now() + duration;
+    let outer_first = outer_deadline.is_some_and(|at| at <= retry_at);
+    let next = outer_deadline.map_or(retry_at, |at| at.min(retry_at));
+    let mut abort = Box::pin(abort);
+    let mut timer = Box::pin(tokio::time::sleep_until(next));
+    let mut initial = true;
+    std::future::poll_fn(|cx| {
+        let aborted = abort.as_mut().poll(cx).is_ready();
+        if initial && !continuation_before_abort && aborted {
+            return Poll::Ready(Exchange::Aborted);
+        }
+        initial = false;
+        let timer_first = !aborted || parent_event_at().is_some_and(|at| next <= at);
+        if timer_first && timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(if outer_first {
+                Exchange::Timeout
+            } else {
+                Exchange::Response((), aborted)
+            });
+        }
+        if aborted {
+            return Poll::Ready(Exchange::Aborted);
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 /// Dispatch pending events as Node does: synchronous parent aborts are already
 /// delivered; timestamped parent events follow earlier response/timeout timers.
 /// The timeout was registered before the response, and the parent event after
