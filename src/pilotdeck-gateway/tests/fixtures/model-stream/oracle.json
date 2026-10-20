@@ -1,0 +1,3188 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/errors/normalizeModelError.ts": "3ded965a305c5aef92f33f83e72b8a8cbe14cfe230677f3127ccc75d90f15f0e",
+  "src/model/errors/tokenLimitParsing.ts": "78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959",
+  "src/model/normalizeProviderBaseUrl.ts": "4c27bda64fedb25d251f667a87680f72fb23ca56e5337fd383cfe38dda7a46af",
+  "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+  "src/model/policy/index.ts": "bc84e59059667b7dda7aeb420bff8b0ca6238880dcd008fdba62f787a14c70fc",
+  "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+  "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+  "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+  "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+  "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+  "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
+  "src/model/providerEndpoint.ts": "cd3d939c85bffdfa0fc8dc68c21cc421b16bb50736986d0ddfb0871fd247780c",
+  "src/model/providers/anthropic/request.ts": "8c0b30a2e016eede29e52282a1caf846895c320615d4298eaf61e2d180cb2907",
+  "src/model/providers/anthropic/response.ts": "834768ac8a1f3143f395cd8a238e8d445539c57dbc13b8ed66717436b4fa1b24",
+  "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+  "src/model/providers/google/client.ts": "327d14c1490f818e1ce95b303ec1d05d1157afb3f3f913639a7d9d69d04ece35",
+  "src/model/providers/google/modelId.ts": "fd4c83c9ca441e9d338c2c70e3eb900e9522e7e6c8ec2ac82c19051a8808d2b4",
+  "src/model/providers/google/request.ts": "129a7d684b6e8f653c74b62bed0cec315f97f8f78a4985e1e18f72c431f5f8ef",
+  "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+  "src/model/providers/google/schema.ts": "18128ea10abc57de9ff8c46723fa912d1e5f2b52f5681ac708a535de96e623e7",
+  "src/model/providers/google/stream.ts": "7d4a8209ba268d6920dea983e8fd162a17feba9b618b8d8c7399d57a694c11ba",
+  "src/model/providers/openai-responses/request.ts": "fc38d980ec728dc4651338760a964e4804f6b15c405af8a102f3930e9285aaad",
+  "src/model/providers/openai-responses/response.ts": "143623aad10247603c7d631ccd3abdc095b67a7df85f3cc56b26d769a5d87f37",
+  "src/model/providers/openai-responses/stream.ts": "dfeaf49e020b53785220d082d29fe7082a8b7067d62fd86620c02a0f381b9c85",
+  "src/model/providers/openai/request.ts": "e38de6a30cfc9e53e853d98218d342f80649cea5b3f5f8b608b6499a3f95352d",
+  "src/model/providers/openai/response.ts": "cc87c3284caed18f5a2b2c43c661e75d7578d41b197200918c29ea78038ee802",
+  "src/model/providers/openai/schema.ts": "cbcda4de9900b85e28e9e8f83f8a679b27cd64f3962cc695468d1e72698750b4",
+  "src/model/providers/openai/stream.ts": "8110c06e89b80ea9af8def4cb04b7a454f17a0c08101b175be7febb1ac9e9898",
+  "src/model/providers/toolResultReferenceText.ts": "7a279eda547943dee2878eca1fda3a350b514a40b78a0e229b5384a681253a7d",
+  "src/model/request/buildModelRequest.ts": "bf7e8e2a0684f64c30e456bc3dd66742231171faee106a230223709f98a63999",
+  "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa",
+  "src/model/request/speedMapping.ts": "ab5cad0b0529d882cf0e8e04d3859c6ce406dcc49930204f2b04fb4f71fa839f",
+  "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+  "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+  "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+  "src/model/response/parseModelResponse.ts": "22c792123e3822c694ebd15fbe14f2af7c7c57dc7479231d7e2a0a189a58ed8e",
+  "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+  "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662",
+  "src/model/streaming/normalizeStreamEvent.ts": "e12249c29b111f7e8341fa540e2d145ddb5fbbe1b2d0ba445d07b2db24e37dd7",
+  "src/model/streaming/requestFingerprint.ts": "3b90e1a600f57158cb7e43b171cff11b680809e234a9bb491c9c210d0656cb77",
+  "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+  "src/model/thinking/registry.ts": "ad0df7187839dfbf5e39acdc93141020acde65e9dbff664638a4aada0227ad7f",
+  "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05",
+  "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+  "src/storage/invocationStorage.ts": "9d24114a71fd71177b36c05363559f3fd174d2b3b59f8dd58e31c933be6f3875"
+ },
+ "node": "v22.22.0",
+ "v8": "12.4.254.21-node.33",
+ "undici": "8.3.0",
+ "locale": "en-US",
+ "random": 0.5,
+ "transportHeaders": [
+  "host",
+  "connection",
+  "content-length",
+  "user-agent",
+  "accept",
+  "accept-language",
+  "sec-fetch-mode",
+  "accept-encoding",
+  "transfer-encoding",
+  "keep-alive"
+ ],
+ "request": {
+  "provider": "anthropic-fixture",
+  "model": "claude-sonnet-4-6",
+  "systemPrompt": "You are terse.",
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Say hi 你好"
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "prior",
+      "signature": "old-sig"
+     },
+     {
+      "type": "text",
+      "text": "Hi"
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Look it up"
+     }
+    ]
+   }
+  ],
+  "tools": [
+   {
+    "name": "lookup",
+    "description": "Look up",
+    "inputSchema": {
+     "type": "object",
+     "properties": {
+      "q": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  ],
+  "toolChoice": "auto",
+  "maxOutputTokens": 256,
+  "metadata": {
+   "user_id": "u-1",
+   "trace": "t"
+  },
+  "cachePlan": {
+   "system": true,
+   "tools": true,
+   "messages": [
+    0,
+    1,
+    2
+   ]
+  },
+  "thinking": {
+   "mode": "high"
+  },
+  "speed": 0.8
+ },
+ "provider": {
+  "id": "anthropic-fixture",
+  "protocol": "anthropic",
+  "url": "$MOCK/v1",
+  "apiKey": "  sk-fixture  ",
+  "headers": {
+   "x-fixture": "1",
+   "anthropic-beta": "tools-2024"
+  },
+  "extraBody": {
+   "temperature": 0.2,
+   "top_k": 5
+  },
+  "speedMapping": "anthropic_speed",
+  "retry": {
+   "baseDelayMs": 2,
+   "maxDelayMs": 30,
+   "streamMaxRetries": 2
+  },
+  "models": {
+   "claude-sonnet-4-6": {
+    "id": "claude-sonnet-4-6",
+    "thinking": {
+     "state": "enabled",
+     "efforts": [
+      "high"
+     ],
+     "format": "provider"
+    },
+    "capabilities": {
+     "supportsStreaming": true,
+     "supportsSystemPrompt": true,
+     "supportsToolUse": true,
+     "supportsSpeed": true,
+     "maxOutputTokens": 32768
+    },
+    "multimodal": {
+     "input": [
+      "text",
+      "image"
+     ]
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "normal-stream",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": ": ping\n\n"
+      },
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Think 一下\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig==\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n"
+      },
+      {
+       "text": "id: 7\nevent: content_block_delta\ndata:   {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" 世界\"}}  \nretry: 10\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{}}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\\\"天\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"气\\\",\\\"n\\\":[1,2.5e3]}\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"input_tokens\":11,\"output_tokens\":30,\"cache_read_input_tokens\":5,\"cache_creation_input_tokens\":2}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "Think 一下",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "thinking_delta",
+        "thinking": "Think 一下"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "thinking_delta",
+      "text": "",
+      "signature": "sig==",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "signature_delta",
+        "signature": "sig=="
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Hello",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "text_delta",
+        "text": "Hello"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " 世界",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 1,
+       "delta": {
+        "type": "text_delta",
+        "text": " 世界"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "toolu_1",
+      "name": "lookup",
+      "raw": {
+       "type": "content_block_start",
+       "index": 2,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_1",
+        "name": "lookup",
+        "input": {}
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "toolu_1",
+      "delta": "{\"q\":\"天",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 2,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"q\":\"天"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "toolu_1",
+      "delta": "气\",\"n\":[1,2.5e3]}",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 2,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "气\",\"n\":[1,2.5e3]}"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_end",
+      "toolCall": {
+       "id": "toolu_1",
+       "name": "lookup",
+       "input": {
+        "q": "天气",
+        "n": [
+         1,
+         2500
+        ]
+       },
+       "raw": {
+        "type": "content_block_stop",
+        "index": 2
+       }
+      },
+      "wasRepaired": false,
+      "raw": {
+       "type": "content_block_stop",
+       "index": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "inputTokens": 11,
+       "outputTokens": 30,
+       "cacheReadTokens": 5,
+       "cacheWriteTokens": 2,
+       "totalTokens": 48
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "input_tokens": 11,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 5,
+        "cache_creation_input_tokens": 2
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "tool_call",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "tool_use"
+       },
+       "usage": {
+        "input_tokens": 11,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 5,
+        "cache_creation_input_tokens": 2
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "utf8-boundaries",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "hex": "ef"
+      },
+      {
+       "hex": "bb"
+      },
+      {
+       "hex": "bf6576656e743a206d6573736167655f73746172740a646174613a207b2274797065223a226d6573736167655f7374617274222c226d657373616765223a7b226964223a226d73675f31222c2274797065223a226d657373616765222c22726f6c65223a22617373697374616e74222c22636f6e74656e74223a5b5d2c226d6f64656c223a22636c617564652d736f6e6e65742d342d36222c227573616765223a7b22696e7075745f746f6b656e73223a31312c226f75747075745f746f6b656e73223a317d7d7d0a0a6576656e743a20636f6e74656e745f626c6f636b5f73746172740a646174613a207b2274797065223a22636f6e74656e745f626c6f636b5f7374617274222c22696e646578223a302c22636f6e74656e745f626c6f636b223a7b2274797065223a2274657874222c2274657874223a22227d7d0a0a6576656e743a20636f6e74656e745f626c6f636b5f64656c74610d0a646174613a207b2274797065223a22636f6e74656e745f626c6f636b5f64656c7461222c22696e646578223a302c2264656c7461223a7b2274797065223a22746578745f64656c7461222c2274657874223a2263726c66227d7d0d0a0d0a6576656e743a20636f6e74656e745f626c6f636b5f64656c74610a646174613a207b2274797065223a22636f6e74656e745f626c6f636b5f64656c7461222c22696e646578223a302c2264656c7461223a7b2274797065223a22746578745f64656c7461222c2274657874223a22e4"
+      },
+      {
+       "hex": "b8ade6"
+      },
+      {
+       "hex": "9687f09f"
+      },
+      {
+       "hex": "98"
+      },
+      {
+       "hex": "80c3"
+      },
+      {
+       "hex": "a9227d7d0a0a6576656e743a20636f6e74656e745f626c6f636b5f64656c74610a646174613a207b2274797065223a22636f6e74656e745f626c6f636b5f64656c7461222c22696e646578223a302c2264656c7461223a7b2274797065223a22746578745f64656c7461222c2274657874223a227461696c227d7d0a0a"
+      },
+      {
+       "hex": "6576656e743a20636f6e74656e745f626c6f636b5f64656c74610a646174613a207b2274797065223a22636f6e74656e745f626c6f636b5f64656c7461222c22696e646578223a302c2264656c7461223a7b2274797065223a22746578745f64656c7461222c2274657874223a2278ff79227d7d0a0a"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "crlf",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "crlf"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "中文😀é",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "中文😀é"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "tail",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "tail"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "x�y",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "x�y"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-retry",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"after retry\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "after retry",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "after retry"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-continuation",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Partial answer\"}}\n\n"
+      },
+      {
+       "text": "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"Internal error, please try again in 5ms\"}}\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" continued\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Partial answer\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:\"}]}],\"system\":\"You are terse.\",\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Partial answer",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "Partial answer"
+       }
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "continuation",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 5,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "dc8f94c086aeeee9ec69db52e9a181dd4d5bc26d33b16f8e31ddf5b65726f85c",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " continued",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": " continued"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "stream-error-fatal",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages: field required\"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "messages: field required",
+      "error": {
+       "provider": "anthropic",
+       "protocol": "anthropic",
+       "code": "invalid_request_error",
+       "message": "messages: field required",
+       "retryable": false,
+       "raw": {
+        "type": "error",
+        "error": {
+         "type": "invalid_request_error",
+         "message": "messages: field required"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-429-retry-after",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 429,
+     "headers": {
+      "retry-after": "0.02",
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit\"}}"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 20,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "ok"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-529-overloaded",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 529,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "ok"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-500-exhausted",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "chunks": [
+      {
+       "text": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "server_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "server_error",
+      "attempt": 2,
+      "maxAttempts": 2,
+      "delayMs": 6,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "server_error",
+       "status": 500,
+       "message": "Model provider request failed.",
+       "retryable": true,
+       "raw": "<!DOCTYPE html><html><head><title> 502 Bad Gateway </title></head><body>x</body></html>",
+       "userHint": "Provider returned a server error. Check provider API status/logs, retry later, or switch provider/model in Settings if it repeats."
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "http-401-no-retry",
+   "target": "mock",
+   "replies": [
+    {
+     "status": 401,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "chunks": [
+      {
+       "text": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "authentication_error",
+       "status": 401,
+       "message": "invalid x-api-key",
+       "retryable": false,
+       "raw": {
+        "type": "error",
+        "error": {
+         "type": "authentication_error",
+         "message": "invalid x-api-key"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "connection-interrupted",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"cut\"}}\n\n"
+      }
+     ],
+     "end": "destroy"
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "cut",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "cut"
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "TypeError",
+      "message": "terminated"
+     }
+    }
+   ]
+  },
+  {
+   "name": "incomplete-continuation",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Half\"}}\n\n"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" rest\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Half\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"You are a helpful assistant. You are given a message and you need to respond to it. You are also given a generated content. You need to respond to the message in continuation of the generated content. Do not repeat the same content. Your response should be in continuation of this text:\"}]}],\"system\":\"You are terse.\",\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "Half",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "Half"
+       }
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "continuation",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "63abdfef85a90baaede7c302011be12a423c9a34f9a58d9a4bd6caa2eabae95a",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": " rest",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": " rest"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "incomplete-tool-interruption",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_x\",\"name\":\"lookup\",\"input\":{}}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\\\"ab\"}}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_start",
+      "id": "toolu_x",
+      "name": "lookup",
+      "raw": {
+       "type": "content_block_start",
+       "index": 0,
+       "content_block": {
+        "type": "tool_use",
+        "id": "toolu_x",
+        "name": "lookup",
+        "input": {}
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "tool_call_delta",
+      "id": "toolu_x",
+      "delta": "{\"q\":\"ab",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "input_json_delta",
+        "partial_json": "{\"q\":\"ab"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "provider_error",
+       "message": "Network stream ended before provider completion sentinel.",
+       "retryable": false,
+       "raw": {
+        "name": "IncompleteStreamError"
+       },
+       "streamInterruption": {
+        "phase": "tool_call",
+        "activeToolCalls": [
+         {
+          "id": "toolu_x",
+          "name": "lookup",
+          "argumentChars": 8
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "cancel",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"first\"}}\n\n"
+      }
+     ],
+     "end": "hold"
+    }
+   ],
+   "abortAfterTextDeltas": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}",
+     "clientClosed": true
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "first",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "first"
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "AbortError",
+      "message": "This operation was aborted"
+     }
+    }
+   ]
+  },
+  {
+   "name": "idle-timeout",
+   "target": "mock",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      }
+     ],
+     "end": "hold"
+    }
+   ],
+   "streamTimeoutMs": 80,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}",
+     "clientClosed": true
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "error",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "timeout",
+       "message": "Stream idle timeout: no data received for 80ms",
+       "retryable": true,
+       "raw": {
+        "name": "StreamIdleTimeoutError"
+       },
+       "userHint": "Stream stalled for provider \"anthropic-fixture\". Increase retry.streamIdleTimeoutMs in Settings → Advanced, or check local network/proxy and provider status.",
+       "settingsFix": {
+        "description": "Increase stream idle timeout for this provider.",
+        "configPath": "model.providers.<id>.retry.streamIdleTimeoutMs"
+       },
+       "streamInterruption": {
+        "phase": "empty"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "invalid-sse-json",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: x\ndata: not json\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "SyntaxError",
+      "message": "Unexpected token 'o', \"not json\" is not valid JSON"
+     }
+    }
+   ]
+  },
+  {
+   "name": "connection-refused",
+   "target": "closed",
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$CLOSED/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 1,
+      "maxAttempts": 2,
+      "delayMs": 3,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$CLOSED/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "progress": {
+      "reason": "network_error",
+      "attempt": 2,
+      "maxAttempts": 2,
+      "delayMs": 6,
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6"
+     }
+    },
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$CLOSED/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "fetch failed",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "connection_refused",
+       "message": "fetch failed",
+       "retryable": true,
+       "raw": {
+        "code": "network_connection_refused",
+        "cause": {},
+        "name": "NetworkFetchError"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "endpoint-fallback",
+   "target": "mock",
+   "url": "$MOCK",
+   "replies": [
+    {
+     "status": 404,
+     "chunks": [
+      {
+       "text": "not here"
+      }
+     ]
+    },
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fallback\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    },
+    {
+     "method": "POST",
+     "path": "/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "fallback",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "fallback"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "request-validation",
+   "target": "mock",
+   "request": {
+    "provider": "missing-provider"
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "thrown": {
+      "name": "ModelRequestError",
+      "message": "Provider missing-provider does not exist.",
+      "code": "provider_not_found"
+     }
+    }
+   ]
+  },
+  {
+   "name": "tls-trusted",
+   "target": "tls-trusted",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n"
+      },
+      {
+       "text": "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"secure\"}}\n\n"
+      },
+      {
+       "text": "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+      },
+      {
+       "text": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}\n\n"
+      },
+      {
+       "text": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "headers": [
+      [
+       "anthropic-beta",
+       "tools-2024, fast-mode-2026-02-01"
+      ],
+      [
+       "anthropic-version",
+       "2023-06-01"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-api-key",
+       "sk-fixture"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"claude-sonnet-4-6\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi 你好\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"prior\",\"signature\":\"old-sig\"},{\"type\":\"text\",\"text\":\"Hi\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Look it up\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}]}],\"system\":[{\"type\":\"text\",\"text\":\"You are terse.\",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tools\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}},\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"5m\"}}],\"tool_choice\":{\"type\":\"auto\"},\"speed\":\"fast\",\"thinking\":{\"type\":\"adaptive\"},\"output_config\":{\"effort\":\"high\"},\"stream\":true,\"metadata\":{\"user_id\":\"u-1\"},\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$TLS/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "type": "message_start",
+       "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": "claude-sonnet-4-6",
+        "usage": {
+         "input_tokens": 11,
+         "output_tokens": 1
+        }
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "secure",
+      "raw": {
+       "type": "content_block_delta",
+       "index": 0,
+       "delta": {
+        "type": "text_delta",
+        "text": "secure"
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "usage",
+      "usage": {
+       "outputTokens": 7,
+       "totalTokens": 7
+      },
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "type": "message_delta",
+       "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+       },
+       "usage": {
+        "output_tokens": 7
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tls-untrusted",
+   "target": "tls-untrusted",
+   "provider": {
+    "retry": {
+     "streamMaxRetries": 0
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "anthropic-fixture",
+      "model": "claude-sonnet-4-6",
+      "providerBaseUrl": "$TLS/v1",
+      "requestFingerprint": "9f92cc92f73f0c23bc55e31e78ce85d82d8dc4897b8d45671650b292741121a4",
+      "metadata": {
+       "user_id": "u-1",
+       "trace": "t"
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "ModelProviderError",
+      "message": "fetch failed",
+      "error": {
+       "provider": "anthropic-fixture",
+       "protocol": "anthropic",
+       "code": "timeout",
+       "message": "fetch failed",
+       "retryable": true,
+       "raw": {
+        "code": "network_fetch_failed",
+        "cause": {},
+        "name": "NetworkFetchError"
+       },
+       "userHint": "Request timed out for provider \"anthropic-fixture\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+       "settingsFix": {
+        "description": "Increase request timeout for this provider.",
+        "configPath": "model.providers.<id>.timeoutMs"
+       }
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
