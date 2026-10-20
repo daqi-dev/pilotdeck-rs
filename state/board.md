@@ -1,17 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.7-pr4 | review | ready | #351：重定向 P1 已修（d682012）、前置 #312 #289 #277 已清（ac7cbfe）；gate7 + 第二家评审 Grok（排在代码分析 bot 上）；GLM 初审 0/0 已有
-- A6.5-pr6 | impl | ready | rewind_files 修复轮 1（DeepSeek）：Grok P1 EISDIR + 清 #348；闸门与 Claude 0/0
-- A6.5-pr7 | impl | ready | bash 修复轮 1（Claude）：闸门 P1 NUL panic + DeepSeek P1 darwin-only 夹具
-- A6.5-pr10a | impl | ready | MCP 客户端修复轮 1（Claude）：补明文 HTTP 传输 + 帧回复顺序 P1；闸门 0/0
-- A6.4-pr5 | impl | ready | 修复轮 1（Claude）：闸门 P1×3（SSE 无上限、错误体无超时、count 未接 TLS）+ jsonrepair 自写移植（决策卡待复核）
-- A6.4-pr6 | impl | ready | openai provider（wt-p2-sweep-4，DeepSeek，叠在 claude/a64-pr5 上）
-- p2-sweep-7 | review | ready | 15 张清账已交付（已修 8 / 修 6 / 改挂 #265），已推送 deepseek/p2-sweep-7；闸门 + Claude/Grok 评审
-- A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry + http/sse 传输；接 pr10a
-- A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7
-- A6.4-pr7 | impl | ready | openai-responses；接 A6.4-pr5 合入后放出（pr8~pr9、A6.5-pr9、A6.6-pr8 同理）
+updated: 2026-10-20 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.7-pr4 | impl | ready | #351 修复轮 r3（Claude）：Grok r2 P1×2（#277 余项、头名 ByteString）+ gate7 P1×2（响应体封顶、undici 每跳/空闲超时）
+- A6.5-pr6 | review | ready | 修复轮 1 已推送（4fe6781）：gate2 + Grok r2 确认
+- A6.5-pr7 | review | ready | 修复轮 2 已推送（163ea13）：gate3 + GLM r3 确认（首轮 DeepSeek、r2 GLM 0/0）
+- A6.5-pr10a | review | ready | 修复轮 1 已推送（9c77e80）：gate2 + GLM r2 0/0
+- A6.4-pr5 | review | ready | 修复轮 2 已推送（6f92c66，已 rebase 新 main）：gate3 + GLM r3 确认
+- A6.4-pr6 | impl | ready | openai：已交付（2f566a8），DeepSeek 正 rebase 到 pr5 修复轮 2 并适配接口（代码冲突真合并）
+- p2-sweep-7 | impl | ready | 修复轮 1（DeepSeek）：gate1 P1 cwd 无条件读取 + Grok P1 #346 SIGTERM 子项 + Claude P1 #301-3 缺实测
+- A6.5-pr10b | impl | ready | MCP 运行时/工具桥 + 清 #361（wt-a65-pr10b，Claude，叠在 pr10a 上）
+- A6.5-pr12 | impl | ready | 后台任务（wt-a67-pr2，Claude，叠在 pr7 上）
+- A6.4-pr7 | impl | ready | openai-responses（wt-a64-pr7，Claude，叠在 pr5 上）；pr8~pr9、A6.5-pr9、A6.6-pr8 随 pr5 合入后放出
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -20,6 +20,10 @@ updated: 2026-10-20 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
+
+> ## 2026-10-20 13:30 · /loop
+> 修复轮都回来了，都还没合并：A6.5-pr6、pr7（第 2 轮）、pr10a，以及 A6.4-pr5（第 2 轮，已 rebase 新 main）已推送，进确认评审；#351、p2-sweep-7 进下一轮修复。实现方修完立即接下一单（连续单打包）：pr10a 的作者接 pr10b，pr7 的作者接 pr12，pr5 的作者接 A6.4-pr7，都叠在各自前序分支上。新 P2-跟进 #359（bash）、#360（provider）、#361（MCP client）。
+> **worktree**：#275 的只读副本 wt-pr275-ro 核过干净、与远端同提交后移除，用来放 A6.4-pr7；board 专用的 wt-a67-pr2 改放 pr12，board 以后在主仓改。仍是 12/12。
 
 > ## 2026-10-20 12:40 · /loop 两小时交接（自 10:40 起）
 > **合并**：#353 A6.5-pr5（09:41，上一会话）、#355 / #356（board、TLS 人批 A、GLM 并发记忆）、#357 排队中。
