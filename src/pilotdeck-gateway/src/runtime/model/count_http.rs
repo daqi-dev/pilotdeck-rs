@@ -193,7 +193,7 @@ where
     }
 }
 
-fn blocked_port(port: u16) -> bool {
+pub(super) fn blocked_port(port: u16) -> bool {
     // Node 22 / Fetch's bad-port table. Check before any network exchange.
     matches!(
         port,

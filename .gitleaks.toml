@@ -36,3 +36,8 @@ regexes = [
   '''5b2dfda51cbcd6cd2a161c46cec1664c3106caeaae964a5eb70036862257aced''',
   '''491823e98e155481cac880726797f6830a612d3396f4b4101726dd13c16c9a74''',
 ]
+
+[[allowlists]]
+description = "A6.4-pr5 model-stream 夹具 tls.json：generate.mts 用 openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的测试 CA/叶子私钥（P-256，自签 CA 不受任何系统信任），不是凭据"
+regexTarget = "match"
+regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFPHGUNt2ECuu2dlb''']

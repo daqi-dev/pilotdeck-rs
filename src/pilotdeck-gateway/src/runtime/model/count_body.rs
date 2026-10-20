@@ -18,20 +18,20 @@ pub(super) fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsValue {
     }
     JsValue::Object(result)
 }
-fn array(value: &JsValue) -> &[JsValue] {
+pub(super) fn array(value: &JsValue) -> &[JsValue] {
     if let JsValue::Array(values) = value {
         values
     } else {
         &[]
     }
 }
-fn is(value: &JsValue, text: &str) -> bool {
+pub(super) fn is(value: &JsValue, text: &str) -> bool {
     value.as_string().is_some_and(|s| s.equals_str(text))
 }
-fn text(value: &JsValue) -> String {
+pub(super) fn text(value: &JsValue) -> String {
     String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default())
 }
-fn truthy(value: &JsValue) -> bool {
+pub(super) fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(v) => *v,
@@ -40,15 +40,15 @@ fn truthy(value: &JsValue) -> bool {
         _ => true,
     }
 }
-fn present(value: &JsValue) -> bool {
+pub(super) fn present(value: &JsValue) -> bool {
     !matches!(value, JsValue::Undefined | JsValue::Null)
 }
-fn put(value: &mut JsValue, key: &str, item: JsValue) {
+pub(super) fn put(value: &mut JsValue, key: &str, item: JsValue) {
     if let JsValue::Object(object) = value {
         object.insert(key.into(), item);
     }
 }
-fn cache_control() -> JsValue {
+pub(super) fn cache_control() -> JsValue {
     object([("type", "ephemeral".into()), ("ttl", "5m".into())])
 }
 
@@ -285,7 +285,7 @@ fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsVal
         })
     }
 }
-fn tool_choice(choice: &JsValue, anthropic: bool) -> JsValue {
+pub(super) fn tool_choice(choice: &JsValue, anthropic: bool) -> JsValue {
     if !truthy(choice) {
         return JsValue::Undefined;
     }
@@ -436,7 +436,7 @@ fn anthropic_body(
         ("thinking", thinking),
     ]))
 }
-fn anthropic_block(block: &JsValue) -> JsValue {
+pub(super) fn anthropic_block(block: &JsValue) -> JsValue {
     let tag = text(field(block, "type"));
     match tag.as_str() {
         "text" => object([
@@ -522,7 +522,7 @@ fn anthropic_block(block: &JsValue) -> JsValue {
         _ => JsValue::Undefined,
     }
 }
-fn concatenate(parts: &[JsValue]) -> JsValue {
+pub(super) fn concatenate(parts: &[JsValue]) -> JsValue {
     let mut units = Vec::new();
     for part in parts {
         units.extend(crate::js_value::to_string_units(part).unwrap_or_default());

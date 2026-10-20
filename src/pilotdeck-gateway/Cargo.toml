@@ -31,6 +31,10 @@ hyper = { version = "=1.7.0", features = ["client", "server", "http1"] }
 hyper-util = { version = "=0.1.17", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "=0.1.3"
 bytes = "=1.10.1"
+# A6.4-pr5 (human-approved 2026-10-20): pure-Rust TLS for provider HTTPS.
+# ring backend (no cmake/aws-lc), webpki-roots = Mozilla bundle like Node.
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
+hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "tls12", "ring", "webpki-tokio"] }
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }
