@@ -55,8 +55,10 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 - **磁盘落盘与快照恢复**未移植：输出只在 1 MB 环形缓冲；`unknown` 状态无法产生（代码路径保留，未覆盖）。
 - **异步 spawn 失败**（ENOENT 等）：TS 不会发 exit，任务永远 running，`stop` / `dispose` 永远等待
-  （`probes/p1.out`：`missing-cwd stop hang`、`dispose-hang`）。Rust 可见状态相同，但 `stop` 在 grace
-  后返回、`dispose` 不等这类任务。夹具只做读取。
+  （`probes/p1.out`：`missing-cwd stop hang`、`dispose-hang`）。Rust 不复制这个挂起：stop 之前可见状态
+  与 TS 相同（running、无 pid）；`stop` 置 `interrupted`，在没有进程可发信号时立即结算为 `cancelled`
+  （`endedAt` 有值、`exitCode` 为 undefined），触发完成事件并唤醒 waiter；`dispose` 同样结算后返回。
+  该差异须登记进 `specs/parity/accepted-diffs.md`（原版缺陷 / 待批）。夹具只做读取。
 - **未调用 dispose 就丢弃运行时**：与 TS 的 `child.unref()` 一致，子进程继续运行。
 - **子代理执行入口**：只移植注册表与投影；`run` 由调用方注入，真正的 AgentLoop fork 不在本单。
 - **bash `run_in_background`**：固定基线的 bash 工具没有该参数（`additionalProperties:false`），后台

@@ -785,7 +785,7 @@ fn dropped_stop_still_kills_a_term_ignoring_group() {
         let tasks = BackgroundTaskRuntime::default();
         let (id, pid) = term_ignoring(&tasks, &root).await;
         // Let the shell install its trap before the TERM is sent.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         let grace = JsValue::Number(300.0);
         let stop = tasks.stop(&id, &grace, None);
         assert!(
@@ -794,6 +794,9 @@ fn dropped_stop_still_kills_a_term_ignoring_group() {
                 .is_err(),
             "the group ignores TERM, so stop is still in its grace period"
         );
+        let during_grace = tasks.get(&id, None).unwrap();
+        assert_eq!(during_grace.status.as_str(), "running");
+        assert!(during_grace.interrupted);
         assert!(group_alive(pid), "TERM alone must not end the group");
         until("SIGKILL after the dropped stop", || !group_alive(pid)).await;
         until("dropped stop settles", || {
@@ -814,7 +817,7 @@ fn dropped_dispose_still_completes() {
     runtime().block_on(async {
         let tasks = BackgroundTaskRuntime::default();
         let (id, pid) = term_ignoring(&tasks, &root).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(
             tokio::time::timeout(Duration::from_millis(50), tasks.dispose())
                 .await
