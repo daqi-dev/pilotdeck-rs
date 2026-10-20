@@ -189,8 +189,13 @@ async function script(_name: string, text: string): Promise<string> {
   scriptContents[path] = text;
   return path;
 }
+// Hook env is recorded in the oracle: use a fixed, machine-independent PATH
+// and HOME (never the generating user's), so regeneration is byte-stable and
+// no local paths leak into the public fixture.
+const FIXED_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+const FIXED_HOME = '/tmp';
 function env() {
-  return { PATH: process.env.PATH, HOME: process.env.HOME };
+  return { PATH: FIXED_PATH, HOME: FIXED_HOME };
 }
 async function commandCase(input: {
   name: string;
@@ -346,7 +351,7 @@ await commandCase({ name: 'abort-during', script: S.abort1, abortAtMs: 500 });
 await commandCase({
   name: 'env-values',
   script: S.env,
-  env: { A: 'a', B: 'b b', PATH: process.env.PATH },
+  env: { A: 'a', B: 'b b', PATH: FIXED_PATH },
 });
 // Argument expansion is the shell's, not the executor's.
 await commandCase({
@@ -435,7 +440,7 @@ await commandCase({
 
 // ---------------------------------------------------------------- HTTP hooks
 const requests: any[] = [];
-const selectedHeaders = ['content-type', 'x-a', 'x-b', 'x-c', 'x-d'];
+const selectedHeaders = ['content-type', 'x-a', 'x-b', 'x-c', 'x-d', 'authorization', 'cookie'];
 function selectHeaders(headers: any) {
   const selected: Record<string, string> = {};
   for (const name of selectedHeaders) {
@@ -480,6 +485,7 @@ const server = createServer((req, res) => {
       '/redirect/refused': [302, `http://127.0.0.1:${closedPort}/x`],
       '/redirect/blocked-port': [302, 'http://127.0.0.1:6000/x'],
       '/nested/deep/relative': [302, '../../echo'],
+      '/redirect/cross-origin': [307, `http://localhost:${port}/echo`],
     };
     const chain = /^\/chain\/(\d+)$/.exec(req.url ?? '');
     if (chain && Number(chain[1]) > 0) {
@@ -635,6 +641,17 @@ await httpCase({ name: 'redirect-chain-21', target: '<url>/chain/21' });
 await httpCase({ name: 'redirect-refused', target: '<url>/redirect/refused' });
 await httpCase({ name: 'redirect-blocked-port', target: '<url>/redirect/blocked-port' });
 await httpCase({ name: 'redirect-abort-during', target: '<url>/redirect/slow', abortAtMs: 500 });
+// Cross-origin hop (127.0.0.1 -> localhost): authorization/cookie dropped.
+await httpCase({ name: 'redirect-cross-origin-credentials', target: '<url>/redirect/cross-origin', headers: { Authorization: 'Bearer t', Cookie: 'c=1', 'X-A': 'a' } });
+// WebIDL ByteString conversion covers record keys too, key before value and
+// entry by entry, all before any Headers.append validation.
+await httpCase({ name: 'header-name-0x100', target: '<url>/ok', headers: { '\u0100': 'v' } });
+await httpCase({ name: 'header-name-lone-surrogate', target: '<url>/ok', headers: { '\ud800': 'v' } });
+await httpCase({ name: 'header-name-before-value', target: '<url>/ok', headers: { 'x\u0100': '\u4e2d' } });
+await httpCase({ name: 'header-bytestring-before-append', target: '<url>/ok', headers: { 'a b': 'v', 'x\u0100': 'v' } });
+// Schemes other than http(s) are network errors in fetch.
+await httpCase({ name: 'scheme-ftp', target: 'ftp://127.0.0.1/x' });
+await httpCase({ name: 'scheme-file', target: 'file:///nonexistent-pdrs' });
 
 // ------------------------------------------------- prompt $ARGUMENTS replace
 // String.prototype.replace(string, string): first match only, replacement
@@ -762,7 +779,7 @@ async function runtimeRun(rt: any, input: any) {
 const runtimeDispose: any = {};
 {
   const rt = new HookRuntime(actualize(runtimeSettings));
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME };
+  const env = { PATH: FIXED_PATH, HOME: FIXED_HOME };
   await runtimeRun(rt, { name: 'mixed-order', event: 'Stop', hookInput: baseInput, matchQuery: 'm', cwd: '<dir>', env });
   await runtimeRun(rt, { name: 'no-match-query', event: 'Stop', hookInput: baseInput, cwd: '<dir>', env });
   await runtimeRun(rt, {
@@ -824,7 +841,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
       hookInput: baseInput,
       matchQuery: 'Stop',
       cwd: '<dir>/does-not-exist',
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
     }),
   };
   await rt.dispose();
@@ -844,7 +861,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
       hookInput: baseInput,
       matchQuery: 'SessionEnd',
       cwd: '<dir>',
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
     }),
   };
   runtimeExtra.sessionEnd.elapsedAtLeast1500 = performance.now() - started >= 1500;
@@ -860,7 +877,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
     hookInput: baseInput,
     matchQuery: 'Stop',
     cwd: root,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
   });
   const asyncRuntime: any = {
     settings: JSON.parse(json(settings)),
@@ -880,7 +897,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
     hookInput: baseInput,
     matchQuery: 'Stop',
     cwd: root,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
   });
   asyncRuntime.secondPending = json(second.pendingAsyncHooks);
   asyncRuntime.cancel = rt.cancelAsyncHook(second.pendingAsyncHooks[0].id);
@@ -912,7 +929,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
       hookInput: baseInput,
       matchQuery: 'Stop',
       cwd: '<dir>',
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
     }),
   };
   await rt.dispose();
@@ -921,7 +938,7 @@ const runtimeExtra: any = { pluginRoot: {}, sessionEnd: {}, async: {}, disposeDr
   // dispose waits for an in-flight run.
   const settings = { Stop: [{ hooks: [{ type: 'command', command: 'sleep 0.3' }] }] };
   const rt = new HookRuntime(actualize(settings));
-  const running = rt.run({ event: 'Stop', hookInput: baseInput, matchQuery: 'Stop', cwd: root, env: { PATH: process.env.PATH } });
+  const running = rt.run({ event: 'Stop', hookInput: baseInput, matchQuery: 'Stop', cwd: root, env: { PATH: FIXED_PATH } });
   const disposing = rt.dispose();
   runtimeExtra.disposeDrain = {
     settings: JSON.parse(json(settings)),
@@ -958,7 +975,7 @@ const lifecycleBaseInput = { ...baseInput, cwd: '<dir>' };
     baseInput: actualize(lifecycleBaseInput),
     payload: { extra: 'v' },
     matchQuery: 'Stop',
-    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
     cwd: '<dir>',
   });
   lifecycle.dispatch = json(result);
@@ -971,7 +988,7 @@ const lifecycleBaseInput = { ...baseInput, cwd: '<dir>' };
     baseInput: actualize(lifecycleBaseInput),
     payload: { extra: 'v' },
     matchQuery: 'Stop',
-    env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    env: { PATH: FIXED_PATH, HOME: FIXED_HOME },
     cwd: '<dir>',
   });
   lifecycle.acrossTurns = {

@@ -449,8 +449,17 @@ fn response(status: u16, body: Vec<u8>) -> hyper::Response<http_body_util::Full<
         .unwrap()
 }
 
+const SELECTED_HEADERS: [&str; 7] = [
+    "content-type",
+    "x-a",
+    "x-b",
+    "x-c",
+    "x-d",
+    "authorization",
+    "cookie",
+];
 fn selected_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
-    ["content-type", "x-a", "x-b", "x-c", "x-d"]
+    SELECTED_HEADERS
         .into_iter()
         .filter_map(|name| {
             headers.get(name).map(|value| {
@@ -471,7 +480,7 @@ fn selected_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
 /// `rawHeaders` scan), so a header split into two lines cannot pass.
 fn selected_header_lines(headers: &hyper::HeaderMap) -> JsObject {
     let mut lines = JsObject::new();
-    for name in ["content-type", "x-a", "x-b", "x-c", "x-d"] {
+    for name in SELECTED_HEADERS {
         let values: Vec<JsValue> = headers
             .get_all(name)
             .iter()
@@ -523,6 +532,13 @@ fn redirect_for(path: &str, base: &str, refused: &str) -> Option<(u16, Option<St
         "/redirect/refused" => (302, Some(format!("{refused}/x"))),
         "/redirect/blocked-port" => (302, Some("http://127.0.0.1:6000/x".to_owned())),
         "/nested/deep/relative" => (302, Some("../../echo".to_owned())),
+        "/redirect/cross-origin" => (
+            307,
+            Some(format!(
+                "{}/echo",
+                base.replace("http://127.0.0.1:", "http://localhost:")
+            )),
+        ),
         _ => return None,
     };
     Some((status, location))
@@ -666,7 +682,7 @@ async fn http_executor_matches_real_ts_and_records_requests() {
     drop(closed);
     let (base, server) = mock_server(recorded.clone(), &refused).await;
     let cases = array(field(field(&oracle, "http"), "cases"));
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 48);
     let executor = HttpHookExecutor::new();
     for case in cases {
         let name = text(field(case, "name"));
@@ -755,15 +771,16 @@ async fn http_executor_matches_real_ts_and_records_requests() {
     let _ = server.await;
 }
 
-/// P1: TS `fetch` gives up after undici's 300 s headers timeout and reports
-/// `fetch failed`. The default is 300 s (too slow for a test), so inject a
-/// short one against a server that accepts but never responds.
+/// TS `fetch` gives up after the dispatcher's headers timeout and reports
+/// `fetch failed`. The TS CLI installs `undici.Agent({ headersTimeout:
+/// 600_000, bodyTimeout: 600_000 })` (too slow for a test), so inject a short
+/// one against a server that accepts but never responds.
 #[tokio::test]
 async fn http_headers_timeout_projects_fetch_failed() {
     assert_eq!(
         HttpHookExecutor::new().timeout(),
-        Duration::from_secs(300),
-        "default must match undici headersTimeout"
+        Duration::from_secs(600),
+        "default must match the TS CLI dispatcher (cli/proxy.ts createLongTimeoutOptions)"
     );
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -793,6 +810,178 @@ async fn http_headers_timeout_projects_fetch_failed() {
         "fetch failed"
     );
     assert!(started.elapsed() < Duration::from_secs(5));
+    server.abort();
+    let _ = server.await;
+}
+
+/// Raw loopback server for timing/size behavior the TS oracle cannot pin
+/// (semantics measured on the baseline's undici with small timeouts:
+/// `_tmp/20261019-a67-pr4/probe-r3/timeouts-3s.mjs`, `body-cap.mjs`).
+/// Paths: `/hop/<delay ms>/<hops left>` answers after `delay` with a 302 to
+/// the next hop (200 `{}` at 0); `/drip/<gap ms>/<chunks>` sends chunked
+/// `x` frames `gap` apart; `/stall` sends headers and one frame, then idles;
+/// `/size/<n>` sends `n` bytes.
+async fn timing_server() -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let Ok(n) = stream.read(&mut buffer).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        return;
+                    }
+                    request.extend_from_slice(&buffer[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let length = text[..end]
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let path = text.split(' ').nth(1).unwrap_or("/").to_owned();
+                let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+                let number = |i: usize| {
+                    parts
+                        .get(i)
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(0)
+                };
+                match parts[0] {
+                    "hop" => {
+                        sleep(Duration::from_millis(number(1))).await;
+                        let response = if number(2) == 0 {
+                            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}"
+                                .to_owned()
+                        } else {
+                            format!(
+                                "HTTP/1.1 302 Found\r\nlocation: /hop/{}/{}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                                number(1),
+                                number(2) - 1
+                            )
+                        };
+                        let _ = stream.write_all(response.as_bytes()).await;
+                    }
+                    "drip" | "stall" => {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n1\r\nx\r\n")
+                            .await;
+                        if parts[0] == "stall" {
+                            sleep(Duration::from_secs(30)).await;
+                            return;
+                        }
+                        for _ in 1..number(2) {
+                            sleep(Duration::from_millis(number(1))).await;
+                            let _ = stream.write_all(b"1\r\nx\r\n").await;
+                        }
+                        let _ = stream.write_all(b"0\r\n\r\n").await;
+                    }
+                    "size" => {
+                        let n = number(1) as usize;
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {n}\r\nconnection: close\r\n\r\n"
+                        );
+                        let _ = stream.write_all(head.as_bytes()).await;
+                        let _ = stream.write_all(&vec![b'a'; n]).await;
+                    }
+                    _ => {}
+                }
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+    (base, task)
+}
+async fn run_http(executor: &HttpHookExecutor, url: String) -> (HookOutcome, String, String) {
+    let result = executor
+        .execute(HttpHookOptions {
+            url: url.into(),
+            headers: None,
+            allowed_env_vars: None,
+            hook_input: JsObject::new(),
+            env: None,
+            signal: None,
+        })
+        .await;
+    (
+        result.outcome,
+        String::from_utf16_lossy(result.stdout.units()),
+        String::from_utf16_lossy(result.stderr.units()),
+    )
+}
+
+/// undici `headersTimeout` is armed per dispatch (each redirect hop), and
+/// `bodyTimeout` is the idle gap between body frames, not a deadline for the
+/// whole fetch. Baseline probe with 3 s timeouts: 3 hops x 2 s succeed
+/// (6 s total), one 5 s hop fails `fetch failed`, 4 frames 2 s apart succeed
+/// (8 s total), a 5 s gap / a stalled body fail `terminated`.
+#[tokio::test]
+async fn http_timeouts_are_per_hop_headers_and_idle_body() {
+    let (base, server) = timing_server().await;
+    let executor = HttpHookExecutor::with_timeout(Duration::from_millis(400));
+    let hops = run_http(&executor, format!("{base}/hop/250/3")).await;
+    assert_eq!(
+        hops,
+        (HookOutcome::Success, "{}".into(), String::new()),
+        "4 dispatches x 250 ms (1 s total) each fit the 400 ms headers timer"
+    );
+    let slow_hop = run_http(&executor, format!("{base}/hop/700/0")).await;
+    assert_eq!(slow_hop.2, "fetch failed");
+    let drip = run_http(&executor, format!("{base}/drip/250/4")).await;
+    assert_eq!(
+        drip,
+        (HookOutcome::Success, "xxxx".into(), String::new()),
+        "frames 250 ms apart (750 ms total) never idle past 400 ms"
+    );
+    let gap = run_http(&executor, format!("{base}/drip/700/2")).await;
+    assert_eq!(
+        (gap.0, gap.2.as_str()),
+        (HookOutcome::NonBlockingError, "terminated")
+    );
+    let stall = run_http(&executor, format!("{base}/stall")).await;
+    assert_eq!(
+        (stall.0, stall.2.as_str()),
+        (HookOutcome::NonBlockingError, "terminated")
+    );
+    server.abort();
+    let _ = server.await;
+}
+
+/// `response.text()` cannot build a string past `MAX_STRING_LENGTH` bytes
+/// (Node: `Cannot create a string longer than 0x1fffffe8 characters` at
+/// 0x1fffffe8 + 1 bytes, success at exactly 0x1fffffe8; probe-r3/body-cap.mjs).
+/// The executor counts bytes per frame and stops at the limit instead of
+/// buffering an unbounded body; a small injected limit exercises that path.
+#[tokio::test]
+async fn http_body_over_string_limit_is_a_range_error() {
+    let (base, server) = timing_server().await;
+    let executor = HttpHookExecutor::new().with_body_limit(16);
+    let fits = run_http(&executor, format!("{base}/size/16")).await;
+    assert_eq!(fits, (HookOutcome::Success, "a".repeat(16), String::new()));
+    let over = run_http(&executor, format!("{base}/size/17")).await;
+    assert_eq!(
+        (over.0, over.1.as_str(), over.2.as_str()),
+        (
+            HookOutcome::NonBlockingError,
+            "",
+            "Cannot create a string longer than 0x1fffffe8 characters"
+        )
+    );
     server.abort();
     let _ = server.await;
 }
@@ -2001,4 +2190,11 @@ async fn async_invocation_id_prefers_the_registration_bridge() {
         }]
     );
     runtime.dispose().await;
+}
+
+/// Regenerates the oracle from the real TS baseline and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn hooks_runtime_fixtures_regenerate_identically_from_ts() {
+    baseline::regenerates_identically("hooks-runtime");
 }
