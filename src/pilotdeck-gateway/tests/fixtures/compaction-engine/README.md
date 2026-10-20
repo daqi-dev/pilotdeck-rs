@@ -42,7 +42,8 @@ generator_twice_is_byte_identical -- --ignored
 逐字节一致。录制前逐项核对了已入库 `compaction/oracle.json` 的全部 650 个
 guard-bound SHA-256；独立枚举确认新生成器的完整相对 import 闭包正是该集合。
 没有以这项复用核验冒充共享守卫的本次执行：固定 HEAD / 全 src 干净树仍待协调者
-跑上面的 guarded regeneration。原始命令、探针、输出和两处实现变异负控由协调者归档。
+跑上面的 guarded regeneration。原始命令、探针、输出和实现变异负控见主仓
+[`_tmp/20261020-a66-pr8b/RESULT.md`](/Users/da/ws/pilotdeck-rs/_tmp/20261020-a66-pr8b/RESULT.md)。
 
 手动端覆盖本次单次 full-summary 适配及 durable bracket；自动策略、
 post-summary snip / emergency / overflow 的完整编排由 pr8b 接续。

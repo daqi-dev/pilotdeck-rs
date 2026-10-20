@@ -10,7 +10,7 @@ host dispatcher、durable context 和 transcript writer。辅助模型为固定�
 | --- | ---: |
 | policyCases / policyBudgetCases | 4 / 4 |
 | recoveryCases / fallbackCases / malformedRecoveryCases | 41 / 20 / 3 |
-| orchestrationCases | 34 |
+| orchestrationCases | 35 |
 | identityCases | 2 |
 | hostCases | 6 |
 | loopCases | 2 |
@@ -18,7 +18,8 @@ host dispatcher、durable context 和 transcript writer。辅助模型为固定�
 编排覆盖 warning/blocking、micro 改写及无改写、缺预算/策略/摘要、手动强制、
 摘要失败、post-summary snip（含非消息预算）、target-not-reached、emergency 的
 额外预算评估/reactive summary/micro/head truncate、最终 overflow、NaN、定制
-truncator 的引用变化，以及 micro 后 ratio 恰为 0.90、最终 ratio 恰为 1.0 的边界。
+truncator 的引用变化，以及 micro 后 ratio 恰为 0.90、最终 ratio 恰为 0.90
+（tier 为 emergency）和 1.0 的边界。
 `orchestrationCases` 比较调用顺序、摘要请求、结果、提交前后
 JSONL 原始字节；两条 recovery 串联案例仅验证决策，不冒充模型重试。
 
