@@ -1,15 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 19:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.4-pr7 | impl | ready | PR #379 与 main（含 A6.4-pr6）冲突：Claude 子代理 rebase 并把两份 resolveThinkingPlan 合成一份（唯一编码）；之后重跑闸门
-- A6.4-pr8 | impl | ready | google：修复轮 1 已推（0651ea2，Grok P1×3），与 main 冲突；**等 A6.4-pr7 合入后再 rebase**（三个 provider 共改 providers/mod.rs、http.rs，按顺序合避免反复冲突）
-- A6.5-pr9 | impl | ready | web_fetch/search 修复轮 2（DeepSeek）：codex r2 P1×2（timeoutMs<=0、取消覆盖 provider 异常）
-- A6.5-pr10b | impl | ready | MCP 运行时修复轮 3（DeepSeek，排在 pr9 之后）：Grok r3 P1 /u 非法 pattern 放行；停机租约、手工合并、栈溢出均确认修好
-- A6.6-pr8a | impl | ready | compaction engine + stripMultimedia（codex，wt-a63-pr1，叠在已合入的 #342 上）
-- A6.6-pr8b | impl | ready | policy/orchestrator/recovery；接 pr8a
-- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层；接 pr9
-- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr7/pr8
+updated: 2026-10-21 00:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9 | review | ready | 修复轮 4（codex）已提交并 rebase 推送 5f73d6a（count_http 冲突真合并：改用 fetch_redirect::blocked_port）；GLM r5 + Grok r5 确认中，沙箱外全量验证 `_tmp/20261021-a65-pr9/verify/`；谱系 Claude+DeepSeek+codex，只能 GLM/Grok 审
+- A6.5-pr10b | review | ready | 修复轮 4（DeepSeek）已提交，`rebase --onto` 去重 pr10a 旧提交后推送 f579dc7；GLM r5 + Grok r5 确认中，验证 `_tmp/20261021-a65-pr10b/verify/`；谱系同上
+- A6.6-pr8b | impl | ready | 两家 + gate1 均无 P0/P1；codex 修复轮 1 做便宜 P2（`_tmp/20261020-a66-pr8b/fix1.md`），完成后沙箱外验证 → 开 PR → 入队；本地已 rebase 057d285 未推
+- A6.4-pr8 | impl | ready | google：rebase 推送 acb2f21；codex 修复轮 2（GLM r2 P1 citationMetadata + gate2 P1×2，`_tmp/20261020-a64-pr8/fix2.md`）；DeepSeek dsh 直连 key 失效（AUTH），改派 codex
+- A6.5-pr9b | impl | ready | html5ever + turndown 规则层（wt-a6-x0 有 wip 513fc53）；接 pr9 合入
+- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr8 合入
+- A6.3-pr9 | impl | ready | inventory 未见提交记录，待核范围
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -18,7 +17,12 @@ updated: 2026-10-20 19:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 - accepted-diffs-4-5 | coord | human | #372 已合入的两条「待批」条目（handshakeClose、background-task-async-spawn），等人批
+- A6.6-pr10 | impl | human | EdgeClaw memory core：sqlite 依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 00:20 · /loop（会话自 10-20 23:56 起）
+> 接续 19:00 后的现场：#379 A6.4-pr7、#383 A6.6-pr8a 已合入。pr9、pr10b 的修复轮 4 早已跑完但未提交——本轮按实际实现方署名提交、rebase 到 main（去掉已合入的前序旧提交；pr9 与 main 的 `blocked_port` 冲突真合并，只留 fetch_redirect 一份），推送后派 GLM + Grok 确认评审，同时在沙箱外跑全量测试补监听端口用例。pr8b 两家与闸门无 P0/P1，codex 做一轮便宜 P2 后开 PR；pr8 GLM r2 与 gate2 共 3 条 P1，改派 codex 修（DeepSeek dsh 直连 key 已失效，评审通道已在 a0747c5 改走 llm-center，实现通道待同样处理）。
+> **资源**：清 4 个已合并 worktree 的 target，磁盘 90.9 → 72.2 GiB；worktree 12/12；cargo 槽 ≤4。**下一步**：评审 / 验证回来 → 开 PR 或插修复；pr8b、pr8 修完 → 验证 → 评审。
 
 > ## 2026-10-20 19:00 · /loop
 > **合并**：#372（accepted-diffs #4 #5，待批）、#373、#374 A6.5-pr6、#375 A6.4-pr6、#376 A6.5-pr10a、#377 #342 tool_pair、#378 A6.5-pr12、#380（CLAUDE.md 精简，用户本人确认草稿全文）。
