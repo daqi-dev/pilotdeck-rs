@@ -1,8 +1,8 @@
 //! `network/fetch.ts` `networkFetch` for the web tools: one request over the
 //! shared [`ModelHttpTransport`] (hyper + rustls), a per-attempt timeout, the
-//! parent abort signal, and the retry loop (statuses 408/409/425/429/5xx and
-//! retryable network errors; GET always, POST only with `retryOnPost`) with
-//! `Retry-After` or jittered exponential backoff.
+//! parent abort signal, and the retry loop (statuses 408/409/425/429/500/502/
+//! 503/504 and retryable network errors; GET always, POST only with
+//! `retryOnPost`) with `Retry-After` or jittered exponential backoff.
 //!
 //! Request construction follows undici's `fetch` as far as the web tools can
 //! reach it: the fragment is dropped, URLs with credentials, non-HTTP(S)
@@ -11,7 +11,9 @@
 //! `accept-language` and `accept-encoding` headers are not sent (see the
 //! fixture README).
 use crate::runtime::{
-    model::http::{ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure},
+    model::http::{
+        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, UNDICI_BODY_TIMEOUT_MS,
+    },
     tools::ToolRunContext,
 };
 use bytes::Bytes;
@@ -19,8 +21,12 @@ use http_body_util::{BodyExt, Full};
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{sync::Arc, time::Duration};
 
-/// undici's default `bodyTimeout`, as configured by the PilotDeck server.
-const BODY_TIMEOUT: Duration = Duration::from_millis(600_000);
+/// The global dispatcher's undici `bodyTimeout` (`cli/proxy.ts` installs
+/// 600000 ms, `probes/body-abort.out`): a body read that sees no bytes for
+/// this long fails like `TypeError: terminated`. It is an idle timer, not a
+/// total deadline — undici resets it on every chunk, so a steadily dripping
+/// body can outlive it (same probe).
+const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
@@ -62,15 +68,34 @@ pub enum BodyError {
     Terminated,
     /// The body grew past the caller's cap (bytes read so far).
     TooLarge,
+    /// The tool call's parent signal fired while the body was being read.
+    /// The baseline detaches its abort listener once the headers arrive, so
+    /// this is a scheduler-contract guarantee rather than a TS behaviour
+    /// (`probes/body-abort.out`).
+    Aborted,
 }
 
 /// `response.arrayBuffer()`, stopping once more than `cap` bytes arrived:
 /// the baseline reads everything and then compares the length, which is the
 /// same outcome without holding an unbounded body in memory.
-pub async fn read_body(body: &mut ModelBody, cap: usize) -> Result<Vec<u8>, BodyError> {
+///
+/// The read races every frame against the parent signal. undici's own
+/// `bodyTimeout` is an idle timer (`BODY_TIMEOUT`); there is no total
+/// deadline because the baseline clears its 60 s timer when the headers
+/// arrive (`probes/body-abort.out`, `probes/body-fetch-path.out`).
+pub async fn read_body(
+    body: &mut ModelBody,
+    cap: usize,
+    parent: Option<&ToolRunContext>,
+) -> Result<Vec<u8>, BodyError> {
     let mut out = Vec::new();
     loop {
-        match tokio::time::timeout(BODY_TIMEOUT, body.frame()).await {
+        let next = tokio::select! {
+            biased;
+            () = parent_aborted(parent) => return Err(BodyError::Aborted),
+            next = tokio::time::timeout(BODY_TIMEOUT, body.frame()) => next,
+        };
+        match next {
             Err(_) | Ok(Some(Err(_))) => return Err(BodyError::Terminated),
             Ok(None) => return Ok(out),
             Ok(Some(Ok(frame))) => {
@@ -312,11 +337,17 @@ pub async fn network_fetch(
                     && attempt < retry.max_retries
                     && RETRY_STATUSES.contains(&status)
                 {
-                    let retry_after = response
-                        .headers()
-                        .get(hyper::header::RETRY_AFTER)
-                        .and_then(|value| value.to_str().ok())
-                        .map(str::to_string);
+                    // `Headers.get()` joins repeated names with `, ` (the
+                    // same read as `response_headers`).
+                    let retry_after = {
+                        let values: Vec<&str> = response
+                            .headers()
+                            .get_all(hyper::header::RETRY_AFTER)
+                            .iter()
+                            .filter_map(|value| value.to_str().ok())
+                            .collect();
+                        (!values.is_empty()).then(|| values.join(", "))
+                    };
                     drop(response);
                     delay(
                         retry_delay(attempt, &retry, retry_after.as_deref(), &options.random),

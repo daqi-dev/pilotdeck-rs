@@ -68,6 +68,7 @@ export const fetches = [
   { name: 'redirect-scheme-change', input: { url: '$TLS/down', mode: 'raw' }, replies: [redirect(307, '$PLAIN/x')] },
   { name: 'redirect-relative-dots', input: { url: '$TLS/a/b/c', mode: 'raw' }, replies: [redirect(301, '../d?q=1'), text('dots')] },
   { name: 'redirect-missing-location', input: { url: '$TLS/nl', mode: 'raw' }, replies: [redirect(302)] },
+  { name: 'redirect-empty-location', input: { url: '$TLS/nl0', mode: 'raw' }, replies: [redirect(302, '')] },
   { name: 'redirect-303-not-followed', input: { url: '$TLS/see', mode: 'raw' }, replies: [{ status: 303, headers: { location: '/x', 'content-type': 'text/plain' }, body: 'see other' }] },
   { name: 'redirect-loop', input: { url: '$TLS/loop', mode: 'raw' }, replies: Array.from({ length: 11 }, () => redirect(302, '/loop')) },
   { name: 'egress-blocked', input: { url: '$TLS/blocked', mode: 'raw' }, replies: [{ status: 403, headers: { 'x-proxy-error': 'blocked-by-allowlist' }, body: 'no' }] },

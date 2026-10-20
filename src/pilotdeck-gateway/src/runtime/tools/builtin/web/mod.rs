@@ -11,7 +11,8 @@ pub mod search;
 pub mod url_validation;
 
 pub use fetch_tool::{
-    SecondaryModel, SecondaryModelEvent, WebFetchModelPort, WebFetchTool, WebFetchToolOptions,
+    SecondaryModel, SecondaryModelEvent, SecondaryNext, SecondaryStream, WebFetchModelPort,
+    WebFetchTool, WebFetchToolOptions,
 };
 pub use fetcher::{HtmlToMarkdown, MissingTurndown, UrlFetcher};
 pub use search::{CustomProviderConfig, WebSearchOptions, WebSearchTool};

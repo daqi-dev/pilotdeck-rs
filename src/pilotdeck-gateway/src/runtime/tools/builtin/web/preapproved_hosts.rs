@@ -1,8 +1,9 @@
 //! Pre-approved hosts for `web_fetch` (baseline `tool/builtin/web/preapprovedHosts.ts`).
 //! Hosts here only switch the secondary-model guidelines to the documentation
 //! wording; they do not bypass permissions. The table is data transcribed
-//! mechanically from the baseline and checked entry by entry against the
-//! real `PREAPPROVED_ENTRIES` in the fixture replay.
+//! mechanically from the baseline; the fixture exports the real
+//! `PREAPPROVED_ENTRIES` into `oracle.json` and the replay compares every
+//! entry (host, path prefix, subdomain flag) in order.
 
 /// `PreapprovedEntry`: lowercased host, optional path prefix, `*.<host>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

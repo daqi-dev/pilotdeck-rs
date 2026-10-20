@@ -44,11 +44,23 @@ pub enum SecondaryModelEvent {
     Throw { is_error: bool, value: JsValue },
 }
 
-pub type SecondaryStream = Pin<Box<dyn Future<Output = Vec<SecondaryModelEvent>> + Send>>;
+/// The pending `next()` of a [`SecondaryStream`].
+pub type SecondaryNext<'a> = Pin<Box<dyn Future<Output = Option<SecondaryModelEvent>> + Send + 'a>>;
+
+/// The `AsyncIterable<CanonicalModelEvent>` returned by
+/// `model.stream(request, signal)`: one event per `next()`.
+pub trait SecondaryStream: Send {
+    fn next(&mut self) -> SecondaryNext<'_>;
+}
 
 /// `PilotDeckToolModelClient.stream` for the secondary call.
+///
+/// `signal` is the tool call's `AbortSignal`; a real client aborts the
+/// underlying provider request when it fires (the tool additionally races
+/// `next()` against the same signal, so cancellation settles even if the
+/// client ignores it).
 pub trait SecondaryModel: Send + Sync {
-    fn stream(&self, request: JsValue) -> SecondaryStream;
+    fn stream(&self, request: JsValue, signal: Option<ToolRunContext>) -> Box<dyn SecondaryStream>;
 }
 
 /// What a host stores in `ToolRuntimeContext::model` for `web_fetch`.
@@ -196,6 +208,23 @@ fn tool_error(code: &str, message: impl Into<JsString>, details: Option<JsObject
     let mut error = ToolError::new(code, message);
     error.details = details;
     error
+}
+
+fn aborted_error() -> ToolError {
+    tool_error("tool_aborted", "web_fetch aborted before completion.", None)
+}
+
+/// The baseline's `modelText += event.text` past V8's string limit is caught
+/// by the surrounding `catch` and rethrown as a secondary-model failure.
+fn secondary_string_too_long() -> ToolError {
+    tool_error(
+        "tool_execution_failed",
+        "web_fetch secondary model failed: Invalid string length",
+        Some(object([
+            ("stage", string("secondary_model")),
+            ("message", string("Invalid string length")),
+        ])),
+    )
 }
 
 /// `definedDetails(...)`: drop `undefined` members, keep `null`.
@@ -523,19 +552,34 @@ async fn execute(
     ]));
 
     let mut model_text: Vec<u16> = Vec::new();
-    for item in model.stream(request).await {
+    let mut events = model.stream(request, Some(context.clone()));
+    loop {
+        if context.is_aborted() {
+            return Err(aborted_error());
+        }
+        let next = tokio::select! {
+            biased;
+            () = context.cancelled() => return Err(aborted_error()),
+            next = events.next() => next,
+        };
+        let Some(item) = next else { break };
+        // `if (signal.aborted)` at the top of every iteration in the baseline.
+        if context.is_aborted() {
+            return Err(aborted_error());
+        }
         match item {
             SecondaryModelEvent::Event(event) => {
-                if context.is_aborted() {
-                    return Err(tool_error(
-                        "tool_aborted",
-                        "web_fetch aborted before completion.",
-                        None,
-                    ));
-                }
                 let kind = field(&event, "type");
                 if kind.as_string().is_some_and(|k| k.equals_str("text_delta")) {
-                    model_text.extend_from_slice(display(field(&event, "text"))?.units());
+                    let text = display(field(&event, "text"))?;
+                    // `modelText += event.text` throws V8's RangeError once the
+                    // concatenation passes `MAX_STRING_LENGTH` UTF-16 units.
+                    if model_text.len().saturating_add(text.units().len())
+                        > crate::runtime::model::MAX_STRING_LENGTH
+                    {
+                        return Err(secondary_string_too_long());
+                    }
+                    model_text.extend_from_slice(text.units());
                 } else if kind.as_string().is_some_and(|k| k.equals_str("error")) {
                     let error = field(&event, "error");
                     let message = display(field(error, "message"))?;

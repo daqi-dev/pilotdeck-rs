@@ -280,7 +280,12 @@ impl UrlFetcher {
             let HttpOutcome(mut response) = self.hop(&url, parent).await?;
             let status = response.status;
             if matches!(status, 301 | 302 | 307 | 308) {
-                let Some(location) = response.header("location").map(str::to_string) else {
+                // `if (!location)`: an empty header value is missing too.
+                let Some(location) = response
+                    .header("location")
+                    .filter(|location| !location.is_empty())
+                    .map(str::to_string)
+                else {
                     return Err(other("Redirect missing Location header"));
                 };
                 let redirect_url = parse_with_base(&location, &url)
@@ -316,9 +321,15 @@ impl UrlFetcher {
                     .unwrap_or_default();
                 return Err(other(&text));
             }
-            let body = match read_body(&mut response.body, MAX_HTTP_CONTENT_LENGTH).await {
+            let body = match read_body(&mut response.body, MAX_HTTP_CONTENT_LENGTH, parent).await {
                 Ok(body) => body,
                 Err(BodyError::Terminated) => return Err(other("terminated")),
+                // The parent signal fired mid-body; the baseline's message for
+                // an aborted `networkFetch` (observed before the headers) is
+                // kept so both abort points look the same.
+                Err(BodyError::Aborted) => {
+                    return Err(other("Network request aborted by parent signal."));
+                }
                 Err(BodyError::TooLarge) => {
                     return Err(other(&format!(
                         "Response exceeds maximum content length of {MAX_HTTP_CONTENT_LENGTH} bytes"
