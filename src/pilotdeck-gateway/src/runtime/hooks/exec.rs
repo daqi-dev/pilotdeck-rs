@@ -1026,25 +1026,49 @@ impl HttpHookExecutor {
                 url.scheme()
             )));
         }
-        // Node's `Headers`/`Request` construction validates names and values as
-        // ByteStrings before `fetch` checks `signal.aborted`; a pre-aborted
-        // request with a bad header therefore reports the header error.
-        let mut built = Vec::with_capacity(headers.len());
+        // `fetch` builds `Headers` from the plain object (node probes in
+        // _tmp/20261019-a67-pr4/probe-p1/): the WebIDL record conversion makes
+        // every value a ByteString first; then undici's `appendHeader` runs per
+        // entry in object key order — trim HTTP whitespace, reject an invalid
+        // name, reject a value holding NUL/CR/LF, and join a name that differs
+        // only in case onto the first one with ", ". All of this happens while
+        // constructing the Request, so before the abort check; any other byte
+        // the wire rejects (e.g. 0x01, 0x7f) only fails at send: `fetch failed`.
+        let mut entries = Vec::with_capacity(headers.len());
         for (name, value) in headers {
+            entries.push((name, header_value_bytes(&value)?));
+        }
+        let mut merged: Vec<(hyper::header::HeaderName, String, Vec<u8>)> =
+            Vec::with_capacity(entries.len());
+        for (name, bytes) in entries {
+            let is_ws = |b: &u8| matches!(b, b'\t' | b'\n' | b'\r' | b' ');
+            let start = bytes.iter().position(|b| !is_ws(b)).unwrap_or(bytes.len());
+            let end = bytes
+                .iter()
+                .rposition(|b| !is_ws(b))
+                .map_or(start, |i| i + 1);
+            let bytes = &bytes[start..end];
             let header_name =
                 hyper::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
                     JsString::from(format!(
                         "Headers.append: \"{name}\" is an invalid header name."
                     ))
                 })?;
-            let bytes = header_value_bytes(&value)?;
-            let header_value = hyper::header::HeaderValue::from_bytes(&bytes).map_err(|_| {
-                JsString::from(format!(
-                    "Headers.append: \"{}\" is an invalid header value.",
-                    String::from_utf16_lossy(value.units())
-                ))
-            })?;
-            built.push((header_name, header_value));
+            if bytes.iter().any(|b| matches!(b, 0 | b'\n' | b'\r')) {
+                let text: String = bytes.iter().map(|b| char::from(*b)).collect();
+                return Err(JsString::from(format!(
+                    "Headers.append: \"{text}\" is an invalid header value."
+                )));
+            }
+            if let Some(entry) = merged
+                .iter_mut()
+                .find(|(_, seen, _)| seen.eq_ignore_ascii_case(&name))
+            {
+                entry.2.extend_from_slice(b", ");
+                entry.2.extend_from_slice(bytes);
+            } else {
+                merged.push((header_name, name, bytes.to_vec()));
+            }
         }
         if options
             .signal
@@ -1054,7 +1078,9 @@ impl HttpHookExecutor {
             return Err("This operation was aborted".into());
         }
         let mut request = hyper::Request::builder().method("POST").uri(url.as_str());
-        for (name, value) in built {
+        for (name, _, value) in merged {
+            let value = hyper::header::HeaderValue::from_bytes(&value)
+                .map_err(|_| JsString::from("fetch failed"))?;
             request = request.header(name, value);
         }
         let request = request
@@ -1163,25 +1189,22 @@ fn resolve_headers(
             output.push((key, JsString::from_utf16(resolved)));
         }
     }
-    // The spread above is a plain object (exact-key override). `fetch` then
-    // builds `Headers` from it, which appends case-insensitively: one header,
-    // first-seen name spelling, values joined with ", " (node probe in
-    // _tmp/20261019-a67-pr4/probe-p1/probe.out).
-    let mut merged: Vec<(String, JsString)> = Vec::with_capacity(output.len());
-    for (name, value) in output {
-        if let Some(entry) = merged
-            .iter_mut()
-            .find(|(seen, _)| seen.eq_ignore_ascii_case(&name))
-        {
-            let mut joined = entry.1.units().to_vec();
-            joined.extend(", ".encode_utf16());
-            joined.extend_from_slice(value.units());
-            entry.1 = JsString::from_utf16(joined);
-        } else {
-            merged.push((name, value));
+    // `{ "content-type": …, ...resolved }` is a plain object, so integer-like
+    // keys enumerate first in ascending order (JS OrdinaryOwnPropertyKeys).
+    let mut indexed: Vec<(u32, (String, JsString))> = Vec::new();
+    let mut named = Vec::with_capacity(output.len());
+    for entry in output {
+        match JsString::from(entry.0.as_str()).array_index() {
+            Some(index) => indexed.push((index, entry)),
+            None => named.push(entry),
         }
     }
-    Ok(merged)
+    indexed.sort_by_key(|(index, _)| *index);
+    Ok(indexed
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .chain(named)
+        .collect())
 }
 
 fn substitute_env(
@@ -1646,5 +1669,18 @@ mod replace_tests {
         // Only the first occurrence is replaced.
         let out = replace_first(&JsString::from("$ARGUMENTS $ARGUMENTS"), "$ARGUMENTS", "x");
         assert_eq!(out, JsString::from("x $ARGUMENTS"));
+    }
+
+    /// Node v22.22.0 sends `{"x-z":"z","123":"n"}` as `123`, `content-type`,
+    /// `x-z` (probe2.out): integer-like keys of the spread object come first.
+    #[test]
+    fn headers_follow_js_object_key_order() {
+        let mut headers = JsObject::new();
+        headers.insert("x-z".into(), "z".into());
+        headers.insert("123".into(), "n".into());
+        headers.insert("01".into(), "o".into());
+        let resolved = resolve_headers(Some(&headers), None, Some(&JsObject::new())).unwrap();
+        let names: Vec<&str> = resolved.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["123", "content-type", "x-z", "01"]);
     }
 }
