@@ -52,3 +52,9 @@
 - **明确已失效、删除**：原第 88 行「2026-10-14 夜跑的 08:30 截止及首 Issue 专属期限不重复生效」——原文自述已不生效，历史见当日晨报与 Git。
 - **原则**：CLAUDE.md 只放每轮要执行的祈使句；为什么 → memory / decisions，怎么配的 → docs/changes/ops，标准 → specs。
 - **断言**：被外部引用的小节名在新文件中逐个 `grep` 命中（见 `_tmp/20261020-claude-md-slim/mapping.md` 末节）。
+
+## A6.6-pr8b：compaction「重入被拒」验收改挂 A7.1（自决 · 待复核，AI 代批，待人复核）
+- **卡在哪**：pr8b 任务书列了「重入被拒」夹具；Grok 判这条验收缺失为 P1。
+- **事实**：TS 的锁在 AgentHandle 的 maintenance admission（AgentHandle.ts:131-168），orchestrator 本身没有锁；Rust 还没有 AgentHandle 这一层。手动 compact 当前只能由 sidecar 在轮次内串行触发（WS compact 方法仍透传给 TS），没有能并发触发的调用方。
+- **选择**：移出 pr8b，挂 #382，前置于 A7.1。不往 orchestrator 里加 TS 没有的锁。
+- **原则**：**锁和接纳控制跟 TS 放在同一层**；所在层还没移植时，把验收挂到该层的移植单上，不在下层另造一把锁。
