@@ -699,14 +699,18 @@ async fn explicit_close_reaps_child() {
 }
 #[tokio::test]
 async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
+    // Real time on purpose: the fixture is an external Python process, so a
+    // paused Tokio clock leaves only a few scheduler ticks between SIGTERM and
+    // SIGKILL, and one coarse `advance` can be consumed by the writer join
+    // before the EOF timer is armed (#346). A full second per grace period is
+    // still bounded by the ten-second `wait_for_event` watchdog.
     let mut bounded = protocol_limits();
-    bounded.close_timeout = Duration::from_millis(50);
+    bounded.close_timeout = Duration::from_secs(1);
     let (mut command, receipt) = peer("close-hang");
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
     let pid = client.child_id().unwrap();
-    let clock = ManualClock::start();
     let close = client.close();
     tokio::pin!(close);
     tokio::select! {
@@ -714,26 +718,15 @@ async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
         result = &mut close => panic!("close skipped EOF grace period: {result:?}"),
         _ = wait_for_event("stdin EOF", || receipt.0.with_extension("eof").exists()) => {}
     }
-    // Poll after the writer has dropped stdin, ensuring the EOF grace timer
-    // is registered before advancing time (the marker alone is not enough).
-    std::future::poll_fn(|cx| {
-        assert!(std::future::Future::poll(close.as_mut(), cx).is_pending());
-        std::task::Poll::Ready(())
-    })
-    .await;
-    tokio::time::advance(Duration::from_millis(51)).await;
     tokio::select! {
         biased;
         result = &mut close => panic!("close skipped TERM grace period: {result:?}"),
         _ = wait_for_event("SIGTERM", || receipt.0.with_extension("term").exists()) => {}
     }
-    tokio::time::advance(Duration::from_millis(51)).await;
-    tokio::select! {
-        biased;
-        result = &mut close => result.unwrap(),
-        _ = wait_for_event("kill and reap", || false) => unreachable!()
-    }
-    drop(clock);
+    let result = timeout(Duration::from_secs(15), &mut close)
+        .await
+        .expect("close did not finish after SIGKILL");
+    result.unwrap();
     assert_reaped(pid).await;
     println!("HOST_PASS close timeout killed and reaped pid={pid}");
 }
