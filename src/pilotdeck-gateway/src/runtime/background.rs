@@ -27,8 +27,15 @@
 //! - A spawn that Node reports asynchronously (ENOENT, EACCES, ...) never
 //!   emits `exit` in the baseline, so its task stays `running` with no pid
 //!   and `stop` / `dispose` wait forever (`probes/p1.out`). Here the visible
-//!   state is the same, but `stop` returns after the grace period and
-//!   `dispose` does not wait for such a task.
+//!   state is the same until it is stopped; `stop` (and so `dispose`) then
+//!   settles it at once as `cancelled` (interrupted, `endedAt` set, no exit
+//!   code), fires its completion event and releases its waiters. There is no
+//!   process to signal, so no grace period applies.
+//!
+//! Cancellation: `stop`'s TERM → grace → KILL escalation and the disposal
+//! body run as runtime-owned tasks. Dropping the caller's future (host abort,
+//! operation deadline) does not cancel them, like the baseline's `rt.stop()`
+//! / `dispose()` promises that keep running after the tool call is gone.
 use crate::{
     js_value,
     process_group::wait_exit_unreaped,
@@ -767,21 +774,13 @@ impl BackgroundTaskRuntime {
             }
             state.task.interrupted = true;
         }
-        entry.terminate(rustix::process::Signal::TERM);
         let grace = match grace_ms {
             JsValue::Undefined | JsValue::Null => DEFAULT_GRACE_MS,
             value => js_value::to_number(value).unwrap_or(f64::NAN),
         };
-        tokio::select! {
-            biased;
-            () = entry.wait_done() => {}
-            () = tokio::time::sleep(timer_delay(grace)) => {
-                entry.terminate(rustix::process::Signal::KILL);
-            }
-        }
-        if !entry.never_exits {
-            entry.wait_done().await;
-        }
+        // Runtime-owned: the KILL must not depend on this call being polled.
+        let escalation = tokio::spawn(escalate(Arc::clone(&self.inner), entry, grace));
+        let _ = escalation.await;
         Ok(())
     }
 
@@ -835,6 +834,17 @@ impl BackgroundTaskRuntime {
             first
         };
         if first {
+            // Runtime-owned: a dropped first caller must not leave
+            // `dispose_started` set with no disposal running.
+            let runtime = self.clone();
+            drop(tokio::spawn(async move { runtime.dispose_now().await }));
+        }
+        let mut disposed = self.inner.disposed.subscribe();
+        let _ = disposed.wait_for(|disposed| *disposed).await;
+    }
+
+    async fn dispose_now(&self) {
+        {
             let mut starts = self.inner.starts.subscribe();
             let _ = starts.wait_for(|starts| *starts == 0).await;
             self.kill_all().await;
@@ -848,9 +858,7 @@ impl BackgroundTaskRuntime {
                 .map(|(_, entry)| Arc::clone(entry))
                 .collect();
             for entry in &entries {
-                if !entry.never_exits {
-                    entry.wait_done().await;
-                }
+                entry.wait_done().await;
             }
             for entry in &entries {
                 entry.state.lock().unwrap().output.close();
@@ -858,11 +866,35 @@ impl BackgroundTaskRuntime {
             }
             self.inner.state.lock().unwrap().phase = Phase::Disposed;
             self.inner.disposed.send_replace(true);
-        } else {
-            let mut disposed = self.inner.disposed.subscribe();
-            let _ = disposed.wait_for(|disposed| *disposed).await;
         }
     }
+}
+
+/// The body of `stop` after `interrupted` is set: SIGTERM, wait `grace`,
+/// SIGKILL, then wait for the exit to be recorded.
+async fn escalate(inner: Arc<Inner>, entry: Arc<Entry>, grace: f64) {
+    if entry.never_exits {
+        // Deliberate deviation (module docs): no exit will ever come.
+        {
+            let mut state = entry.state.lock().unwrap();
+            if state.task.status != TaskStatus::Running {
+                return;
+            }
+            state.task.status = TaskStatus::Cancelled;
+            state.task.ended_at = Some((inner.now)());
+        }
+        inner.settle(&entry);
+        return;
+    }
+    entry.terminate(rustix::process::Signal::TERM);
+    tokio::select! {
+        biased;
+        () = entry.wait_done() => {}
+        () = tokio::time::sleep(timer_delay(grace)) => {
+            entry.terminate(rustix::process::Signal::KILL);
+        }
+    }
+    entry.wait_done().await;
 }
 
 impl Inner {
