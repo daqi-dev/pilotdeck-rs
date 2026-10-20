@@ -484,32 +484,7 @@ impl SdkClient {
                 ));
             }
             if let Some(structured) = structured {
-                match super::output_schema::validate(&schema, structured) {
-                    Ok(None) => {}
-                    Ok(Some(message)) => {
-                        return Err(McpClientError::rpc(
-                            -32602.0,
-                            &format!(
-                                "Structured content does not match the tool's output schema: {message}"
-                            ),
-                        ));
-                    }
-                    Err(super::output_schema::ValidationError::Threw) => {
-                        return Err(McpClientError::rpc(
-                            -32602.0,
-                            &format!(
-                                "Failed to validate structured content: {}",
-                                CallStackExceeded::MESSAGE
-                            ),
-                        ));
-                    }
-                    Err(super::output_schema::ValidationError::Unsupported(message)) => {
-                        return Err(McpClientError::rpc(
-                            -32602.0,
-                            &format!("Failed to validate structured content: {message}"),
-                        ));
-                    }
-                }
+                validate_structured_content(&schema, structured)?;
             }
         }
         Ok(result)
@@ -572,8 +547,16 @@ impl PerSessionDirectory {
         // Success/spawn failure drops the sender; failed initialization keeps
         // it in the background close task until that task finishes.
         let _ = self.failed_close.await;
-        let _ = std::fs::remove_dir_all(self.path);
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(self.path)).await;
     }
+}
+
+/// The connection retains both the task and a cancellable wait handle.
+/// Cancelling a close caller cannot remove the task from a later dispose.
+struct Cleanup {
+    task: tokio::task::JoinHandle<()>,
+    done: watch::Receiver<bool>,
+    wait_on_close: bool,
 }
 
 struct State {
@@ -588,6 +571,48 @@ struct State {
     epoch: u64,
     reconnect_in_flight: bool,
     per_session_dir: Option<PerSessionDirectory>,
+    cleanups: Vec<Cleanup>,
+}
+
+impl State {
+    fn retire_connection(&mut self) -> watch::Receiver<bool> {
+        let client = self.client.take();
+        let dir = self.per_session_dir.take();
+        self.spawn_cleanup(
+            async move {
+                if let Some(client) = client {
+                    client.close().await;
+                }
+                if let Some(dir) = dir {
+                    dir.remove().await;
+                }
+            },
+            true,
+        )
+    }
+
+    fn spawn_cleanup(
+        &mut self,
+        cleanup: impl Future<Output = ()> + Send + 'static,
+        wait_on_close: bool,
+    ) -> watch::Receiver<bool> {
+        self.cleanups.retain(|cleanup| !cleanup.task.is_finished());
+        let (sender, done) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            cleanup.await;
+            sender.send_replace(true);
+        });
+        self.cleanups.push(Cleanup {
+            task,
+            done: done.clone(),
+            wait_on_close,
+        });
+        done
+    }
+}
+
+async fn await_cleanup(mut done: watch::Receiver<bool>) {
+    let _ = done.wait_for(|done| *done).await;
 }
 
 struct Inner {
@@ -725,6 +750,7 @@ impl McpClient {
                     epoch: 0,
                     reconnect_in_flight: false,
                     per_session_dir: None,
+                    cleanups: Vec::new(),
                 }),
             }),
         }
@@ -846,14 +872,17 @@ impl McpClient {
                 // already failed, so a connection that still lands is owned
                 // by nobody: close it so its child process is reaped.
                 let late_dir = dir.take();
-                tokio::spawn(async move {
-                    if let Ok(Ok(late)) = handshake.await {
-                        late.close().await;
-                    }
-                    if let Some(dir) = late_dir {
-                        dir.remove().await;
-                    }
-                });
+                self.state().spawn_cleanup(
+                    async move {
+                        if let Ok(Ok(late)) = handshake.await {
+                            late.close().await;
+                        }
+                        if let Some(dir) = late_dir {
+                            dir.remove().await;
+                        }
+                    },
+                    false,
+                );
                 Err(McpClientError::client(
                     McpClientErrorCode::HandshakeFailed,
                     format!(
@@ -883,15 +912,17 @@ impl McpClient {
             // baseline still installs the connection (and a racing `start()`
             // could install a second one); here the late connection is closed
             // and the attempt fails, so at most one connection is ever live.
-            drop(state);
-            tokio::spawn(async move {
-                if let Ok(client) = outcome {
-                    client.close().await;
-                }
-                if let Some(dir) = dir {
-                    dir.remove().await;
-                }
-            });
+            state.spawn_cleanup(
+                async move {
+                    if let Ok(client) = outcome {
+                        client.close().await;
+                    }
+                    if let Some(dir) = dir {
+                        dir.remove().await;
+                    }
+                },
+                true,
+            );
             return Err(self.aborted());
         }
         // Installed under the epoch-checked lock, so `close()` either takes
@@ -902,7 +933,7 @@ impl McpClient {
             // the directory slot and leaks it; retain cleanup ownership and
             // wait for that attempt's original background close.
             if let Some(old) = std::mem::replace(&mut state.per_session_dir, dir) {
-                tokio::spawn(old.remove());
+                state.spawn_cleanup(old.remove(), true);
             }
         }
         match outcome {
@@ -1130,98 +1161,81 @@ impl McpClient {
     /// M5b — drop the wedged transport synchronously; close it and remove
     /// the per-session directory in the background.
     fn recycle_transport_after_timeout(&self, timed_out: Option<&Arc<SdkClient>>) {
-        let (client, dir) = {
-            let mut state = self.state();
-            // A second request on an already retired connection can time out
-            // during its close grace period. It owns neither a newer client
-            // nor the published handshake slot.
-            if !state
-                .client
-                .as_ref()
-                .zip(timed_out)
-                .is_some_and(|(current, timed_out)| Arc::ptr_eq(current, timed_out))
-            {
-                return;
-            }
-            let client = state.client.take();
-            state.connect = None;
-            state.list_tools_cache = None;
-            let dir = state.per_session_dir.take();
-            state.status = McpStatus::Error;
-            (client, dir)
-        };
-        tokio::spawn(async move {
-            if let Some(client) = client {
-                client.close().await;
-            }
-            if let Some(dir) = dir {
-                dir.remove().await;
-            }
-        });
+        let mut state = self.state();
+        // A second timeout from an already retired connection owns neither
+        // the new client nor its published handshake slot.
+        if !state
+            .client
+            .as_ref()
+            .zip(timed_out)
+            .is_some_and(|(current, timed_out)| Arc::ptr_eq(current, timed_out))
+        {
+            return;
+        }
+        state.connect = None;
+        state.list_tools_cache = None;
+        state.status = McpStatus::Error;
+        state.retire_connection();
     }
 
-    /// M5 — close the existing connection and connect again. The old
-    /// connection and slot are dropped under one lock; the new attempt is
-    /// published by `start()`, which moves the epoch and so supersedes any
-    /// attempt still in flight. If another caller published an attempt while
-    /// the old connection closed, `start()` joins it instead of adding one.
+    /// Close the old connection before publishing a replacement attempt.
     async fn reconnect(&self) -> Result<(), McpClientError> {
-        let (client, dir) = {
+        let done = {
             let mut state = self.state();
             state.status = McpStatus::Connecting;
             state.list_tools_cache = None;
             state.connect = None;
-            (state.client.take(), state.per_session_dir.take())
+            state.retire_connection()
         };
-        // Own both resources in a detached task even if the reconnect caller
-        // is cancelled during the close grace period.
-        let _ = tokio::spawn(async move {
-            if let Some(client) = client {
-                client.close().await;
-            }
-            if let Some(dir) = dir {
-                dir.remove().await;
-            }
-        })
-        .await;
+        await_cleanup(done).await;
         self.start().await
     }
 
+    /// Retire the current connection and await its already-retired cleanup.
+    /// A timed-out handshake still running is joined only by final dispose;
+    /// ordinary close retains the SDK's nonwaiting timeout behaviour.
     pub async fn close(&self) {
-        // The epoch moves before the first await, so an in-flight connect is
-        // invalidated even when the caller drops this future.
-        let (client, epoch, dir) = {
+        let (epoch, cleanups) = {
             let mut state = self.state();
             state.epoch += 1;
             state.list_tools_cache = None;
-            // Unpublish now so a `start()` arriving while the old connection
-            // closes begins a fresh attempt instead of joining the old one.
+            // A future start owns a new epoch; pending handshakes retain the
+            // existing supersession contract and are not awaited here.
             state.connect = None;
+            state.retire_connection();
             (
-                state.client.take(),
                 state.epoch,
-                state.per_session_dir.take(),
+                state
+                    .cleanups
+                    .iter()
+                    .filter(|cleanup| cleanup.wait_on_close)
+                    .map(|cleanup| cleanup.done.clone())
+                    .collect::<Vec<_>>(),
             )
         };
-        // A caller may cancel close while a failed initialize's original
-        // background close is still in its grace period. Keep both resources
-        // owned until cleanup finishes, even after that cancellation.
-        let _ = tokio::spawn(async move {
-            if let Some(client) = client {
-                client.close().await;
-            }
-            if let Some(dir) = dir {
-                dir.remove().await;
-            }
-        })
-        .await;
-        {
-            // A `start()` published while the old connection closed owns the
-            // status now; leave it to that attempt.
-            let mut state = self.state();
-            if state.epoch == epoch {
-                state.status = McpStatus::Idle;
-            }
+        // These are only cloned tickets. The tasks remain in State even if
+        // this caller is cancelled, so a later close/dispose can wait again.
+        for done in cleanups {
+            await_cleanup(done).await;
+        }
+        let mut state = self.state();
+        if state.epoch == epoch {
+            state.status = McpStatus::Idle;
+        }
+    }
+
+    /// Registry disposal also joins cleanup of already-timed-out handshakes.
+    /// Keep the tasks in State while awaiting cloned completion tickets.
+    pub(crate) async fn dispose(&self) {
+        self.close().await;
+        let cleanups = self
+            .state()
+            .cleanups
+            .iter()
+            .map(|cleanup| cleanup.done.clone())
+            .collect::<Vec<_>>();
+        for done in cleanups {
+            await_cleanup(done).await;
         }
     }
 
@@ -1256,6 +1270,28 @@ impl McpClient {
     }
 }
 
+/// SDK output validation's exact RPC error projection, shared with oracle replay.
+pub(super) fn validate_structured_content(
+    schema: &JsValue,
+    data: &JsValue,
+) -> Result<(), McpClientError> {
+    use super::output_schema::ValidationError;
+    let message = match super::output_schema::validate(schema, data) {
+        Ok(None) => return Ok(()),
+        Ok(Some(message)) => {
+            format!("Structured content does not match the tool's output schema: {message}")
+        }
+        Err(ValidationError::Threw) => format!(
+            "Failed to validate structured content: {}",
+            CallStackExceeded::MESSAGE
+        ),
+        Err(ValidationError::Unsupported(message)) => {
+            format!("Failed to validate structured content: {message}")
+        }
+    };
+    Err(McpClientError::rpc(-32602.0, &message))
+}
+
 /// `this.client!.<method>` on a `null` client.
 fn null_property(method: &str) -> McpClientError {
     McpClientError::plain(
@@ -1267,6 +1303,62 @@ fn null_property(method: &str) -> McpClientError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn close_leaves_pending_handshake_cleanup_for_dispose() {
+        let client = McpClient::new(
+            McpServerSpec {
+                id: "unused".into(),
+                transport: McpTransportSpec::Stdio {
+                    command: "unused".into(),
+                    args: None,
+                    env: None,
+                    cwd: None,
+                    per_session: false,
+                },
+                call_timeout_ms: None,
+            },
+            McpClientOptions::default(),
+        );
+        let (gate, release) = oneshot::channel();
+        let done = client.state().spawn_cleanup(
+            async move {
+                let _ = release.await;
+            },
+            false,
+        );
+        tokio::time::timeout(Duration::from_millis(1), client.close())
+            .await
+            .expect("ordinary close must not await the pending handshake");
+        assert!(!*done.borrow());
+        let mut dispose = Box::pin(client.dispose());
+        tokio::select! {
+            biased;
+            () = &mut dispose => panic!("dispose must join the pending cleanup"),
+            () = tokio::task::yield_now() => {}
+        }
+        // Finish close's own cleanup before polling again. Otherwise the
+        // empty retired connection could hide a dispose that skips this gate.
+        let closing = client
+            .state()
+            .cleanups
+            .iter()
+            .filter(|cleanup| cleanup.wait_on_close)
+            .map(|cleanup| cleanup.done.clone())
+            .collect::<Vec<_>>();
+        for done in closing {
+            await_cleanup(done).await;
+        }
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(dispose.as_mut().poll(cx)))
+                .await
+                .is_pending(),
+            "dispose must still await the gated pending handshake"
+        );
+        gate.send(()).unwrap();
+        dispose.await;
+        assert!(*done.borrow());
+    }
 
     #[test]
     fn parse_int_matches_js() {

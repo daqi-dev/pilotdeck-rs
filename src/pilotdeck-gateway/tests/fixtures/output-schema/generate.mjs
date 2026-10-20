@@ -107,6 +107,12 @@ addCompile('compile/enum-nonarray', {enum: 'a'});
 addCompile('compile/ref-remote', {$ref: 'https://example.com/schema'});
 addCompile('compile/ref-missing-pointer', {$ref: '#/missing'});
 addCompile('compile/ref-missing-anchor', {$ref: '#foo'});
+for (const segment of ['01', '+1']) {
+  addCompile(`compile/ref-array-${segment}`, {items: [true, false], $ref: `#/items/${segment}`});
+}
+for (const segment of ['0', '1']) {
+  add(`ref-array/canonical-${segment}`, {items: [true, false], $ref: `#/items/${segment}`}, null);
+}
 addCompile('compile/ref-nonstring', {$ref: 5});
 addCompile('compile/id-nonstring', {$id: 5});
 addCompile('compile/maximum-string', {maximum: '5'});
@@ -696,45 +702,99 @@ for (const [name, pattern] of [
   }
 }
 
-// Do not serialize recursive data: both JSON.stringify and the fixture
-// parser have independent depth limits. Store its exact iterative recipe.
-// Each observation uses a new default-stack process so warm-up cannot move
-// the boundary. The SDK compiles this schema before validating the data.
-const recursiveDataTemplate = fs.readFileSync(
+// Store iterative recipes, avoiding JSON stringify/parser recursion limits.
+// Each sample is a cold, default-stack *real Client.callTool* observation.
+// The port's budget is 1024 weighted active schema units, not data depth.
+let recursiveDataTemplate = fs.readFileSync(
   fileURLToPath(new URL('./recursive-data.mjs', import.meta.url)), 'utf8',
 );
-assert.equal(recursiveDataTemplate.split("'pdrs:baseline-ajv-provider'").length, 2);
+const sdkFiles = {
+  client: 'client/index.js', server: 'server/index.js', memory: 'inMemory.js', types: 'types.js',
+};
+const recursiveSdkPins = {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js": "a5e17addde5d50e0b2a4ac5961d0f59fd044ff47b01b69e715c3b7ab23075bbd",
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js": "8dbee2ac3001c9685ad49a2d6b2c59973ca0b223579ec353f9c2e199484591b0",
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js": "8eb57dc4b4c0993869273a5e01a35c71e8d84c3d5050e9871a8cf141360f883d",
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js": "962836b0f8dad85bcd398ad3ddb5ba81a7c7530c706955aa846dd8dfc02dd6a9"
+};
+const recursiveSdkSha256 = {};
+for (const [name, file] of Object.entries(sdkFiles)) {
+  const marker = `'pdrs:baseline-${name}'`;
+  assert.equal(recursiveDataTemplate.split(marker).length, 2);
+  const relative = `node_modules/@modelcontextprotocol/sdk/dist/esm/${file}`;
+  recursiveSdkSha256[relative] = hash(relative);
+  assert.equal(recursiveSdkSha256[relative], recursiveSdkPins[relative], `recursive SDK source drift: ${relative}`);
+  recursiveDataTemplate = recursiveDataTemplate.replace(marker, JSON.stringify(pathToFileURL(path.join(baseline, relative)).href));
+}
 const recursiveDataScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pdrs-recursive-data-'));
 const recursiveDataProbe = path.join(recursiveDataScratch, 'probe.mjs');
-fs.writeFileSync(recursiveDataProbe, recursiveDataTemplate.replace(
-  "'pdrs:baseline-ajv-provider'", JSON.stringify(pathToFileURL(providerPath).href),
-));
+fs.writeFileSync(recursiveDataProbe, recursiveDataTemplate);
 const recursiveDataEnv = {...process.env};
 delete recursiveDataEnv.NODE_OPTIONS;
 delete recursiveDataEnv.NODE_COMPILE_CACHE;
+const overflow = {code: -32602, message: 'MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded'};
+const observe = (shape, depth) => JSON.parse(execFileSync(process.execPath, [
+  recursiveDataProbe, shape, String(depth),
+], {env: recursiveDataEnv, encoding: 'utf8'}));
 try {
-  for (const key of ['a', 'next']) {
-    for (const depth of [4000, 4001, 4234, 4235, 4500]) {
-      const observed = JSON.parse(execFileSync(process.execPath, [
-        recursiveDataProbe, key, String(depth),
-      ], {env: recursiveDataEnv, encoding: 'utf8'}));
-      assert.equal(Boolean(observed.validationThrow), depth >= 4235, `cold SDK boundary drift: ${key}/${depth}`);
-      cases.push({
-        id: `recursive-data/${key}-${depth}`,
-        schema: {type: 'object', properties: {[key]: {$ref: '#'}}},
-        data: null,
-        recursiveData: {key, depth},
-        ...(depth > 4000 ? {portUnsupported: true} : {}),
-        ...observed,
+  for (const [shape, lastSupported] of [
+    ['properties', 145], ['patternProperties', 145], ['additionalProperties', 170],
+    ['items', 168], ['anyOf', 67],
+  ]) {
+    for (const depth of [0, lastSupported, lastSupported + 1]) {
+      const observed = observe(shape, depth);
+      if (depth <= lastSupported) assert.ok(!observed.sdkError, `SDK must pass below port budget: ${shape}/${depth}`);
+      else if (observed.sdkError) assert.deepEqual(observed.sdkError, overflow);
+      cases.push({id: `recursive-data/${shape}-${depth}`, ...observed,
+        ...(depth > lastSupported ? {portDepthLimit: true, ...(observed.sdkError ? {} : {knownDifference: 'conservative-stack-budget'})} : {}),
       });
     }
+    // Find an over-SDK-boundary sample dynamically. No V8-specific breakpoint
+    // is hard-coded as an assertion; the bounded search fails loudly if absent.
+    let depth = 1024;
+    let observed;
+    for (; depth <= 32768; depth *= 2) {
+      observed = observe(shape, depth);
+      if (observed.sdkError) break;
+    }
+    assert.ok(depth <= 32768, `no SDK overflow sample found: ${shape}`);
+    assert.deepEqual(observed.sdkError, overflow);
+    cases.push({id: `recursive-data/${shape}-sdk-overflow`, ...observed, portDepthLimit: true});
+  }
+  for (const [kind, lastSupported] of [['const', 510], ['enum', 509], ['uniqueItems', 1016]]) {
+    const regularError = {code: -32602, message: "MCP error -32602: Structured content does not match the tool's output schema: data/a must NOT have duplicate items (items ## 0 and 1 are identical)"};
+    for (const depth of [lastSupported, lastSupported + 1]) {
+      const observed = observe(kind, depth);
+      assert.deepEqual(observed.sdkError, kind === 'uniqueItems' ? regularError : undefined, `SDK below comparison safety margin: ${kind}/${depth}`);
+      cases.push({id: `recursive-comparison/${kind}-${depth}`, ...observed,
+        ...(depth > lastSupported ? {portDepthLimit: true, knownDifference: 'conservative-stack-budget'} : {}),
+      });
+    }
+    let depth = 1024;
+    let observed;
+    for (; depth <= 32768; depth *= 2) {
+      observed = observe(kind, depth);
+      if (observed.sdkError?.message === overflow.message) break;
+    }
+    assert.ok(depth <= 32768, `no SDK comparison overflow sample found: ${kind}`);
+    assert.deepEqual(observed.sdkError, overflow);
+    cases.push({id: `recursive-comparison/${kind}-sdk-overflow`, ...observed, portDepthLimit: true});
+  }
+  for (const depth of [0, 340]) {
+    const observed = observe('wideAnyOf', depth);
+    if (observed.sdkError) assert.deepEqual(observed.sdkError, overflow);
+    cases.push({id: `recursive-data/wideAnyOf-${depth}`, ...observed, portDepthLimit: true,
+      ...(observed.sdkError ? {} : {knownDifference: 'conservative-stack-budget'}),
+    });
   }
 } finally {
   fs.rmSync(recursiveDataScratch, {recursive: true, force: true});
 }
 
+Object.assign(cases.find(({id}) => id === 'ref/recursive-499'), {portDepthLimit: true, knownDifference: 'conservative-stack-budget'});
+
 const oracle = {
-  sourceCommit, sourceSha256, regexCompilation,
+  sourceCommit, sourceSha256, regexCompilation, recursiveSdkSha256,
   sdk: sdkPackage.version,
   ajv: ajvPackage.version,
   ajvFormats: formatsPackage.version,
@@ -744,10 +804,10 @@ const oracle = {
   recursiveDataRuntime: {
     node: process.version, v8: process.versions.v8,
     platform: process.platform, arch: process.arch,
-    coldStart: true, defaultStack: true,
+    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024,
   },
   cases: cases.map((entry) => {
-    if (entry.recursiveData) return entry;
+    if (entry.recursiveData || entry.comparisonData) return entry;
     const {id, schema, data} = entry;
     const validator = new AjvJsonSchemaValidator();
     let compiled = false;

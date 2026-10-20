@@ -1,25 +1,69 @@
-// One cold, default-stack SDK validation per process. Keep validation at
-// module scope: extra JS call frames move V8's native stack boundary.
-// The generator binds this import to the hash-checked baseline provider
-// in a temporary copy; a dynamic import changes the cold module call stack.
-import {AjvJsonSchemaValidator} from 'pdrs:baseline-ajv-provider';
-const key = process.argv[2];
-const depth = Number(process.argv[3]);
-if (!['a', 'next'].includes(key) || !Number.isSafeInteger(depth) || depth < 0) {
-  throw new Error('expected a|next and a nonnegative integer depth');
+// One cold SDK Client.callTool per process, using linked in-memory transports.
+// The generator binds these static imports to the hash-checked baseline in /tmp.
+import {Client} from 'pdrs:baseline-client';
+import {Server} from 'pdrs:baseline-server';
+import {InMemoryTransport} from 'pdrs:baseline-memory';
+import {ListToolsRequestSchema, CallToolRequestSchema} from 'pdrs:baseline-types';
+const [shape, rawDepth, mode] = process.argv.slice(2);
+const depth = Number(rawDepth);
+if (!Number.isSafeInteger(depth) || depth < 0) throw new Error('invalid depth');
+const props = {type: 'object', properties: {a: {$ref: '#'}}};
+const schemas = {
+  properties: props,
+  patternProperties: {type: 'object', patternProperties: {'^a$': {$ref: '#'}}},
+  additionalProperties: {type: 'object', additionalProperties: {$ref: '#'}},
+  anyOf: {type: 'object', anyOf: [props]},
+  items: {type: 'object', properties: {a: {$ref: '#/definitions/node'}},
+    definitions: {node: {type: 'array', items: {$ref: '#/definitions/node'}}}},
+  wideAnyOf: {type: 'object', anyOf: Array.from({length: 512}, () => props)},
+};
+let schema = schemas[shape];
+const comparison = ['const', 'enum', 'uniqueItems'].includes(shape);
+if (!schema && !comparison) throw new Error('invalid shape');
+const arrays = shape === 'items';
+let cursor = arrays ? [] : {};
+let data = arrays ? {a: cursor} : cursor;
+for (let i = 0; i < depth; i++) {
+  const child = arrays ? [] : {};
+  if (arrays) cursor.push(child); else cursor.a = child;
+  cursor = child;
 }
-const schema = {type: 'object', properties: {[key]: {$ref: '#'}}};
-let data = {};
-let cursor = data;
-for (let index = 0; index < depth; index++) {
-  cursor[key] = {};
-  cursor = cursor[key];
+if (comparison) {
+  const cloneChain = () => {
+    let value = {};
+    for (let i = 0; i < depth; i++) value = {a: value};
+    return value;
+  };
+  schema = {type: 'object'};
+  if (shape === 'const') schema.const = cloneChain();
+  if (shape === 'enum') schema.enum = [cloneChain()];
+  if (shape === 'uniqueItems') {
+    schema.properties = {a: {uniqueItems: true}};
+    data = {a: [data, cloneChain()]};
+  }
 }
-const validate = new AjvJsonSchemaValidator().getValidator(schema);
+// Leaf corruption is a data negative control for the generator's safety assertion.
+if (mode === 'invalid-leaf') {
+  if (arrays) cursor.push(7); else cursor.a = 7;
+}
+const client = new Client({name: 'oracle', version: '1'});
+const server = new Server({name: 'oracle', version: '1'}, {capabilities: {tools: {}}});
+const [ct, st] = InMemoryTransport.createLinkedPair();
+server.setRequestHandler(ListToolsRequestSchema, () => ({tools: [
+  {name: 'probe', inputSchema: {type: 'object'}, outputSchema: schema},
+]}));
+server.setRequestHandler(CallToolRequestSchema, () => ({content: [], structuredContent: data}));
+await server.connect(st);
+await client.connect(ct);
+await client.listTools();
+let observed = {};
 try {
-  const result = validate(data);
-  console.log(JSON.stringify(result.valid ? {} : {errorText: result.errorMessage}));
+  await client.callTool({name: 'probe', arguments: {}});
 } catch (error) {
-  if (!(error instanceof RangeError)) throw error;
-  console.log(JSON.stringify({validationThrow: {name: error.name, message: error.message}}));
+  observed = {sdkError: {code: error.code, message: error.message}};
 }
+await client.close();
+await server.close();
+console.log(JSON.stringify(comparison
+  ? {schema: null, data: null, comparisonData: {kind: shape, depth}, ...observed}
+  : {schema, data: null, recursiveData: {shape, depth}, ...observed}));

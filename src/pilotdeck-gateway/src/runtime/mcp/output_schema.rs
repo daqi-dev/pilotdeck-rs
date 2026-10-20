@@ -34,8 +34,8 @@
 //! that gap is reported later as [`ValidationError::Unsupported`] when the
 //! pattern is actually used, never as a silent pass. Relative/remote `$ref`s
 //! that need an `$id` base are reported as unresolvable; validation nesting
-//! deeper than [`MAX_DEPTH`] is reported as [`ValidationError::Unsupported`] with an
-//! explicit message. User patterns use the SDK's JavaScript `/u` character
+//! exceeding [`MAX_VALIDATION_BUDGET`] in weighted units is conservatively reported
+//! as [`ValidationError::Threw`]. User patterns use the SDK's JavaScript `/u` character
 //! classes: `\d`/`\w` and word boundaries are ASCII, whitespace includes BOM
 //! but excludes NEL, and dot excludes all four JavaScript line terminators.
 //! The JS escapes Rust spells differently (`\0`, `\cX`, `\xHH`, `\uXXXX`,
@@ -54,14 +54,16 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-/// Conservative validation bound: default-stack, cold Node 22.22.0 / V8 12.4
-/// SDK probes passed 4234 object edges and threw RangeError at 4235 (two
-/// property names, five independent binary searches each). The exact native
-/// limit depends on call-stack shape; support 4000 edges, not the old ~5000.
-/// Recursive `$ref` costs two `check` frames per edge plus the root frame.
-/// Beyond this measured support range return Unsupported, never guess valid
-/// or claim an exact V8 stack boundary. [`validate`] uses a 64 MiB stack.
-const MAX_DEPTH: usize = 8_001;
+/// Budget for static schema JSON values on the active validation path.
+/// Count every value, including non-schema arrays (required/dependencies) and
+/// unused branches: Ajv generates native-stack locals for those too. Following
+/// only schema keywords misses wide dependency arrays; counting only calls
+/// misses wide anyOf/allOf. Strings are one value; `$ref` is never expanded.
+/// Cold Node 22.22.0 / V8 12.4 keyword and real Client.callTool probes informed
+/// this conservative support budget, not an exact V8 stack model. Deep value
+/// comparisons spend the same budget. Earlier rejections are explicit known
+/// differences; overflow uses the SDK RangeError result. See the fixture README.
+const MAX_VALIDATION_BUDGET: usize = 1_024;
 
 /// Schema-structure recursion bound for [`check_schema`], which runs on the
 /// caller's (2 MiB) worker stack. Ajv itself throws `RangeError` on a
@@ -96,9 +98,8 @@ pub(crate) fn validate(
     schema: &JsValue,
     data: &JsValue,
 ) -> Result<Option<String>, ValidationError> {
-    // Deeply nested recursive data is valid in Ajv (depth 4000 measured).
-    // Tokio's worker stacks are 2 MiB, so run the recursive walk on a larger
-    // dedicated stack to support that measured range.
+    // The bounded Rust walk still needs more than Tokio's 2 MiB worker
+    // stack in debug builds. The dedicated stack is not the V8 limit.
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
@@ -117,7 +118,8 @@ fn validate_inner(schema: &JsValue, data: &JsValue) -> Result<Option<String>, Va
     let mut validator = Validator {
         refs,
         errors: Vec::new(),
-        depth: 0,
+        budget_used: 0,
+        weights: schema_weights(schema),
         seen: HashSet::new(),
     };
     validator.check(schema, data, "")?;
@@ -190,7 +192,7 @@ impl<'a> SchemaRefs<'a> {
                     SchemaError(format!("can't resolve reference {reference} from id #"))
                 })?,
                 JsValue::Array(items) => items
-                    .get(segment.parse::<usize>().ok().ok_or_else(|| {
+                    .get(array_index(&segment).ok_or_else(|| {
                         SchemaError(format!("can't resolve reference {reference} from id #"))
                     })?)
                     .ok_or_else(|| {
@@ -205,6 +207,19 @@ impl<'a> SchemaRefs<'a> {
         }
         Ok(node)
     }
+}
+
+// Ajv indexes arrays with the decoded string, not JavaScript Number coercion:
+// "01", "+1", whitespace and "-0" are properties, not array elements.
+fn array_index(segment: &str) -> Option<usize> {
+    if segment != "0"
+        && (segment.starts_with('0')
+            || segment.is_empty()
+            || !segment.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    segment.parse().ok()
 }
 
 /// Every `$id` fragment anchor in the document. Ajv registers these while
@@ -283,6 +298,38 @@ fn schema_children(object: &JsObject) -> Vec<&JsValue> {
         _ => {}
     }
     out
+}
+
+/// Iterative post-order over all JSON values. Counting the entire static tree
+/// deliberately includes data/metadata and avoids a codegen-keyword whitelist.
+/// Targets reached through `$ref` are charged on entry, never expanded here.
+fn schema_weights(root: &JsValue) -> HashMap<usize, usize> {
+    let mut sizes = HashMap::new();
+    let mut weights = HashMap::new();
+    let mut pending = vec![(root, false)];
+    while let Some((value, visited)) = pending.pop() {
+        let children: Vec<&JsValue> = match value {
+            JsValue::Object(object) => object.entries().iter().map(|(_, value)| value).collect(),
+            JsValue::Array(items) => items.iter().collect(),
+            _ => Vec::new(),
+        };
+        if !visited {
+            pending.push((value, true));
+            pending.extend(children.into_iter().map(|child| (child, false)));
+            continue;
+        }
+        let mut weight = 1usize;
+        for child in children {
+            weight = weight
+                .saturating_add(sizes[&(child as *const JsValue as usize)])
+                .min(MAX_VALIDATION_BUDGET + 1);
+        }
+        sizes.insert(value as *const JsValue as usize, weight);
+        if let JsValue::Object(object) = value {
+            weights.insert(object as *const JsObject as usize, weight);
+        }
+    }
+    weights
 }
 
 fn is_schema(value: &JsValue) -> bool {
@@ -699,7 +746,8 @@ fn utf8(value: &JsString, keyword: &str) -> Result<String, SchemaError> {
 struct Validator<'a> {
     refs: SchemaRefs<'a>,
     errors: Vec<(String, String)>,
-    depth: usize,
+    budget_used: usize,
+    weights: HashMap<usize, usize>,
     /// `(schema, data)` pairs on the current recursion path. Re-entering one
     /// is Ajv's `Maximum call stack size exceeded` without consuming data
     /// (the `{$ref:"#"}` probe), so report it immediately instead of walking
@@ -755,40 +803,49 @@ fn data_type_matches(name: &str, data: &JsValue) -> bool {
 }
 
 /// fast-deep-equal over JSON values (object key order is irrelevant).
-fn deep_equal(left: &JsValue, right: &JsValue) -> bool {
-    let mut pending = vec![(left, right)];
-    while let Some((a, b)) = pending.pop() {
+fn deep_equal(
+    left: &JsValue,
+    right: &JsValue,
+    budget_used: usize,
+) -> Result<bool, ValidationError> {
+    let mut pending = vec![(left, right, 1)];
+    while let Some((a, b, depth)) = pending.pop() {
+        // fast-deep-equal recurses even though this implementation uses a
+        // heap stack. Charge its active comparison calls to the same budget.
+        if depth > MAX_VALIDATION_BUDGET - budget_used {
+            return Err(ValidationError::Threw);
+        }
         match (a, b) {
             (JsValue::Array(x), JsValue::Array(y)) => {
                 if x.len() != y.len() {
-                    return false;
+                    return Ok(false);
                 }
-                pending.extend(x.iter().zip(y));
+                pending.extend(x.iter().zip(y).map(|(x, y)| (x, y, depth + 1)));
             }
             (JsValue::Object(x), JsValue::Object(y)) => {
                 if x.len() != y.len() {
-                    return false;
+                    return Ok(false);
                 }
                 for (key, value) in x.entries() {
                     match y.get_key(key) {
-                        Some(other) => pending.push((value, other)),
-                        None => return false,
+                        Some(other) => pending.push((value, other, depth + 1)),
+                        None => return Ok(false),
                     }
                 }
             }
             (JsValue::Number(x), JsValue::Number(y)) => {
                 if x != y && !(x.is_nan() && y.is_nan()) {
-                    return false;
+                    return Ok(false);
                 }
             }
             (x, y) => {
                 if x != y {
-                    return false;
+                    return Ok(false);
                 }
             }
         }
     }
-    true
+    Ok(true)
 }
 
 fn number(value: Option<&JsValue>) -> Option<f64> {
@@ -2333,6 +2390,7 @@ impl<'a> Validator<'a> {
         path: &str,
     ) -> Result<bool, ValidationError> {
         let start = self.errors.len();
+        let schema_value = schema;
         let schema = match schema {
             JsValue::Bool(true) => return Ok(true),
             JsValue::Bool(false) => {
@@ -2342,10 +2400,16 @@ impl<'a> Validator<'a> {
             JsValue::Object(object) => object,
             _ => return Ok(true),
         };
-        if self.depth >= MAX_DEPTH {
-            return Err(ValidationError::Unsupported(
-                "output schema validation exceeds the supported recursion depth".into(),
-            ));
+        let key = schema as *const JsObject as usize;
+        // JSON pointers can target arbitrary document locations, not just
+        // recognised subschema keywords. Register that target lazily without
+        // expanding the reference graph (which may contain cycles).
+        if !self.weights.contains_key(&key) {
+            self.weights.extend(schema_weights(schema_value));
+        }
+        let weight = self.weights[&key];
+        if weight > MAX_VALIDATION_BUDGET - self.budget_used {
+            return Err(ValidationError::Threw);
         }
         let pair = (
             schema as *const JsObject as usize,
@@ -2354,9 +2418,9 @@ impl<'a> Validator<'a> {
         if !self.seen.insert(pair) {
             return Err(ValidationError::Threw);
         }
-        self.depth += 1;
+        self.budget_used += weight;
         let result = self.keywords(schema, data, path);
-        self.depth -= 1;
+        self.budget_used -= weight;
         self.seen.remove(&pair);
         result?;
         Ok(self.errors.len() == start)
@@ -2436,14 +2500,21 @@ impl<'a> Validator<'a> {
             self.check(target, data, path)?;
         }
         if let Some(expected) = schema.get("const")
-            && !deep_equal(expected, data)
+            && !deep_equal(expected, data, self.budget_used)?
         {
             self.fail(path, "must be equal to constant");
         }
-        if let Some(JsValue::Array(allowed)) = schema.get("enum")
-            && !allowed.iter().any(|value| deep_equal(value, data))
-        {
-            self.fail(path, "must be equal to one of the allowed values");
+        if let Some(JsValue::Array(allowed)) = schema.get("enum") {
+            let mut found = false;
+            for value in allowed {
+                if deep_equal(value, data, self.budget_used)? {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                self.fail(path, "must be equal to one of the allowed values");
+            }
         }
         if let Some(not) = schema.get("not") {
             let (valid, _) = self.trial(not, data, path)?;
@@ -2734,7 +2805,7 @@ impl<'a> Validator<'a> {
         } else {
             'outer: for i in (0..items.len()).rev() {
                 for j in (0..i).rev() {
-                    if deep_equal(&items[i], &items[j]) {
+                    if deep_equal(&items[i], &items[j], self.budget_used)? {
                         self.fail(
                             path,
                             format!(
@@ -3024,40 +3095,261 @@ mod tests {
         );
     }
 
-    #[test]
-    fn deep_recursive_data_matches_ajv_at_4000() {
-        // `probes/sdk-ajv3.out`: Ajv accepts a 4000-deep recursive object.
-        // `validate` runs on a dedicated 64 MiB stack for exactly this case.
-        let mut data = JsValue::Object(JsObject::new());
-        for _ in 0..4000 {
-            let mut object = JsObject::new();
-            object.insert("a".into(), data);
-            data = JsValue::Object(object);
-        }
-        let schema = parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
-        assert_eq!(validate(&schema, &data).unwrap(), None);
-    }
-
-    #[test]
-    fn recursive_data_above_measured_support_never_passes() {
-        let schema = parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
-        // Check the SDK's first measured RangeError before the conservative
-        // support boundary, so restoring the old bound exposes a false PASS.
-        for depth in [4235, 4500, 4999, 4001, 4234] {
-            let mut data = JsValue::Object(JsObject::new());
-            for _ in 0..depth {
+    fn recursive_data(shape: &str, depth: usize) -> JsValue {
+        let arrays = shape == "items";
+        let mut data = if arrays {
+            JsValue::Array(vec![])
+        } else {
+            JsValue::Object(JsObject::new())
+        };
+        for _ in 0..depth {
+            if arrays {
+                data = JsValue::Array(vec![data]);
+            } else {
                 let mut object = JsObject::new();
                 object.insert("a".into(), data);
                 data = JsValue::Object(object);
             }
-            assert!(
-                matches!(
+        }
+        if arrays {
+            let mut object = JsObject::new();
+            object.insert("a".into(), data);
+            data = JsValue::Object(object);
+        }
+        data
+    }
+
+    #[test]
+    fn recursive_keyword_shapes_share_one_weighted_budget() {
+        for (shape, source, last_valid) in [
+            (
+                "properties",
+                r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##,
+                145,
+            ),
+            (
+                "patternProperties",
+                r##"{"type":"object","patternProperties":{"^a$":{"$ref":"#"}}}"##,
+                145,
+            ),
+            (
+                "additionalProperties",
+                r##"{"type":"object","additionalProperties":{"$ref":"#"}}"##,
+                170,
+            ),
+            (
+                "items",
+                r##"{"type":"object","properties":{"a":{"$ref":"#/definitions/node"}},"definitions":{"node":{"type":"array","items":{"$ref":"#/definitions/node"}}}}"##,
+                168,
+            ),
+            (
+                "anyOf",
+                r##"{"type":"object","anyOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
+                67,
+            ),
+            (
+                "oneOf",
+                r##"{"type":"object","oneOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
+                67,
+            ),
+            (
+                "allOf",
+                r##"{"type":"object","allOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
+                67,
+            ),
+            (
+                "not",
+                r##"{"type":"object","not":{"not":{"type":"object","properties":{"a":{"$ref":"#"}}}}}"##,
+                47,
+            ),
+            (
+                "if",
+                r##"{"type":"object","if":{"type":"object","properties":{"a":{"$ref":"#"}}},"then":{"type":"object"},"else":{"type":"object"}}"##,
+                56,
+            ),
+            (
+                "then",
+                r##"{"type":"object","if":{"required":["a"]},"then":{"type":"object","properties":{"a":{"$ref":"#"}}}}"##,
+                59,
+            ),
+            (
+                "else",
+                r##"{"type":"object","if":{"not":{"required":["a"]}},"then":{"type":"object"},"else":{"type":"object","properties":{"a":{"$ref":"#"}}}}"##,
+                50,
+            ),
+            (
+                "ref",
+                r##"{"type":"object","definitions":{"node":{"type":"object","properties":{"a":{"$ref":"#/definitions/alias"}}},"alias":{"$ref":"#/definitions/node"}},"$ref":"#/definitions/node"}"##,
+                112,
+            ),
+        ] {
+            let schema = parse_json(source).unwrap();
+            assert_eq!(
+                validate(&schema, &recursive_data(shape, last_valid)),
+                Ok(None),
+                "{shape}"
+            );
+            for depth in [last_valid + 1, 4500] {
+                assert_eq!(
+                    validate(&schema, &recursive_data(shape, depth)),
+                    Err(ValidationError::Threw),
+                    "{shape}/{depth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unused_wide_branches_spend_recursion_budget() {
+        let branch = parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
+        let mut schema = JsObject::new();
+        schema.insert("anyOf".into(), JsValue::Array(vec![branch; 512]));
+        let schema = JsValue::Object(schema);
+        // A wide but shallow schema also demonstrates the intentional strict
+        // difference. Check it first so an unweighted negative control fails
+        // before recursively trying hundreds of equivalent anyOf branches.
+        assert_eq!(
+            validate(&schema, &recursive_data("properties", 0)),
+            Err(ValidationError::Threw)
+        );
+        // Real cold SDK throws at 340 for this shape. Counting only active
+        // checks (3*340+2 <= 1024) would silently pass this exact counterexample.
+        assert_eq!(
+            validate(&schema, &recursive_data("properties", 340)),
+            Err(ValidationError::Threw)
+        );
+        // Narrowing the schema restores ordinary validation.
+        let mut small = JsObject::new();
+        small.insert(
+            "anyOf".into(),
+            JsValue::Array(vec![parse_json("{\"type\":\"object\"}").unwrap(); 8]),
+        );
+        assert_eq!(
+            validate(&JsValue::Object(small), &recursive_data("properties", 0)),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn non_schema_dependency_arrays_spend_static_budget() {
+        let mut schema =
+            parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
+        let JsValue::Object(object) = &mut schema else {
+            unreachable!()
+        };
+        let mut dependencies = JsObject::new();
+        for n in 0..512 {
+            dependencies.insert(format!("x{n}").into(), JsValue::Array(vec!["y".into()]));
+        }
+        object.insert("dependencies".into(), JsValue::Object(dependencies));
+        // The trigger keys are absent, but Ajv still allocates generated error
+        // locals for each dependency array. A subschema-only weight misses it.
+        assert_eq!(
+            validate(&schema, &recursive_data("properties", 340)),
+            Err(ValidationError::Threw)
+        );
+    }
+
+    fn comparison_case(kind: &str, depth: usize) -> (JsValue, JsValue) {
+        let data = recursive_data("properties", depth);
+        let mut schema = JsObject::new();
+        schema.insert("type".into(), "object".into());
+        match kind {
+            "const" => {
+                schema.insert("const".into(), recursive_data("properties", depth));
+            }
+            "enum" => {
+                schema.insert(
+                    "enum".into(),
+                    JsValue::Array(vec![recursive_data("properties", depth)]),
+                );
+            }
+            "uniqueItems" => {
+                schema.insert(
+                    "properties".into(),
+                    parse_json(r#"{"a":{"uniqueItems":true}}"#).unwrap(),
+                );
+                let mut wrapper = JsObject::new();
+                wrapper.insert(
+                    "a".into(),
+                    JsValue::Array(vec![data, recursive_data("properties", depth)]),
+                );
+                return (JsValue::Object(schema), JsValue::Object(wrapper));
+            }
+            _ => unreachable!(),
+        }
+        (JsValue::Object(schema), data)
+    }
+
+    #[test]
+    fn deep_comparisons_spend_the_shared_validation_budget() {
+        for (kind, last) in [("const", 510), ("enum", 509), ("uniqueItems", 1016)] {
+            let (schema, data) = comparison_case(kind, last);
+            let observed = validate(&schema, &data).unwrap();
+            if kind == "uniqueItems" {
+                assert_eq!(
+                    observed.as_deref(),
+                    Some("data/a must NOT have duplicate items (items ## 0 and 1 are identical)")
+                );
+            } else {
+                assert_eq!(observed, None);
+            }
+            for depth in [last + 1, 6000] {
+                let (schema, data) = comparison_case(kind, depth);
+                assert_eq!(
                     validate(&schema, &data),
-                    Err(ValidationError::Unsupported(_))
-                ),
-                "depth {depth}: must not silently pass beyond the measured support range"
+                    Err(ValidationError::Threw),
+                    "{kind}/{depth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pointer_array_segments_are_canonical_decimal() {
+        for segment in ["01", "+1", "-0", " 1", "1.0", ""] {
+            let schema = parse_json(&format!(
+                r##"{{"items":[true,false],"$ref":"#/items/{segment}"}}"##
+            ))
+            .unwrap();
+            assert_eq!(
+                check_schema(&schema),
+                Err(SchemaError(format!(
+                    "can't resolve reference #/items/{segment} from id #"
+                )))
             );
         }
+        for (segment, valid) in [("0", true), ("1", false)] {
+            let schema = parse_json(&format!(
+                r##"{{"items":[true,false],"$ref":"#/items/{segment}"}}"##
+            ))
+            .unwrap();
+            assert!(check_schema(&schema).is_ok());
+            assert_eq!(validate(&schema, &JsValue::Null).unwrap().is_none(), valid);
+        }
+    }
+
+    #[test]
+    fn referenced_schemas_outside_keyword_positions_have_weights() {
+        for source in [
+            r##"{"$ref":"#/x","x":{"type":"object"}}"##,
+            r##"{"$ref":"#/examples/0","examples":[{"type":"object"}]}"##,
+        ] {
+            let schema = parse_json(source).unwrap();
+            assert_eq!(
+                validate(&schema, &JsValue::Object(JsObject::new())),
+                Ok(None)
+            );
+            assert_eq!(
+                validate(&schema, &JsValue::Null),
+                Ok(Some("data must be object".into()))
+            );
+        }
+        let cyclic = parse_json(r##"{"$ref":"#/x","x":{"$ref":"#/x"}}"##).unwrap();
+        assert_eq!(
+            validate(&cyclic, &JsValue::Null),
+            Err(ValidationError::Threw)
+        );
     }
 
     #[test]
@@ -3503,7 +3795,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 573);
+        assert_eq!(cases.len(), 598);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
@@ -3535,21 +3827,101 @@ mod tests {
         for case in cases {
             let id = case.get("id").unwrap().as_string().unwrap();
             let id = String::from_utf16_lossy(id.units());
-            let schema = case.get("schema").unwrap();
-            let recursive_data = case.get("recursiveData").map(|recipe| {
-                let key = recipe.get("key").unwrap().as_string().unwrap();
+            let comparison = case.get("comparisonData").map(|recipe| {
+                let kind = recipe
+                    .get("kind")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
                 let depth = recipe.get("depth").unwrap().as_number().unwrap() as usize;
-                let mut data = JsValue::Object(JsObject::new());
-                for _ in 0..depth {
-                    let mut object = JsObject::new();
-                    object.insert(key.clone(), data);
-                    data = JsValue::Object(object);
-                }
-                data
+                comparison_case(&kind, depth)
             });
-            let data = recursive_data
+            let schema = comparison
                 .as_ref()
+                .map(|(schema, _)| schema)
+                .unwrap_or_else(|| case.get("schema").unwrap());
+            let recursive_data = case.get("recursiveData").map(|recipe| {
+                let shape = recipe
+                    .get("shape")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
+                let depth = recipe.get("depth").unwrap().as_number().unwrap() as usize;
+                recursive_data(&shape, depth)
+            });
+            let data = comparison
+                .as_ref()
+                .map(|(_, data)| data)
+                .or(recursive_data.as_ref())
                 .unwrap_or_else(|| case.get("data").unwrap());
+            if case.get("portDepthLimit").and_then(JsValue::as_bool) == Some(true) {
+                use super::super::client::{McpErrorCode, validate_structured_content};
+                assert!(check_schema(schema).is_ok(), "{id}");
+                assert_eq!(validate(schema, data), Err(ValidationError::Threw), "{id}");
+                let error = validate_structured_content(schema, data).unwrap_err();
+                assert_eq!(error.code(), Some(&McpErrorCode::Number(-32602.0)), "{id}");
+                let expected_message = "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded";
+                assert_eq!(error.message(), expected_message, "{id}");
+                if let Some(gap) = case.get("knownDifference") {
+                    assert!(
+                        gap.as_string()
+                            .unwrap()
+                            .equals_str("conservative-stack-budget"),
+                        "{id}"
+                    );
+                    assert!(
+                        case.get("sdkError").is_none_or(|sdk| !sdk
+                            .get("message")
+                            .unwrap()
+                            .as_string()
+                            .unwrap()
+                            .equals_str(expected_message)),
+                        "{id}: equal errors are not a gap"
+                    );
+                } else {
+                    let sdk = case
+                        .get("sdkError")
+                        .expect("over-SDK-boundary case needs real error");
+                    assert_eq!(
+                        sdk.get("code").and_then(JsValue::as_number),
+                        Some(-32602.0),
+                        "{id}"
+                    );
+                    assert!(
+                        sdk.get("message")
+                            .unwrap()
+                            .as_string()
+                            .unwrap()
+                            .equals_str(expected_message),
+                        "{id}"
+                    );
+                }
+                continue;
+            }
+            if let Some(sdk) = case.get("sdkError") {
+                let error =
+                    super::super::client::validate_structured_content(schema, data).unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    Some(&super::super::client::McpErrorCode::Number(
+                        sdk.get("code").unwrap().as_number().unwrap()
+                    )),
+                    "{id}"
+                );
+                assert!(
+                    sdk.get("message")
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .equals_str(error.message()),
+                    "{id}"
+                );
+                continue;
+            }
             if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
                 // Schema compile must accept it (Ajv does), and using it must
                 // fail explicitly, never compile into a permissive validator
@@ -3597,7 +3969,7 @@ mod tests {
                 .get("errorText")
                 .and_then(JsValue::as_string)
                 .map(|s| String::from_utf16_lossy(s.units()));
-            assert_eq!(validate(schema, data).unwrap(), expected, "{id}");
+            assert_eq!(validate(schema, data), Ok(expected), "{id}");
         }
     }
 }

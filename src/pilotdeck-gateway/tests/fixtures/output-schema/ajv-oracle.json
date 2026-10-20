@@ -18,6 +18,12 @@
       "flags": "u"
     }
   ],
+  "recursiveSdkSha256": {
+    "node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js": "a5e17addde5d50e0b2a4ac5961d0f59fd044ff47b01b69e715c3b7ab23075bbd",
+    "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js": "8dbee2ac3001c9685ad49a2d6b2c59973ca0b223579ec353f9c2e199484591b0",
+    "node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js": "8eb57dc4b4c0993869273a5e01a35c71e8d84c3d5050e9871a8cf141360f883d",
+    "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js": "962836b0f8dad85bcd398ad3ddb5ba81a7c7530c706955aa846dd8dfc02dd6a9"
+  },
   "sdk": "1.29.0",
   "ajv": "8.20.0",
   "ajvFormats": "3.0.1",
@@ -30,7 +36,9 @@
     "platform": "darwin",
     "arch": "arm64",
     "coldStart": true,
-    "defaultStack": true
+    "defaultStack": true,
+    "clientCallTool": true,
+    "validationBudget": 1024
   },
   "cases": [
     {
@@ -137,6 +145,53 @@
       },
       "data": null,
       "compileError": "can't resolve reference #foo from id #"
+    },
+    {
+      "id": "compile/ref-array-01",
+      "schema": {
+        "items": [
+          true,
+          false
+        ],
+        "$ref": "#/items/01"
+      },
+      "data": null,
+      "compileError": "can't resolve reference #/items/01 from id #"
+    },
+    {
+      "id": "compile/ref-array-+1",
+      "schema": {
+        "items": [
+          true,
+          false
+        ],
+        "$ref": "#/items/+1"
+      },
+      "data": null,
+      "compileError": "can't resolve reference #/items/+1 from id #"
+    },
+    {
+      "id": "ref-array/canonical-0",
+      "schema": {
+        "items": [
+          true,
+          false
+        ],
+        "$ref": "#/items/0"
+      },
+      "data": null
+    },
+    {
+      "id": "ref-array/canonical-1",
+      "schema": {
+        "items": [
+          true,
+          false
+        ],
+        "$ref": "#/items/1"
+      },
+      "data": null,
+      "errorText": "data boolean schema is false"
     },
     {
       "id": "compile/ref-nonstring",
@@ -2467,7 +2522,9 @@
             }
           }
         }
-      }
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
     },
     {
       "id": "date/leap",
@@ -6599,7 +6656,7 @@
       "errorText": "data must match pattern \"^(?<中>x)$\""
     },
     {
-      "id": "recursive-data/a-4000",
+      "id": "recursive-data/properties-0",
       "schema": {
         "type": "object",
         "properties": {
@@ -6610,12 +6667,12 @@
       },
       "data": null,
       "recursiveData": {
-        "key": "a",
-        "depth": 4000
+        "shape": "properties",
+        "depth": 0
       }
     },
     {
-      "id": "recursive-data/a-4001",
+      "id": "recursive-data/properties-145",
       "schema": {
         "type": "object",
         "properties": {
@@ -6626,13 +6683,12 @@
       },
       "data": null,
       "recursiveData": {
-        "key": "a",
-        "depth": 4001
-      },
-      "portUnsupported": true
+        "shape": "properties",
+        "depth": 145
+      }
     },
     {
-      "id": "recursive-data/a-4234",
+      "id": "recursive-data/properties-146",
       "schema": {
         "type": "object",
         "properties": {
@@ -6643,13 +6699,14 @@
       },
       "data": null,
       "recursiveData": {
-        "key": "a",
-        "depth": 4234
+        "shape": "properties",
+        "depth": 146
       },
-      "portUnsupported": true
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
     },
     {
-      "id": "recursive-data/a-4235",
+      "id": "recursive-data/properties-sdk-overflow",
       "schema": {
         "type": "object",
         "properties": {
@@ -6660,127 +6717,8677 @@
       },
       "data": null,
       "recursiveData": {
-        "key": "a",
-        "depth": 4235
+        "shape": "properties",
+        "depth": 8192
       },
-      "portUnsupported": true,
-      "validationThrow": {
-        "name": "RangeError",
-        "message": "Maximum call stack size exceeded"
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-data/patternProperties-0",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^a$": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "patternProperties",
+        "depth": 0
       }
     },
     {
-      "id": "recursive-data/a-4500",
+      "id": "recursive-data/patternProperties-145",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^a$": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "patternProperties",
+        "depth": 145
+      }
+    },
+    {
+      "id": "recursive-data/patternProperties-146",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^a$": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "patternProperties",
+        "depth": 146
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-data/patternProperties-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^a$": {
+            "$ref": "#"
+          }
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "patternProperties",
+        "depth": 4096
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-data/additionalProperties-0",
+      "schema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#"
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "additionalProperties",
+        "depth": 0
+      }
+    },
+    {
+      "id": "recursive-data/additionalProperties-170",
+      "schema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#"
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "additionalProperties",
+        "depth": 170
+      }
+    },
+    {
+      "id": "recursive-data/additionalProperties-171",
+      "schema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#"
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "additionalProperties",
+        "depth": 171
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-data/additionalProperties-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#"
+        }
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "additionalProperties",
+        "depth": 4096
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-data/items-0",
       "schema": {
         "type": "object",
         "properties": {
           "a": {
-            "$ref": "#"
+            "$ref": "#/definitions/node"
+          }
+        },
+        "definitions": {
+          "node": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/node"
+            }
           }
         }
       },
       "data": null,
       "recursiveData": {
-        "key": "a",
-        "depth": 4500
-      },
-      "portUnsupported": true,
-      "validationThrow": {
-        "name": "RangeError",
-        "message": "Maximum call stack size exceeded"
+        "shape": "items",
+        "depth": 0
       }
     },
     {
-      "id": "recursive-data/next-4000",
+      "id": "recursive-data/items-168",
       "schema": {
         "type": "object",
         "properties": {
-          "next": {
-            "$ref": "#"
+          "a": {
+            "$ref": "#/definitions/node"
+          }
+        },
+        "definitions": {
+          "node": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/node"
+            }
           }
         }
       },
       "data": null,
       "recursiveData": {
-        "key": "next",
-        "depth": 4000
+        "shape": "items",
+        "depth": 168
       }
     },
     {
-      "id": "recursive-data/next-4001",
+      "id": "recursive-data/items-169",
       "schema": {
         "type": "object",
         "properties": {
-          "next": {
-            "$ref": "#"
+          "a": {
+            "$ref": "#/definitions/node"
+          }
+        },
+        "definitions": {
+          "node": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/node"
+            }
           }
         }
       },
       "data": null,
       "recursiveData": {
-        "key": "next",
-        "depth": 4001
+        "shape": "items",
+        "depth": 169
       },
-      "portUnsupported": true
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
     },
     {
-      "id": "recursive-data/next-4234",
+      "id": "recursive-data/items-sdk-overflow",
       "schema": {
         "type": "object",
         "properties": {
-          "next": {
-            "$ref": "#"
+          "a": {
+            "$ref": "#/definitions/node"
+          }
+        },
+        "definitions": {
+          "node": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/node"
+            }
           }
         }
       },
       "data": null,
       "recursiveData": {
-        "key": "next",
-        "depth": 4234
+        "shape": "items",
+        "depth": 4096
       },
-      "portUnsupported": true
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
     },
     {
-      "id": "recursive-data/next-4235",
+      "id": "recursive-data/anyOf-0",
       "schema": {
         "type": "object",
-        "properties": {
-          "next": {
-            "$ref": "#"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
           }
-        }
+        ]
       },
       "data": null,
       "recursiveData": {
-        "key": "next",
-        "depth": 4235
-      },
-      "portUnsupported": true,
-      "validationThrow": {
-        "name": "RangeError",
-        "message": "Maximum call stack size exceeded"
+        "shape": "anyOf",
+        "depth": 0
       }
     },
     {
-      "id": "recursive-data/next-4500",
+      "id": "recursive-data/anyOf-67",
       "schema": {
         "type": "object",
-        "properties": {
-          "next": {
-            "$ref": "#"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
           }
-        }
+        ]
       },
       "data": null,
       "recursiveData": {
-        "key": "next",
-        "depth": 4500
-      },
-      "portUnsupported": true,
-      "validationThrow": {
-        "name": "RangeError",
-        "message": "Maximum call stack size exceeded"
+        "shape": "anyOf",
+        "depth": 67
       }
+    },
+    {
+      "id": "recursive-data/anyOf-68",
+      "schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          }
+        ]
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "anyOf",
+        "depth": 68
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-data/anyOf-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          }
+        ]
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "anyOf",
+        "depth": 4096
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-comparison/const-510",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "const",
+        "depth": 510
+      }
+    },
+    {
+      "id": "recursive-comparison/const-511",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "const",
+        "depth": 511
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-comparison/const-sdk-overflow",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "const",
+        "depth": 8192
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-comparison/enum-509",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "enum",
+        "depth": 509
+      }
+    },
+    {
+      "id": "recursive-comparison/enum-510",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "enum",
+        "depth": 510
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-comparison/enum-sdk-overflow",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "enum",
+        "depth": 8192
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-comparison/uniqueItems-1016",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "uniqueItems",
+        "depth": 1016
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/a must NOT have duplicate items (items ## 0 and 1 are identical)"
+      }
+    },
+    {
+      "id": "recursive-comparison/uniqueItems-1017",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "uniqueItems",
+        "depth": 1017
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/a must NOT have duplicate items (items ## 0 and 1 are identical)"
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-comparison/uniqueItems-sdk-overflow",
+      "schema": null,
+      "data": null,
+      "comparisonData": {
+        "kind": "uniqueItems",
+        "depth": 8192
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
+    },
+    {
+      "id": "recursive-data/wideAnyOf-0",
+      "schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          }
+        ]
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "wideAnyOf",
+        "depth": 0
+      },
+      "portDepthLimit": true,
+      "knownDifference": "conservative-stack-budget"
+    },
+    {
+      "id": "recursive-data/wideAnyOf-340",
+      "schema": {
+        "type": "object",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "$ref": "#"
+              }
+            }
+          }
+        ]
+      },
+      "data": null,
+      "recursiveData": {
+        "shape": "wideAnyOf",
+        "depth": 340
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portDepthLimit": true
     }
   ]
 }

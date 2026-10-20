@@ -505,14 +505,9 @@ const FORCE_RESOLVE_NOTE: &str =
     "\n[PilotDeck] Process did not exit within 15s after termination; force-resolved.";
 
 /// Node `setTimeout` delay coercion: outside `[1, 2^31 - 1]` (including NaN)
-/// the delay is 1 ms.
+/// the delay is 1 ms; fractional milliseconds are truncated.
 pub(crate) fn timer_delay(ms: f64) -> Duration {
-    let ms = if (1.0..=2_147_483_647.0).contains(&ms) {
-        ms
-    } else {
-        1.0
-    };
-    Duration::from_secs_f64(ms / 1000.0)
+    Duration::from_millis(crate::runtime::async_hooks::timer_delay_ms(ms))
 }
 
 fn elapsed_ms(started: Instant) -> f64 {
@@ -703,6 +698,21 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timer_delay_truncates_fractional_milliseconds() {
+        for (input, expected) in [
+            (1.9, 1),
+            (1500.7, 1500),
+            (2_147_483_646.9, 2_147_483_646),
+            (0.9, 1),
+            (f64::NAN, 1),
+            (f64::INFINITY, 1),
+            (2_147_483_647.1, 1),
+        ] {
+            assert_eq!(timer_delay(input), Duration::from_millis(expected));
+        }
+    }
 
     #[test]
     fn utf8_stream_matches_text_decoder() {

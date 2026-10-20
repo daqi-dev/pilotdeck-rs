@@ -1229,16 +1229,9 @@ pub fn project_mcp_config_file_path(project_root: &Path) -> PathBuf {
         .join(MCP_CONFIG_FILE_NAME)
 }
 
-/// `path.resolve` for an already-normalised input: relative paths are taken
-/// from the process cwd.
+/// `path.resolve`: normalize dot segments relative to the process cwd.
 fn absolute(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    }
+    crate::metadata::resolve_process_path(Path::new(""), path)
 }
 
 /// `loadMcpServerConfig(projectRoot, pilotHome)`. `Err` is the uncaught
@@ -1353,6 +1346,21 @@ pub(crate) fn errno_text(error: &std::io::Error) -> (&'static str, &'static str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_paths_use_shared_lexical_resolution() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            global_mcp_config_file_path(Path::new("a/../b/./")),
+            cwd.join("b").join(MCP_CONFIG_FILE_NAME)
+        );
+        assert_eq!(
+            project_mcp_config_file_path(Path::new("/a/../../中/./x/..")),
+            Path::new("/中/.pilotdeck").join(MCP_CONFIG_FILE_NAME)
+        );
+        assert_eq!(absolute(Path::new("")), cwd);
+        assert_eq!(absolute(Path::new("/../")), Path::new("/"));
+    }
 
     /// Real SDK/zod probe values are recorded in the round-4 evidence.
     /// Unknown values keep their own nested keys; only the schema's own

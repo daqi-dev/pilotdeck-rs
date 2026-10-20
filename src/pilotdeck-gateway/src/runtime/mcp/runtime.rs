@@ -218,12 +218,12 @@ impl McpRuntime {
         client.call_tool(tool_name, input, options).await
     }
 
-    /// Close every client concurrently.
+    /// Dispose every client concurrently, including retired cleanup tasks.
     pub async fn stop(&self) {
         let mut set = tokio::task::JoinSet::new();
         for (_, client) in &self.clients {
             let client = client.clone();
-            set.spawn(async move { client.close().await });
+            set.spawn(async move { client.dispose().await });
         }
         while set.join_next().await.is_some() {}
     }
