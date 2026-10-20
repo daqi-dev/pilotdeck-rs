@@ -347,17 +347,117 @@ impl Utf8Stream {
 
 /// `ERR_INVALID_ARG_VALUE` for a string with a NUL byte, through the shared
 /// `node_io` formatter (the same contract as Node's fs path validation).
-fn nul_error(prefix: &[u16], value: &JsString) -> ToolError {
-    ToolError::failed(crate::node_io::invalid_arg_value_message(
-        prefix,
-        value.units(),
-    ))
+fn nul_message(prefix: &[u16], value: &JsString) -> JsString {
+    crate::node_io::invalid_arg_value_message(prefix, value.units())
 }
 
 /// libuv's error name for a spawn failure (`uv_err_name`), from the shared
 /// complete table.
 fn errno_name(error: &io::Error) -> Option<&'static str> {
     crate::node_io::lookup(error).map(|(code, _)| code)
+}
+
+/// A validated shell spawn: the resolved shell, its argv, and the exact cwd
+/// and env Node would hand the OS.
+pub(crate) struct PreparedSpawn {
+    pub shell: CommandShell,
+    args: Vec<JsString>,
+    cwd: JsString,
+    env: Option<Vec<(JsString, JsString)>>,
+}
+
+impl PreparedSpawn {
+    /// `spawn(shell, args, { cwd, env, detached: true })` with `stdin` as
+    /// given and piped stdout/stderr. The caller owns kill-on-drop policy.
+    pub(crate) fn command(&self, stdin: Stdio) -> Command {
+        let mut process = Command::new(lossy(&self.shell.shell));
+        process
+            .args(self.args.iter().map(lossy))
+            .current_dir(os_path(&self.cwd))
+            .process_group(0)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(env) = &self.env {
+            process.env_clear();
+            for (key, value) in env {
+                process.env(lossy(key), lossy(value));
+            }
+        }
+        process
+    }
+}
+
+/// `resolveDefaultCommandShell` plus Node's `normalizeSpawnArguments` NUL
+/// checks, in Node's order: args, then cwd, then each env entry (key before
+/// value, `Object.keys` order). Without these checks `std::process::Command`
+/// fails the spawn with its own InvalidInput error. The error is the message
+/// Node throws synchronously. `resolve_env` is the env the shell resolver
+/// reads (`env ?? process.env`).
+pub(crate) fn prepare_spawn(
+    command: &JsString,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+    resolve_env: &[(JsString, JsString)],
+) -> Result<PreparedSpawn, JsString> {
+    let shell = resolve_default_command_shell(resolve_env)?;
+    let args = shell.args(command);
+    if let Some(index) = args.iter().position(|arg| arg.units().contains(&0)) {
+        let prefix = units(&format!(
+            "The argument 'args[{index}]' must be a string without null bytes. Received "
+        ));
+        return Err(nul_message(&prefix, &args[index]));
+    }
+    if cwd.units().contains(&0) {
+        let prefix = units(
+            "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received ",
+        );
+        return Err(nul_message(&prefix, cwd));
+    }
+    for (key, value) in env.into_iter().flatten() {
+        if let Some(bad) = [key, value]
+            .into_iter()
+            .find(|text| text.units().contains(&0))
+        {
+            let mut prefix = units("The property 'options.env['");
+            prefix.extend_from_slice(key.units());
+            prefix.extend(units("']' must be a string without null bytes. Received "));
+            return Err(nul_message(&prefix, bad));
+        }
+    }
+    Ok(PreparedSpawn {
+        shell,
+        args,
+        cwd: cwd.clone(),
+        env: env.map(<[_]>::to_vec),
+    })
+}
+
+/// A failed `Command::spawn` in Node's terms.
+pub(crate) enum SpawnError {
+    /// `spawn <file> <code>`, delivered by Node as an `error` event after
+    /// `spawn()` returned (EACCES, EAGAIN, EMFILE, ENFILE, ENOENT).
+    Async(JsString),
+    /// `spawn <code>`, thrown synchronously by `spawn()`.
+    Sync(JsString),
+}
+
+pub(crate) fn classify_spawn_error(error: &io::Error, shell: &CommandShell) -> SpawnError {
+    match errno_name(error) {
+        Some(code @ ("EACCES" | "EAGAIN" | "EMFILE" | "ENFILE" | "ENOENT")) => {
+            let mut message = units("spawn ");
+            message.extend_from_slice(shell.shell.units());
+            message.extend(units(&format!(" {code}")));
+            SpawnError::Async(JsString::from_utf16(message))
+        }
+        Some(code) => SpawnError::Sync(JsString::from(format!("spawn {code}").as_str())),
+        None => SpawnError::Sync(JsString::from(format!("spawn {error}").as_str())),
+    }
+}
+
+/// `process.env` as Node's spawn defaults read it.
+pub(crate) fn inherited_env() -> Vec<(JsString, JsString)> {
+    process_env()
 }
 
 /// Kills the process group on Drop unless disarmed after the leader is reaped.
@@ -385,38 +485,12 @@ impl Drop for GroupGuard {
 /// killed by a signal); the outer `None` means the status is not observable
 /// without reaping (no WNOWAIT, or the child is no longer waitable).
 async fn leader_exited(group: Option<rustix::process::Pid>) -> Option<Option<i32>> {
-    let group = group?;
-    #[cfg(not(any(
-        target_os = "cygwin",
-        target_os = "horizon",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "wasi"
-    )))]
-    loop {
-        use rustix::process::{WaitId, WaitIdOptions, waitid};
-        match waitid(
-            WaitId::Pid(group),
-            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-        ) {
-            Ok(None) => tokio::time::sleep(Duration::from_millis(5)).await,
-            Err(rustix::io::Errno::INTR) => continue,
-            Ok(Some(status)) => return Some(status.exit_status()),
-            // No longer waitable: the final `wait` reports the real status.
-            Err(_) => return None,
-        }
-    }
-    #[cfg(any(
-        target_os = "cygwin",
-        target_os = "horizon",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "wasi"
-    ))]
-    {
-        let _ = group;
-        None
-    }
+    // No longer waitable (or no WNOWAIT): the final `wait` reports the status.
+    crate::process_group::wait_exit_unreaped(group?)
+        .await
+        .ok()
+        .flatten()
+        .map(|exit| exit.code)
 }
 
 /// `try { options.onStdout(text) } catch {}`: a panicking progress callback
@@ -432,7 +506,7 @@ const FORCE_RESOLVE_NOTE: &str =
 
 /// Node `setTimeout` delay coercion: outside `[1, 2^31 - 1]` (including NaN)
 /// the delay is 1 ms.
-fn timer_delay(ms: f64) -> Duration {
+pub(crate) fn timer_delay(ms: f64) -> Duration {
     let ms = if (1.0..=2_147_483_647.0).contains(&ms) {
         ms
     } else {
@@ -455,78 +529,29 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             &inherited
         }
     };
-    let shell = resolve_default_command_shell(env).map_err(ToolError::failed)?;
-    let args = shell.args(&command);
-    // Node's `normalizeSpawnArguments` order: args, then cwd, then each env
-    // entry (key before value, `Object.keys` order). Without these checks
-    // `std::process::Command` fails the spawn with its own InvalidInput error.
-    if let Some(index) = args.iter().position(|arg| arg.units().contains(&0)) {
-        let prefix = units(&format!(
-            "The argument 'args[{index}]' must be a string without null bytes. Received "
-        ));
-        return Err(nul_error(&prefix, &args[index]));
-    }
-    if options.cwd.units().contains(&0) {
-        let prefix = units(
-            "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received ",
-        );
-        return Err(nul_error(&prefix, &options.cwd));
-    }
-    for (key, value) in options.env.iter().flatten() {
-        if let Some(bad) = [key, value]
-            .into_iter()
-            .find(|text| text.units().contains(&0))
-        {
-            let mut prefix = units("The property 'options.env['");
-            prefix.extend_from_slice(key.units());
-            prefix.extend(units("']' must be a string without null bytes. Received "));
-            return Err(nul_error(&prefix, bad));
-        }
-    }
-
-    let mut process = Command::new(lossy(&shell.shell));
-    process
-        .args(args.iter().map(lossy))
-        .current_dir(os_path(&options.cwd))
-        .process_group(0)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(env) = &options.env {
-        process.env_clear();
-        for (key, value) in env {
-            process.env(lossy(key), lossy(value));
-        }
-    }
+    let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
+        .map_err(ToolError::failed)?;
+    let mut process = prepared.command(Stdio::piped());
+    process.kill_on_drop(true);
     let mut child = match process.spawn() {
         Ok(child) => child,
-        Err(error) => {
-            let name = errno_name(&error);
-            // Node emits these asynchronously as `spawn <file> <code>` (and
-            // resolves as timed out when the signal is already aborted);
-            // every other errno is thrown synchronously as `spawn <code>`.
-            if let Some(code @ ("EACCES" | "EAGAIN" | "EMFILE" | "ENFILE" | "ENOENT")) = name {
-                if options.signal.as_ref().is_some_and(AbortSignal::aborted) {
-                    return Ok(CommandResult {
-                        exit_code: None,
-                        stdout: String::new(),
-                        stderr: String::new(),
-                        timed_out: true,
-                        duration_ms: elapsed_ms(started),
-                        pid: None,
-                    });
-                }
-                let mut message = units("spawn ");
-                message.extend_from_slice(shell.shell.units());
-                message.extend(units(&format!(" {code}")));
-                return Err(ToolError::failed(JsString::from_utf16(message)));
+        Err(error) => match classify_spawn_error(&error, &prepared.shell) {
+            // Node emits these asynchronously (and resolves as timed out when
+            // the signal is already aborted); the rest are thrown synchronously.
+            SpawnError::Async(_) if options.signal.as_ref().is_some_and(AbortSignal::aborted) => {
+                return Ok(CommandResult {
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: true,
+                    duration_ms: elapsed_ms(started),
+                    pid: None,
+                });
             }
-            return Err(ToolError::failed(match name {
-                Some(code) => format!("spawn {code}"),
-                None => format!("spawn {error}"),
-            }));
-        }
+            SpawnError::Async(message) | SpawnError::Sync(message) => {
+                return Err(ToolError::failed(message));
+            }
+        },
     };
     let pid = child.id();
     let group = pid.and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
@@ -696,11 +721,10 @@ mod tests {
     fn nul_messages_use_the_shared_node_formatter() {
         // Raw values from `_tmp/20261020-a65-pr7/probes/nul2.out` / `nul5.out`.
         let args = |value: &str| {
-            let message = nul_error(
+            let message = nul_message(
                 &units("The argument 'args[1]' must be a string without null bytes. Received "),
                 &JsString::from(value),
-            )
-            .message;
+            );
             String::from_utf16(message.units())
                 .unwrap()
                 .split_once("Received ")
@@ -716,7 +740,7 @@ mod tests {
             args(&format!("{}\0", "x".repeat(200))),
             format!("'{}...", "x".repeat(127))
         );
-        let lone = nul_error(&units("p "), &JsString::from_utf16(vec![0xd800, 0])).message;
+        let lone = nul_message(&units("p "), &JsString::from_utf16(vec![0xd800, 0]));
         assert_eq!(String::from_utf16_lossy(lone.units()), "p '\\ud800\\x00'");
     }
 }

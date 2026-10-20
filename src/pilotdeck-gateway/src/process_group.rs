@@ -14,6 +14,9 @@
 //! The leader is observed with `WNOWAIT` so it stays a zombie (and therefore
 //! its PGID cannot be reused) until the caller has sent the final group
 //! signal; only then may `Child::wait` reap it.
+//!
+//! The background task runtime and the foreground bash runner additionally
+//! await the leader's exit status through [`wait_exit_unreaped`].
 use rustix::process::{Pid, Signal};
 use std::time::Duration;
 
@@ -152,4 +155,64 @@ pub(crate) async fn wait_for_group_empty(group: Option<Pid>, limit: Duration) {
         }
     };
     let _ = tokio::time::timeout(limit, observe).await;
+}
+
+/// How the group leader ended, as `child.on("exit")` reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LeaderExit {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
+/// Whether this platform can observe an exit without reaping. Owners decide
+/// the fallback: wait out a grace period, or kill at once.
+pub(crate) const WNOWAIT_SUPPORTED: bool = cfg!(not(any(
+    target_os = "cygwin",
+    target_os = "horizon",
+    target_os = "openbsd",
+    target_os = "redox",
+    target_os = "wasi"
+)));
+
+/// Resolves once `leader` has exited, without reaping it. `Ok(None)` when the
+/// platform has no WNOWAIT; `Err` for a non-EINTR `waitid` failure (for
+/// example ECHILD once someone else reaped it).
+pub(crate) async fn wait_exit_unreaped(
+    leader: Pid,
+) -> Result<Option<LeaderExit>, rustix::io::Errno> {
+    #[cfg(not(any(
+        target_os = "cygwin",
+        target_os = "horizon",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "wasi"
+    )))]
+    loop {
+        use rustix::process::{WaitId, WaitIdOptions, waitid};
+        match waitid(
+            WaitId::Pid(leader),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        ) {
+            Ok(Some(status)) => {
+                return Ok(Some(LeaderExit {
+                    code: status.exit_status(),
+                    signal: status.terminating_signal(),
+                }));
+            }
+            Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    #[cfg(any(
+        target_os = "cygwin",
+        target_os = "horizon",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "wasi"
+    ))]
+    {
+        let _ = leader;
+        Ok(None)
+    }
 }
