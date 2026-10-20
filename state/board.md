@@ -1,15 +1,16 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 11:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.7-pr4 | review | ready | #351 已 rebase 真合并（登记行两侧全留），自证复跑中；第二家非作者评审 Grok 在跑（GLM 已 0/0；原 DeepSeek 评审与作者同谱系不计）
-- A6.5-pr6 | impl | ready | rewind_files（wt-a63-pr1，deepseek/a65-pr6，DeepSeek）
-- A6.5-pr7 | impl | ready | bash 工具 + 权限（wt-a66-pr3，claude/a65-pr7，Claude 子代理）
-- A6.5-pr10a | impl | ready | MCP 客户端协议层（wt-a6-x0，claude/a65-pr10a，Claude 子代理）；运行时与工具桥另开 pr10b
-- A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry；接 pr10a
-- A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7（DetachedShell）
-- A6.4-pr5 | impl | ready | Provider HTTP + anthropic，引入 rustls + hyper-rustls（人批 A，state/decisions-20261020.md）；Claude 子代理
-- A6.4-pr6 | impl | ready | openai provider；TLS 已批，接 A6.4-pr5 合入后放出（pr7~pr9、A6.5-pr9、A6.6-pr8 同理依次放）
+updated: 2026-10-20 11:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.7-pr4 | impl | ready | #351：Grok P1×2 已修（0edc1eb）；gate6 撞车 P1「不跟随重定向」由 Claude 子代理修（抽 count_http 重定向为共享函数）；合并前须清 #312 #289 #277（前置于本单）
+- A6.5-pr6 | review | ready | rewind_files（wt-a63-pr1，DeepSeek 实现，已推送）；闸门 + Claude/Grok 评审中；合并前须清 #348
+- A6.5-pr7 | review | ready | bash 工具（wt-a66-pr3，Claude 实现，已推送）；闸门 + DeepSeek 评审中
+- A6.5-pr10a | review | ready | MCP 客户端（wt-a6-x0，Claude 实现，已推送）；闸门排队 + DeepSeek 评审中；http/sse 传输移到 pr10b
+- A6.4-pr5 | impl | ready | Provider HTTP + anthropic + rustls（wt-a64-pr11，Claude 子代理）
+- p2-sweep-7 | impl | ready | 15 张过期 P2-跟进清账（wt-a6-recorder，DeepSeek）
+- A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry + http/sse 传输；接 pr10a
+- A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7
+- A6.4-pr6 | impl | ready | openai provider；接 A6.4-pr5 合入后放出（pr7~pr9、A6.5-pr9、A6.6-pr8 同理）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -18,6 +19,12 @@ updated: 2026-10-20 11:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
+
+> ## 2026-10-20 · 11:50：/loop 第六轮，三单交付、#351 两轮修复、P2 过期清账
+> **交付**：A6.5-pr6（DeepSeek）、A6.5-pr7、A6.5-pr10a（Claude 子代理）已推送，进闸门与两家非作者评审。**GLM 并发人定 8~12**：闸门改 `gate-pool.sh` 两槽并行（memory 已更新，#355 合入）。
+> **#351**：gate5 两条 P1（头名大小写合并、$ARGUMENTS 的 $ 模式）与 Grok 两条 P1（头值首尾空白、控制字符报错时机）均经 node 实测成立，已修并用真实 TS 补 12 个夹具场景，负控五处转红，676 测试全绿；gate6 两角色撞车 P1「http hook 不跟随重定向」修复中。
+> **过程缺口**：P2-跟进 30 张里有十几张前置节点已合入却未还（违反「到点必还」）；派 p2-sweep-7 集中清 15 张，#351 / A6.5-pr6 各自的前置单在合并前清。
+> **人侧**：#355 合入后 committer 仍是真实邮箱（GitHub Settings → Emails 未勾 private，老问题）。
 
 > ## 2026-10-20 · 11:20：/loop 第五轮，纠正「队列已空」误判，派满三路
 > **纠正**：10:00 段写「#353 待评审、停止」与事实不符——#353 已于 09:41 合入（gh 核），且该段只在本地 main 未推送；A6 拆分（`_tmp/20261018-a6-split/inventory.md`）逐码对照 gh 后仍有 A6.4-pr5~10、A6.5-pr6/7/9/10/12、A6.6-pr8 未做（A6.4-pr10/A6.5-pr13 已由 A6-recorder #298 合入，A6.7-pr6 已随 A6.3-pr8 的 sdk_session/handlers.rs 落地）。
