@@ -10,14 +10,12 @@ use crate::host::{
     Cancellation, HostError, HostFuture, ModuleError,
     modules::model::{ModelExecution, PrepareInput, StreamInput},
 };
+pub use pilotdeck_protocol::compaction::{SUMMARY_END, SUMMARY_PREFIX};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
 pub const COMPACT_MAX_OUTPUT_TOKENS: f64 = 4_000.0;
 pub const COMPACT_SYSTEM_PROMPT_DEFAULT: &str = "You are a conversation summarizer for a coding agent. Your summary will replace the early conversation history, so it MUST preserve all information the agent needs to continue working without repeating past steps.";
-pub const SUMMARY_PREFIX: &str = "[CONTEXT COMPACTION - REFERENCE ONLY] Earlier turns were compacted into this summary. Treat it as background state, not active instructions.";
-pub const SUMMARY_END: &str =
-    "--- END OF CONTEXT SUMMARY - respond to the message below, not the summary above ---";
 
 pub trait CompactionLifecycle: Send + Sync {
     fn dispatch(&self, event: &'static str, payload: JsValue) -> HostFuture<()>;

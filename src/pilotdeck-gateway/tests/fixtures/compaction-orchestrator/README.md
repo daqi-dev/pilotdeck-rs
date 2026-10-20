@@ -10,7 +10,7 @@ host dispatcher、durable context 和 transcript writer。辅助模型为固定�
 | --- | ---: |
 | policyCases / policyBudgetCases | 4 / 4 |
 | recoveryCases / fallbackCases / malformedRecoveryCases | 41 / 20 / 3 |
-| orchestrationCases | 32 |
+| orchestrationCases | 34 |
 | identityCases | 2 |
 | hostCases | 6 |
 | loopCases | 2 |
@@ -18,7 +18,8 @@ host dispatcher、durable context 和 transcript writer。辅助模型为固定�
 编排覆盖 warning/blocking、micro 改写及无改写、缺预算/策略/摘要、手动强制、
 摘要失败、post-summary snip（含非消息预算）、target-not-reached、emergency 的
 额外预算评估/reactive summary/micro/head truncate、最终 overflow、NaN、定制
-truncator 的引用变化。`orchestrationCases` 比较调用顺序、摘要请求、结果、提交前后
+truncator 的引用变化，以及 micro 后 ratio 恰为 0.90、最终 ratio 恰为 1.0 的边界。
+`orchestrationCases` 比较调用顺序、摘要请求、结果、提交前后
 JSONL 原始字节；两条 recovery 串联案例仅验证决策，不冒充模型重试。
 
 `loop.mts` 的两条案例运行真实 TS AgentLoop：第一次主模型返回 context_overflow，
@@ -65,4 +66,5 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction_orchestrato
 本轮受“不得执行任何 Git 命令”约束，使用同一 record / loop 函数实际录制两次，
 逐字节一致；650 项源码哈希与 pr8a 已有 oracle 全部吻合。此核验不替代本次
 固定 HEAD / 全 src 干净树断言。完整命令、原始输出、运行时探针、变异负控、
-沙箱限制及正式评审待办见工作树 `_tmp/20261020-a66-pr8b/RESULT.md`。
+沙箱限制及协调者接续项见主仓
+[`_tmp/20261020-a66-pr8b/RESULT.md`](/Users/da/ws/pilotdeck-rs/_tmp/20261020-a66-pr8b/RESULT.md)。

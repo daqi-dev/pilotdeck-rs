@@ -1,5 +1,6 @@
 //! Owning AgentLoop turn policy. IO/identity/serialization remain bound ports.
 use crate::ports::{PermissionMode, Route, RuntimeContextSurface};
+use pilotdeck_protocol::compaction::SUMMARY_PREFIX as COMPACT_SUMMARY_PREFIX;
 use pilotdeck_protocol::model::{BoundarySnapshot, ThinkingConfig, ToolChoice};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7589,7 +7590,6 @@ fn strip_trailing_error_pair(state: &mut TurnExecutionState) -> PortResult<()> {
 // ---------------------------------------------------------------------------
 const CONTINUATION_TEXT: &str =
     "[system: the conversation above has been compacted. please continue with the current task.]";
-const COMPACT_SUMMARY_PREFIX: &str = "[CONTEXT COMPACTION - REFERENCE ONLY] Earlier turns were compacted into this summary. Treat it as background state, not active instructions.";
 const INTERNAL_USER_TEXT_PREFIXES: [&str; 5] = [
     "<compact-boundary",
     "<snip-boundary",
