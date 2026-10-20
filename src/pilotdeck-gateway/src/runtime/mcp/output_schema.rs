@@ -40,8 +40,8 @@
 //! but excludes NEL, and dot excludes all four JavaScript line terminators.
 //! The JS escapes Rust spells differently (`\0`, `\cX`, `\xHH`, `\uXXXX`,
 //! `\u{...}`, `\f`/`\n`/`\r`/`\t`/`\v`, class-local `\-`) are translated
-//! instead of being refused; named groups are passed through to Rust, whose
-//! syntax is the same.
+//! instead of being refused; named groups without backreferences are
+//! translated to ordinary capturing groups.
 
 mod unicode;
 
@@ -66,6 +66,11 @@ const MAX_DEPTH: usize = 10_000;
 /// 600-level nested schema (`probes/sdk-ajv2.out`), so an explicit error here
 /// is the same shape of failure.
 const MAX_SCHEMA_DEPTH: usize = 256;
+
+/// V8 12.4 (Node 22.22.0) accepts 32767 captures and rejects the next one
+/// with "Too many captures", with and without `/u`. This is a capture-count
+/// limit, not a nesting limit: noncapturing groups can nest much deeper.
+const MAX_REGEXP_CAPTURES: usize = 32_767;
 
 /// The validator threw instead of returning errors, or hit a schema feature
 /// this port cannot evaluate exactly.
@@ -1045,6 +1050,19 @@ fn translate_js_regex(pattern: &str) -> String {
             continue;
         }
         match ch {
+            '(' if chars.get(index + 1) == Some(&'?')
+                && chars.get(index + 2) == Some(&'<')
+                && !matches!(chars.get(index + 3), Some('=' | '!'))
+                && !in_class =>
+            {
+                // The syntax checker has validated the name and refuses
+                // backreferences. Matching does not observe capture names,
+                // so this also supports JS names Rust rejects (e.g. `$`).
+                while chars[index] != '>' {
+                    index += 1;
+                }
+                output.push('(');
+            }
             '[' => {
                 // A raw `[` inside a class is a literal in `/u`; it is
                 // flagged as unsupported before this translator runs.
@@ -1128,7 +1146,7 @@ struct ParsedJsPattern {
 
 struct JsPatternSyntaxError(&'static str);
 
-/// A recursive-descent checker for the ECMAScript `RegExp` pattern grammar
+/// An iterative checker for the ECMAScript `RegExp` pattern grammar
 /// under the `/u` flag. Ajv builds `new RegExp(pattern, "u")` for both
 /// `pattern` and `patternProperties` (observed in
 /// `probes/ajv-u-patterns-r3*.out`), so a pattern V8 rejects must be rejected
@@ -1140,6 +1158,7 @@ struct JsPatternParser {
     names: Vec<String>,
     named_references: Vec<String>,
     max_backreference: u64,
+    has_named_captures: bool,
     /// `true` for the schema `/u` grammar, `false` for the non-`u` grammar
     /// `ajv-formats` uses for `format: "regex"` (Annex B).
     unicode: bool,
@@ -1167,8 +1186,10 @@ fn parse_js_pattern_mode(
     pattern: &str,
     unicode: bool,
 ) -> Result<ParsedJsPattern, JsPatternSyntaxError> {
+    let source: Vec<char> = pattern.chars().collect();
     let mut parser = JsPatternParser {
-        source: pattern.chars().collect(),
+        has_named_captures: has_named_captures(&source),
+        source,
         position: 0,
         captures: 0,
         names: Vec::new(),
@@ -1177,10 +1198,7 @@ fn parse_js_pattern_mode(
         unicode,
         unsupported: false,
     };
-    parser.parse_disjunction(None)?;
-    if parser.position != parser.source.len() {
-        return Err(JsPatternSyntaxError("Unmatched ')'"));
-    }
+    parser.parse_disjunction()?;
     if parser.unicode && parser.max_backreference > parser.captures as u64 {
         return Err(JsPatternSyntaxError("Invalid escape"));
     }
@@ -1198,6 +1216,31 @@ fn parse_js_pattern_mode(
     })
 }
 
+/// Annex B only treats `\k` as a backreference if a named group exists
+/// anywhere in the pattern, including after the reference. This lexical
+/// scan skips escapes and classes without recursing into group bodies.
+fn has_named_captures(source: &[char]) -> bool {
+    let mut in_class = false;
+    let mut index = 0;
+    while let Some(ch) = source.get(index) {
+        match ch {
+            '\\' => index += 1,
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '(' if !in_class
+                && source.get(index + 1) == Some(&'?')
+                && source.get(index + 2) == Some(&'<')
+                && !matches!(source.get(index + 3), Some('=' | '!')) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
 impl JsPatternParser {
     fn peek(&self) -> Option<char> {
         self.source.get(self.position).copied()
@@ -1213,34 +1256,25 @@ impl JsPatternParser {
         Some(ch)
     }
 
-    fn parse_disjunction(&mut self, stop: Option<char>) -> Result<(), JsPatternSyntaxError> {
-        loop {
-            self.parse_alternative(stop)?;
-            if self.peek() == Some('|') {
-                self.position += 1;
-                continue;
-            }
-            break;
-        }
-        if let Some(close) = stop {
-            if self.peek() == Some(close) {
-                self.position += 1;
-                return Ok(());
-            }
-            return Err(JsPatternSyntaxError("Unterminated group"));
-        }
-        if self.position != self.source.len() {
-            return Err(JsPatternSyntaxError("Unmatched ')'"));
-        }
-        Ok(())
-    }
-
-    fn parse_alternative(&mut self, stop: Option<char>) -> Result<(), JsPatternSyntaxError> {
+    fn parse_disjunction(&mut self) -> Result<(), JsPatternSyntaxError> {
+        // Each open group only needs to remember whether its closing atom
+        // can be quantified. Keep this on the heap: schema compilation runs
+        // on a 2 MiB worker stack, and regex format data is untrusted too.
+        let mut groups = Vec::new();
         while let Some(ch) = self.peek() {
-            if ch == '|' || Some(ch) == stop {
-                return Ok(());
+            match ch {
+                '(' => groups.push(self.parse_group()?),
+                ')' => {
+                    let quantifiable = groups.pop().ok_or(JsPatternSyntaxError("Unmatched ')'"))?;
+                    self.position += 1;
+                    self.parse_quantifier(quantifiable)?;
+                }
+                '|' => self.position += 1,
+                _ => self.parse_term()?,
             }
-            self.parse_term()?;
+        }
+        if !groups.is_empty() {
+            return Err(JsPatternSyntaxError("Unterminated group"));
         }
         Ok(())
     }
@@ -1261,10 +1295,6 @@ impl JsPatternParser {
             '\\' => {
                 self.parse_escape_outside()?;
                 self.parse_quantifier(true)?;
-            }
-            '(' => {
-                let quantifiable = self.parse_group()?;
-                self.parse_quantifier(quantifiable)?;
             }
             '[' => {
                 self.parse_class()?;
@@ -1413,25 +1443,32 @@ impl JsPatternParser {
         (self.position > start).then_some(value)
     }
 
+    fn add_capture(&mut self) -> Result<(), JsPatternSyntaxError> {
+        self.captures += 1;
+        if self.captures > MAX_REGEXP_CAPTURES {
+            return Err(JsPatternSyntaxError("Too many captures"));
+        }
+        Ok(())
+    }
+
+    /// Consume only the opening header; `parse_disjunction` owns the body
+    /// and the closing parenthesis, without calling back into this method.
     fn parse_group(&mut self) -> Result<bool, JsPatternSyntaxError> {
         debug_assert_eq!(self.peek(), Some('('));
         self.position += 1;
         if self.peek() != Some('?') {
-            self.captures += 1;
-            self.parse_disjunction(Some(')'))?;
+            self.add_capture()?;
             return Ok(true);
         }
         self.position += 1;
         match self.peek() {
             Some(':') => {
                 self.position += 1;
-                self.parse_disjunction(Some(')'))?;
                 Ok(true)
             }
             Some('=' | '!') => {
                 self.position += 1;
                 self.unsupported = true;
-                self.parse_disjunction(Some(')'))?;
                 // Without `/u`, V8 allows quantifying a lookahead (Annex B).
                 Ok(!self.unicode)
             }
@@ -1441,7 +1478,6 @@ impl JsPatternParser {
                     Some('=' | '!') => {
                         self.position += 1;
                         self.unsupported = true;
-                        self.parse_disjunction(Some(')'))?;
                         Ok(false)
                     }
                     _ => {
@@ -1450,8 +1486,7 @@ impl JsPatternParser {
                             return Err(JsPatternSyntaxError("Duplicate capture group name"));
                         }
                         self.names.push(name);
-                        self.captures += 1;
-                        self.parse_disjunction(Some(')'))?;
+                        self.add_capture()?;
                         Ok(true)
                     }
                 }
@@ -1521,12 +1556,12 @@ impl JsPatternParser {
                 self.parse_unicode_escape()?;
             }
             'u' => {}
-            'k' if self.unicode => {
+            'k' if self.unicode || self.has_named_captures => {
                 self.parse_named_backreference()?;
             }
-            'k' => {
-                self.parse_named_backreference_non_unicode()?;
-            }
+            // Only the escaped `k` is literal. The following `<...>` must
+            // still be parsed, including any groups and quantifiers inside.
+            'k' => {}
             other if is_js_syntax_character(other) || other == '/' => {}
             _ if self.unicode => return Err(JsPatternSyntaxError("Invalid escape")),
             // Annex B identity escape: any other escaped character is
@@ -1681,7 +1716,7 @@ impl JsPatternParser {
             }
             'u' => literal_class_atom(u32::from('u')),
             'k' => {
-                if self.unicode {
+                if self.unicode || self.has_named_captures {
                     return Err(JsPatternSyntaxError("Invalid escape"));
                 }
                 literal_class_atom(u32::from('k'))
@@ -1822,45 +1857,7 @@ impl JsPatternParser {
             return Err(JsPatternSyntaxError("Invalid capture group name"));
         }
         self.named_references.push(name);
-        Ok(())
-    }
-
-    /// `\k<name>` without `/u` is a named backreference only when a named
-    /// group exists; otherwise `\k` is an Annex B identity escape.
-    fn parse_named_backreference_non_unicode(&mut self) -> Result<(), JsPatternSyntaxError> {
-        if self.peek() != Some('<') {
-            if !self.names.is_empty() {
-                return Err(JsPatternSyntaxError("Invalid named reference"));
-            }
-            return Ok(());
-        }
-        let close = self
-            .source
-            .get(self.position + 1..)
-            .unwrap_or_default()
-            .iter()
-            .position(|ch| *ch == '>')
-            .map(|offset| self.position + 1 + offset);
-        let Some(close) = close else {
-            if !self.names.is_empty() {
-                return Err(JsPatternSyntaxError("Invalid capture group name"));
-            }
-            return Ok(());
-        };
-        let raw: String = self.source[self.position + 1..close].iter().collect();
-        self.position = close + 1;
-        if self.names.is_empty() {
-            // A standalone `\k<name>` is an identity escape in Annex B.
-            return Ok(());
-        }
-        if raw.is_empty() {
-            return Err(JsPatternSyntaxError("Invalid capture group name"));
-        }
-        let name = decode_group_name(&raw)?;
-        if !valid_group_name(&name) {
-            return Err(JsPatternSyntaxError("Invalid capture group name"));
-        }
-        self.named_references.push(name);
+        self.unsupported = true;
         Ok(())
     }
 
@@ -3096,6 +3093,129 @@ mod tests {
     }
 
     #[test]
+    fn deep_patterns_compile_on_a_worker_stack() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                for depth in [10_000, 32_767, 32_768, 100_000] {
+                    for open in ["(", "(?:", "(?="] {
+                        let pattern = format!("{}{}", open.repeat(depth), ")".repeat(depth));
+                        for (schema, data) in [
+                            (serde_json::json!({"pattern": pattern}), r#""""#),
+                            (
+                                serde_json::json!({
+                                    "patternProperties": {&pattern: {"type": "number"}}
+                                }),
+                                r#"{"x":1}"#,
+                            ),
+                        ] {
+                            let schema = parse_json(&schema.to_string()).unwrap();
+                            let data = parse_json(data).unwrap();
+                            if open == "(" && depth > 32_767 {
+                                let error = check_schema(&schema).unwrap_err();
+                                assert!(error.0.ends_with(": Too many captures"));
+                            } else {
+                                assert!(check_schema(&schema).is_ok(), "{open} {depth}");
+                            }
+                            // Run the actual validation walk on THIS 2 MiB
+                            // stack too; public validate has its own thread.
+                            assert!(matches!(
+                                validate_inner(&schema, &data),
+                                Err(ValidationError::Unsupported(_))
+                            ));
+                            assert!(matches!(
+                                validate(&schema, &data),
+                                Err(ValidationError::Unsupported(_))
+                            ));
+                        }
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn deep_regex_formats_validate_on_a_worker_stack() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let schema = parse_json(r#"{"type":"string","format":"regex"}"#).unwrap();
+                assert!(check_schema(&schema).is_ok());
+                for depth in [10_000, 32_767, 32_768, 100_000] {
+                    for open in ["(", "(?:", "(?="] {
+                        let pattern = format!("{}{}", open.repeat(depth), ")".repeat(depth));
+                        let data = JsValue::String(pattern.into());
+                        let expected = if open == "(" && depth > 32_767 {
+                            Some("data must match format \"regex\"".into())
+                        } else {
+                            None
+                        };
+                        assert_eq!(validate_inner(&schema, &data), Ok(expected.clone()));
+                        assert_eq!(validate(&schema, &data), Ok(expected));
+                    }
+                }
+                // The V8 bound counts all captures, not just nesting.
+                for count in [32_767, 32_768] {
+                    let flat = "()".repeat(count);
+                    assert_eq!(regex_format_valid(&flat), Some(count == 32_767));
+                    let identity = format!(r"\k<{}{}>", "(".repeat(count), ")".repeat(count));
+                    assert_eq!(regex_format_valid(&identity), Some(count == 32_767));
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn group_stack_preserves_alternatives_assertions_and_quantifiers() {
+        for (pattern, unicode_valid, non_unicode_valid) in [
+            ("(|a|(?:b|))*", true, true),
+            ("(?:(?=a)|(?<=b))+", true, true),
+            ("(?=a)*", false, true),
+            ("(?<=a)*", false, false),
+            ("((a){2,3}?|b)+", true, true),
+            ("(a)**", false, false),
+            ("(?:(a)", false, false),
+            ("a)", false, false),
+            (r"[\(\)]\(\)", true, true),
+            (r"\k<(>", false, false),
+            (r"\k<[]>", false, true),
+            (r"\k<x>(?<x>a)", true, true),
+            (r"\k<y>(?<x>a)", false, false),
+            (r"[\k](?<x>a)", false, false),
+            (r"(?<x>a)[\k]", false, false),
+            (r"\k<(?<x>a)>", false, false),
+        ] {
+            assert_eq!(
+                parse_js_pattern(pattern).is_ok(),
+                unicode_valid,
+                "{pattern}"
+            );
+            assert_eq!(
+                parse_js_pattern_non_unicode(pattern).is_ok(),
+                non_unicode_valid,
+                "{pattern}"
+            );
+        }
+        for pattern in [r"^(?<$>x)$", r"^(?<\u0061>x)$", r"^(?<中>x)$"] {
+            let schema = parse_json(&serde_json::json!({"pattern": pattern}).to_string()).unwrap();
+            assert_eq!(
+                validate_inner(&schema, &JsValue::String("x".into())),
+                Ok(None)
+            );
+            assert!(
+                validate_inner(&schema, &JsValue::String("y".into()))
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(matches!(js_regex(r"(?<$>x)\k<$>"), JsRegex::JsOnly));
+    }
+
+    #[test]
     fn deep_schema_anchor_collection_is_safe_on_a_worker_stack() {
         std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
@@ -3357,7 +3477,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 526);
+        assert_eq!(cases.len(), 563);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
