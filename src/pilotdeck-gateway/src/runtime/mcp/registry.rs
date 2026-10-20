@@ -25,7 +25,7 @@ use super::runtime::{McpRuntimeFactory, McpRuntimePort, SessionMcpRuntime};
 use crate::{js_value, runtime::project::RuntimeError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    path::{Component, Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex, MutexGuard},
 };
 use tokio::sync::watch;
@@ -301,22 +301,9 @@ pub struct BuiltinMcpPaths {
 
 /// `path.resolve(p)` (POSIX, lexical).
 pub(crate) fn resolve_path(path: &str) -> String {
-    let base = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
-    } else {
-        std::env::current_dir().unwrap_or_default().join(path)
-    };
-    let mut out = PathBuf::from("/");
-    for component in base.components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::Normal(part) => out.push(part),
-            _ => {}
-        }
-    }
-    out.to_string_lossy().into_owned()
+    crate::metadata::resolve_process_path(Path::new(""), Path::new(path))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `value.replaceAll(marker, replacement)` with GetSubstitution.
@@ -1066,6 +1053,14 @@ impl ProjectMcpRuntimeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_paths_use_shared_lexical_resolution() {
+        assert_eq!(resolve_path("/a/../../图/./"), "/图");
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(resolve_path("a/../b"), cwd.join("b").to_string_lossy());
+        assert_eq!(resolve_path(""), cwd.to_string_lossy());
+    }
 
     #[test]
     fn replace_all_uses_get_substitution() {

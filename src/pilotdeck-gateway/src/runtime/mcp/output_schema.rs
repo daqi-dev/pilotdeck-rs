@@ -34,7 +34,7 @@
 //! that gap is reported later as [`ValidationError::Unsupported`] when the
 //! pattern is actually used, never as a silent pass. Relative/remote `$ref`s
 //! that need an `$id` base are reported as unresolvable; validation nesting
-//! deeper than [`MAX_DEPTH`] is reported as [`ValidationError::Threw`] with an
+//! deeper than [`MAX_DEPTH`] is reported as [`ValidationError::Unsupported`] with an
 //! explicit message. User patterns use the SDK's JavaScript `/u` character
 //! classes: `\d`/`\w` and word boundaries are ASCII, whitespace includes BOM
 //! but excludes NEL, and dot excludes all four JavaScript line terminators.
@@ -54,12 +54,14 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-/// Validation recursion bound. V8/Ajv handles recursive data at depth 4000
-/// (`probes/sdk-ajv3.out`); the recursive `$ref` in that shape costs two
-/// `check` frames per data level, so the bound allows roughly 5000 data
-/// levels. [`validate`] runs on a dedicated 64 MiB stack. Exceeding the bound
-/// is an explicit error, never a silent pass.
-const MAX_DEPTH: usize = 10_000;
+/// Conservative validation bound: default-stack, cold Node 22.22.0 / V8 12.4
+/// SDK probes passed 4234 object edges and threw RangeError at 4235 (two
+/// property names, five independent binary searches each). The exact native
+/// limit depends on call-stack shape; support 4000 edges, not the old ~5000.
+/// Recursive `$ref` costs two `check` frames per edge plus the root frame.
+/// Beyond this measured support range return Unsupported, never guess valid
+/// or claim an exact V8 stack boundary. [`validate`] uses a 64 MiB stack.
+const MAX_DEPTH: usize = 8_001;
 
 /// Schema-structure recursion bound for [`check_schema`], which runs on the
 /// caller's (2 MiB) worker stack. Ajv itself throws `RangeError` on a
@@ -96,7 +98,7 @@ pub(crate) fn validate(
 ) -> Result<Option<String>, ValidationError> {
     // Deeply nested recursive data is valid in Ajv (depth 4000 measured).
     // Tokio's worker stacks are 2 MiB, so run the recursive walk on a larger
-    // dedicated stack instead of lowering the schema port's depth.
+    // dedicated stack to support that measured range.
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
@@ -2341,7 +2343,9 @@ impl<'a> Validator<'a> {
             _ => return Ok(true),
         };
         if self.depth >= MAX_DEPTH {
-            return Err(ValidationError::Threw);
+            return Err(ValidationError::Unsupported(
+                "output schema validation exceeds the supported recursion depth".into(),
+            ));
         }
         let pair = (
             schema as *const JsObject as usize,
@@ -3035,6 +3039,28 @@ mod tests {
     }
 
     #[test]
+    fn recursive_data_above_measured_support_never_passes() {
+        let schema = parse_json(r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##).unwrap();
+        // Check the SDK's first measured RangeError before the conservative
+        // support boundary, so restoring the old bound exposes a false PASS.
+        for depth in [4235, 4500, 4999, 4001, 4234] {
+            let mut data = JsValue::Object(JsObject::new());
+            for _ in 0..depth {
+                let mut object = JsObject::new();
+                object.insert("a".into(), data);
+                data = JsValue::Object(object);
+            }
+            assert!(
+                matches!(
+                    validate(&schema, &data),
+                    Err(ValidationError::Unsupported(_))
+                ),
+                "depth {depth}: must not silently pass beyond the measured support range"
+            );
+        }
+    }
+
+    #[test]
     fn nullable_and_anchor_refs_match_ajv() {
         let schema = parse_json(r#"{"type":"string","nullable":true}"#).unwrap();
         assert_eq!(validate(&schema, &JsValue::Null).unwrap(), None);
@@ -3477,7 +3503,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 563);
+        assert_eq!(cases.len(), 573);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
@@ -3510,15 +3536,27 @@ mod tests {
             let id = case.get("id").unwrap().as_string().unwrap();
             let id = String::from_utf16_lossy(id.units());
             let schema = case.get("schema").unwrap();
-            let data = case.get("data").unwrap();
+            let recursive_data = case.get("recursiveData").map(|recipe| {
+                let key = recipe.get("key").unwrap().as_string().unwrap();
+                let depth = recipe.get("depth").unwrap().as_number().unwrap() as usize;
+                let mut data = JsValue::Object(JsObject::new());
+                for _ in 0..depth {
+                    let mut object = JsObject::new();
+                    object.insert(key.clone(), data);
+                    data = JsValue::Object(object);
+                }
+                data
+            });
+            let data = recursive_data
+                .as_ref()
+                .unwrap_or_else(|| case.get("data").unwrap());
             if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
-                // "Unsupported" is a port gap only for patterns V8 accepts.
                 // Schema compile must accept it (Ajv does), and using it must
                 // fail explicitly, never compile into a permissive validator
                 // or silently pass data.
                 assert!(
                     check_schema(schema).is_ok(),
-                    "{id}: valid /u pattern was rejected by check_schema"
+                    "{id}: valid schema was rejected by check_schema"
                 );
                 assert!(
                     matches!(validate(schema, data), Err(ValidationError::Unsupported(_))),

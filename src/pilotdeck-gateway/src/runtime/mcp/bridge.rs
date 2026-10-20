@@ -24,7 +24,7 @@ use crate::{
 use base64::Engine;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 
@@ -314,22 +314,7 @@ static IMAGE_LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
 
 /// `path.resolve(cwd, rel)` (POSIX, lexical).
 fn resolve_path(cwd: &str, relative: &str) -> PathBuf {
-    let base = if Path::new(cwd).is_absolute() {
-        PathBuf::from(cwd)
-    } else {
-        std::env::current_dir().unwrap_or_default().join(cwd)
-    };
-    let mut out = PathBuf::from("/");
-    for component in base.join(relative).components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::Normal(part) => out.push(part),
-            _ => {}
-        }
-    }
-    out
+    crate::metadata::resolve_process_path(Path::new(cwd), Path::new(relative))
 }
 
 fn extract_file_images(text: &JsString, cwd: &str) -> Vec<JsValue> {
@@ -394,6 +379,18 @@ fn error_text(content: &JsValue, server_id: &str, tool_name: &str) -> JsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_paths_use_shared_lexical_resolution() {
+        assert_eq!(resolve_path("/a/./b", "../图.png"), Path::new("/a/图.png"));
+        assert_eq!(resolve_path("/a", "/x/../img.png"), Path::new("/img.png"));
+        assert_eq!(
+            resolve_path("/a", "../../../img.png"),
+            Path::new("/img.png")
+        );
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(resolve_path("a/../b", "./../img.png"), cwd.join("img.png"));
+    }
     use pilotdeck_protocol::parse_json;
 
     #[test]

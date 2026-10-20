@@ -12,8 +12,9 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
 import path from 'node:path';
+import os from 'node:os';
 import {createHash} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const baseline = process.env.PDRS_BASELINE;
 if (!baseline || !path.isAbsolute(baseline)) {
@@ -695,6 +696,43 @@ for (const [name, pattern] of [
   }
 }
 
+// Do not serialize recursive data: both JSON.stringify and the fixture
+// parser have independent depth limits. Store its exact iterative recipe.
+// Each observation uses a new default-stack process so warm-up cannot move
+// the boundary. The SDK compiles this schema before validating the data.
+const recursiveDataTemplate = fs.readFileSync(
+  fileURLToPath(new URL('./recursive-data.mjs', import.meta.url)), 'utf8',
+);
+assert.equal(recursiveDataTemplate.split("'pdrs:baseline-ajv-provider'").length, 2);
+const recursiveDataScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pdrs-recursive-data-'));
+const recursiveDataProbe = path.join(recursiveDataScratch, 'probe.mjs');
+fs.writeFileSync(recursiveDataProbe, recursiveDataTemplate.replace(
+  "'pdrs:baseline-ajv-provider'", JSON.stringify(pathToFileURL(providerPath).href),
+));
+const recursiveDataEnv = {...process.env};
+delete recursiveDataEnv.NODE_OPTIONS;
+delete recursiveDataEnv.NODE_COMPILE_CACHE;
+try {
+  for (const key of ['a', 'next']) {
+    for (const depth of [4000, 4001, 4234, 4235, 4500]) {
+      const observed = JSON.parse(execFileSync(process.execPath, [
+        recursiveDataProbe, key, String(depth),
+      ], {env: recursiveDataEnv, encoding: 'utf8'}));
+      assert.equal(Boolean(observed.validationThrow), depth >= 4235, `cold SDK boundary drift: ${key}/${depth}`);
+      cases.push({
+        id: `recursive-data/${key}-${depth}`,
+        schema: {type: 'object', properties: {[key]: {$ref: '#'}}},
+        data: null,
+        recursiveData: {key, depth},
+        ...(depth > 4000 ? {portUnsupported: true} : {}),
+        ...observed,
+      });
+    }
+  }
+} finally {
+  fs.rmSync(recursiveDataScratch, {recursive: true, force: true});
+}
+
 const oracle = {
   sourceCommit, sourceSha256, regexCompilation,
   sdk: sdkPackage.version,
@@ -703,7 +741,13 @@ const oracle = {
   providerSha256: hash('node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js'),
   ajvSha256: hash('node_modules/ajv/dist/ajv.js'),
   formatsSha256: hash('node_modules/ajv-formats/dist/formats.js'),
+  recursiveDataRuntime: {
+    node: process.version, v8: process.versions.v8,
+    platform: process.platform, arch: process.arch,
+    coldStart: true, defaultStack: true,
+  },
   cases: cases.map((entry) => {
+    if (entry.recursiveData) return entry;
     const {id, schema, data} = entry;
     const validator = new AjvJsonSchemaValidator();
     let compiled = false;

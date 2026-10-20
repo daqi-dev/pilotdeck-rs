@@ -82,7 +82,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
     time::{Duration, Instant},
 };
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 /// Connect handshake timeout when the options give none.
 pub const DEFAULT_HANDSHAKE_TIMEOUT_MS: f64 = 10_000.0;
@@ -329,7 +329,10 @@ impl SdkClient {
     /// `Client.connect(transport)`: start, `initialize`, version check,
     /// `notifications/initialized`. On failure after the spawn the
     /// transport is closed in the background (`void this.close()`).
-    async fn connect(wire: Arc<Wire>) -> Result<Arc<Self>, McpClientError> {
+    async fn connect(
+        wire: Arc<Wire>,
+        close_finished: oneshot::Sender<()>,
+    ) -> Result<Arc<Self>, McpClientError> {
         // `Protocol.connect` → `transport.start()`, outside the try that
         // closes the transport on failure.
         if let Some(link) = wire.http_link() {
@@ -344,7 +347,10 @@ impl SdkClient {
             Ok(()) => Ok(client),
             Err(error) => {
                 let wire = client.wire.clone();
-                tokio::spawn(async move { wire.close().await });
+                tokio::spawn(async move {
+                    wire.close().await;
+                    let _ = close_finished.send(());
+                });
                 Err(error)
             }
         }
@@ -554,6 +560,22 @@ fn initialize_settled(reply: &Reply) -> Settled {
 
 type ConnectResult = Option<Result<(), McpClientError>>;
 
+/// Retains the failed handshake's original close completion, since calling
+/// `Wire::close` a second time returns immediately during its grace period.
+struct PerSessionDirectory {
+    path: PathBuf,
+    failed_close: oneshot::Receiver<()>,
+}
+
+impl PerSessionDirectory {
+    async fn remove(self) {
+        // Success/spawn failure drops the sender; failed initialization keeps
+        // it in the background close task until that task finishes.
+        let _ = self.failed_close.await;
+        let _ = std::fs::remove_dir_all(self.path);
+    }
+}
+
 struct State {
     status: McpStatus,
     client: Option<Arc<SdkClient>>,
@@ -565,7 +587,7 @@ struct State {
     /// connection while the epoch is still the one it was published under.
     epoch: u64,
     reconnect_in_flight: bool,
-    per_session_dir: Option<PathBuf>,
+    per_session_dir: Option<PerSessionDirectory>,
 }
 
 struct Inner {
@@ -804,6 +826,8 @@ impl McpClient {
         // status stays `connecting`.
         let mut dir = None;
         let wire = self.build_transport(&mut dir)?;
+        let (close_finished, failed_close) = oneshot::channel();
+        let mut dir = dir.map(|path| PerSessionDirectory { path, failed_close });
         let handshake_ms = self
             .inner
             .options
@@ -811,7 +835,7 @@ impl McpClient {
             .unwrap_or(DEFAULT_HANDSHAKE_TIMEOUT_MS);
         let mut handshake = tokio::spawn(async move {
             match wire {
-                Ok(wire) => SdkClient::connect(wire).await,
+                Ok(wire) => SdkClient::connect(wire, close_finished).await,
                 Err(error) => Err(error),
             }
         });
@@ -827,7 +851,7 @@ impl McpClient {
                         late.close().await;
                     }
                     if let Some(dir) = late_dir {
-                        let _ = std::fs::remove_dir_all(dir);
+                        dir.remove().await;
                     }
                 });
                 Err(McpClientError::client(
@@ -865,7 +889,7 @@ impl McpClient {
                     client.close().await;
                 }
                 if let Some(dir) = dir {
-                    let _ = std::fs::remove_dir_all(dir);
+                    dir.remove().await;
                 }
             });
             return Err(self.aborted());
@@ -874,9 +898,11 @@ impl McpClient {
         // it or this attempt was superseded and removed it above.
         if dir.is_some() {
             // A previous failed (non-timeout) attempt may still own a
-            // directory. Replacing the slot must not lose that ownership.
+            // directory and a child in its close grace period. TS overwrites
+            // the directory slot and leaks it; retain cleanup ownership and
+            // wait for that attempt's original background close.
             if let Some(old) = std::mem::replace(&mut state.per_session_dir, dir) {
-                let _ = std::fs::remove_dir_all(old);
+                tokio::spawn(old.remove());
             }
         }
         match outcome {
@@ -1129,7 +1155,7 @@ impl McpClient {
                 client.close().await;
             }
             if let Some(dir) = dir {
-                let _ = std::fs::remove_dir_all(dir);
+                dir.remove().await;
             }
         });
     }
@@ -1154,7 +1180,7 @@ impl McpClient {
                 client.close().await;
             }
             if let Some(dir) = dir {
-                let _ = std::fs::remove_dir_all(dir);
+                dir.remove().await;
             }
         })
         .await;
@@ -1177,9 +1203,18 @@ impl McpClient {
                 state.per_session_dir.take(),
             )
         };
-        if let Some(client) = client {
-            client.close().await;
-        }
+        // A caller may cancel close while a failed initialize's original
+        // background close is still in its grace period. Keep both resources
+        // owned until cleanup finishes, even after that cancellation.
+        let _ = tokio::spawn(async move {
+            if let Some(client) = client {
+                client.close().await;
+            }
+            if let Some(dir) = dir {
+                dir.remove().await;
+            }
+        })
+        .await;
         {
             // A `start()` published while the old connection closed owns the
             // status now; leave it to that attempt.
@@ -1187,9 +1222,6 @@ impl McpClient {
             if state.epoch == epoch {
                 state.status = McpStatus::Idle;
             }
-        }
-        if let Some(dir) = dir {
-            let _ = std::fs::remove_dir_all(dir);
         }
     }
 
