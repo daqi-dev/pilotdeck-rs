@@ -222,6 +222,173 @@
  },
  "cases": [
   {
+   "name": "google-compatible-schema",
+   "target": "mock",
+   "request": {
+    "tools": [
+     {
+      "name": "lookup",
+      "description": "Google schema",
+      "inputSchema": {
+       "type": "object",
+       "properties": {
+        "bad-name": {
+         "type": "string"
+        },
+        "good": {
+         "const": "x"
+        },
+        "list": {
+         "type": "array",
+         "minItems": 1
+        }
+       },
+       "required": [
+        "bad-name",
+        "good",
+        "missing"
+       ],
+       "additionalProperties": false,
+       "$schema": "x"
+      }
+     }
+    ],
+    "outputSchema": {
+     "name": "Answer",
+     "schema": {
+      "type": "object",
+      "properties": {
+       "bad-name": {
+        "type": "string"
+       },
+       "good": {
+        "const": "x"
+       },
+       "list": {
+        "type": "array",
+        "minItems": 1
+       }
+      },
+      "required": [
+       "bad-name",
+       "good",
+       "missing"
+      ],
+      "additionalProperties": false,
+      "$schema": "x"
+     }
+    }
+   },
+   "provider": {
+    "id": "google"
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"id\":\"google-openai\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\n"
+      },
+      {
+       "text": "data: {\"id\":\"google-openai\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
+      },
+      {
+       "text": "data: [DONE]\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "headers": [
+      [
+       "authorization",
+       "Bearer sk-fixture"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ]
+     ],
+     "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"system\",\"content\":\"You are terse.\"},{\"role\":\"user\",\"content\":\"Say hi 你好\"},{\"role\":\"assistant\",\"content\":\"Hi\",\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}}],\"reasoning_content\":\"prior-reasoning\"},{\"role\":\"tool\",\"tool_call_id\":\"call_a\",\"content\":\"result-a\\n[Image: image/png, 8 base64 characters]\"},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Visual content from tool result]\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0=\"}}]},{\"role\":\"user\",\"content\":\"continue\"}],\"max_tokens\":256,\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"description\":\"Google schema\",\"parameters\":{\"type\":\"object\",\"properties\":{\"good\":{\"enum\":[\"x\"]},\"list\":{\"type\":\"array\",\"items\":{}}},\"required\":[\"good\"]}}}],\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}},\"service_tier\":\"priority\",\"stream\":true,\"metadata\":{\"user_id\":\"u-1\",\"n\":\"2\"},\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"Answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"good\":{\"enum\":[\"x\"]},\"list\":{\"type\":\"array\",\"items\":{}}},\"required\":[\"good\"]},\"strict\":true}},\"reasoning_effort\":\"high\",\"top_k\":5}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google",
+      "model": "gpt-5.4",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "5722cb2525336de4cc3a7fbe84da75cad1ab52a280e16f31e35209e11613a4c8",
+      "metadata": {
+       "user_id": "u-1",
+       "n": 2
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "id": "google-openai",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "ok"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "id": "google-openai",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {
+          "role": "assistant",
+          "content": "ok"
+         },
+         "finish_reason": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "id": "google-openai",
+       "choices": [
+        {
+         "index": 0,
+         "delta": {},
+         "finish_reason": "stop"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "normal-text",
    "target": "mock",
    "replies": [

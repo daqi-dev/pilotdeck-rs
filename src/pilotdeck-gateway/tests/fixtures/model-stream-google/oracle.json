@@ -202,6 +202,278 @@
  },
  "cases": [
   {
+   "name": "citation-metadata",
+   "target": "mock",
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"quoted\"}]},\"citationMetadata\":{\"citationSources\":[{\"startIndex\":0,\"endIndex\":6,\"uri\":\"https://example.invalid/source\",\"license\":\"CC-BY\",\"extra\":\"preserved\"}],\"citations\":[\"discard\"],\"extra\":\"discard\"}}]}\n\n"
+      },
+      {
+       "text": "data: {\"candidates\":[{\"citationMetadata\":{\"citationSources\":null,\"extra\":\"discard\"},\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "5950e398962343a61080523b1e8ba084a8bd3ce9eabe814393c5c88514ca475d"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "quoted"
+           }
+          ]
+         },
+         "citationMetadata": {
+          "citations": [
+           {
+            "startIndex": 0,
+            "endIndex": 6,
+            "uri": "https://example.invalid/source",
+            "license": "CC-BY",
+            "extra": "preserved"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "quoted",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "quoted"
+           }
+          ]
+         },
+         "citationMetadata": {
+          "citations": [
+           {
+            "startIndex": 0,
+            "endIndex": 6,
+            "uri": "https://example.invalid/source",
+            "license": "CC-BY",
+            "extra": "preserved"
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "citationMetadata": {},
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool-name-object",
+   "target": "mock",
+   "request": {
+    "messages": [
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_call",
+        "id": "opaque",
+        "name": {
+         "toString": null
+        },
+        "input": {}
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "toolCallId": "opaque",
+        "content": [
+         {
+          "type": "text",
+          "text": "result"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Continue the conversation from the available context.\"}],\"role\":\"user\"},{\"parts\":[{\"functionCall\":{\"id\":\"opaque\",\"args\":{},\"name\":{\"toString\":null}}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"opaque\",\"name\":{\"toString\":null},\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"description\":\"Look up\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"},\"topP\":0.5}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "cd0d9527074fc89454c2e01a727654e9b10a8c2ad3f8f34e522ca4d455c68027"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "text",
    "target": "mock",
    "replies": [
@@ -3933,6 +4205,68 @@
      }
     }
    ]
+  }
+ ],
+ "schemaCases": [
+  {
+   "depth": 128,
+   "traversed": 128,
+   "leaf": {
+    "enum": [
+     "leaf"
+    ]
+   },
+   "union": {
+    "type": "string",
+    "enum": [
+     "leaf"
+    ]
+   }
+  },
+  {
+   "depth": 512,
+   "traversed": 512,
+   "leaf": {
+    "enum": [
+     "leaf"
+    ]
+   },
+   "union": {
+    "type": "string",
+    "enum": [
+     "leaf"
+    ]
+   }
+  },
+  {
+   "depth": 1200,
+   "traversed": 1200,
+   "leaf": {
+    "enum": [
+     "leaf"
+    ]
+   },
+   "union": {
+    "type": "string",
+    "enum": [
+     "leaf"
+    ]
+   }
+  },
+  {
+   "depth": 2000,
+   "traversed": 2000,
+   "leaf": {
+    "enum": [
+     "leaf"
+    ]
+   },
+   "union": {
+    "type": "string",
+    "enum": [
+     "leaf"
+    ]
+   }
   }
  ]
 }

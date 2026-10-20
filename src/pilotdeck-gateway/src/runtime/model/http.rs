@@ -970,6 +970,21 @@ thread_local! {
     /// Tests shrink V8's string limit to exercise the cap without 512 MiB.
     pub(crate) static STRING_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
 }
+/// Restores a test's thread-local limit even if its assertion panics.
+#[cfg(test)]
+pub(crate) struct LimitGuard(usize);
+#[cfg(test)]
+impl LimitGuard {
+    pub(crate) fn set(limit: usize) -> Self {
+        Self(STRING_LIMIT.with(|cell| cell.replace(limit)))
+    }
+}
+#[cfg(test)]
+impl Drop for LimitGuard {
+    fn drop(&mut self) {
+        STRING_LIMIT.with(|cell| cell.set(self.0));
+    }
+}
 #[cfg(test)]
 pub(crate) fn string_limit() -> usize {
     STRING_LIMIT.with(std::cell::Cell::get)
@@ -1028,13 +1043,13 @@ async fn send_google_request(
 ) -> Result<Response<ModelBody>, ModelStreamError> {
     let timeout_ms = idle_timeout_ms(provider, options);
     let final_body = providers::google::final_body(body, provider);
-    let headers = providers::google::headers(provider);
+    let headers = providers::google::headers(provider)?;
     let encoded = crate::js_value::json_stringify(&final_body)
         .map_err(|_| {
             ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
         })?
         .unwrap_or_default();
-    let endpoint = providers::google::endpoint(provider, model);
+    let endpoint = providers::google::endpoint(provider, model)?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| ModelStreamError::thrown("TypeError", error.message))?;
     let exchange = crate::fetch_redirect::follow(

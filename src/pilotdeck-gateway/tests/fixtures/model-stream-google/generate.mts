@@ -2,6 +2,7 @@
 // Real TS `streamModel` (google protocol, @google/genai SDK) against an owned
 // loopback HTTP mock. No external traffic.
 import assert from 'node:assert/strict';
+import { regressionCases, recordDeepSchemas } from './regression-cases.mts';
 import { execFileSync } from 'node:child_process';
 import { realpathSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -10,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
+assert.ok(process.execArgv.includes('--stack-size=8192'), 'deep schema fixtures require --stack-size=8192');
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the output directory');
 const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -80,6 +82,7 @@ const weirdSchema: Record<string, unknown> = {
 };
 
 const specs: Spec[] = [
+  ...regressionCases,
   { name: 'text', replies: [{ chunks: [
     sse({ responseId: 'resp 1/2', candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }],
       usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2, totalTokenCount: 7 } }),
@@ -354,11 +357,13 @@ for (const spec of specs) {
 http.close();
 http.closeAllConnections?.();
 
+const { normalizeGoogleToolSchema, cleanSchemaForGoogle } = await import(pathToFileURL(join(baseline, 'src/model/providers/google/schema.ts')).href);
+const schemaCases = recordDeepSchemas(normalizeGoogleToolSchema, cleanSchemaForGoogle);
 const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8,
-  locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
+  locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases, schemaCases,
 };
-assert.equal(cases.length, 26);
-assert.equal(requestCount, 26);
+assert.equal(cases.length, 28);
+assert.equal(requestCount, 28);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));

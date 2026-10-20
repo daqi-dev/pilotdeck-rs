@@ -1,6 +1,7 @@
 // Run from the repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 // Real TS `streamModel` (OpenAI chat completions) against an owned loopback HTTP mock.
 import assert from 'node:assert/strict';
+import { regressionCases } from './regression-cases.mts';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -63,6 +64,7 @@ const utf8Hex = (text: string) => Buffer.from(text, 'utf8').toString('hex');
 const json = (value: unknown) => ({ text: JSON.stringify(value) });
 
 const specs: Spec[] = [
+  ...regressionCases,
   { name: 'normal-text', replies: [{ chunks: [
     { text: ': keep-alive\n\n' },
     sse(chunk({ role: 'assistant', content: 'Hello' })),
@@ -404,6 +406,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, locale, random: 0.5,
   transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 30);
+assert.equal(cases.length, 31);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));
