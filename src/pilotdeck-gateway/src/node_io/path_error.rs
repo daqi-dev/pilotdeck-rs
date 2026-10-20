@@ -57,7 +57,20 @@ pub(crate) fn nul_message(path: &JsString) -> JsString {
 /// (`path` for mkdir/readFile/writeFile, `target` for symlink's first
 /// parameter, `oldPath` for readlink).
 pub(crate) fn nul_message_for(path: &JsString, argument: &str) -> JsString {
-    let units = path.units();
+    let prefix: Vec<u16> = format!(
+        "The argument '{argument}' must be a string, Uint8Array, or URL without null bytes. Received "
+    )
+    .encode_utf16()
+    .collect();
+    invalid_arg_value_message(&prefix, path.units())
+}
+
+/// `ERR_INVALID_ARG_VALUE`'s `${prefix}${inspect(value)}` with the error
+/// constructor's 128-unit cut. Shared by every Node validator that reports a
+/// string value (fs paths, `child_process.spawn` args/cwd/env); `prefix` is
+/// UTF-16 so a lone surrogate in a property name survives unchanged.
+pub(crate) fn invalid_arg_value_message(prefix: &[u16], value: &[u16]) -> JsString {
+    let units = value;
     let displayed = &units[..units.len().min(10_000)];
     let mut inspected = vec![];
     if displayed.len() > 76 {
@@ -80,11 +93,7 @@ pub(crate) fn nul_message_for(path: &JsString, argument: &str) -> JsString {
         inspected.truncate(128);
         inspected.extend("...".encode_utf16());
     }
-    let mut message: Vec<_> = format!(
-        "The argument '{argument}' must be a string, Uint8Array, or URL without null bytes. Received "
-    )
-    .encode_utf16()
-    .collect();
+    let mut message = prefix.to_vec();
     message.extend(inspected);
     JsString::from_utf16(message)
 }

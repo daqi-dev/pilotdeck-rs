@@ -360,7 +360,7 @@ fn number_text(value: f64) -> String {
 
 /// `context.env` as Node's spawn reads it: `undefined` members are skipped and
 /// every other value is `String()`ed. A missing or non-object env inherits.
-fn spawn_env(context: &ToolRunContext) -> Result<Option<Vec<(String, String)>>, ToolError> {
+fn spawn_env(context: &ToolRunContext) -> Result<Option<Vec<(JsString, JsString)>>, ToolError> {
     let Some(JsValue::Object(env)) = context.fields.get("env") else {
         return Ok(None);
     };
@@ -371,16 +371,16 @@ fn spawn_env(context: &ToolRunContext) -> Result<Option<Vec<(String, String)>>, 
         if value.is_undefined() {
             continue;
         }
-        let mut text = js_value::display(value)
+        let mut text = js_value::to_string_units(value)
             .map_err(|_| ToolError::failed(js_value::StackOverflow::MESSAGE))?;
         // Node only NUL-checks string values; any other value is `${value}`d
         // and the C string ends at its first NUL (probes/nul4.out).
         if !matches!(value, JsValue::String(_))
-            && let Some(end) = text.find('\0')
+            && let Some(end) = text.iter().position(|unit| *unit == 0)
         {
             text.truncate(end);
         }
-        pairs.push((String::from_utf16_lossy(key.units()), text));
+        pairs.push((key.clone(), JsString::from_utf16(text)));
     }
     Ok(Some(pairs))
 }
@@ -470,7 +470,7 @@ async fn execute(
 
     let result = runner
         .run(
-            command_text,
+            command.clone(),
             CommandOptions {
                 cwd: super::cwd(context),
                 env: spawn_env(context)?,

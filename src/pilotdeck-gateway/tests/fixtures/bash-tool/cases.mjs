@@ -207,6 +207,14 @@ export const cases = {
       run('nul-cwd', 'echo x', { cwd: '/nonexistent/a\u0000b' }),
       run('nul-cwd-and-env', 'echo x', { cwd: '/nonexistent/a\u0000b', env: { ...env, A: '\u0000' } }),
       run('nul-shell-path', 'echo x', { env: { ...env, PILOTDECK_SHELL_PATH: '/bin/sh\u0000x' } }),
+      // Lone surrogates next to NUL: Node's util.inspect escapes them as \udXXX
+      // (a surrogate pair stays literal), and the env key keeps its raw units.
+      run('nul-lone-surrogate-command', 'echo \ud800\u0000'),
+      run('nul-surrogate-pair-command', 'echo 😀\udc00\u0000'),
+      run('nul-lone-surrogate-cwd', 'echo x', { cwd: '/nonexistent/\udbff\u0000' }),
+      run('nul-lone-surrogate-env-key', 'echo x', { env: { ...env, ['K\ud800']: 'a\u0000' } }),
+      run('nul-lone-surrogate-env-value', 'echo x', { env: { ...env, A: '\udfff\u0000' } }),
+      run('nul-lone-surrogate-shell', 'echo x', { env: { ...env, PILOTDECK_SHELL_PATH: '/bin/\ud800sh\u0000' } }),
       run('env-non-string', 'echo "$N|$T|$Z|${U-unset}|$A"', { env: { ...env, N: 5, T: true, Z: null, A: ['a\u0000b'] } }),
       // The baseline's 3 s SIGKILL fires after the result for a member that
       // ignored TERM and does not hold the pipes: early.txt (1.5 s) is written,

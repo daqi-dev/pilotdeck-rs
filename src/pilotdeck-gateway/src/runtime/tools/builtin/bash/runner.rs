@@ -58,9 +58,10 @@ impl AbortSignal {
 #[derive(Clone)]
 pub struct CommandOptions {
     pub cwd: JsString,
-    /// `env` with `undefined` members removed and values already `String()`d;
-    /// `None` inherits the gateway process environment like Node does.
-    pub env: Option<Vec<(String, String)>>,
+    /// `env` with `undefined` members removed and values already `String()`d,
+    /// in `Object.keys` order and kept as UTF-16 so Node's diagnostics can
+    /// show lone surrogates; `None` inherits the gateway process environment.
+    pub env: Option<Vec<(JsString, JsString)>>,
     pub timeout_ms: f64,
     pub signal: Option<AbortSignal>,
     pub on_stdout: Option<OutputCallback>,
@@ -81,7 +82,9 @@ pub struct CommandResult {
 
 /// `PilotDeckCommandRunner`.
 pub trait CommandRunner: Send + Sync {
-    fn run(&self, command: String, options: CommandOptions) -> ToolFuture<CommandResult>;
+    /// `command` is the original UTF-16 text; the OS receives its UTF-8 form
+    /// (lone surrogates as U+FFFD), like Node.
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult>;
 }
 
 /// The default local runner.
@@ -89,7 +92,7 @@ pub trait CommandRunner: Send + Sync {
 pub struct NodeShellCommandRunner;
 
 impl CommandRunner for NodeShellCommandRunner {
-    fn run(&self, command: String, options: CommandOptions) -> ToolFuture<CommandResult> {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
         Box::pin(run(command, options))
     }
 }
@@ -105,68 +108,87 @@ pub enum CommandShellKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandShell {
-    pub shell: String,
+    pub shell: JsString,
     pub kind: CommandShellKind,
 }
 
+fn units(text: &str) -> Vec<u16> {
+    text.encode_utf16().collect()
+}
+
 impl CommandShell {
-    pub fn args(&self, command: &str) -> Vec<String> {
+    pub fn args(&self, command: &JsString) -> Vec<JsString> {
+        let literal = |text: &str| JsString::from(text);
         match self.kind {
-            CommandShellKind::Cmd => vec![
-                "/d".into(),
-                "/s".into(),
-                "/c".into(),
-                format!("\"{command}\""),
-            ],
+            CommandShellKind::Cmd => {
+                let mut quoted = vec![u16::from(b'"')];
+                quoted.extend_from_slice(command.units());
+                quoted.push(u16::from(b'"'));
+                vec![
+                    literal("/d"),
+                    literal("/s"),
+                    literal("/c"),
+                    JsString::from_utf16(quoted),
+                ]
+            }
             CommandShellKind::Pwsh => vec![
-                "-NoLogo".into(),
-                "-NoProfile".into(),
-                "-Command".into(),
-                command.into(),
+                literal("-NoLogo"),
+                literal("-NoProfile"),
+                literal("-Command"),
+                command.clone(),
             ],
-            _ => vec!["-c".into(), command.into()],
+            _ => vec![literal("-c"), command.clone()],
         }
     }
 }
 
-fn env_get<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    env.iter()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value.as_str())
+fn lossy(value: &JsString) -> String {
+    String::from_utf16_lossy(value.units())
 }
 
+fn env_get<'a>(env: &'a [(JsString, JsString)], key: &str) -> Option<&'a JsString> {
+    env.iter()
+        .find(|(name, _)| name.equals_str(key))
+        .map(|(_, value)| value)
+}
+
+/// `existsSync(path)`: Node hands the OS the UTF-8 form, so a lone surrogate
+/// or NUL byte simply fails to exist.
 fn exists(path: &str) -> bool {
-    !path.is_empty() && Path::new(path).exists()
+    !path.is_empty() && !path.contains('\0') && Path::new(path).exists()
 }
 
 /// `findOnPath` (POSIX): the first `path` key in any case, `:`-separated,
 /// empty entries skipped, candidates `path.join`ed.
-fn find_on_path(command: &str, env: &[(String, String)]) -> Option<String> {
-    let (_, value) = env.iter().find(|(name, _)| name.to_lowercase() == "path")?;
-    if value.is_empty() {
-        return None;
-    }
+fn find_on_path(command: &JsString, env: &[(JsString, JsString)]) -> Option<JsString> {
+    let (_, value) = env
+        .iter()
+        .find(|(name, _)| lossy(name).to_lowercase() == "path")?;
     value
-        .split(':')
+        .units()
+        .split(|unit| *unit == u16::from(b':'))
         .filter(|entry| !entry.is_empty())
-        .map(|entry| {
-            String::from_utf16_lossy(join(&JsString::from(entry), &JsString::from(command)).units())
-        })
-        .find(|candidate| exists(candidate))
+        .map(|entry| join(&JsString::from_utf16(entry.to_vec()), command))
+        .find(|candidate| exists(&lossy(candidate)))
 }
 
-fn command_available(command: &str, env: &[(String, String)]) -> bool {
-    if command.contains('/') || command.contains('\\') {
-        return exists(command);
+fn command_available(command: &JsString, env: &[(JsString, JsString)]) -> bool {
+    if command
+        .units()
+        .iter()
+        .any(|unit| *unit == u16::from(b'/') || *unit == u16::from(b'\\'))
+    {
+        return exists(&lossy(command));
     }
     find_on_path(command, env).is_some()
 }
 
-fn shell_from_path(shell: &str) -> CommandShell {
-    let name = shell
+fn shell_from_path(shell: &JsString) -> CommandShell {
+    let text = lossy(shell);
+    let name = text
         .rsplit(['\\', '/'])
         .next()
-        .unwrap_or(shell)
+        .unwrap_or(&text)
         .to_lowercase();
     let kind = match name.as_str() {
         "bash" | "bash.exe" => CommandShellKind::Bash,
@@ -178,44 +200,47 @@ fn shell_from_path(shell: &str) -> CommandShell {
         _ => CommandShellKind::Custom,
     };
     CommandShell {
-        shell: shell.into(),
+        shell: shell.clone(),
         kind,
     }
 }
 
 /// `resolveDefaultCommandShell({ env })` on a non-Windows platform. The error
-/// is the baseline's thrown `Error` message.
-pub fn resolve_default_command_shell(env: &[(String, String)]) -> Result<CommandShell, String> {
+/// is the baseline's thrown `Error` message, with the configured value's
+/// original UTF-16 units.
+pub fn resolve_default_command_shell(
+    env: &[(JsString, JsString)],
+) -> Result<CommandShell, JsString> {
     if let Some(configured) = env_get(env, "PILOTDECK_SHELL_PATH").filter(|v| !v.is_empty()) {
         if !command_available(configured, env) {
-            return Err(format!(
-                "Configured PilotDeck shell was not found: {configured}"
-            ));
+            let mut message = units("Configured PilotDeck shell was not found: ");
+            message.extend_from_slice(configured.units());
+            return Err(JsString::from_utf16(message));
         }
         return Ok(shell_from_path(configured));
     }
-    let bash = |shell: String| CommandShell {
+    let bash = |shell: JsString| CommandShell {
         shell,
         kind: CommandShellKind::Bash,
     };
     if exists("/bin/bash") {
-        return Ok(bash("/bin/bash".into()));
+        return Ok(bash(JsString::from("/bin/bash")));
     }
-    if let Some(found) = find_on_path("bash", env) {
+    if let Some(found) = find_on_path(&JsString::from("bash"), env) {
         return Ok(bash(found));
     }
     Ok(CommandShell {
-        shell: "/bin/sh".into(),
+        shell: JsString::from("/bin/sh"),
         kind: CommandShellKind::Sh,
     })
 }
 
-fn process_env() -> Vec<(String, String)> {
+fn process_env() -> Vec<(JsString, JsString)> {
     std::env::vars_os()
         .map(|(key, value)| {
             (
-                key.to_string_lossy().into_owned(),
-                value.to_string_lossy().into_owned(),
+                JsString::from(key.to_string_lossy().as_ref()),
+                JsString::from(value.to_string_lossy().as_ref()),
             )
         })
         .collect()
@@ -283,80 +308,19 @@ impl Utf8Stream {
     }
 }
 
-/// `util.inspect(string)` as used by Node's `ERR_INVALID_ARG_VALUE`: quote
-/// choice, escapes, line splitting past the break length and the 128-unit cut.
-fn inspect_string(value: &str) -> String {
-    fn escape(piece: &str) -> String {
-        let (quote, escape_single) = if !piece.contains('\'') {
-            ('\'', true)
-        } else if !piece.contains('"') {
-            ('"', false)
-        } else if !piece.contains('`') && !piece.contains("${") {
-            ('`', false)
-        } else {
-            ('\'', true)
-        };
-        let mut out = String::new();
-        out.push(quote);
-        for c in piece.chars() {
-            match c {
-                '\u{08}' => out.push_str("\\b"),
-                '\t' => out.push_str("\\t"),
-                '\n' => out.push_str("\\n"),
-                '\u{0C}' => out.push_str("\\f"),
-                '\r' => out.push_str("\\r"),
-                '\\' => out.push_str("\\\\"),
-                '\'' if escape_single => out.push_str("\\'"),
-                c if (c as u32) < 0x20 || (0x7F..=0x9F).contains(&(c as u32)) => {
-                    out.push_str(&format!("\\x{:02X}", c as u32));
-                }
-                c => out.push(c),
-            }
-        }
-        out.push(quote);
-        out
-    }
-    // `value.length > kMinLineWidth (16) && value.length > breakLength (80) -
-    // indentation (0) - 4`; the second bound implies the first. The 128-unit
-    // cut below is the error message's own truncation.
-    let length = value.encode_utf16().count();
-    let inspected = if length > 80 - 4 {
-        value
-            .split_inclusive('\n')
-            .map(escape)
-            .collect::<Vec<_>>()
-            .join(" +\n  ")
-    } else {
-        escape(value)
-    };
-    let units: Vec<u16> = inspected.encode_utf16().collect();
-    if units.len() > 128 {
-        format!("{}...", String::from_utf16_lossy(&units[..128]))
-    } else {
-        inspected
-    }
+/// `ERR_INVALID_ARG_VALUE` for a string with a NUL byte, through the shared
+/// `node_io` formatter (the same contract as Node's fs path validation).
+fn nul_error(prefix: &[u16], value: &JsString) -> ToolError {
+    ToolError::failed(crate::node_io::invalid_arg_value_message(
+        prefix,
+        value.units(),
+    ))
 }
 
+/// libuv's error name for a spawn failure (`uv_err_name`), from the shared
+/// complete table.
 fn errno_name(error: &io::Error) -> Option<&'static str> {
-    Some(match error.raw_os_error()? {
-        libc::ENOENT => "ENOENT",
-        libc::ENOTDIR => "ENOTDIR",
-        libc::EACCES => "EACCES",
-        libc::EPERM => "EPERM",
-        libc::ELOOP => "ELOOP",
-        libc::ENAMETOOLONG => "ENAMETOOLONG",
-        libc::E2BIG => "E2BIG",
-        libc::ENOEXEC => "ENOEXEC",
-        libc::EAGAIN => "EAGAIN",
-        libc::EMFILE => "EMFILE",
-        libc::ENFILE => "ENFILE",
-        libc::ENOMEM => "ENOMEM",
-        libc::EISDIR => "EISDIR",
-        libc::ETXTBSY => "ETXTBSY",
-        libc::EINVAL => "EINVAL",
-        libc::EIO => "EIO",
-        _ => return None,
-    })
+    crate::node_io::lookup(error).map(|(code, _)| code)
 }
 
 /// Kills the process group on Drop unless disarmed after the leader is reaped.
@@ -444,10 +408,10 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_millis() as f64
 }
 
-async fn run(command: String, options: CommandOptions) -> Result<CommandResult, ToolError> {
+async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult, ToolError> {
     let started = Instant::now();
     let inherited;
-    let env: &[(String, String)] = match &options.env {
+    let env: &[(JsString, JsString)] = match &options.env {
         Some(env) => env,
         None => {
             inherited = process_env();
@@ -456,33 +420,36 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
     };
     let shell = resolve_default_command_shell(env).map_err(ToolError::failed)?;
     let args = shell.args(&command);
-    if let Some(index) = args.iter().position(|arg| arg.contains('\0')) {
-        return Err(ToolError::failed(format!(
-            "The argument 'args[{index}]' must be a string without null bytes. Received {}",
-            inspect_string(&args[index])
-        )));
-    }
     // Node's `normalizeSpawnArguments` order: args, then cwd, then each env
     // entry (key before value, `Object.keys` order). Without these checks
     // `std::process::Command` fails the spawn with its own InvalidInput error.
+    if let Some(index) = args.iter().position(|arg| arg.units().contains(&0)) {
+        let prefix = units(&format!(
+            "The argument 'args[{index}]' must be a string without null bytes. Received "
+        ));
+        return Err(nul_error(&prefix, &args[index]));
+    }
     if options.cwd.units().contains(&0) {
-        return Err(ToolError::failed(format!(
-            "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {}",
-            inspect_string(&String::from_utf16_lossy(options.cwd.units()))
-        )));
+        let prefix = units(
+            "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received ",
+        );
+        return Err(nul_error(&prefix, &options.cwd));
     }
     for (key, value) in options.env.iter().flatten() {
-        if let Some(bad) = [key, value].into_iter().find(|text| text.contains('\0')) {
-            return Err(ToolError::failed(format!(
-                "The property 'options.env['{key}']' must be a string without null bytes. Received {}",
-                inspect_string(bad)
-            )));
+        if let Some(bad) = [key, value]
+            .into_iter()
+            .find(|text| text.units().contains(&0))
+        {
+            let mut prefix = units("The property 'options.env['");
+            prefix.extend_from_slice(key.units());
+            prefix.extend(units("']' must be a string without null bytes. Received "));
+            return Err(nul_error(&prefix, bad));
         }
     }
 
-    let mut process = Command::new(&shell.shell);
+    let mut process = Command::new(lossy(&shell.shell));
     process
-        .args(&args)
+        .args(args.iter().map(lossy))
         .current_dir(os_path(&options.cwd))
         .process_group(0)
         .stdin(Stdio::piped())
@@ -492,7 +459,7 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
     if let Some(env) = &options.env {
         process.env_clear();
         for (key, value) in env {
-            process.env(key, value);
+            process.env(lossy(key), lossy(value));
         }
     }
     let mut child = match process.spawn() {
@@ -513,7 +480,10 @@ async fn run(command: String, options: CommandOptions) -> Result<CommandResult, 
                         pid: None,
                     });
                 }
-                return Err(ToolError::failed(format!("spawn {} {code}", shell.shell)));
+                let mut message = units("spawn ");
+                message.extend_from_slice(shell.shell.units());
+                message.extend(units(&format!(" {code}")));
+                return Err(ToolError::failed(JsString::from_utf16(message)));
             }
             return Err(ToolError::failed(match name {
                 Some(code) => format!("spawn {code}"),
@@ -677,47 +647,30 @@ mod tests {
     }
 
     #[test]
-    fn inspect_matches_node_err_invalid_arg_value() {
-        // Raw values from `_tmp/20261020-a65-pr7/probes/nul2.out`.
-        assert_eq!(inspect_string("a\0b"), "'a\\x00b'");
-        assert_eq!(inspect_string("it's\0"), "\"it's\\x00\"");
-        assert_eq!(inspect_string("it's \"q\"\0"), "`it's \"q\"\\x00`");
-        assert_eq!(
-            inspect_string("it's \"q\" `b`\0"),
-            "'it\\'s \"q\" `b`\\x00'"
-        );
-        assert_eq!(
-            inspect_string("\x01\x7f\u{85}\u{a0}\0"),
-            "'\\x01\\x7F\\x85\u{a0}\\x00'"
-        );
-        let long = format!("{}\0", "x".repeat(200));
-        assert_eq!(inspect_string(&long), format!("'{}...", "x".repeat(127)));
-        // `probes/nul3.out` is raw `util.inspect`; the error message then
-        // cuts it at 128 UTF-16 units. The line split starts above 76 units.
-        let cut = |inspected: String| {
-            let units: Vec<u16> = inspected.encode_utf16().collect();
-            if units.len() > 128 {
-                format!("{}...", String::from_utf16_lossy(&units[..128]))
-            } else {
-                inspected
-            }
+    fn nul_messages_use_the_shared_node_formatter() {
+        // Raw values from `_tmp/20261020-a65-pr7/probes/nul2.out` / `nul5.out`.
+        let args = |value: &str| {
+            let message = nul_error(
+                &units("The argument 'args[1]' must be a string without null bytes. Received "),
+                &JsString::from(value),
+            )
+            .message;
+            String::from_utf16(message.units())
+                .unwrap()
+                .split_once("Received ")
+                .unwrap()
+                .1
+                .to_string()
         };
-        let near = |n: usize| format!("{}\ny\0", "x".repeat(n - 3));
+        assert_eq!(args("a\0b"), "'a\\x00b'");
+        assert_eq!(args("it's\0"), "\"it's\\x00\"");
+        assert_eq!(args("it's \"q\"\0"), "`it's \"q\"\\x00`");
+        assert_eq!(args("it's \"q\" `b`\0"), "'it\\'s \"q\" `b`\\x00'");
         assert_eq!(
-            inspect_string(&near(76)),
-            format!("'{}\\ny\\x00'", "x".repeat(73))
+            args(&format!("{}\0", "x".repeat(200))),
+            format!("'{}...", "x".repeat(127))
         );
-        for n in [77, 124, 125] {
-            assert_eq!(
-                inspect_string(&near(n)),
-                cut(format!("'{}\\n' +\n  'y\\x00'", "x".repeat(n - 3))),
-                "{n}"
-            );
-        }
-        let split = format!("line1\n{}\0\nz", "y".repeat(150));
-        assert_eq!(
-            inspect_string(&split),
-            format!("'line1\\n' +\n  '{}...", "y".repeat(113))
-        );
+        let lone = nul_error(&units("p "), &JsString::from_utf16(vec![0xd800, 0])).message;
+        assert_eq!(String::from_utf16_lossy(lone.units()), "p '\\ud800\\x00'");
     }
 }
