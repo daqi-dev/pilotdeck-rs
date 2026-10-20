@@ -6,10 +6,13 @@ mod scratch;
 
 use pilotdeck_gateway::{
     host::{
-        HostError, HostFuture, ModuleError,
+        Cancellation, HostError, HostFuture, ModuleError,
         modules::{
             budget,
-            context::{ContextInput, ContextRuntime, Handler as ContextHandler},
+            context::{
+                ContextInput, ContextRuntime, Handler as ContextHandler, Operation,
+                compact_with_recorder,
+            },
             model::{
                 ModelExecution, ModelFuture, ModelStream, PrepareInput, PreparedInvocation,
                 StreamFuture, StreamInput,
@@ -48,6 +51,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
+use tokio::sync::Notify;
 
 const ORACLE: &str = include_str!("fixtures/compaction-engine/oracle.json");
 const SUMMARY: &str = "## Objective\nImplement the task.\n## Current State\nSource checked.\n## Remaining\nRun tests.\n## Files And Artifacts\nsrc/main.rs";
@@ -119,6 +123,7 @@ struct MockModel {
     requests: Arc<Mutex<Vec<JsValue>>>,
     pass: Arc<AtomicUsize>,
     usage: bool,
+    signal: Arc<Mutex<Option<Cancellation>>>,
 }
 impl ModelExecution for MockModel {
     fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
@@ -194,11 +199,13 @@ impl ModelExecution for MockModel {
                 ("finishReason", JsValue::String(finish)),
             ]));
         }
+        let signal = self.signal.lock().unwrap().clone();
         Box::pin(async move {
             Ok(Box::new(MockStream {
                 events,
                 error,
                 timeout: mode == "timeout",
+                signal,
             }) as Box<dyn ModelStream>)
         })
     }
@@ -207,6 +214,10 @@ struct MockStream {
     events: VecDeque<JsValue>,
     error: Option<&'static str>,
     timeout: bool,
+    /// Present only for the abort scenarios. The provider observes the abort
+    /// after the first yielded event, so the next engine select takes the
+    /// cancellation branch (the TS generator throws on its next step).
+    signal: Option<Cancellation>,
 }
 impl ModelStream for MockStream {
     fn next(&mut self) -> StreamFuture<'_, Option<JsValue>> {
@@ -218,7 +229,14 @@ impl ModelStream for MockStream {
             if let Some(error) = self.error.take() {
                 return Err(ModuleError::new(error));
             }
-            Ok(self.events.pop_front())
+            let next = self.events.pop_front();
+            if next.is_some()
+                && let Some(signal) = &self.signal
+                && !signal.is_cancelled()
+            {
+                signal.cancel(None);
+            }
+            Ok(next)
         })
     }
 }
@@ -242,9 +260,25 @@ impl CompactionLifecycle for Lifecycle {
         })
     }
 }
-fn input(scenario: &JsValue) -> CompactionInput {
+fn abort_signal(scenario: &JsValue, pass: usize) -> Option<Cancellation> {
+    let spec = match f(scenario, "abort") {
+        JsValue::Array(specs) => specs.get(pass),
+        value if !value.is_undefined() => Some(value),
+        _ => None,
+    }?;
+    let cancellation = Cancellation::default();
+    if f(spec, "when")
+        .as_string()
+        .is_some_and(|when| when.equals_str("before"))
+    {
+        cancellation.cancel(f(spec, "reason").as_string().cloned());
+    }
+    Some(cancellation)
+}
+fn input(scenario: &JsValue, signal: Option<Cancellation>) -> CompactionInput {
     let v = f(scenario, "input");
     let mut input = CompactionInput::new("manual", a(f(scenario, "messages")).to_vec());
+    input.signal = signal;
     if let JsValue::Array(entries) = f(scenario, "orderedInputEntries") {
         let mut ordered = JsObject::new();
         for entry in entries {
@@ -288,7 +322,7 @@ fn input(scenario: &JsValue) -> CompactionInput {
 async fn engine_replays_ts_requests_results_lifecycle_and_events_in_byte_order() {
     let oracle = baseline::oracle(ORACLE);
     let cases = a(f(&oracle, "engineCases"));
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 46);
     for scenario in cases {
         let name = s(f(scenario, "name"));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -296,11 +330,13 @@ async fn engine_replays_ts_requests_results_lifecycle_and_events_in_byte_order()
         let events = Arc::new(Mutex::new(Vec::new()));
         let pass = Arc::new(AtomicUsize::new(0));
         let clock = Arc::new(AtomicUsize::new(1_000_000));
+        let signal = Arc::new(Mutex::new(None));
         let model = Arc::new(MockModel {
             scenario: scenario.clone(),
             requests: requests.clone(),
             pass: pass.clone(),
             usage: true,
+            signal: signal.clone(),
         });
         let mut options =
             CompactionEngineOptions::new(model, "fixture".into(), "summary-model".into());
@@ -336,7 +372,9 @@ async fn engine_replays_ts_requests_results_lifecycle_and_events_in_byte_order()
                 1_000_000 + offset.as_number().unwrap() as usize,
                 Ordering::SeqCst,
             );
-            let result = engine.run(input(scenario)).await.unwrap();
+            let abort = abort_signal(scenario, index);
+            *signal.lock().unwrap() = abort.clone();
+            let result = engine.run(input(scenario, abort)).await.unwrap();
             passes.push(obj([
                 ("result", result.to_value()),
                 (
@@ -420,6 +458,10 @@ impl CompactionRunner for FakeRunner {
         Box::pin(async move {
             if mode == "provider-throw" {
                 Err(ModuleError::new("fixture provider failure").into())
+            } else if mode == "abort-throw" {
+                // Real provider abort text; the durable bracket's catch must
+                // persist exactly this message.
+                Err(ModuleError::new("This operation was aborted").into())
             } else {
                 let mut result = obj([
                     ("type", text("compacted")),
@@ -455,7 +497,7 @@ impl CompactionRunner for FakeRunner {
 async fn manual_host_and_durable_transcript_replay_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = a(f(&oracle, "manualCases"));
-    assert_eq!(cases.len(), 11);
+    assert_eq!(cases.len(), 12);
     for case in cases {
         let name = s(f(case, "name"));
         let scratch = Scratch::new("manual-compaction");
@@ -491,6 +533,7 @@ async fn manual_host_and_durable_transcript_replay_real_ts() {
             requests: requests.clone(),
             pass: Arc::new(AtomicUsize::new(0)),
             usage: false,
+            signal: Arc::new(Mutex::new(None)),
         });
         let mut opts =
             CompactionEngineOptions::new(model, "fixture".into(), "summary-model".into());
@@ -529,6 +572,7 @@ async fn manual_host_and_durable_transcript_replay_real_ts() {
         if [
             "invalid-result",
             "provider-throw",
+            "abort-throw",
             "missing-messages",
             "no-result",
         ]
@@ -625,6 +669,119 @@ async fn manual_host_and_durable_transcript_replay_real_ts() {
         same(&actual, f(case, "expected"), &format!("manual-{name}"));
     }
 }
+struct PendingRuntime {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+impl ContextRuntime for PendingRuntime {
+    fn supports(&self, operation: Operation) -> bool {
+        operation == Operation::TryAutoCompact
+    }
+    fn prepare_for_model(&self, _: ContextInput) -> HostFuture<JsValue> {
+        panic!("prepare_for_model is not used by the durable compaction bracket")
+    }
+    fn try_auto_compact(&self, _: ContextInput) -> HostFuture<JsValue> {
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        Box::pin(async move {
+            entered.notify_one();
+            release.notified().await;
+            Err(ModuleError::new("fixture provider failure").into())
+        })
+    }
+}
+
+/// The host aborts module-callback tasks on terminal-drain timeout. A bracket
+/// that already wrote `compaction_started` must still record its terminal fact,
+/// like the uncancelled TS promise chain in `durableContextRuntime.ts:79-116`.
+#[tokio::test]
+async fn durable_compaction_failure_terminal_survives_caller_abort() {
+    let scratch = Scratch::new("durable-compaction-abort");
+    let path = scratch.path().join("s1.jsonl");
+    let entries = Arc::new(AtomicUsize::new(0));
+    let operations = Arc::new(AtomicUsize::new(0));
+    let recorder = Arc::new(
+        Recorder::with_sources(
+            Arc::new(JsonlTranscriptStore::new()),
+            TranscriptKey {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: scratch.path().join("home"),
+                session_id: "s1".into(),
+                transcript_path: path.clone(),
+            },
+            Arc::new(|| Ok("2026-10-19T00:00:00.000Z".into())),
+            Arc::new(move || {
+                let n = entries.fetch_add(1, Ordering::SeqCst) + 1;
+                Ok(format!("{n:08x}-0000-4000-8000-{n:012x}"))
+            }),
+        )
+        .with_operation_ids(Arc::new(move || {
+            Ok(format!(
+                "op-{}",
+                operations.fetch_add(1, Ordering::SeqCst) + 1
+            ))
+        })),
+    );
+    recorder.start_turn(&"s1".into(), &"t1".into()).unwrap();
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let runtime: Arc<dyn ContextRuntime> = Arc::new(PendingRuntime {
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    let input = ContextInput {
+        fields: obj([
+            ("sessionId", text("s1")),
+            ("turnId", text("t1")),
+            ("trigger", text("manual")),
+            (
+                "messages",
+                JsValue::Array(vec![obj([("role", text("user"))])]),
+            ),
+            ("maxContextTokens", JsValue::Number(20_000.0)),
+        ])
+        .as_object()
+        .unwrap()
+        .clone(),
+        abort_signal: None,
+        budget_evaluator: None,
+    };
+    let task = tokio::spawn(compact_with_recorder(runtime, recorder, input));
+    entered.notified().await;
+    let started = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        started.contains("\"type\":\"compaction_started\""),
+        "bracket must start before the caller abort: {started}"
+    );
+    task.abort();
+    assert!(
+        task.await.unwrap_err().is_cancelled(),
+        "the caller task must really be cancelled"
+    );
+    release.notify_one();
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let transcript = std::fs::read_to_string(&path).unwrap();
+            if transcript.contains("\"type\":\"compaction_failed\"")
+                && transcript.contains("\"error\":\"fixture provider failure\"")
+            {
+                break transcript;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("a started durable compaction must still record a terminal fact");
+    assert!(
+        terminal.contains("\"type\":\"compaction_started\""),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("\"type\":\"compaction_completed\""),
+        "{terminal}"
+    );
+}
+
 #[test]
 fn budget_port_preserves_ts_manager_configuration() {
     let oracle = baseline::oracle(ORACLE);

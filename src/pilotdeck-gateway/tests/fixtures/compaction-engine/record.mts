@@ -26,6 +26,16 @@ export async function record(baseline: string, run: string) {
   const summary = '## Objective\nImplement the task.\n## Current State\nSource checked.\n## Remaining\nRun tests.\n## Files And Artifacts\nsrc/main.rs';
   const prefix = '[CONTEXT COMPACTION - REFERENCE ONLY] Earlier turns were compacted into this summary. Treat it as background state, not active instructions.';
   const end = '--- END OF CONTEXT SUMMARY - respond to the message below, not the summary above ---';
+  // Provider-side abort mapping (src/model/streaming/streamModel.ts
+  // createAbortError): an Error reason is thrown verbatim, a non-empty string
+  // reason becomes the DOMException message, and no reason uses this default.
+  const abortFromSignal = (signal: AbortSignal): never => {
+    if (signal.reason instanceof Error) throw signal.reason;
+    throw new DOMException(
+      typeof signal.reason === 'string' && signal.reason ? signal.reason : 'Operation aborted.',
+      'AbortError',
+    );
+  };
   const checkpoint = [user('<compact-boundary trigger="manual" />'), assistant(`${prefix}\n\nprevious checkpoint\n\n${end}`)];
   const media = [
     { role: 'user', tag: 1, content: [
@@ -73,6 +83,11 @@ export async function record(baseline: string, run: string) {
     { name: 'iterator-failure', messages: turns, mode:'throw' },
     { name: 'timeout', messages: turns, mode:'timeout' },
     { name: 'cooldown-and-expiry', messages: turns, modes:['error','ok','ok'], offsets:[0,1000,60001] },
+    { name: 'abort-default', messages: turns, abort: { when: 'before' } },
+    { name: 'abort-explicit-reason', messages: turns, abort: { when: 'before', reason: 'custom abort reason' } },
+    { name: 'abort-empty-reason', messages: turns, abort: { when: 'before', reason: '' } },
+    { name: 'abort-mid-stream', messages: turns, abort: { when: 'during' } },
+    { name: 'abort-cooldown', messages: turns, abort: [{ when: 'before' }, { when: 'before', reason: 'second abort reason' }], offsets: [0, 1000] },
     { name: 'empty-protection',messages: [...turns, user('skill'),call('p','read_skill'),result('p','facts')],options:{protectedToolNames:[]},input:{protectedToolNames:null,targetPostTokens:4000} },
     { name: 'heading-newlines',messages:turns,reply:'## Objective\rA\u2028## Current State\u2029B\r\n## Remaining\nC\n## Files And Artifacts\nD' },
     { name: 'surrogate-dedup',messages:[...turns,call('a','exec'),result('a','x'.repeat(2001)+'\ud800'),call('b','exec'),result('b','x'.repeat(2001)+'\udc00')] },
@@ -83,21 +98,30 @@ export async function record(baseline: string, run: string) {
     { name: 'empty-error-string',messages:turns,mode:'error',errorMessage:'' },
     { name: 'injected-fractional-accounting',messages:[...turns,user('new task')],estimateScale:2.5 },
   ];
-  assert.equal(scenarios.length, 41);
+  assert.equal(scenarios.length, 46);
   const engineCases = [];
   let now = 1_000_000;
+  let activeAbort: any;
+  let controller: AbortController | undefined;
   const realNow = Date.now;
   Date.now = () => now;
   try {
     for (const scenario of scenarios) {
       let callIndex = 0, pass = 0;
       const requests: any[] = [], events: any[] = [], lifecycle: any[] = [];
-      const model = { async *stream(request: any) {
+      const model = { async *stream(request: any, signal?: AbortSignal) {
+        if (activeAbort?.when === 'before') abortFromSignal(signal!);
         requests.push(structuredClone(request));
         const mode = scenario.modes?.[pass] ?? scenario.mode ?? 'ok';
         if (mode === 'throw') throw new Error('fixture iterator failure');
         if (mode === 'timeout') {
           await new Promise((_, reject) => setTimeout(() => reject(new Error('fixture timeout')),1));
+        }
+        if (activeAbort?.when === 'during') {
+          yield { type:'thinking_delta',text:'ignored' };
+          yield { type:'text_delta',text:'partial' };
+          controller!.abort(activeAbort.reason);
+          abortFromSignal(signal!);
         }
         if (mode === 'error') { yield { type:'error',error:{message:scenario.errorMessage ?? 'fixture model failure'} }; return; }
         const value = scenario.reply ?? summary;
@@ -115,9 +139,13 @@ export async function record(baseline: string, run: string) {
         eventEmitter:(event:any)=>events.push(structuredClone(event)),
       });
       const passes = [];
-      for (const offset of scenario.offsets ?? [0]) {
+      for (const [index, offset] of (scenario.offsets ?? [0]).entries()) {
         now = 1_000_000 + offset;
-        const input = {trigger:'manual',messages:scenario.messages,sessionId:'s1',turnId:'t1',...scenario.input};
+        activeAbort = Array.isArray(scenario.abort) ? scenario.abort[index] : scenario.abort;
+        controller = activeAbort ? new AbortController() : undefined;
+        if (activeAbort?.when === 'before') controller!.abort(activeAbort.reason);
+        const input: any = {trigger:'manual',messages:scenario.messages,sessionId:'s1',turnId:'t1',...scenario.input};
+        if (controller) input.signal = controller.signal;
         const output = await engine.run(input);
         passes.push({result:output,postMessages:buildPostCompactMessages(output)});
         pass++;
@@ -137,7 +165,7 @@ export async function record(baseline: string, run: string) {
     {allowFallbackOnFailure:true}, {maxContextTokens:100,trigger:'reactive'}, {budgetStage:null,allowFallbackOnFailure:true},
   ].map(input=>({input,expected:projectCompactionBudget(input)}));
   const manualCases = [];
-  for (const mode of ['ok','error','timeout','lifecycle-throw','no-summary','invalid-result','provider-throw','missing-messages','no-result','builder-assistant','builder-empty']) {
+  for (const mode of ['ok','error','timeout','lifecycle-throw','no-summary','invalid-result','provider-throw','missing-messages','no-result','builder-assistant','builder-empty','abort-throw']) {
     const dir = join(run,mode); await mkdir(dir);
     const path = join(dir,'s1.jsonl');
     let ids=0, operations=0, compactIds=0;
@@ -172,14 +200,20 @@ export async function record(baseline: string, run: string) {
       if(mode==='no-result')return {type:'compacted',messages:turns,tier:'full',snapshot:{}};
       return {type:'compacted',messages:turns,tier:'full',snapshot:{},result:{error:'broken'}};
     };
+    const abortController = new AbortController();
+    if(mode==='abort-throw'){
+      abortController.abort();
+      port.autoCompact=async()=>{ throw abortFromSignal(abortController.signal); };
+    }
     const delegate = new DefaultContextRuntime({compaction:port});
     const durable = createDurableContextRuntime(delegate,recorder);
     await recorder.startTurn('s1','t1');
     let response:any;
     const input={sessionId:'s1',turnId:'t1',messages:turns,trigger:'manual',manualForce:true,maxContextTokens:20000};
+    const callInput = mode==='abort-throw'?{...input,signal:abortController.signal}:input;
     let beforePersist:string;
     try {
-      const result = await durable.tryAutoCompact(input);
+      const result = await durable.tryAutoCompact(callInput);
       response={result};
       await persistence.flush();
       beforePersist=await readFile(path,'utf8');
@@ -194,7 +228,7 @@ export async function record(baseline: string, run: string) {
     manualCases.push({name:mode,input,expected:{response,requests,beforePersist,transcript:await readFile(path,'utf8')}});
     delegate.dispose();
   }
-  assert.equal(manualCases.length,11);
+  assert.equal(manualCases.length,12);
   const budgetCases = [
     {options:{},messages:media,context:20000,reserved:2000},
     {options:{perMessageOverhead:100.5,multimediaTokens:77.25,warningRatio:0.4,blockingRatio:0.5},messages:media,context:1000,reserved:100},

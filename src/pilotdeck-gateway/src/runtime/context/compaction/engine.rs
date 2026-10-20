@@ -481,19 +481,20 @@ impl CompactionEngine {
             ("thinking", object([("enabled", JsValue::Bool(false))])),
             ("cacheBreakpoints", JsValue::Array(Vec::new())),
         ]);
+        let signal = input.signal.as_ref();
         let aborted = async {
-            match &input.signal {
+            match signal {
                 Some(signal) => signal.cancelled().await,
                 None => std::future::pending().await,
             }
         };
         tokio::pin!(aborted);
         let prepared = tokio::select! { biased;
-            _ = &mut aborted => return Err(failure("The operation was aborted")),
+            _ = &mut aborted => return Err(abort_failure(signal)),
             result = self.options.model.prepare(PrepareInput { request, context: JsObject::new() }) => result?,
         };
         let mut stream = tokio::select! { biased;
-            _ = &mut aborted => return Err(failure("The operation was aborted")),
+            _ = &mut aborted => return Err(abort_failure(signal)),
             result = self.options.model.stream(StreamInput { prepared, context: JsObject::new() }) => result?,
         };
         let mut units = Vec::new();
@@ -501,7 +502,7 @@ impl CompactionEngine {
         let mut finish = JsValue::Undefined;
         let outcome = loop {
             let next = tokio::select! { biased;
-                _ = &mut aborted => break Err(failure("The operation was aborted")),
+                _ = &mut aborted => break Err(abort_failure(signal)),
                 event = stream.next() => event,
             };
             match next {
@@ -761,6 +762,23 @@ fn set(value: &mut JsValue, key: &str, child: JsValue) {
 }
 fn failure(value: &str) -> HostError {
     ModuleError::new(value).into()
+}
+/// TS `streamModel.createAbortError(signal.reason)` as reached through
+/// `CompactionEngine.summarize`: the provider's AbortError text, not a local
+/// placeholder. A default abort is Node's `DOMException("This operation was
+/// aborted", "AbortError")`; an explicit string reason is used verbatim, and
+/// the host's synthetic `host_abort` marker means "no reason given".
+fn abort_failure(signal: Option<&Cancellation>) -> HostError {
+    // `host_abort` is the host's synthetic "no reason" marker. A real empty
+    // string reason is distinct: `createAbortError` falls back to
+    // "Operation aborted." because of its `... && reason` test.
+    let message = match signal.and_then(Cancellation::reason) {
+        None => "This operation was aborted".to_string(),
+        Some(reason) if reason.equals_str("host_abort") => "This operation was aborted".to_string(),
+        Some(reason) if reason.units().is_empty() => "Operation aborted.".to_string(),
+        Some(reason) => String::from_utf16_lossy(reason.units()),
+    };
+    failure(&message)
 }
 fn diagnostic(code: &str, value: JsString) -> JsValue {
     object([

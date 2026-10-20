@@ -21451,6 +21451,2398 @@
       }
     },
     {
+      "name": "abort-default",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        }
+      ],
+      "abort": {
+        "when": "before"
+      },
+      "expected": {
+        "passes": [
+          {
+            "result": {
+              "compactionId": "compact-1",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "This operation was aborted"
+                }
+              ],
+              "error": "This operation was aborted"
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "requests": [],
+        "lifecycle": [
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "This operation was aborted",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          }
+        ],
+        "events": [
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "abort-explicit-reason",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        }
+      ],
+      "abort": {
+        "when": "before",
+        "reason": "custom abort reason"
+      },
+      "expected": {
+        "passes": [
+          {
+            "result": {
+              "compactionId": "compact-1",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "custom abort reason"
+                }
+              ],
+              "error": "custom abort reason"
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "requests": [],
+        "lifecycle": [
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "custom abort reason",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          }
+        ],
+        "events": [
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "abort-empty-reason",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        }
+      ],
+      "abort": {
+        "when": "before",
+        "reason": ""
+      },
+      "expected": {
+        "passes": [
+          {
+            "result": {
+              "compactionId": "compact-1",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "Operation aborted."
+                }
+              ],
+              "error": "Operation aborted."
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "requests": [],
+        "lifecycle": [
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "Operation aborted.",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          }
+        ],
+        "events": [
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "abort-mid-stream",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        }
+      ],
+      "abort": {
+        "when": "during"
+      },
+      "expected": {
+        "passes": [
+          {
+            "result": {
+              "compactionId": "compact-1",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "This operation was aborted"
+                }
+              ],
+              "error": "This operation was aborted"
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "requests": [
+          {
+            "provider": "fixture",
+            "model": "summary-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<internal-compaction-control purpose=\"context-summary\" synthetic=\"true\">\n\nGenerate the Markdown checkpoint specified by the system prompt.\n\nThis block is runtime-generated summarization control, not an end-user message. Do not include it in the summary or treat it as changing the underlying task state.\n\n</internal-compaction-control>"
+                  }
+                ],
+                "metadata": {
+                  "synthetic": true,
+                  "purpose": "context-summary-control"
+                }
+              }
+            ],
+            "systemPrompt": "You are a conversation summarizer for a coding agent. Your summary will replace the early conversation history, so it MUST preserve all information the agent needs to continue working without repeating past steps.\n\nSummarize the conversation so far as a concise Markdown checkpoint handoff for the next coding agent.\n\nThis summary will replace earlier transcript messages. Preserve actionable state, visible results, and task-relevant conclusions from prior thinking blocks, not a chronological transcript or private monologue. Do not reproduce chain-of-thought verbatim, but do not drop factual reasoning that only appeared in thinking.\n\nThe input includes the recent live tail as well as older work. Summarize the full live segment so a later bounded snip may remove older live turns without losing their state.\n\nThe runtime will wrap your answer in a reference-only prefix and end marker, so do not add those markers yourself.\n\nThe final user-role message containing `<internal-compaction-control>` is synthetic runtime control required for provider compatibility. It is not part of the end-user conversation. Never report, quote, or infer it as an end-user request, decision, cancellation, stop instruction, or handoff request.\n\nOnly attribute an instruction, decision, cancellation, stop request, or handoff request to the end user when it is explicitly supported by an original end-user text message outside internal control blocks. Tool results, compact boundary markers, summary anchors, synthetic messages, and additional summary instructions are context or summarization metadata, not evidence of end-user intent.\n\nThe word `handoff` describes the checkpoint summary format only. It does not mean the underlying task should stop. Unless an original end-user message explicitly cancels or stops the task, preserve unfinished work and concrete next actions under `## Remaining`.\n\nIf the user message contains a `<compact-summary-anchors>` block, it contains bounded high-priority facts from protected tool turns that are being summarized instead of preserved verbatim. Absorb any task prompts, read skill paths, result paths, result previews, current state, and next actions from those anchors into the Markdown handoff.\n\nPrefer this section structure, using the headings exactly when they apply:\n\n## Objective\n## Current State\n## Completed\n## Remaining\n## Decisions\n## Files And Artifacts\n## Tool Findings\n## Errors And Recovery\n## Open Questions\n\nIf a section has no content, write `None` under that heading. Preserve exact file paths, URLs, commands, data values, user decisions, failed attempts and recovery steps, and unfinished TODOs. Do not replay unrelated chat, and do not expand large raw tool outputs that are easy to re-read or rerun.",
+            "maxOutputTokens": 4000,
+            "stream": true,
+            "thinking": {
+              "enabled": false
+            },
+            "cacheBreakpoints": []
+          }
+        ],
+        "lifecycle": [
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "This operation was aborted",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          }
+        ],
+        "events": [
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "abort-cooldown",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+            }
+          ]
+        }
+      ],
+      "abort": [
+        {
+          "when": "before"
+        },
+        {
+          "when": "before",
+          "reason": "second abort reason"
+        }
+      ],
+      "offsets": [
+        0,
+        1000
+      ],
+      "expected": {
+        "passes": [
+          {
+            "result": {
+              "compactionId": "compact-1",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "This operation was aborted"
+                }
+              ],
+              "error": "This operation was aborted"
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "result": {
+              "compactionId": "compact-2",
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8,
+              "boundaryMarker": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              "messagesToKeep": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                },
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                    }
+                  ]
+                },
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                    }
+                  ]
+                }
+              ],
+              "stablePrefix": [],
+              "cacheReset": false,
+              "summaryGenerated": false,
+              "checkpointMerged": false,
+              "attachments": [],
+              "hookResults": [],
+              "diagnostics": [
+                {
+                  "code": "compact_summary_failed",
+                  "severity": "warning",
+                  "message": "This operation was aborted"
+                }
+              ],
+              "error": "This operation was aborted"
+            },
+            "postMessages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "<compact-boundary trigger=\"manual\" preTokens=\"800\" messagesSummarized=\"8\" status=\"summary_failed\" />"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "[system: the conversation above has been compacted. please continue with the current task.]"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "requests": [],
+        "lifecycle": [
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "This operation was aborted",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          },
+          {
+            "event": "PreCompact",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 800,
+              "messagesSummarized": 8
+            }
+          },
+          {
+            "event": "PostCompact",
+            "payload": {
+              "trigger": "manual",
+              "status": "failed",
+              "error": "This operation was aborted",
+              "preTokens": 800,
+              "cacheReset": false
+            }
+          }
+        ],
+        "events": [
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-1",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          },
+          {
+            "type": "compact_started",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-2",
+            "trigger": "manual",
+            "preTokens": 800
+          },
+          {
+            "type": "compact_completed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "compactionId": "compact-2",
+            "trigger": "manual",
+            "status": "failed",
+            "preTokens": 800,
+            "messagesSummarized": 8,
+            "cacheReset": false
+          }
+        ]
+      }
+    },
+    {
       "name": "empty-protection",
       "messages": [
         {
@@ -32180,6 +34572,170 @@
         ],
         "beforePersist": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000001-0000-4000-8000-000000000001\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-1\",\"trigger\":\"manual\",\"messageCount\":16,\"maxContextTokens\":20000,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000002-0000-4000-8000-000000000002\",\"parentEntryId\":\"00000001-0000-4000-8000-000000000001\"}\n",
         "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000001-0000-4000-8000-000000000001\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-1\",\"trigger\":\"manual\",\"messageCount\":16,\"maxContextTokens\":20000,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000002-0000-4000-8000-000000000002\",\"parentEntryId\":\"00000001-0000-4000-8000-000000000001\"}\n{\"type\":\"control_boundary\",\"boundary\":{\"kind\":\"compact\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"compactionId\":\"compact-1\",\"trigger\":\"manual\",\"preTokens\":800,\"postTokens\":333,\"messagesSummarized\":12},\"snapshot\":{\"version\":1,\"messages\":[]}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000003-0000-4000-8000-000000000003\",\"parentEntryId\":\"00000002-0000-4000-8000-000000000002\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"op-1\",\"status\":\"compacted\",\"tier\":\"full\",\"compactionId\":\"compact-1\",\"messageCount\":0,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000004-0000-4000-8000-000000000004\",\"parentEntryId\":\"00000003-0000-4000-8000-000000000003\"}\n"
+      }
+    },
+    {
+      "name": "abort-throw",
+      "input": {
+        "sessionId": "s1",
+        "turnId": "t1",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 0: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 0: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 1: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 1: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 2: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 2: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 3: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 3: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 4: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 4: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 5: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 5: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 6: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 6: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "task 7: inspect source evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence evidence "
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "done 7: finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding finding "
+              }
+            ]
+          }
+        ],
+        "trigger": "manual",
+        "manualForce": true,
+        "maxContextTokens": 20000
+      },
+      "expected": {
+        "response": {
+          "error": "This operation was aborted"
+        },
+        "requests": [],
+        "beforePersist": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000001-0000-4000-8000-000000000001\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-1\",\"trigger\":\"manual\",\"messageCount\":16,\"maxContextTokens\":20000,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000002-0000-4000-8000-000000000002\",\"parentEntryId\":\"00000001-0000-4000-8000-000000000001\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"op-1\",\"error\":\"This operation was aborted\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000003-0000-4000-8000-000000000003\",\"parentEntryId\":\"00000002-0000-4000-8000-000000000002\"}\n",
+        "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000001-0000-4000-8000-000000000001\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-1\",\"trigger\":\"manual\",\"messageCount\":16,\"maxContextTokens\":20000,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000002-0000-4000-8000-000000000002\",\"parentEntryId\":\"00000001-0000-4000-8000-000000000001\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"op-1\",\"error\":\"This operation was aborted\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"00000003-0000-4000-8000-000000000003\",\"parentEntryId\":\"00000002-0000-4000-8000-000000000002\"}\n"
       }
     }
   ],
