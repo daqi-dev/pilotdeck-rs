@@ -1,17 +1,21 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.7-pr4 | impl | ready | #351 修复轮 r3（Claude）：Grok r2 P1×2（#277 余项、头名 ByteString）+ gate7 P1×2（响应体封顶、undici 每跳/空闲超时）
-- A6.5-pr6 | review | ready | 修复轮 1 已推送（4fe6781）：gate2 + Grok r2 确认
-- A6.5-pr7 | review | ready | 修复轮 2 已推送（163ea13）：gate3 + GLM r3 确认（首轮 DeepSeek、r2 GLM 0/0）
-- A6.5-pr10a | review | ready | 修复轮 1 已推送（9c77e80）：gate2 + GLM r2 0/0
-- A6.4-pr5 | review | ready | 修复轮 2 已推送（6f92c66，已 rebase 新 main）：gate3 + GLM r3 确认
-- A6.4-pr6 | impl | ready | openai：已交付（2f566a8），DeepSeek 正 rebase 到 pr5 修复轮 2 并适配接口（代码冲突真合并）
-- p2-sweep-7 | impl | ready | 修复轮 1（DeepSeek）：gate1 P1 cwd 无条件读取 + Grok P1 #346 SIGTERM 子项 + Claude P1 #301-3 缺实测
-- A6.5-pr10b | impl | ready | MCP 运行时/工具桥 + 清 #361（wt-a65-pr10b，Claude，叠在 pr10a 上）
-- A6.5-pr12 | impl | ready | 后台任务（wt-a67-pr2，Claude，叠在 pr7 上）
-- A6.4-pr7 | impl | ready | openai-responses（wt-a64-pr7，Claude，叠在 pr5 上）；pr8~pr9、A6.5-pr9、A6.6-pr8 随 pr5 合入后放出
+updated: 2026-10-20 14:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr7 | gate | ready | PR #366 已入队（四轮收敛，GLM/DeepSeek）
+- p2-sweep-7 | gate | ready | PR #367 已入队（两轮收敛，Claude/Grok）
+- A6.7-pr4-fixes | review | ready | #351 提前合入（auto-merge 遗留），5 个修复提交 rebase 成 claude/a67-pr4-fixes（解了 count_http 冲突，702 测试全绿）；gate9 中；Grok r3 0/0、gate8 0/0 已有，开 PR 时带上并关 #312 #289 #277
+- A6.5-pr6 | impl | ready | 修复轮 2（DeepSeek）：Grok r2 P1 trackedFileBackups 值为字符串/数组
+- A6.5-pr10a | impl | ready | GLM r3 P1：epoch 捕获位置（Claude 修，wt-a6-x0）
+- A6.5-pr10b | impl | ready | DeepSeek P1×3（new_cyclic 竞态、outputSchema 不等价 Ajv 等），rebase 到 pr10a 修复后修（Claude）
+- A6.4-pr6 | review | ready | openai（DeepSeek，已 rebase 到 pr5）：Claude 0/0，GLM 第二家与 gate1 中；pr5 已入 main，开 PR 前 rebase main
+- A6.4-pr7 | review | ready | openai-responses（Claude）：DeepSeek 0/0，GLM 第二家与 gate1 中；同上
+- A6.5-pr12 | review | ready | 后台任务（Claude，叠在 pr7 上）：DeepSeek 评审与 gate1 中
+- A6.5-pr9 | impl | ready | web_fetch/search（Claude，wt-a64-pr11）：HTML 转换先走注入边界
+- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层自写移植；接 pr9
+- A6.4-pr8 | impl | ready | google provider；A6.4-pr5 已入 main，可开工（等空闲实现方与 worktree）
+- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr6~pr8
+- A6.6-pr8 | impl | ready | 全量 compaction（辅助模型经 A6.4）；可开工
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -20,6 +24,12 @@ updated: 2026-10-20 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
+
+> ## 2026-10-20 14:30 · /loop
+> **合并**：#364 A6.4-pr5（provider HTTP + rustls，三轮收敛）、#362、#365。入队：#366 A6.5-pr7（四轮）、#367 p2-sweep-7（15 张清账）。
+> **#351 事故**：上一会话 10-19 给 #351 开了 auto-merge，交接时没写；本会话 10:44 rebase 推送后，队列 10:57 就合入了 gate5 前的 b478338，之后 5 个修复提交都推到了已合并的分支上，13:58 才发现。hook 执行器尚未接生产路径，无运行时影响。修复提交已 rebase 成新分支 claude/a67-pr4-fixes（count_http 与 A6.4-pr5 冲突已真合并，blocked_port 收到 fetch_redirect 一处），702 测试全绿。第二次踩同一个坑，防第三次的推送前检查写进了 memory（20261018-auto-merge-armed）。
+> **人定**：html5ever 选 A（web_fetch HTML→markdown，pr9b 引入）。**AI 代批待复核**：bash 输出超上限不随 TS 关停网关。
+> **磁盘**：13:36 一度 109.8 GiB 超限，清掉空闲 worktree 的编译缓存，回落到 82~93 GiB。worktree 12/12。
 
 > ## 2026-10-20 13:30 · /loop
 > 修复轮都回来了，都还没合并：A6.5-pr6、pr7（第 2 轮）、pr10a，以及 A6.4-pr5（第 2 轮，已 rebase 新 main）已推送，进确认评审；#351、p2-sweep-7 进下一轮修复。实现方修完立即接下一单（连续单打包）：pr10a 的作者接 pr10b，pr7 的作者接 pr12，pr5 的作者接 A6.4-pr7，都叠在各自前序分支上。新 P2-跟进 #359（bash）、#360（provider）、#361（MCP client）。
