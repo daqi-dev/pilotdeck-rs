@@ -49,7 +49,7 @@ print(json.dumps({"type": "system", "subtype": "init", "tools": tools, "model": 
 if mode == "hang":
     time.sleep(30)
 if mode != "no_assistant":
-    resp = "claude-sonnet-5-5" if mode == "wrong_resp" else model
+    resp = "claude-sonnet-5-5" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3"}.get(model, model)  # 真网关回显展示名
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": []}}), flush=True)
 final = "只有半截" if mode == "noverdict" else conf["final"]
 usage = {("claude-sonnet-5-5" if mode == "wrong_usage" else model): {}}
@@ -121,12 +121,12 @@ def _run(gate, rrr, out_base: Path) -> int:
             return gate.check(s + "\nRefs #1\n", head)
 
         rc, s = run("zai-ok", "ok")
-        if rc != 0 or "simplify:PASS" not in s or "runner=zai model=glm-5.3 readonly=tools" not in s:
-            fails.append(f"zai-ok：应全 PASS 且标 runner=zai model=glm-5.3 readonly=tools（rc={rc}）")
+        if rc != 0 or "simplify:PASS" not in s or "runner=zai model=glm-5.3-mb readonly=tools" not in s:
+            fails.append(f"zai-ok：应全 PASS 且标 runner=zai model=glm-5.3-mb readonly=tools（rc={rc}）")
         if gate_errs(s):
             fails.append(f"zai-ok：闸门应接受：{gate_errs(s)}")
         calls = [json.loads(x) for x in log.read_text().splitlines()]
-        if not calls or any(c["base"] != "https://api.z.ai/api/anthropic" or c["key_is"] != "zai_file" for c in calls):
+        if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "zai_file" for c in calls):
             fails.append("zai-ok：子进程应拿到智谱接口地址与文件里的 ZAI 密钥（不是父环境的）")
         if any(polluted & set(c["env"]) for c in calls):
             fails.append(f"zai-ok：父环境污染变量泄进了评审进程：{sorted(polluted & set(calls[0]['env']))}")
