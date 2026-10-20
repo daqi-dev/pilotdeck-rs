@@ -136,6 +136,13 @@ const specs: Spec[] = [
   { name: 'no-content', replies: [{ status: 204, headers: {} }] },
   // pr7 修复轮 1: `settings.efforts.includes` — substring on a string, V8 TypeError on null.
   { name: 'thinking-efforts-string', provider: { models: { 'claude-sonnet-4-6': { id: 'claude-sonnet-4-6', thinking: { state: 'enabled', efforts: 'xhigh', format: 'provider' }, capabilities: { supportsStreaming: true, supportsSystemPrompt: true, supportsToolUse: true, supportsSpeed: true, maxOutputTokens: 32768 }, multimodal: { input: ['text', 'image'] } } } }, replies: [short('sub')] },
+  // #360-1: undici `redirect: "follow"` on the provider stream.
+  { name: 'redirect-302-post-to-get', replies: [{ status: 302, headers: { location: '/v2/final?x=1' }, chunks: [{ text: 'moved' }] }, short('after 302')] },
+  { name: 'redirect-307-resends-post', replies: [{ status: 307, headers: { location: '../v1/again' } }, short('after 307')] },
+  { name: 'redirect-cross-origin', provider: { headers: { 'x-fixture': '1', authorization: 'Bearer user', cookie: 'c=1' } },
+    replies: [{ status: 308, headers: { location: '$OTHER/v1/messages' } }, short('other origin')] },
+  { name: 'redirect-blocked-port', provider: { retry: { streamMaxRetries: 0 } },
+    replies: [{ status: 307, headers: { location: 'http://127.0.0.1:6000/v1/messages' } }] },
   { name: 'thinking-efforts-null', provider: { models: { 'claude-sonnet-4-6': { id: 'claude-sonnet-4-6', thinking: { state: 'enabled', efforts: null, format: 'provider' }, capabilities: { supportsStreaming: true, supportsSystemPrompt: true, supportsToolUse: true, supportsSpeed: true, maxOutputTokens: 32768 }, multimodal: { input: ['text', 'image'] } } } }, replies: [] },
 ];
 
@@ -164,7 +171,9 @@ type Exchange = { replies: Reply[]; requests: any[]; origin: string };
 let current: Exchange = { replies: [], requests: [], origin: '' };
 const chunkBytes = (chunk: Chunk) => chunk.hex !== undefined ? Buffer.from(chunk.hex, 'hex') : Buffer.from(chunk.text!, 'utf8');
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-function handler(req: IncomingMessage, res: ServerResponse) {
+// Reply header values may name `$MOCK` / `$OTHER` (redirect Locations).
+const materialize = (value: string) => value.split('$MOCK').join(MOCK).split('$OTHER').join(OTHER);
+const handler = (server?: string) => (req: IncomingMessage, res: ServerResponse) => {
   const body: Buffer[] = [];
   req.on('data', (part) => body.push(part));
   req.on('end', async () => {
@@ -174,6 +183,8 @@ function handler(req: IncomingMessage, res: ServerResponse) {
       .map(([name, value]) => [name, String(value)])
       .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     const record: Record<string, unknown> = { method: req.method, path: req.url, headers, body: Buffer.concat(body).toString('utf8') };
+    // Which server received it, when not the case's own origin.
+    if (server) record.server = server;
     exchange.requests.push(record);
     const reply = exchange.replies[exchange.requests.length - 1];
     assert.ok(reply, `unexpected extra request in ${exchange.origin}`);
@@ -181,7 +192,10 @@ function handler(req: IncomingMessage, res: ServerResponse) {
     // Registered before any write: a client may close mid-reply.
     const closed = new Promise<boolean>((done) => socket.once('close', () => done(true)));
     socket.setNoDelay(true);
-    res.writeHead(reply.status ?? 200, reply.headers ?? { 'content-type': 'text/event-stream' });
+    const replyHeaders = reply.headers
+      ? Object.fromEntries(Object.entries(reply.headers).map(([k, v]) => [k, materialize(v)]))
+      : { 'content-type': 'text/event-stream' };
+    res.writeHead(reply.status ?? 200, replyHeaders);
     res.flushHeaders();
     for (const chunk of reply.chunks ?? []) {
       res.write(chunkBytes(chunk));
@@ -199,11 +213,15 @@ function handler(req: IncomingMessage, res: ServerResponse) {
       res.end();
     }
   });
-}
+};
 
-const http = createHttpServer(handler);
+const http = createHttpServer(handler());
 await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
 const MOCK = `http://127.0.0.1:${(http.address() as any).port}`;
+// A second loopback origin for cross-origin redirects.
+const other = createHttpServer(handler('$OTHER'));
+await new Promise<void>((r) => other.listen(0, '127.0.0.1', r));
+const OTHER = `http://127.0.0.1:${(other.address() as any).port}`;
 const probe = createNetServer();
 await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
 const CLOSED = `http://127.0.0.1:${(probe.address() as any).port}`;
@@ -233,7 +251,7 @@ if (!existsSync(tlsPath)) {
 }
 const material = JSON.parse(readFileSync(tlsPath, 'utf8'));
 const caPem = Buffer.from(material.ca);
-const tls = createHttpsServer({ key: material.key, cert: material.cert }, handler);
+const tls = createHttpsServer({ key: material.key, cert: material.cert }, handler());
 await new Promise<void>((r) => tls.listen(0, '127.0.0.1', r));
 const TLS = `https://127.0.0.1:${(tls.address() as any).port}`;
 
@@ -253,7 +271,7 @@ for (const spec of specs) {
   const target = spec.target ?? 'mock';
   const origin = target === 'closed' ? CLOSED : target === 'mock' ? MOCK : TLS;
   origins.length = 0;
-  origins.push([origin, target === 'closed' ? '$CLOSED' : target === 'mock' ? '$MOCK' : '$TLS']);
+  origins.push([origin, target === 'closed' ? '$CLOSED' : target === 'mock' ? '$MOCK' : '$TLS'], [OTHER, '$OTHER']);
   current = { replies: spec.replies, requests: [], origin };
   const caseProvider = { ...provider, ...(spec.provider ?? {}),
     retry: { ...provider.retry, ...((spec.provider?.retry as object) ?? {}) },
@@ -292,6 +310,8 @@ for (const spec of specs) {
     bodyTimeoutMs: spec.bodyTimeoutMs, requests: current.requests, timeline }));
 }
 http.close();
+other.close();
+other.closeAllConnections?.();
 tls.close();
 http.closeAllConnections?.();
 tls.closeAllConnections?.();
@@ -300,6 +320,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, undici: JSON.parse(readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version,
   locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 27);
+assert.equal(cases.length, 31);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));

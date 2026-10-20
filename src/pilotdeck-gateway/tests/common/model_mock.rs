@@ -44,6 +44,9 @@ pub fn items(value: &JsValue) -> &[JsValue] {
 pub struct Exchange {
     pub replies: Vec<JsValue>,
     pub requests: Vec<JsObject>,
+    /// `(placeholder, origin)` substituted into reply header values
+    /// (redirect `Location`s naming `$MOCK` / `$OTHER`).
+    pub materialize: Vec<(String, String)>,
 }
 
 pub struct Mock {
@@ -60,6 +63,17 @@ pub fn start_mock(
     exchange: Arc<Mutex<Exchange>>,
     excluded: Vec<String>,
     tls: Option<Arc<rustls::ServerConfig>>,
+) -> Mock {
+    start_tagged_mock(exchange, excluded, tls, None)
+}
+
+/// Like [`start_mock`]; every request record also carries `server: tag`
+/// (the generator's second origin, `$OTHER`).
+pub fn start_tagged_mock(
+    exchange: Arc<Mutex<Exchange>>,
+    excluded: Vec<String>,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    tag: Option<&'static str>,
 ) -> Mock {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -83,9 +97,10 @@ pub fn start_mock(
                                 rustls::StreamOwned::new(connection, socket),
                                 &exchange,
                                 &excluded,
+                                tag,
                             );
                         }
-                        None => serve(socket, &exchange, &excluded),
+                        None => serve(socket, &exchange, &excluded, tag),
                     });
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -151,7 +166,12 @@ fn read_request(socket: &mut impl Socket) -> Option<Received> {
     Some((method, path, headers, body))
 }
 
-fn serve(mut socket: impl Socket, exchange: &Mutex<Exchange>, excluded: &[String]) {
+fn serve(
+    mut socket: impl Socket,
+    exchange: &Mutex<Exchange>,
+    excluded: &[String],
+    tag: Option<&'static str>,
+) {
     while let Some((method, path, headers, body)) = read_request(&mut socket) {
         let mut kept: Vec<(String, String)> = headers
             .into_iter()
@@ -173,11 +193,18 @@ fn serve(mut socket: impl Socket, exchange: &Mutex<Exchange>, excluded: &[String
             "body".into(),
             String::from_utf8(body).unwrap().as_str().into(),
         );
-        let (index, reply) = {
+        if let Some(tag) = tag {
+            record.insert("server".into(), tag.into());
+        }
+        let (index, reply, materialize) = {
             let mut exchange = exchange.lock().unwrap();
             exchange.requests.push(record);
             let index = exchange.requests.len() - 1;
-            (index, exchange.replies.get(index).cloned())
+            (
+                index,
+                exchange.replies.get(index).cloned(),
+                exchange.materialize.clone(),
+            )
         };
         let Some(reply) = reply else {
             return; // unexpected extra request; the exact count assertion fails
@@ -187,7 +214,10 @@ fn serve(mut socket: impl Socket, exchange: &Mutex<Exchange>, excluded: &[String
         match get(&reply, "headers").as_object() {
             Some(headers) => {
                 for (name, value) in headers.entries() {
-                    head.push_str(&format!("{}: {}\r\n", name.to_utf8().unwrap(), text(value)));
+                    let value = materialize
+                        .iter()
+                        .fold(text(value), |acc, (from, to)| acc.replace(from, to));
+                    head.push_str(&format!("{}: {value}\r\n", name.to_utf8().unwrap()));
                 }
             }
             None => head.push_str("content-type: text/event-stream\r\n"),
@@ -345,6 +375,7 @@ pub async fn replay(oracle: &JsValue, cases_expected: usize, requests_expected: 
 
     let exchange = Arc::new(Mutex::new(Exchange::default()));
     let http = start_mock(exchange.clone(), excluded.clone(), None);
+    let other = start_tagged_mock(exchange.clone(), excluded.clone(), None, Some("$OTHER"));
     let https = start_mock(exchange.clone(), excluded, Some(server_config));
     let closed = {
         let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -374,6 +405,10 @@ pub async fn replay(oracle: &JsValue, cases_expected: usize, requests_expected: 
             let mut exchange = exchange.lock().unwrap();
             exchange.replies = replies.clone();
             exchange.requests.clear();
+            exchange.materialize = vec![
+                ("$MOCK".into(), http.origin.clone()),
+                ("$OTHER".into(), other.origin.clone()),
+            ];
         }
         let base_provider = get(&oracle, "provider");
         let mut provider = merge(base_provider, get(case, "provider"));
@@ -450,7 +485,10 @@ pub async fn replay(oracle: &JsValue, cases_expected: usize, requests_expected: 
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        let scrub = |s: String| s.replace(&origin, placeholder);
+        let scrub = |s: String| {
+            s.replace(&origin, placeholder)
+                .replace(&other.origin, "$OTHER")
+        };
         let expected: Vec<String> = items(get(case, "timeline")).iter().map(json).collect();
         let actual: Vec<String> = timeline.into_iter().map(scrub).collect();
         assert_eq!(
