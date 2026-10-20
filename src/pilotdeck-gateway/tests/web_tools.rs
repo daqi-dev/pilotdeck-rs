@@ -1,0 +1,916 @@
+//! `web_fetch` / `web_search` replay against the fixed TypeScript baseline
+//! (`tests/fixtures/web-tools/generate.mts`). The real TS tools and this port
+//! talk to the same scripted loopback mock (plain HTTP and HTTPS with the
+//! throwaway model-stream CA); request records and tool results are compared
+//! in order, byte for byte. No external traffic.
+#[path = "common/baseline.rs"]
+mod baseline;
+
+use pilotdeck_gateway::{
+    host::modules::{
+        capability::ToolDefinition,
+        tool_context::{HostToolCheckpoint, ToolRuntimeContext},
+    },
+    runtime::{
+        model::http::{HyperModelTransport, ModelHttpTransport},
+        tools::{
+            ExecutableTool, ToolCancellation, ToolRunContext,
+            builtin::web::{
+                CustomProviderConfig, HtmlToMarkdown, MissingTurndown, SecondaryModel,
+                SecondaryModelEvent, UrlFetcher, WebFetchModelPort, WebFetchTool,
+                WebFetchToolOptions, WebSearchOptions, WebSearchTool,
+                cache::{FetchedEntry, UrlCache},
+                fetch_tool::{
+                    make_secondary_prompt, validate_web_fetch_input, web_fetch_permission,
+                },
+                fetcher::shared_cache,
+                preapproved_hosts::is_preapproved_url,
+                search::web_search_permission,
+                url_validation::{is_permitted_redirect, upgrade_http_to_https, validate_url},
+            },
+        },
+    },
+};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+use sha2::{Digest, Sha256};
+use std::{
+    io::{ErrorKind, Read, Write},
+    net::TcpListener,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+const ORACLE: &str = include_str!("fixtures/web-tools/oracle.json");
+const TLS: &str = include_str!("fixtures/model-stream/tls.json");
+
+fn json(value: &JsValue) -> String {
+    stringify_json(value).unwrap().unwrap_or_default()
+}
+fn text(value: &JsValue) -> String {
+    value.as_string().expect("string").to_utf8().unwrap()
+}
+fn get<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+    static UNDEFINED: JsValue = JsValue::Undefined;
+    value.get(key).unwrap_or(&UNDEFINED)
+}
+fn items(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        _ => &[],
+    }
+}
+fn opt_text(value: &JsValue) -> Option<String> {
+    value.as_string().map(|s| s.to_utf8().unwrap())
+}
+fn object(entries: Vec<(&str, JsValue)>) -> JsValue {
+    let mut out = JsObject::new();
+    for (key, value) in entries {
+        if !matches!(value, JsValue::Undefined) {
+            out.insert(key.into(), value);
+        }
+    }
+    JsValue::Object(out)
+}
+
+// ---- loopback mock ------------------------------------------------------------
+
+#[derive(Default)]
+struct Exchange {
+    replies: Vec<JsValue>,
+    requests: Vec<JsValue>,
+    /// Negative control: overrides every reason phrase.
+    reason_override: Option<String>,
+}
+
+struct Mock {
+    port: u16,
+    stop: Arc<AtomicBool>,
+}
+impl Drop for Mock {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+fn start_mock(
+    exchange: Arc<Mutex<Exchange>>,
+    excluded: Arc<Vec<String>>,
+    agents: Arc<Vec<String>>,
+    tls: Option<Arc<rustls::ServerConfig>>,
+) -> Mock {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    thread::spawn(move || {
+        while !flag.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((socket, _)) => {
+                    socket.set_nonblocking(false).unwrap();
+                    socket.set_nodelay(true).unwrap();
+                    let (exchange, excluded, agents, tls) = (
+                        exchange.clone(),
+                        excluded.clone(),
+                        agents.clone(),
+                        tls.clone(),
+                    );
+                    thread::spawn(move || match tls {
+                        Some(config) => {
+                            let connection = rustls::ServerConnection::new(config).unwrap();
+                            serve(
+                                rustls::StreamOwned::new(connection, socket),
+                                &exchange,
+                                &excluded,
+                                &agents,
+                            );
+                        }
+                        None => serve(socket, &exchange, &excluded, &agents),
+                    });
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2))
+                }
+                Err(error) => panic!("accept: {error}"),
+            }
+        }
+    });
+    Mock { port, stop }
+}
+
+/// method, path, lower-cased headers (duplicates joined), body.
+type Received = (String, String, Vec<(String, String)>, Vec<u8>);
+
+fn read_request(socket: &mut impl Read) -> Option<Received> {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match socket.read(&mut byte) {
+            Ok(1) => head.push(byte[0]),
+            _ => return None,
+        }
+    }
+    let head = String::from_utf8(head).unwrap();
+    let mut lines = head.split("\r\n");
+    let mut start = lines.next().unwrap().split(' ');
+    let method = start.next().unwrap().to_string();
+    let path = start.next().unwrap().to_string();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines.filter(|l| !l.is_empty()) {
+        let (name, value) = line.split_once(':').unwrap();
+        let (name, value) = (name.to_ascii_lowercase(), value.trim().to_string());
+        match headers.iter_mut().find(|(n, _)| *n == name) {
+            Some(entry) => entry.1 = format!("{}, {value}", entry.1),
+            None => headers.push((name, value)),
+        }
+    }
+    let length = headers
+        .iter()
+        .find(|(n, _)| n == "content-length")
+        .map_or(0, |(_, v)| v.parse().unwrap());
+    let mut body = vec![0u8; length];
+    socket.read_exact(&mut body).ok()?;
+    Some((method, path, headers, body))
+}
+
+fn reply_bytes(reply: &JsValue) -> Vec<u8> {
+    if let JsValue::Array(repeat) = get(reply, "repeat") {
+        let unit = text(&repeat[0]).into_bytes()[0];
+        return vec![unit; repeat[1].as_number().unwrap() as usize];
+    }
+    if let Some(hex) = opt_text(get(reply, "hex")) {
+        let hex = hex.replace(' ', "");
+        return (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+    }
+    opt_text(get(reply, "body"))
+        .unwrap_or_default()
+        .into_bytes()
+}
+
+fn serve(
+    mut socket: impl Read + Write,
+    exchange: &Mutex<Exchange>,
+    excluded: &[String],
+    agents: &[String],
+) {
+    let Some((method, path, headers, body)) = read_request(&mut socket) else {
+        return;
+    };
+    let mut kept: Vec<(String, String)> = headers
+        .into_iter()
+        .filter(|(name, value)| {
+            !excluded.contains(name) && !(name == "user-agent" && agents.contains(value))
+        })
+        .collect();
+    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    let record = object(vec![
+        ("method", method.as_str().into()),
+        ("path", path.as_str().into()),
+        (
+            "headers",
+            JsValue::Array(
+                kept.iter()
+                    .map(|(n, v)| JsValue::Array(vec![n.as_str().into(), v.as_str().into()]))
+                    .collect(),
+            ),
+        ),
+        ("body", String::from_utf8(body).unwrap().as_str().into()),
+    ]);
+    let (reply, reason_override) = {
+        let mut exchange = exchange.lock().unwrap();
+        exchange.requests.push(record);
+        let index = exchange.requests.len() - 1;
+        (
+            exchange.replies.get(index).cloned(),
+            exchange.reason_override.clone(),
+        )
+    };
+    let Some(reply) = reply else { return };
+    let bytes = reply_bytes(&reply);
+    let status = get(&reply, "status").as_number().unwrap();
+    let reason = reason_override.unwrap_or_else(|| text(get(&reply, "reason")));
+    let mut head = format!("HTTP/1.1 {status} {reason}\r\n");
+    if let Some(headers) = get(&reply, "headers").as_object() {
+        for (name, value) in headers.entries() {
+            head.push_str(&format!("{}: {}\r\n", name.to_utf8().unwrap(), text(value)));
+        }
+    }
+    head.push_str(&format!(
+        "content-length: {}\r\nconnection: close\r\n\r\n",
+        bytes.len()
+    ));
+    // The client may stop reading an oversized body; that is not an error here.
+    let _ = socket
+        .write_all(head.as_bytes())
+        .and_then(|()| socket.write_all(&bytes))
+        .and_then(|()| socket.flush());
+}
+
+fn tls_material() -> (rustls::RootCertStore, Arc<rustls::ServerConfig>) {
+    let material = parse_json(TLS).unwrap();
+    let ca = CertificateDer::from_pem_slice(text(get(&material, "ca")).as_bytes()).unwrap();
+    let cert = CertificateDer::from_pem_slice(text(get(&material, "cert")).as_bytes()).unwrap();
+    let key = PrivateKeyDer::from_pem_slice(text(get(&material, "key")).as_bytes()).unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(ca).unwrap();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let server = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)
+        .unwrap();
+    (roots, Arc::new(server))
+}
+
+// ---- harness --------------------------------------------------------------------
+
+struct Harness {
+    oracle: JsValue,
+    exchange: Arc<Mutex<Exchange>>,
+    transport: Arc<dyn ModelHttpTransport>,
+    origins: Vec<(String, String)>,
+    _mocks: (Mock, Mock),
+}
+
+impl Harness {
+    fn new() -> Self {
+        let oracle = baseline::oracle(ORACLE);
+        let strings = |key: &str| {
+            Arc::new(
+                items(get(&oracle, key))
+                    .iter()
+                    .map(text)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let (excluded, agents) = (strings("transportHeaders"), strings("defaultUserAgents"));
+        let exchange = Arc::new(Mutex::new(Exchange::default()));
+        let (roots, server) = tls_material();
+        let plain = start_mock(exchange.clone(), excluded.clone(), agents.clone(), None);
+        let tls = start_mock(exchange.clone(), excluded, agents, Some(server));
+        let closed = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut origins = vec![
+            (
+                format!("https://127.0.0.1:{}", tls.port),
+                "$TLS".to_string(),
+            ),
+            (
+                format!("http://127.0.0.1:{}", plain.port),
+                "$PLAIN".to_string(),
+            ),
+            (
+                format!("http://127.0.0.1:{}", tls.port),
+                "$UPGRADE".to_string(),
+            ),
+            (format!("http://127.0.0.1:{closed}"), "$CLOSED".to_string()),
+        ];
+        origins.sort_by_key(|(origin, _)| std::cmp::Reverse(origin.len()));
+        Self {
+            oracle,
+            exchange,
+            transport: Arc::new(HyperModelTransport::with_roots(roots)),
+            origins,
+            _mocks: (plain, tls),
+        }
+    }
+    fn real(&self, value: &JsValue) -> JsValue {
+        if matches!(value, JsValue::Undefined) {
+            return JsValue::Undefined;
+        }
+        let mut wire = json(value);
+        for (origin, name) in &self.origins {
+            wire = wire.replace(name.as_str(), origin);
+        }
+        parse_json(&wire).unwrap()
+    }
+    fn scrub(&self, value: &JsValue) -> String {
+        let mut wire = json(value);
+        for (origin, name) in &self.origins {
+            wire = wire.replace(origin.as_str(), name);
+        }
+        wire
+    }
+    fn begin(&self, spec: &JsValue, reason_override: Option<&str>) {
+        let mut exchange = self.exchange.lock().unwrap();
+        exchange.replies = items(&self.real(get(spec, "replies"))).to_vec();
+        exchange.requests.clear();
+        exchange.reason_override = reason_override.map(str::to_string);
+    }
+    fn requests(&self) -> JsValue {
+        JsValue::Array(self.exchange.lock().unwrap().requests.clone())
+    }
+}
+
+fn random() -> Arc<dyn Fn() -> f64 + Send + Sync> {
+    Arc::new(|| 0.5)
+}
+
+fn context(
+    fields_model: Option<Arc<dyn SecondaryModel>>,
+    env: JsValue,
+    signal: Option<ToolCancellation>,
+) -> ToolRunContext {
+    let mut fields = JsObject::new();
+    fields.insert("cwd".into(), "/w".into());
+    fields.insert("sessionId".into(), "s".into());
+    fields.insert("env".into(), env);
+    let host = ToolRuntimeContext {
+        fields,
+        files: HostToolCheckpoint::default().tool_context_state(),
+        abort_signal: signal.map(|s| Arc::new(s) as _),
+        model: fields_model.map(|m| Arc::new(WebFetchModelPort(m)) as _),
+        elicitation: None,
+        user_dialog: None,
+        audit_recorder: None,
+        file_history: None,
+        file_update_notifier: None,
+        now: None,
+        progress: None,
+        subagent: None,
+        plan_todo: None,
+        goal: None,
+        plan_directory: None,
+    };
+    ToolRunContext::new(Arc::new(host))
+}
+
+async fn run(tool: &dyn ExecutableTool, input: JsValue, context: ToolRunContext) -> JsValue {
+    match tool.execute(input, context).await {
+        Ok(out) => object(vec![(
+            "ok",
+            object(vec![
+                ("content", JsValue::Array(out.content)),
+                ("data", out.data.unwrap_or(JsValue::Undefined)),
+                (
+                    "metadata",
+                    out.metadata.map_or(JsValue::Undefined, JsValue::Object),
+                ),
+            ]),
+        )]),
+        Err(error) => object(vec![(
+            "error",
+            object(vec![
+                ("code", error.code.as_str().into()),
+                ("message", JsValue::String(error.message)),
+                (
+                    "details",
+                    error.details.map_or(JsValue::Undefined, JsValue::Object),
+                ),
+            ]),
+        )]),
+    }
+}
+
+fn hash_units(value: &JsString) -> JsValue {
+    let bytes: Vec<u8> = value.units().iter().flat_map(|u| u.to_le_bytes()).collect();
+    let digest: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    object(vec![
+        ("sha256", digest.as_str().into()),
+        ("units", JsValue::Number(value.units().len() as f64)),
+    ])
+}
+
+fn hashed(result: JsValue) -> JsValue {
+    let Some(ok) = result.get("ok") else {
+        return result;
+    };
+    let content: Vec<JsValue> = items(get(ok, "content"))
+        .iter()
+        .map(|item| {
+            let mut item = item.as_object().unwrap().clone();
+            if let Some(JsValue::String(text)) = item.get("text") {
+                let hash = hash_units(text);
+                item.insert("text".into(), hash);
+            }
+            JsValue::Object(item)
+        })
+        .collect();
+    let mut ok = ok.as_object().unwrap().clone();
+    ok.insert("content".into(), JsValue::Array(content));
+    let mut root = result.as_object().unwrap().clone();
+    root.insert("ok".into(), JsValue::Object(ok));
+    JsValue::Object(root)
+}
+
+/// The scripted secondary model (`makeModel` in the generator).
+struct ScriptedModel {
+    events: Vec<JsValue>,
+    thrown: Option<JsValue>,
+    abort: Option<ToolCancellation>,
+    requests: Mutex<Vec<JsValue>>,
+}
+
+impl SecondaryModel for ScriptedModel {
+    fn stream(
+        &self,
+        request: JsValue,
+    ) -> pilotdeck_gateway::runtime::tools::builtin::web::fetch_tool::SecondaryStream {
+        self.requests.lock().unwrap().push(request);
+        // The generator aborts before yielding each event; the tool checks the
+        // signal on every event it receives.
+        if let Some(abort) = &self.abort {
+            abort.cancel();
+        }
+        let mut out: Vec<SecondaryModelEvent> = self
+            .events
+            .iter()
+            .cloned()
+            .map(SecondaryModelEvent::Event)
+            .collect();
+        if let Some(thrown) = &self.thrown {
+            out.push(if matches!(get(thrown, "error"), JsValue::Bool(true)) {
+                let mut value = JsObject::new();
+                for (key, item) in thrown.as_object().unwrap().entries() {
+                    let key = key.to_utf8().unwrap();
+                    match key.as_str() {
+                        "error" => {}
+                        "error_" => {
+                            value.insert("error".into(), item.clone());
+                        }
+                        _ => {
+                            value.insert(key.as_str().into(), item.clone());
+                        }
+                    }
+                }
+                SecondaryModelEvent::Throw {
+                    is_error: true,
+                    value: JsValue::Object(value),
+                }
+            } else {
+                SecondaryModelEvent::Throw {
+                    is_error: false,
+                    value: get(thrown, "value").clone(),
+                }
+            });
+        }
+        Box::pin(async move { out })
+    }
+}
+
+struct FakeConverter;
+impl HtmlToMarkdown for FakeConverter {
+    fn convert(&self, _html: &str) -> Result<String, String> {
+        Ok("# Hi\n\nx".into())
+    }
+}
+
+#[derive(Default)]
+struct Mutation {
+    html: Option<Arc<dyn HtmlToMarkdown>>,
+    reason: Option<&'static str>,
+}
+
+/// One `fetches` scenario; returns (requests, modelRequests, results) scrubbed.
+async fn replay_fetch(
+    h: &Harness,
+    spec: &JsValue,
+    mutation: &Mutation,
+) -> (String, String, String) {
+    h.begin(spec, mutation.reason);
+    let cache = Arc::new(UrlCache::new(None));
+    if let Some(seed) = get(spec, "cacheSeed").as_object() {
+        let content = text(seed.get("content").unwrap());
+        let entry = FetchedEntry {
+            bytes: content.len(),
+            code: 200,
+            code_text: "OK".into(),
+            content: content.clone(),
+            content_type: "text/markdown".into(),
+        };
+        cache.set(&text(seed.get("url").unwrap()), entry, content.len());
+    }
+    let signal = ToolCancellation::default();
+    let model_spec = get(spec, "model");
+    let model: Option<Arc<ScriptedModel>> =
+        (!matches!(model_spec, JsValue::Undefined)).then(|| {
+            let (events, thrown) = match model_spec {
+                JsValue::Array(events) => (events.clone(), None),
+                other => (
+                    items(get(other, "events")).to_vec(),
+                    Some(get(other, "throw").clone()),
+                ),
+            };
+            Arc::new(ScriptedModel {
+                events,
+                thrown,
+                abort: matches!(get(spec, "abortDuringModel"), JsValue::Bool(true))
+                    .then(|| signal.clone()),
+                requests: Mutex::new(Vec::new()),
+            })
+        });
+    let via_context = opt_text(get(spec, "modelVia")).as_deref() == Some("context");
+    let as_model = model.clone().map(|m| m as Arc<dyn SecondaryModel>);
+    let fetcher = UrlFetcher {
+        transport: h.transport.clone(),
+        cache,
+        html: mutation
+            .html
+            .clone()
+            .unwrap_or_else(|| Arc::new(MissingTurndown)),
+        random: random(),
+    };
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: if via_context { None } else { as_model.clone() },
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    });
+    let ctx = context(
+        if via_context { as_model } else { None },
+        JsValue::Object(JsObject::new()),
+        Some(signal),
+    );
+    let input = h.real(get(spec, "input"));
+    let mut results = vec![run(&tool, input.clone(), ctx.clone()).await];
+    if matches!(get(spec, "repeatCall"), JsValue::Bool(true)) {
+        results.push(run(&tool, input, ctx.clone()).await);
+    }
+    if !matches!(get(spec, "secondInput"), JsValue::Undefined) {
+        results.push(run(&tool, h.real(get(spec, "secondInput")), ctx.clone()).await);
+    }
+    if matches!(get(spec, "hashOnly"), JsValue::Bool(true)) {
+        results = results.into_iter().map(hashed).collect();
+    }
+    let model_requests = JsValue::Array(
+        model
+            .map(|m| m.requests.lock().unwrap().clone())
+            .unwrap_or_default(),
+    );
+    (
+        h.scrub(&h.requests()),
+        h.scrub(&model_requests),
+        h.scrub(&JsValue::Array(results)),
+    )
+}
+
+fn string_option(value: &JsValue, key: &str) -> Option<String> {
+    opt_text(get(value, key))
+}
+
+fn search_options(transport: Arc<dyn ModelHttpTransport>, options: &JsValue) -> WebSearchOptions {
+    let mut out = WebSearchOptions::new(transport);
+    out.provider = string_option(options, "provider");
+    out.search_engine = string_option(options, "searchEngine");
+    out.api_key = string_option(options, "apiKey");
+    out.endpoint = string_option(options, "endpoint");
+    out.organic_limit = get(options, "organicLimit").as_number();
+    out.random = random();
+    let custom = get(options, "customProvider");
+    if custom.as_object().is_some() {
+        out.custom_provider = Some(CustomProviderConfig {
+            name: string_option(custom, "name"),
+            auth: string_option(custom, "auth"),
+            method: string_option(custom, "method"),
+            query_param: string_option(custom, "queryParam"),
+            api_key_param: string_option(custom, "apiKeyParam"),
+            results_path: string_option(custom, "resultsPath"),
+            title_field: string_option(custom, "titleField"),
+            url_field: string_option(custom, "urlField"),
+            snippet_field: string_option(custom, "snippetField"),
+            source_field: string_option(custom, "sourceField"),
+            published_at_field: string_option(custom, "publishedAtField"),
+        });
+    }
+    out
+}
+
+async fn replay_search(h: &Harness, spec: &JsValue) -> (String, String) {
+    h.begin(spec, None);
+    let tool = WebSearchTool::new(search_options(
+        h.transport.clone(),
+        &h.real(get(spec, "options")),
+    ));
+    let env = match get(spec, "env") {
+        JsValue::Undefined => JsValue::Object(JsObject::new()),
+        env => h.real(env),
+    };
+    let result = run(&tool, get(spec, "input").clone(), context(None, env, None)).await;
+    (h.scrub(&h.requests()), h.scrub(&result))
+}
+
+fn expect(spec: &JsValue, key: &str) -> String {
+    json(get(spec, key))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_ts_web_fetch_and_web_search_over_loopback() {
+    let h = Harness::new();
+    let fetches = items(get(&h.oracle, "fetches"));
+    let searches = items(get(&h.oracle, "searches"));
+    assert_eq!((fetches.len(), searches.len()), (40, 39), "scenario counts");
+    let mut requests = 0;
+    for spec in fetches {
+        let name = text(get(spec, "name"));
+        let (reqs, model_requests, results) = replay_fetch(&h, spec, &Mutation::default()).await;
+        assert_eq!(reqs, expect(spec, "requests"), "{name}: requests");
+        assert_eq!(
+            model_requests,
+            expect(spec, "modelRequests"),
+            "{name}: model requests"
+        );
+        assert_eq!(results, expect(spec, "results"), "{name}: results");
+        assert_eq!(
+            items(get(spec, "requests")).len(),
+            items(get(spec, "replies")).len(),
+            "{name}: replies consumed"
+        );
+        requests += items(get(spec, "requests")).len();
+    }
+    for spec in searches {
+        let name = text(get(spec, "name"));
+        let (reqs, result) = replay_search(&h, spec).await;
+        assert_eq!(reqs, expect(spec, "requests"), "{name}: requests");
+        assert_eq!(result, expect(spec, "result"), "{name}: result");
+        requests += items(get(spec, "requests")).len();
+    }
+    assert_eq!(requests, 89, "total scripted requests");
+}
+
+#[test]
+fn real_ts_pure_helpers_tools_and_cache() {
+    let oracle = baseline::oracle(ORACLE);
+    let urls = items(get(&oracle, "urls"));
+    assert_eq!(urls.len(), 20);
+    for case in urls {
+        let url = text(get(case, "url"));
+        assert_eq!(
+            JsValue::Bool(validate_url(&url)),
+            *get(case, "valid"),
+            "validateURL({url})"
+        );
+        assert_eq!(
+            JsValue::Bool(is_preapproved_url(&url)),
+            *get(case, "preapproved"),
+            "isPreapprovedUrl({url})"
+        );
+    }
+    let upgrades = items(get(&oracle, "upgrades"));
+    assert_eq!(upgrades.len(), 9);
+    for case in upgrades {
+        let url = text(get(case, "url"));
+        assert_eq!(
+            upgrade_http_to_https(&url),
+            opt_text(get(case, "upgraded")),
+            "upgrade({url})"
+        );
+    }
+    let redirects = items(get(&oracle, "redirects"));
+    assert_eq!(redirects.len(), 10);
+    for case in redirects {
+        let (from, to) = (text(get(case, "from")), text(get(case, "to")));
+        assert_eq!(
+            JsValue::Bool(is_permitted_redirect(&from, &to)),
+            *get(case, "permitted"),
+            "{from} -> {to}"
+        );
+    }
+    let preapproved = items(get(&oracle, "preapproved"));
+    assert_eq!(preapproved.len(), 14);
+    for case in preapproved {
+        let url = text(get(case, "url"));
+        assert_eq!(
+            JsValue::Bool(is_preapproved_url(&url)),
+            *get(case, "preapproved"),
+            "{url}"
+        );
+    }
+    let prompts = items(get(&oracle, "prompts"));
+    assert_eq!(prompts.len(), 3);
+    for case in prompts {
+        let md = get(case, "md").as_string().unwrap();
+        let prompt = get(case, "prompt").as_string().unwrap();
+        let pre = matches!(get(case, "pre"), JsValue::Bool(true));
+        assert_eq!(
+            JsValue::String(make_secondary_prompt(md, prompt, pre)),
+            *get(case, "text")
+        );
+    }
+    let validations = items(get(&oracle, "validations"));
+    assert_eq!(validations.len(), 15);
+    for case in validations {
+        let input = get(case, "input").clone();
+        let result = match validate_web_fetch_input(&input) {
+            None => object(vec![("ok", JsValue::Bool(true)), ("input", input)]),
+            Some(issues) => object(vec![
+                ("ok", JsValue::Bool(false)),
+                (
+                    "issues",
+                    JsValue::Array(issues.into_iter().map(JsValue::Object).collect()),
+                ),
+            ]),
+        };
+        assert_eq!(
+            json(&result),
+            expect(case, "result"),
+            "validateInput({})",
+            expect(case, "input")
+        );
+    }
+
+    // Tool definitions and permission requests.
+    let transport: Arc<dyn ModelHttpTransport> = Arc::new(HyperModelTransport::new());
+    let fetch = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher: UrlFetcher::new(transport.clone()),
+    });
+    let search = WebSearchTool::new(WebSearchOptions::new(transport.clone()));
+    for (key, tool) in [
+        ("webFetch", &fetch as &dyn ToolDefinition),
+        ("webSearch", &search as &dyn ToolDefinition),
+    ] {
+        let expected = get(get(&oracle, "tools"), key);
+        for field in [
+            "name",
+            "aliases",
+            "description",
+            "kind",
+            "inputSchema",
+            "maxResultBytes",
+        ] {
+            assert_eq!(
+                json(tool.fields().get(field).unwrap()),
+                expect(expected, field),
+                "{key}.{field}"
+            );
+        }
+        assert_eq!(
+            tool.is_read_only(&JsValue::Undefined).unwrap(),
+            *get(expected, "isReadOnly")
+        );
+        assert_eq!(
+            tool.is_concurrency_safe(&JsValue::Undefined).unwrap(),
+            *get(expected, "isConcurrencySafe")
+        );
+    }
+    let permissions = get(&oracle, "permissions");
+    assert_eq!(
+        json(&web_fetch_permission()),
+        expect(permissions, "webFetch")
+    );
+    assert_eq!(
+        json(&web_search_permission()),
+        expect(permissions, "webSearch")
+    );
+
+    let availability = items(get(&oracle, "availability"));
+    assert_eq!(availability.len(), 6);
+    for case in availability {
+        let tool = WebSearchTool::new(search_options(transport.clone(), get(case, "options")));
+        let result = match tool.check_availability(Some(get(case, "env"))) {
+            None => object(vec![("ok", JsValue::Bool(true))]),
+            Some((code, reason)) => object(vec![
+                ("ok", JsValue::Bool(false)),
+                ("code", code.into()),
+                ("reason", reason.into()),
+            ]),
+        };
+        assert_eq!(
+            json(&result),
+            expect(case, "result"),
+            "checkAvailability({})",
+            expect(case, "options")
+        );
+    }
+
+    // WebFetchUrlCache with a pinned clock.
+    let now = Arc::new(Mutex::new(0.0));
+    let clock = now.clone();
+    let cache = UrlCache::new(Some(Arc::new(move || *clock.lock().unwrap())));
+    let ops = items(get(&oracle, "cacheOps"));
+    assert_eq!(ops.len(), 17);
+    for op in ops {
+        *now.lock().unwrap() = get(op, "at").as_number().unwrap();
+        let mut result = JsValue::Null;
+        match text(get(op, "op")).as_str() {
+            "set" => {
+                let entry = FetchedEntry {
+                    bytes: 1,
+                    code: 200,
+                    code_text: "OK".into(),
+                    content: text(get(op, "content")),
+                    content_type: "text/plain".into(),
+                };
+                cache.set(
+                    &text(get(op, "url")),
+                    entry,
+                    get(op, "bytes").as_number().unwrap() as usize,
+                );
+            }
+            "get" => {
+                if let Some(entry) = cache.get(&text(get(op, "url"))) {
+                    result = entry.content.as_str().into();
+                }
+            }
+            _ => cache.clear(),
+        }
+        assert_eq!(result, *get(op, "result"), "cache op {}", json(op));
+        let keys: Vec<String> = items(get(op, "keys")).iter().map(text).collect();
+        assert_eq!(cache.urls(), keys, "cache keys after {}", json(op));
+        assert_eq!(
+            cache.total_bytes() as f64,
+            get(op, "totalBytes").as_number().unwrap(),
+            "cache bytes after {}",
+            json(op)
+        );
+    }
+    // The process-wide cache is one shared instance, like URL_CACHE.
+    assert!(Arc::ptr_eq(&shared_cache(), &shared_cache()));
+}
+
+fn scenario<'a>(h: &'a Harness, name: &str) -> &'a JsValue {
+    items(get(&h.oracle, "fetches"))
+        .iter()
+        .find(|s| text(get(s, "name")) == name)
+        .unwrap()
+}
+
+/// Negative control: a working HTML converter (what turndown would do) must
+/// make the turndown-missing scenario diverge from the recorded TS failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn negative_control_html_converter_is_detected() {
+    let h = Harness::new();
+    let spec = scenario(&h, "html-turndown-missing");
+    let mutation = Mutation {
+        html: Some(Arc::new(FakeConverter)),
+        ..Default::default()
+    };
+    let (_, _, results) = replay_fetch(&h, spec, &mutation).await;
+    assert_ne!(results, expect(spec, "results"));
+    assert!(results.contains("# Hi"), "{results}");
+}
+
+/// Negative control: a different reason phrase from the server must change
+/// the status text the replay sees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn negative_control_reason_phrase_is_detected() {
+    let h = Harness::new();
+    let spec = scenario(&h, "http-custom-reason");
+    let mutation = Mutation {
+        reason: Some("Mock"),
+        ..Default::default()
+    };
+    let (requests, _, results) = replay_fetch(&h, spec, &mutation).await;
+    assert_eq!(requests, expect(spec, "requests"));
+    assert_ne!(results, expect(spec, "results"));
+    assert!(results.contains("400 Mock"), "{results}");
+}
