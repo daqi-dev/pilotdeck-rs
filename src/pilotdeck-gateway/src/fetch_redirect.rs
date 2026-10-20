@@ -3,13 +3,60 @@
 //! count transport (calibrated by `tests/fixtures/token-accounting`) and the
 //! HTTP hook executor (`tests/fixtures/hooks-runtime`).
 //!
-//! Only the single HTTP exchange is injected (`send`); timeout/abort wrap the
-//! whole returned future, so every hop shares one signal and one deadline.
+//! Only the single HTTP exchange is injected (`send`): a per-dispatch timer
+//! (undici `headersTimeout`) belongs inside `send`, an abort signal around the
+//! returned future.
 use bytes::Bytes;
-use http_body_util::Full;
-use hyper::{HeaderMap, Method, Request, Response};
-use std::future::Future;
+use http_body_util::{BodyExt, Full};
+use hyper::{HeaderMap, Method, Request, Response, body::Body};
+use std::{future::Future, time::Duration};
 use url::Url;
+
+/// `buffer.constants.MAX_STRING_LENGTH` on Node 22.22 (V8 12.x): `text()` /
+/// `json()` reject a body with more bytes than this.
+pub(crate) const MAX_STRING_LENGTH: usize = 0x1fffffe8;
+/// V8 / Node `ERR_STRING_TOO_LONG` message for [`MAX_STRING_LENGTH`].
+pub(crate) const STRING_TOO_LONG: &str = "Cannot create a string longer than 0x1fffffe8 characters";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BodyError {
+    /// More than the limit's bytes arrived.
+    TooLong,
+    /// A frame failed, or no data arrived within the idle timeout.
+    Terminated,
+}
+
+/// Reads a response body like `response.text()` before decoding: bytes are
+/// counted frame by frame and the read stops as soon as `limit` would be
+/// exceeded, so a never-ending body cannot grow memory without bound.
+/// `idle` is undici's `bodyTimeout`: the longest gap between two body frames
+/// (including the wait for the first), not a deadline for the whole body.
+pub(crate) async fn read_body<B: Body<Data = Bytes>>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+) -> Result<Vec<u8>, BodyError> {
+    let mut body = std::pin::pin!(body);
+    let mut buffer = Vec::new();
+    loop {
+        let frame = match idle {
+            Some(idle) => tokio::time::timeout(idle, body.frame())
+                .await
+                .map_err(|_| BodyError::Terminated)?,
+            None => body.frame().await,
+        };
+        let Some(frame) = frame else {
+            return Ok(buffer);
+        };
+        let frame = frame.map_err(|_| BodyError::Terminated)?;
+        if let Some(data) = frame.data_ref() {
+            if buffer.len().saturating_add(data.len()) > limit {
+                return Err(BodyError::TooLong);
+            }
+            buffer.extend_from_slice(data);
+        }
+    }
+}
 
 /// Follow 301/302/303/307/308 like undici and return the first non-redirect
 /// response (its body unread). Every network-level refusal maps to `failed()`

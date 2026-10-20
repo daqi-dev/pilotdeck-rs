@@ -1,6 +1,6 @@
 //! Async count transport. TLS is supplied by the provider transport in A6.4-pr5.
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::{HeaderMap, Method, Request, Response, body::Body};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
@@ -15,7 +15,7 @@ use crate::host::{HostError, HostFuture, ModuleError};
 mod tests;
 
 /// `buffer.constants.MAX_STRING_LENGTH` on Node 22.22 (V8 12.x).
-pub const MAX_STRING_LENGTH: usize = 0x1fffffe8;
+pub const MAX_STRING_LENGTH: usize = crate::fetch_redirect::MAX_STRING_LENGTH;
 
 #[derive(Clone, Debug)]
 pub struct CountHttpRequest {
@@ -105,20 +105,14 @@ where
     // `buffer.constants.MAX_STRING_LENGTH` (0x1fffffe8). Bound the read so
     // a broken/malicious endpoint cannot stream unbounded bytes inside the
     // 1500ms window; the message matches V8's RangeError.
-    let mut body = Box::pin(response.into_body());
-    let mut buffer = Vec::new();
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|_| ModuleError::new("fetch failed"))?;
-        if let Some(data) = frame.data_ref() {
-            if buffer.len().saturating_add(data.len()) > MAX_STRING_LENGTH {
-                return Err(ModuleError::new(
-                    "Cannot create a string longer than 0x1fffffe8 characters",
-                )
-                .into());
+    let buffer = crate::fetch_redirect::read_body(response.into_body(), MAX_STRING_LENGTH, None)
+        .await
+        .map_err(|error| match error {
+            crate::fetch_redirect::BodyError::TooLong => {
+                ModuleError::new(crate::fetch_redirect::STRING_TOO_LONG)
             }
-            buffer.extend_from_slice(data);
-        }
-    }
+            crate::fetch_redirect::BodyError::Terminated => ModuleError::new("fetch failed"),
+        })?;
     let bytes = Bytes::from(buffer);
     super::cpu::run(move || super::count_json::parse_response(&bytes)).await
 }

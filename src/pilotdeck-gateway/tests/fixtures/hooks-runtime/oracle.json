@@ -314,8 +314,8 @@
       "command": "/bin/bash '<dir>/cmd-1.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -331,8 +331,8 @@
       "command": "/bin/bash '<dir>/cmd-2.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -348,8 +348,8 @@
       "command": "/bin/bash '<dir>/cmd-3.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -365,8 +365,8 @@
       "command": "/bin/bash '<dir>/cmd-4.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -382,8 +382,8 @@
       "command": "",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -398,8 +398,8 @@
       "command": "true",
       "cwd": "<dir>/missing",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -414,8 +414,8 @@
       "command": "/bin/bash '<dir>/cmd-5.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -431,8 +431,8 @@
       "command": "/bin/bash '<dir>/cmd-6.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -448,8 +448,8 @@
       "command": "/bin/bash '<dir>/cmd-7.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -465,8 +465,8 @@
       "command": "/bin/bash '<dir>/cmd-8.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -482,8 +482,8 @@
       "command": "/bin/bash '<dir>/cmd-9.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -500,8 +500,8 @@
       "command": "/bin/bash '<dir>/cmd-10.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -518,8 +518,8 @@
       "command": "/bin/bash '<dir>/cmd-11.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -538,7 +538,7 @@
       "env": {
         "A": "a",
         "B": "b b",
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -554,8 +554,8 @@
       "command": "/bin/bash '<dir>/cmd-13.sh' 'x y'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -570,8 +570,8 @@
       "command": "head -c 70000 /dev/zero | tr '\\0' a; printf '\\n{\"decision\":\"block\"}\\n'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -586,8 +586,8 @@
       "command": "head -c 70000 /dev/zero | tr '\\0' a 1>&2; exit 2",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -602,8 +602,8 @@
       "command": "sleep 20 & echo hi",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -619,8 +619,8 @@
       "command": "sleep 20 & echo hi",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -637,8 +637,8 @@
       "command": "bash -c 'trap \"\" TERM; sleep 20' & echo hi; sleep 20",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -654,8 +654,8 @@
       "command": "sleep 0.4 & echo hi",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -671,8 +671,8 @@
       "command": "bash -c 'trap \"sleep 1; touch <dir>/term-grace.marker; exit 0\" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -690,8 +690,8 @@
       "command": "bash -c 'trap \"sleep 1; touch <dir>/term-handler-grace-abort.marker; exit 0\" TERM; sleep 29 & wait' >/dev/null 2>&1 & echo hi; sleep 29",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -710,8 +710,8 @@
       "command": "bash -c 'trap \"\" TERM; sleep 20' & echo hi; sleep 20",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -728,8 +728,8 @@
       "command": "printf 'empty-ok\\n'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp",
         "PILOTDECK_SHELL_PATH": ""
       },
       "hookInput": {
@@ -745,8 +745,8 @@
       "command": "printf 'bare-ok\\n'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp",
         "PILOTDECK_SHELL_PATH": "bash"
       },
       "hookInput": {
@@ -762,8 +762,8 @@
       "command": "/bin/bash '<dir>/cmd-16.sh'",
       "cwd": "<dir>",
       "env": {
-        "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-        "HOME": "/Users/da"
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": "/tmp"
       },
       "hookInput": {
         "sessionId": "session-1",
@@ -2177,6 +2177,151 @@
             "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
           }
         ]
+      },
+      {
+        "name": "redirect-cross-origin-credentials",
+        "target": "<url>/redirect/cross-origin",
+        "headers": {
+          "Authorization": "Bearer t",
+          "Cookie": "c=1",
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/cross-origin",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a",
+            "authorization": "Bearer t",
+            "cookie": "c=1"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ],
+            "authorization": [
+              "Bearer t"
+            ],
+            "cookie": [
+              "c=1"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "POST",
+            "path": "/echo",
+            "headers": {
+              "content-type": "application/json",
+              "x-a": "a"
+            },
+            "headerLines": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+          }
+        ]
+      },
+      {
+        "name": "header-name-0x100",
+        "target": "<url>/ok",
+        "headers": {
+          "Ā": "v"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Cannot convert argument to a ByteString because the character at index 0 has a value of 256 which is greater than 255.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-name-lone-surrogate",
+        "target": "<url>/ok",
+        "headers": {
+          "\ud800": "v"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Cannot convert argument to a ByteString because the character at index 0 has a value of 55296 which is greater than 255.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-name-before-value",
+        "target": "<url>/ok",
+        "headers": {
+          "xĀ": "中"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Cannot convert argument to a ByteString because the character at index 1 has a value of 256 which is greater than 255.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "header-bytestring-before-append",
+        "target": "<url>/ok",
+        "headers": {
+          "a b": "v",
+          "xĀ": "v"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"Cannot convert argument to a ByteString because the character at index 1 has a value of 256 which is greater than 255.\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "scheme-ftp",
+        "target": "ftp://127.0.0.1/x",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
+      },
+      {
+        "name": "scheme-file",
+        "target": "file:///nonexistent-pdrs",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": null
       }
     ]
   },
@@ -2470,8 +2615,8 @@
         "matchQuery": "m",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"},{\"type\":\"block\",\"reason\":\"err\\n\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[{\"code\":\"hook_blocking_error\",\"message\":\"err\\n\",\"hookName\":\"plug:command\",\"exitCode\":2}],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"Prompt hook evaluator is not configured.\",\"hookName\":\"plug:prompt\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"Agent hook runner is not configured.\",\"hookName\":\"plug:agent\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
@@ -2487,8 +2632,8 @@
         },
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
@@ -2509,8 +2654,8 @@
         "matchQuery": "Read",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\",\"stdout\":\"oops\\n\",\"stderr\":\"\",\"exitCode\":3,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"oops\\n\",\"hookName\":\"command\",\"exitCode\":3}],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"PreToolUse\",\"stdout\":\"oops\\n\",\"stderr\":\"\",\"exitCode\":3,\"outcome\":\"non_blocking_error\"}]"
@@ -2531,8 +2676,8 @@
         "matchQuery": "Read",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[],\"events\":[],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[]"
@@ -2549,8 +2694,8 @@
         "matchQuery": "m",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"},{\"type\":\"block\",\"reason\":\"err\\n\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}],\"blockingErrors\":[{\"code\":\"hook_blocking_error\",\"message\":\"err\\n\",\"hookName\":\"plug:command\",\"exitCode\":2}],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"Prompt hook evaluator is not configured.\",\"hookName\":\"plug:prompt\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"Agent hook runner is not configured.\",\"hookName\":\"plug:agent\"},{\"code\":\"hook_non_blocking_error\",\"message\":\"out\\n\",\"hookName\":\"command\",\"exitCode\":1}],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"err\\n\",\"exitCode\":2,\"outcome\":\"blocking\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:prompt\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Prompt hook evaluator is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:agent\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"Agent hook runner is not configured.\",\"outcome\":\"non_blocking_error\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"out\\n\",\"stderr\":\"\",\"exitCode\":1,\"outcome\":\"non_blocking_error\"}]"
@@ -2587,8 +2732,8 @@
         "matchQuery": "Stop",
         "cwd": "<dir>/does-not-exist",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"PWD:<dir>\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"Stop\",\"stdout\":\"PWD:<dir>\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}]"
@@ -2619,8 +2764,8 @@
         "matchQuery": "SessionEnd",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\",\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"timeout\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[{\"code\":\"hook_non_blocking_error\",\"message\":\"start\\n\",\"hookName\":\"command\"}],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"command\",\"hookEvent\":\"SessionEnd\",\"stdout\":\"start\\n\",\"stderr\":\"\",\"outcome\":\"timeout\"}]"
@@ -2704,8 +2849,8 @@
         "matchQuery": "Stop",
         "cwd": "<dir>",
         "env": {
-          "PATH": "/Users/da/.local/bin:/Users/da/.bun/bin:/Users/da/.cargo/bin:/Users/da/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/corplink/mdm/opt/corplink-mdm/bin:/opt/homebrew/bin:/Users/da/.local/bin:/Users/da/.bun/bin:/opt/homebrew/sbin:/Users/da/Library/pnpm",
-          "HOME": "/Users/da"
+          "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "HOME": "/tmp"
         },
         "expected": "{\"effects\":[{\"type\":\"system_message\",\"content\":\"sys\"},{\"type\":\"system_message\",\"content\":\"hello\"},{\"type\":\"additional_context\",\"content\":\"ctx\",\"source\":\"plug:command\"}],\"events\":[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}],\"blockingErrors\":[],\"nonBlockingErrors\":[],\"pendingAsyncHooks\":[]}",
         "expectedEvents": "[{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:callback\",\"hookEvent\":\"Stop\",\"stdout\":\"\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"},{\"type\":\"started\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\"},{\"type\":\"response\",\"sessionId\":\"session-1\",\"hookName\":\"plug:command\",\"hookEvent\":\"Stop\",\"stdout\":\"STDIN:{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\\n{\\\"systemMessage\\\":\\\"hello\\\",\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"Stop\\\",\\\"additionalContext\\\":\\\"ctx\\\"}}\\n\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\"}]"
