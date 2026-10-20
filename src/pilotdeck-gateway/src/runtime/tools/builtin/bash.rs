@@ -360,7 +360,9 @@ fn number_text(value: f64) -> String {
 
 /// `context.env` as Node's spawn reads it: `undefined` members are skipped and
 /// every other value is `String()`ed. A missing or non-object env inherits.
-fn spawn_env(context: &ToolRunContext) -> Result<Option<Vec<(JsString, JsString)>>, ToolError> {
+pub(crate) fn spawn_env(
+    context: &ToolRunContext,
+) -> Result<Option<Vec<(JsString, JsString)>>, ToolError> {
     let Some(JsValue::Object(env)) = context.fields.get("env") else {
         return Ok(None);
     };
