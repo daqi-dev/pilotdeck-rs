@@ -32,3 +32,4 @@
 - [quote-review-findings](20261018-quote-review-findings.md) — 修复任务书里的评审结论只能从原文机械摘取，不凭记忆转述
 - [glm-concurrency](20261018-glm-concurrency.md) — ZAI key 全局并发≈10、超限立即 429 并被退避拖成超时；四角色闸门同时最多 2 个，GLM 评审另留余量
 - [gate-oracle-exclusion](20261018-gate-oracle-exclusion.md) — 闸门 --paths 排除 oracle.json 会招来「oracle 未入库」误报；PR 里预先写明并贴 ls-tree
+- [dsh 绕沙箱搬 gitdir](20261020-dsh-gitlocal.md) — dsh/codex 不做 git rebase/commit，协调者在主仓侧做；出现 .git-local 的恢复步骤
