@@ -141,6 +141,12 @@ impl ToolCancellation {
     pub fn cancelled_at(&self) -> Option<Instant> {
         self.0.borrow().map(|event| event.at)
     }
+    pub(crate) fn abort_event_at(&self) -> Option<Instant> {
+        self.0
+            .borrow()
+            .filter(|event| !event.synchronous)
+            .map(|event| event.at)
+    }
     pub fn is_cancelled(&self) -> bool {
         self.0.borrow().is_some()
     }
@@ -187,11 +193,7 @@ impl ToolRunContext {
     /// The legacy host signal and explicit synchronous aborts keep immediate
     /// delivery semantics.
     pub(crate) fn abort_event_at(&self) -> Option<Instant> {
-        self.cancellation()?
-            .0
-            .borrow()
-            .filter(|event| !event.synchronous)
-            .map(|event| event.at)
+        self.cancellation()?.abort_event_at()
     }
     /// Resolves once the abort signal fires, whichever of the two signal types
     /// the host stored. Without a recognised signal it never resolves, like an

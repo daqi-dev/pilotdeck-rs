@@ -22,6 +22,11 @@
 use super::client::{McpClientError, McpErrorCode};
 use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
+use crate::runtime::{
+    model::http::retry_after_header_ms,
+    network::{Exchange, ExchangeFuture, exchange, node_timer_duration},
+    tools::ToolCancellation,
+};
 use crate::{fetch_redirect, js_value};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -35,7 +40,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
     time::Duration,
 };
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
 use url::Url;
 
 type HttpClient = Client<HttpConnector, Full<Bytes>>;
@@ -76,7 +81,7 @@ pub(super) struct HttpLink {
     get_timeout_ms: f64,
     client: HttpClient,
     state: Mutex<LinkState>,
-    aborted: watch::Sender<bool>,
+    aborted: ToolCancellation,
 }
 
 /// A fetch failure, already in the shape the SDK surfaces.
@@ -133,7 +138,7 @@ fn header_value(headers: &hyper::HeaderMap, name: &str) -> Option<String> {
 
 /// A `Headers` object built from a plain record and then edited with
 /// `set`: names compare case-insensitively, values are kept in order.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct HeaderList(Vec<(String, String)>);
 impl HeaderList {
     fn append(&mut self, name: &str, value: &str) {
@@ -224,16 +229,15 @@ where
 /// Legacy fetch keeps its abort signal attached while response.text() reads.
 async fn legacy_post_response<B: hyper::body::Body<Data = Bytes>>(
     response: hyper::Response<B>,
-    aborted: &watch::Sender<bool>,
+    aborted: &ToolCancellation,
 ) -> Result<(), McpClientError> {
     let status = response.status();
     if status.is_success() {
         return Ok(());
     }
-    let mut aborted = aborted.subscribe();
     let bytes = tokio::select! {
         biased;
-        _ = aborted.wait_for(|aborted| *aborted) => Err(fetch_redirect::BodyError::Terminated),
+        _ = aborted.cancelled() => Err(fetch_redirect::BodyError::Terminated),
         bytes = fetch_redirect::read_body(response.into_body(), fetch_redirect::MAX_STRING_LENGTH, None) => bytes,
     };
     let text = bytes
@@ -278,11 +282,8 @@ fn strip_cause(error: McpClientError) -> McpClientError {
 
 /// `jitteredBackoff(0, { baseDelayMs: 500, maxDelayMs: 5000 })`.
 fn retry_delay(retry_after: Option<&str>) -> Duration {
-    if let Some(seconds) = retry_after
-        .map(|value| js_value::string_to_number(value.trim()))
-        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-    {
-        return Duration::from_millis((seconds * 1000.0).round().min(5000.0) as u64);
+    if let Some(ms) = retry_after_header_ms(retry_after) {
+        return node_timer_duration(ms.min(5000.0));
     }
     let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) % 125;
     Duration::from_millis(500 + jitter)
@@ -305,39 +306,59 @@ async fn network_fetch(
     headers: &HeaderList,
     body: Option<String>,
     mode: Fetch,
-    aborted: &watch::Sender<bool>,
+    aborted: &ToolCancellation,
 ) -> Result<hyper::Response<Incoming>, McpClientError> {
+    network_fetch_with(method.clone(), mode, aborted, || {
+        let (client, method, url, headers, body) = (
+            client.clone(),
+            method.clone(),
+            url.clone(),
+            headers.clone(),
+            body.clone(),
+        );
+        ExchangeFuture::io(async move { fetch_once(&client, method, &url, &headers, body).await })
+    })
+    .await
+}
+
+/// Same policy as the socket path, with observable settlement for deterministic tests.
+async fn network_fetch_with<B: Send + 'static>(
+    method: Method,
+    mode: Fetch,
+    aborted: &ToolCancellation,
+    mut send: impl FnMut() -> ExchangeFuture<Result<hyper::Response<B>, McpClientError>>,
+) -> Result<hyper::Response<B>, McpClientError> {
     let (timeout_ms, retries) = match mode {
         Fetch::Network { timeout_ms } => (timeout_ms, true),
         Fetch::Plain => (0.0, false),
     };
     let retryable_method = retries && method == Method::GET;
-    let mut aborted = aborted.subscribe();
     for attempt in 0..=1 {
-        if *aborted.borrow() {
+        if aborted.is_cancelled() {
             return Err(network_error(
                 "network_abort",
                 "Network request aborted by parent signal.".into(),
             ));
         }
-        let fetch = fetch_once(client, method.clone(), url, headers, body.clone());
-        let outcome = tokio::select! {
-            outcome = async {
-                if timeout_ms > 0.0 {
-                    tokio::time::timeout(super::wire::node_delay(timeout_ms), fetch)
-                        .await
-                        .unwrap_or_else(|_| Err(network_error(
-                            "network_timeout",
-                            format!(
-                                "Network request timed out after {}ms.",
-                                js_value::number_string(timeout_ms)
-                            ),
-                        )))
-                } else {
-                    fetch.await
-                }
-            } => outcome,
-            _ = aborted.wait_for(|aborted| *aborted) => Err(network_error(
+        let deadline = (timeout_ms > 0.0)
+            .then(|| tokio::time::Instant::now() + node_timer_duration(timeout_ms));
+        let outcome = match exchange(
+            send(),
+            aborted.cancelled(),
+            || aborted.abort_event_at(),
+            deadline,
+        )
+        .await
+        {
+            Exchange::Response(outcome, _) => outcome,
+            Exchange::Timeout => Err(network_error(
+                "network_timeout",
+                format!(
+                    "Network request timed out after {}ms.",
+                    js_value::number_string(timeout_ms)
+                ),
+            )),
+            Exchange::Aborted => Err(network_error(
                 "network_abort",
                 "Network request aborted by parent signal.".into(),
             )),
@@ -509,17 +530,16 @@ impl Utf8Stream {
 /// Returns `false` when it ended because of an abort or a read error.
 async fn read_events<B: hyper::body::Body<Data = Bytes>>(
     body: B,
-    aborted: &watch::Sender<bool>,
+    aborted: &ToolCancellation,
     mut on_item: impl FnMut(SseItem),
 ) -> bool {
-    let mut aborted = aborted.subscribe();
     let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
     loop {
         let frame = tokio::select! {
             biased;
-            _ = aborted.wait_for(|aborted| *aborted) => return false,
+            _ = aborted.cancelled() => return false,
             frame = body.frame() => frame,
         };
         match frame {
@@ -531,7 +551,7 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
                     parser.feed(&decoder.push(&data), &mut items);
                     for item in items {
                         on_item(item);
-                        if *aborted.borrow() {
+                        if aborted.is_cancelled() {
                             return false;
                         }
                     }
@@ -567,7 +587,7 @@ impl HttpLink {
             get_timeout_ms,
             client: Client::builder(TokioExecutor::new()).build_http(),
             state: Mutex::new(LinkState::default()),
-            aborted: watch::channel(false).0,
+            aborted: ToolCancellation::default(),
         }
     }
 
@@ -605,11 +625,11 @@ impl HttpLink {
 
     /// `transport.close()`: abort the controller and every open stream.
     pub(super) fn close(&self) {
-        self.aborted.send_replace(true);
+        self.aborted.cancel_synchronously();
     }
 
     fn is_aborted(&self) -> bool {
-        *self.aborted.borrow()
+        self.aborted.is_cancelled()
     }
 
     /// `transport.start()`. Streamable HTTP does no I/O; the legacy
@@ -855,7 +875,7 @@ async fn handle_sse_stream(wire: Weak<Wire>, body: Incoming, reconnectable: bool
         }
     })
     .await;
-    if (reconnectable || primed) && !received_response && !*aborted.borrow() {
+    if (reconnectable || primed) && !received_response && !aborted.is_cancelled() {
         schedule_reconnection(wire, last_event_id, 0);
     }
 }
@@ -870,12 +890,12 @@ fn schedule_reconnection(wire: Weak<Wire>, resumption: Option<String>, attempt: 
     };
     let link = link_of(&strong);
     let delay = link.reconnection_delay(attempt);
-    let mut aborted = link.aborted.subscribe();
+    let aborted = link.aborted.clone();
     drop(strong);
     tokio::spawn(async move {
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
-            _ = aborted.wait_for(|aborted| *aborted) => return,
+            _ = aborted.cancelled() => return,
         }
         if start_sse(wire.clone(), resumption.clone()).await.is_err() {
             schedule_reconnection(wire, resumption, attempt + 1);
@@ -960,7 +980,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         let base = link.url.clone();
         drop(strong);
         let retry = legacy_stream(&wire, response.into_body(), &aborted, &base, &mut ready).await;
-        if *aborted.borrow() {
+        if aborted.is_cancelled() {
             return;
         }
         if let Some(ms) = retry {
@@ -968,7 +988,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         }
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
-            _ = async { let mut a = aborted.subscribe(); let _ = a.wait_for(|a| *a).await; } => return,
+            _ = aborted.cancelled() => return,
         }
     }
 }
@@ -978,7 +998,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
 async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
     wire: &Weak<Wire>,
     body: B,
-    aborted: &watch::Sender<bool>,
+    aborted: &ToolCancellation,
     base: &Url,
     ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>,
 ) -> Option<f64> {
@@ -1044,6 +1064,192 @@ async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn poll_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        std::future::poll_fn(|cx| {
+            assert!(future.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+    }
+
+    /// Real TS networkFetch probe: response/timeout/parent timers retain their
+    /// ordering when the event loop resumes late. Exercise the production MCP
+    /// policy, not just the shared dispatcher; no socket scheduling is involved.
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_orders_response_timeout_and_later_abort() {
+        for (budget, parent_ms, expected) in [
+            (100.0, Some(110), None),
+            (100.0, Some(60), None),
+            (100.0, Some(30), Some("network_abort")),
+            (100.0, None, None),
+            (60.0, None, Some("network_timeout")),
+            (60.9, None, Some("network_timeout")),
+            (61.1, None, None),
+            (30.0, Some(110), Some("network_timeout")),
+        ] {
+            let signal = ToolCancellation::default();
+            let started = tokio::time::Instant::now();
+            let mut pending = Box::pin(network_fetch_with(
+                Method::POST,
+                Fetch::Network { timeout_ms: budget },
+                &signal,
+                || ExchangeFuture::after(Duration::from_millis(60), Ok(hyper::Response::new(()))),
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(120)).await;
+            if let Some(parent_ms) = parent_ms {
+                // A later timer callback, not abort() in a blocked call stack.
+                signal.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            match pending.await {
+                Ok(response) => {
+                    assert_eq!(expected, None, "budget={budget}, parent={parent_ms:?}");
+                    assert_eq!(response.status(), 200);
+                }
+                Err(error) => assert_eq!(error.code(), expected.map(McpErrorCode::Text).as_ref()),
+            }
+        }
+    }
+
+    /// Negative control: close() delivers abort synchronously, so overdue but
+    /// undispatched response/timeout callbacks must not replace it.
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_close_precedes_undispatched_response() {
+        let link = HttpLink::new(
+            HttpKind::Streamable,
+            Url::parse("http://example.com/").unwrap(),
+            Vec::new(),
+            100.0,
+            100.0,
+        );
+        let mut pending = Box::pin(network_fetch_with(
+            Method::POST,
+            Fetch::Network { timeout_ms: 100.0 },
+            &link.aborted,
+            || ExchangeFuture::after(Duration::from_millis(60), Ok(hyper::Response::new(()))),
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        link.close();
+        assert_eq!(
+            pending.await.unwrap_err().code(),
+            Some(&McpErrorCode::Text("network_abort"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_queued_response_precedes_overdue_timeout() {
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(network_fetch_with(
+            Method::POST,
+            Fetch::Network { timeout_ms: 1.0 },
+            &signal,
+            || {
+                ExchangeFuture::microtask(async {
+                    tokio::task::yield_now().await;
+                    Ok(hyper::Response::new(()))
+                })
+            },
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        assert_eq!(pending.await.unwrap().status(), 200);
+    }
+
+    /// TS resolve(response); controller.abort() still fulfills networkFetch.
+    /// The promise has settled; only its queued continuation has not run.
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_settled_response_survives_later_close() {
+        let link = HttpLink::new(
+            HttpKind::Streamable,
+            Url::parse("http://example.com/").unwrap(),
+            Vec::new(),
+            100.0,
+            100.0,
+        );
+        let mut pending = Box::pin(network_fetch_with(
+            Method::POST,
+            Fetch::Network { timeout_ms: 100.0 },
+            &link.aborted,
+            || {
+                ExchangeFuture::microtask(async {
+                    tokio::task::yield_now().await;
+                    tokio::task::yield_now().await;
+                    Ok(hyper::Response::new(()))
+                })
+            },
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(120)).await;
+        link.close();
+        poll_pending(pending.as_mut()).await;
+        assert_eq!(pending.await.unwrap().status(), 200);
+
+        // Negative control: an abort delivered before fetch is started must
+        // prevent even a synchronously fulfilled response from being used.
+        let error = network_fetch_with(
+            Method::POST,
+            Fetch::Network { timeout_ms: 100.0 },
+            &link.aborted,
+            || ExchangeFuture::ready(Ok(hyper::Response::new(()))),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), Some(&McpErrorCode::Text("network_abort")));
+    }
+
+    #[test]
+    fn retry_delay_accepts_http_date_and_caps_like_ts() {
+        assert_eq!(
+            retry_delay(Some("Wed, 21 Oct 2099 07:28:00 GMT")),
+            Duration::from_millis(5000)
+        );
+        assert_eq!(retry_delay(Some("6")), Duration::from_millis(5000));
+        assert_eq!(retry_delay(Some("0.0609")), Duration::from_millis(61));
+        assert_eq!(retry_delay(Some("0")), Duration::from_millis(1));
+        // Expired/malformed/empty headers must still use jittered backoff.
+        for header in [
+            None,
+            Some(""),
+            Some("bad"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        ] {
+            assert!(
+                (Duration::from_millis(500)..Duration::from_millis(625))
+                    .contains(&retry_delay(header))
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_retries_http_date_after_capped_delay() {
+        let signal = ToolCancellation::default();
+        let mut attempts = 0;
+        let mut pending = Box::pin(network_fetch_with(
+            Method::GET,
+            Fetch::Network { timeout_ms: 100.0 },
+            &signal,
+            || {
+                attempts += 1;
+                ExchangeFuture::ready(Ok(if attempts == 1 {
+                    hyper::Response::builder()
+                        .status(429)
+                        .header("retry-after", "Wed, 21 Oct 2099 07:28:00 GMT")
+                        .body(())
+                        .unwrap()
+                } else {
+                    hyper::Response::new(())
+                }))
+            },
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(4999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(pending.await.unwrap().status(), 200);
+        assert_eq!(attempts, 2);
+    }
     use std::{
         convert::Infallible,
         pin::Pin,

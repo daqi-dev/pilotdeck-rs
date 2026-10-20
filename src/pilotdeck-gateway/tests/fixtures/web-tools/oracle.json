@@ -3503,6 +3503,571 @@
    ]
   },
   {
+   "name": "redirect-exactly-ten-hops",
+   "input": {
+    "url": "$TLS/redirect-ten/0",
+    "mode": "raw"
+   },
+   "replies": [
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/1"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/2"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/3"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/4"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/5"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/6"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/7"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/8"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/9"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-ten/10"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 200,
+     "headers": {
+      "content-type": "text/plain; charset=utf-8"
+     },
+     "body": "landed after exactly ten redirects",
+     "reason": "OK"
+    }
+   ],
+   "requests": [
+    {
+     "method": "GET",
+     "path": "/redirect-ten/0",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/1",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/2",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/3",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/4",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/5",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/6",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/7",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/8",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/9",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-ten/10",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    }
+   ],
+   "modelRequests": [],
+   "results": [
+    {
+     "ok": {
+      "content": [
+       {
+        "type": "text",
+        "text": "landed after exactly ten redirects"
+       }
+      ],
+      "data": {
+       "url": "$TLS/redirect-ten/0",
+       "fromCache": false,
+       "mode": "raw",
+       "llmUsed": false,
+       "contentType": "text/plain; charset=utf-8",
+       "bytes": 34,
+       "status": 200,
+       "truncated": false,
+       "rawLength": 34,
+       "returnedLength": 34
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "redirect-eleventh-hop-rejected",
+   "input": {
+    "url": "$TLS/redirect-eleven/0",
+    "mode": "raw"
+   },
+   "replies": [
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/1"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/2"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/3"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/4"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/5"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/6"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/7"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/8"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/9"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/10"
+     },
+     "body": "",
+     "reason": "Found"
+    },
+    {
+     "status": 302,
+     "headers": {
+      "location": "/redirect-eleven/11"
+     },
+     "body": "",
+     "reason": "Found"
+    }
+   ],
+   "requests": [
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/0",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/1",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/2",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/3",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/4",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/5",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/6",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/7",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/8",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/9",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    },
+    {
+     "method": "GET",
+     "path": "/redirect-eleven/10",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    }
+   ],
+   "modelRequests": [],
+   "results": [
+    {
+     "error": {
+      "code": "tool_execution_failed",
+      "message": "web_fetch failed: Too many redirects (exceeded 10)",
+      "details": {
+       "stage": "http_fetch"
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "redirect-loop",
    "input": {
     "url": "$TLS/loop",

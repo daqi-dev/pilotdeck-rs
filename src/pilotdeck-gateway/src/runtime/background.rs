@@ -1296,7 +1296,7 @@ impl BackgroundSubagentRuntime {
         if let Some(before_cancel) = &self.before_cancel {
             before_cancel();
         }
-        entry.controller.cancel();
+        entry.controller.cancel_synchronously();
         true
     }
 
@@ -1565,6 +1565,45 @@ mod tests {
             subagent_type: "general".into(),
             observed_subagent_id: None,
             run,
+        }
+    }
+
+    /// stop() runs controller.abort() in the handler's call stack. Unlike a
+    /// later timer event, it precedes overdue but undispatched web responses.
+    #[tokio::test(start_paused = true)]
+    async fn subagent_stop_synchronously_aborts_overdue_exchange() {
+        use crate::runtime::network::{Exchange, ExchangeFuture, exchange};
+        for synchronous_stop in [true, false] {
+            let runtime = BackgroundSubagentRuntime::default();
+            let task = runtime.start(subagent_input(Box::new(|signal| {
+                Box::pin(async move {
+                    signal.cancelled().await;
+                    Ok(())
+                })
+            })));
+            let entry = runtime.find(&task.task_id).unwrap();
+            let mut pending = Box::pin(exchange(
+                ExchangeFuture::after(Duration::from_millis(60), ()),
+                entry.controller.cancelled(),
+                || entry.controller.abort_event_at(),
+                Some(tokio::time::Instant::now() + Duration::from_millis(100)),
+            ));
+            std::future::poll_fn(|cx| {
+                assert!(pending.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            tokio::time::advance(Duration::from_millis(120)).await;
+            if synchronous_stop {
+                assert!(runtime.stop(&task.task_id));
+                assert!(entry.controller.is_cancelled());
+                assert!(matches!(pending.await, Exchange::Aborted));
+            } else {
+                // Negative control: an event delivered later preserves the
+                // response whose timer was due first.
+                entry.controller.cancel();
+                assert!(matches!(pending.await, Exchange::Response((), true)));
+            }
         }
     }
 

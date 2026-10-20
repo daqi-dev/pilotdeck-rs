@@ -20,7 +20,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 
 ## 覆盖
 
-fetch 41 例（90 次请求含 search）：raw 文本/JSON/二进制/无类型/空/非法 UTF-8/截断（含代理对切分）/10 MB 边界与超限；同主机重定向、跨主机与协议变化不跟随、相对路径、缺 Location、空 Location、303、11 跳超限；出口代理拦截；404/410/401 二进制/418 长预览/自定义原因短语/429 Retry-After 重试耗尽/503 后恢复；缓存命中与键为原始输入；LLM 模式：无模型、经 context 注入、预批域名（缓存种子）、空白输出、error 事件、Error/规范错误/字符串抛出、中途取消。search 39 例：glm（含 env key/endpoint、code/error 字段、500 重试、坏 JSON、null JSON）、tavily、serper、brave、baidu、bocha、exa、serpapi（引擎、gl、错误、密钥脱敏）、custom（POST/GET、bearer/query/body 密钥、none、端点缺失/非法、code 错误）、env 选 provider、连接拒绝。另有 URL 校验 20、升级 9、重定向判定 10、预批 14、二级提示 3、输入校验 15、可用性 6、缓存操作 17。
+fetch 43 例（112 次请求含 search）：raw 文本/JSON/二进制/无类型/空/非法 UTF-8/截断（含代理对切分）/10 MB 边界与超限；同主机重定向、跨主机与协议变化不跟随、相对路径、缺 Location、空 Location、303、恰好 10 跳成功、第 11 跳超限；出口代理拦截；404/410/401 二进制/418 长预览/自定义原因短语/429 Retry-After 重试耗尽/503 后恢复；缓存命中与键为原始输入；LLM 模式：无模型、经 context 注入、预批域名（缓存种子）、空白输出、error 事件、Error/规范错误/字符串抛出、中途取消。search 39 例：glm（含 env key/endpoint、code/error 字段、500 重试、坏 JSON、null JSON）、tavily、serper、brave、baidu、bocha、exa、serpapi（引擎、gl、错误、密钥脱敏）、custom（POST/GET、bearer/query/body 密钥、none、端点缺失/非法、code 错误）、env 选 provider、连接拒绝。另有 URL 校验 20、升级 9、重定向判定 10、预批 14、二级提示 3、输入校验 15、可用性 6、缓存操作 17。
 
 ## 已知偏离（Rust 不发送的 undici 隐式头）
 

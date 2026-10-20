@@ -681,12 +681,109 @@ fn expect(spec: &JsValue, key: &str) -> String {
     json(get(spec, key))
 }
 
+/// Replay the exact boundary oracle without listening on a socket, so sandbox
+/// restrictions cannot hide a MAX_REDIRECTS off-by-one mutation.
+#[tokio::test]
+async fn real_ts_redirect_exact_boundary_without_sockets() {
+    struct BoundaryTransport {
+        replies: Vec<JsValue>,
+        requests: Arc<Mutex<Vec<JsValue>>>,
+    }
+    impl ModelHttpTransport for BoundaryTransport {
+        fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+            let mut headers = request
+                .headers()
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.to_str().unwrap()))
+                .collect::<Vec<_>>();
+            headers.sort();
+            let record = object(vec![
+                ("method", request.method().as_str().into()),
+                (
+                    "path",
+                    request.uri().path_and_query().unwrap().as_str().into(),
+                ),
+                (
+                    "headers",
+                    JsValue::Array(
+                        headers
+                            .into_iter()
+                            .map(|(key, value)| JsValue::Array(vec![key.into(), value.into()]))
+                            .collect(),
+                    ),
+                ),
+                ("body", "".into()),
+            ]);
+            let mut requests = self.requests.lock().unwrap();
+            let reply = &self.replies[requests.len()];
+            requests.push(record);
+            let mut response =
+                hyper::Response::builder().status(get(reply, "status").as_number().unwrap() as u16);
+            for (name, value) in get(reply, "headers").as_object().unwrap().entries() {
+                response = response.header(name.to_utf8().unwrap(), text(value));
+            }
+            TransportFuture::ready(Ok(response
+                .body(
+                    Full::new(Bytes::from(reply_bytes(reply)))
+                        .map_err(|never| -> BodyFailure { match never {} })
+                        .boxed(),
+                )
+                .unwrap()))
+        }
+    }
+    let oracle = baseline::oracle(ORACLE);
+    for name in [
+        "redirect-exactly-ten-hops",
+        "redirect-eleventh-hop-rejected",
+    ] {
+        let original = items(get(&oracle, "fetches"))
+            .iter()
+            .find(|spec| text(get(spec, "name")) == name)
+            .unwrap();
+        let spec = parse_json(&json(original).replace("$TLS", "https://example.com")).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let transport = Arc::new(BoundaryTransport {
+            replies: items(get(&spec, "replies")).to_vec(),
+            requests: requests.clone(),
+        });
+        let tool = WebFetchTool::new(WebFetchToolOptions {
+            fetcher: UrlFetcher {
+                transport,
+                cache: Arc::new(UrlCache::new(None)),
+                html: Arc::new(MissingTurndown),
+                random: random(),
+            },
+            model: None,
+            provider: None,
+            model_id: None,
+            max_output_tokens: None,
+        });
+        let result = run(
+            &tool,
+            get(&spec, "input").clone(),
+            context(None, empty_env(), None),
+        )
+        .await;
+        assert_eq!(
+            json(&JsValue::Array(vec![result])),
+            expect(&spec, "results"),
+            "{name}: results"
+        );
+        assert_eq!(
+            json(&JsValue::Array(requests.lock().unwrap().clone())),
+            expect(&spec, "requests"),
+            "{name}: requests"
+        );
+        assert_eq!(requests.lock().unwrap().len(), 11);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_ts_web_fetch_and_web_search_over_loopback() {
     let h = Harness::new();
     let fetches = items(get(&h.oracle, "fetches"));
     let searches = items(get(&h.oracle, "searches"));
-    assert_eq!((fetches.len(), searches.len()), (41, 39), "scenario counts");
+    assert_eq!((fetches.len(), searches.len()), (43, 39), "scenario counts");
     let mut requests = 0;
     for spec in fetches {
         let name = text(get(spec, "name"));
@@ -712,7 +809,7 @@ async fn real_ts_web_fetch_and_web_search_over_loopback() {
         assert_eq!(result, expect(spec, "result"), "{name}: result");
         requests += items(get(spec, "requests")).len();
     }
-    assert_eq!(requests, 90, "total scripted requests");
+    assert_eq!(requests, 112, "total scripted requests");
 }
 
 #[test]

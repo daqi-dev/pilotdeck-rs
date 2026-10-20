@@ -12,15 +12,14 @@
 //! fixture README).
 use crate::runtime::{
     model::http::{
-        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, TransportFuture,
-        UNDICI_BODY_TIMEOUT_MS,
+        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, UNDICI_BODY_TIMEOUT_MS,
     },
     tools::ToolRunContext,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use pilotdeck_protocol::{JsObject, JsValue};
-use std::{future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration};
+use std::{future::Future, sync::Arc, task::Poll, time::Duration};
 use tokio::time::Instant;
 
 /// The global dispatcher's undici `bodyTimeout` (`cli/proxy.ts` installs
@@ -30,30 +29,8 @@ use tokio::time::Instant;
 /// body can outlive it (same probe).
 const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
 
-/// The delay Node's `setTimeout` actually arms for a requested millisecond
-/// value: values inside `[1, 2^31-1]` are truncated to integer milliseconds;
-/// everything else — `NaN`, `±Infinity`, values below 1 and values
-/// above `2^31-1` — becomes 1 ms (the `TimeoutOverflowWarning` path).
-/// Node validates the original value before `insert()` truncates it, so
-/// `2147483647.5` becomes 1, not `2147483647`. `_idleTimeout` alone still
-/// contains the fraction and does not describe the scheduled timer list.
-///
-/// Both `networkFetch`'s per-attempt timer and the providers' outer abort
-/// timer go through this, so an overflowing `timeoutMs` never reaches
-/// `Duration::from_secs_f64`, which panics on non-finite or overflowing
-/// input.
-pub fn node_timer_delay_ms(ms: f64) -> f64 {
-    if ms.is_finite() && (1.0..=i32::MAX as f64).contains(&ms) {
-        ms.trunc()
-    } else {
-        1.0
-    }
-}
-
-/// [`node_timer_delay_ms`] as a `Duration` for `tokio::time`.
-pub fn node_timer_duration(ms: f64) -> Duration {
-    Duration::from_millis(node_timer_delay_ms(ms) as u64)
-}
+use crate::runtime::network::{Exchange, exchange};
+pub use crate::runtime::network::{node_timer_delay_ms, node_timer_duration};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
@@ -370,12 +347,6 @@ async fn delay(
     .await
 }
 
-enum Exchange {
-    Response(Result<hyper::Response<ModelBody>, TransportFailure>, bool),
-    Aborted,
-    Timeout,
-}
-
 #[derive(Clone, Copy)]
 struct OuterDeadline {
     at: Instant,
@@ -391,60 +362,6 @@ impl OuterDeadline {
             timeout_error(timeout_ms)
         }
     }
-}
-
-/// Dispatch pending events as Node does: synchronous parent aborts are already
-/// delivered; timestamped parent events follow earlier response/timeout timers.
-/// The timeout was registered before the response, and the parent event after
-/// both, which also determines ties. A queued promise continuation runs before
-/// timers. Socket readiness is polled after due timers in this dispatcher;
-/// transports must distinguish it from a queued continuation.
-/// `TransportFuture::after` makes a delayed response's deadline observable.
-async fn exchange(
-    mut send: TransportFuture,
-    parent: Option<&ToolRunContext>,
-    deadline: Option<Instant>,
-) -> Exchange {
-    let mut abort = Box::pin(parent_aborted(parent));
-    let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
-    let mut initial = true;
-    std::future::poll_fn(|cx| {
-        let aborted = abort.as_mut().poll(cx).is_ready();
-        let parent_at = aborted
-            .then(|| parent.and_then(ToolRunContext::abort_event_at))
-            .flatten();
-        if aborted && parent_at.is_none() {
-            return Poll::Ready(Exchange::Aborted);
-        }
-        let response_before_timeout = match (send.scheduled_at(), deadline) {
-            (Some(response_at), Some(abort_at)) => response_at < abort_at,
-            (None, Some(_)) => initial || send.is_microtask(),
-            (_, None) => true,
-        };
-        let response_before_parent = parent_at.is_none_or(|at| {
-            send.scheduled_at()
-                .map_or_else(|| send.is_microtask(), |response_at| response_at <= at)
-        });
-        let response_first = response_before_timeout && response_before_parent;
-        initial = false;
-        if response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
-            return Poll::Ready(Exchange::Response(result, aborted));
-        }
-        if parent_at.is_none_or(|at| deadline.is_some_and(|deadline| deadline <= at))
-            && let Some(timer) = &mut timer
-            && timer.as_mut().poll(cx).is_ready()
-        {
-            return Poll::Ready(Exchange::Timeout);
-        }
-        if aborted {
-            return Poll::Ready(Exchange::Aborted);
-        }
-        if !response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
-            return Poll::Ready(Exchange::Response(result, false));
-        }
-        Poll::Pending
-    })
-    .await
 }
 
 /// `networkFetch(url, init, { timeoutMs, signal, retry })`.
@@ -525,7 +442,14 @@ async fn network_fetch_inner(
                         (Some(outer), Some(attempt)) => Some(outer.min(attempt)),
                         (outer, attempt) => outer.or(attempt),
                     };
-                    match exchange(transport.send(built), options.parent, deadline).await {
+                    match exchange(
+                        transport.send(built),
+                        parent_aborted(options.parent),
+                        || options.parent.and_then(ToolRunContext::abort_event_at),
+                        deadline,
+                    )
+                    .await
+                    {
                         Exchange::Response(Ok(response), body_before_abort) => {
                             continuation_before_abort = body_before_abort;
                             Ok((response, body_before_abort))

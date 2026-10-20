@@ -70,6 +70,8 @@ export const fetches = [
   { name: 'redirect-missing-location', input: { url: '$TLS/nl', mode: 'raw' }, replies: [redirect(302)] },
   { name: 'redirect-empty-location', input: { url: '$TLS/nl0', mode: 'raw' }, replies: [redirect(302, '')] },
   { name: 'redirect-303-not-followed', input: { url: '$TLS/see', mode: 'raw' }, replies: [{ status: 303, headers: { location: '/x', 'content-type': 'text/plain' }, body: 'see other' }] },
+  { name: 'redirect-exactly-ten-hops', input: { url: '$TLS/redirect-ten/0', mode: 'raw' }, replies: [...Array.from({ length: 10 }, (_, i) => redirect(302, `/redirect-ten/${i + 1}`)), text('landed after exactly ten redirects')] },
+  { name: 'redirect-eleventh-hop-rejected', input: { url: '$TLS/redirect-eleven/0', mode: 'raw' }, replies: Array.from({ length: 11 }, (_, i) => redirect(302, `/redirect-eleven/${i + 1}`)) },
   { name: 'redirect-loop', input: { url: '$TLS/loop', mode: 'raw' }, replies: Array.from({ length: 11 }, () => redirect(302, '/loop')) },
   { name: 'egress-blocked', input: { url: '$TLS/blocked', mode: 'raw' }, replies: [{ status: 403, headers: { 'x-proxy-error': 'blocked-by-allowlist' }, body: 'no' }] },
   { name: 'http-404', input: { url: '$TLS/missing', mode: 'raw' }, replies: [{ status: 404, headers: { 'content-type': 'text/html' }, body: '<html>\n  <body>\tNot   Found\u0000 </body>\n</html>' }] },
