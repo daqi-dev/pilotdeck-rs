@@ -287,38 +287,6 @@ mod tests {
     }
 
     #[test]
-HEAD
-    fn json_stringify_reports_the_shared_depth_bound() {
-        let nested_value = nested(MAX_ARRAY_DEPTH);
-        assert!(json_stringify(&nested_value).is_ok());
-        assert_eq!(
-            json_stringify(&nested(MAX_ARRAY_DEPTH + 1)),
-            Err(StackOverflow)
-        );
-        let mut object = JsValue::Object(Default::default());
-        for _ in 0..=MAX_ARRAY_DEPTH {
-            let mut parent = pilotdeck_protocol::JsObject::new();
-            parent.insert("x".into(), object);
-            object = JsValue::Object(parent);
-        }
-        assert_eq!(json_stringify(&object), Err(StackOverflow));
-
-    fn replacement_patterns_follow_get_substitution() {
-        assert_eq!(expand_replacement("$$", "m", "pre", "post"), "$");
-        assert_eq!(expand_replacement("$&", "m", "pre", "post"), "m");
-        assert_eq!(expand_replacement("$`", "m", "pre", "post"), "pre");
-        assert_eq!(expand_replacement("$'", "m", "pre", "post"), "post");
-        assert_eq!(
-            expand_replacement("$1 $<n> $ $x $$ $& $` $'", "m", "pre", "post"),
-            "$1 $<n> $ $x $ m pre post"
-        );
-        assert_eq!(
-            expand_replacement("没有 $ 模式", "m", "pre", "post"),
-            "没有 $ 模式"
-        );
-    }
-
-    #[test]
     fn replacement_patterns_follow_get_substitution() {
         assert_eq!(expand_replacement("$$", "m", "pre", "post"), "$");
         assert_eq!(expand_replacement("$&", "m", "pre", "post"), "m");
