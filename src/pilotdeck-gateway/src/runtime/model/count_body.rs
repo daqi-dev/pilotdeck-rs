@@ -539,7 +539,7 @@ pub(super) fn concatenate(parts: &[JsValue]) -> JsValue {
     }
     JsValue::String(JsString::from_utf16(units))
 }
-fn reference_text(block: &JsValue) -> JsValue {
+pub(super) fn reference_text(block: &JsValue) -> JsValue {
     if !truthy(field(block, "hasMore")) {
         return field(block, "preview").clone();
     }
@@ -769,7 +769,7 @@ fn data_url(block: &JsValue) -> JsValue {
         field(block, "data").clone(),
     ])
 }
-fn normalize_schema(value: &JsValue) -> Result<JsValue, HostError> {
+pub(super) fn normalize_schema(value: &JsValue) -> Result<JsValue, HostError> {
     super::json_walk::transform(value, false, |raw| {
         let mut normalized = JsObject::new();
         for (key, value) in raw.entries() {

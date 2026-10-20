@@ -10,128 +10,14 @@ use super::super::count_body::{
 use crate::runtime::model::http::{ModelStreamError, retry_after_from_message};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 
-fn units(value: &JsValue) -> JsString {
-    JsString::from_utf16(crate::js_value::to_string_units(value).unwrap_or_default())
-}
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-
-/// The fields of `ThinkingPlan` that `buildAnthropicRequest` consumes.
-#[derive(Default)]
-struct ThinkingPlan {
-    thinking_type: Option<&'static str>,
-    effort: Option<JsString>,
-    anthropic_output_effort: bool,
-}
-
-/// `resolveThinkingPlan` + `throwIfUnsupportedThinkingPlan` for an Anthropic
-/// provider. Non-Anthropic formats only matter here through their failures.
-fn thinking_plan(request: &JsValue, model: &JsValue) -> Result<ThinkingPlan, ModelStreamError> {
-    let settings = field(model, "thinking");
-    let state = field(settings, "state");
-    if !present(state) || is(state, "default") {
-        return Ok(ThinkingPlan::default());
-    }
-    let off = is(state, "disabled");
-    let requested = field(field(request, "thinking"), "mode");
-    let effort = (!off)
-        .then(|| EFFORTS.iter().find(|e| is(requested, e)).copied())
-        .flatten();
-    let fail = |message: &str| {
-        let mut text: Vec<u16> = units(field(model, "id")).units().to_vec();
-        text.extend(": ".encode_utf16());
-        text.extend(message.encode_utf16());
-        Err(ModelStreamError::Request {
-            code: "unsupported_thinking".into(),
-            message: JsString::from_utf16(text),
-        })
-    };
-    if let Some(effort) = effort {
-        let configured = match field(settings, "efforts") {
-            JsValue::Array(efforts) => efforts.iter().any(|e| is(e, effort)),
-            _ => false,
-        };
-        if !configured {
-            return fail(&format!(
-                "Reasoning effort '{effort}' is not configured. Select Default or configure the model's supported efforts."
-            ));
-        }
-    }
-    let format = field(settings, "format");
-    let format = if !present(format) || is(format, "provider") {
-        "anthropic".to_string()
-    } else {
-        String::from_utf16_lossy(units(format).units())
-    };
-    let model_id = String::from_utf16_lossy(units(field(model, "id")).units());
-    match format.as_str() {
-        "server-default" => {
-            if off || effort.is_some() {
-                return fail(
-                    "This parameter format only supports the server default. Choose a thinking parameter format in model settings.",
-                );
-            }
-            Ok(ThinkingPlan::default())
-        }
-        "openai" => Ok(ThinkingPlan::default()),
-        "anthropic" => {
-            if off {
-                return Ok(ThinkingPlan {
-                    thinking_type: Some("disabled"),
-                    ..Default::default()
-                });
-            }
-            let budget_only = super::super::count_body::budget_only_model(&model_id);
-            if budget_only {
-                if effort.is_some() {
-                    return fail(
-                        "This model requires a thinking budget; only Default is supported.",
-                    );
-                }
-                return Ok(ThinkingPlan::default());
-            }
-            Ok(ThinkingPlan {
-                thinking_type: Some("adaptive"),
-                effort: effort.map(JsString::from),
-                anthropic_output_effort: true,
-            })
-        }
-        "google" => {
-            if off {
-                return fail(
-                    "Turning off thinking is not supported by this effort-only Gemini adapter. Uncheck both thinking options to use the server default.",
-                );
-            }
-            if !regex::Regex::new("gemini-?3")
-                .expect("static regex")
-                .is_match(&model_id)
-            {
-                if effort.is_some() {
-                    return fail(
-                        "This Gemini model has no supported thinking-level adapter. Select Default.",
-                    );
-                }
-                return Ok(ThinkingPlan::default());
-            }
-            if let Some(effort) = effort.filter(|e| !["low", "medium", "high"].contains(e)) {
-                return fail(&format!(
-                    "Gemini thinkingLevel does not support '{effort}'."
-                ));
-            }
-            Ok(ThinkingPlan::default())
-        }
-        // Other formats only patch OpenAI-style bodies; resolveFormat never
-        // yields them from `provider` for an Anthropic provider.
-        _ => Ok(ThinkingPlan::default()),
-    }
-}
-
 /// `buildAnthropicRequest(request, model, provider)`.
 pub(crate) fn build_request(
     request: &JsValue,
     model: &JsValue,
     provider: &JsValue,
 ) -> Result<JsValue, ModelStreamError> {
-    let plan = thinking_plan(request, model)?;
+    let plan = super::thinking::resolve(request, provider, model)?;
+    super::thinking::throw_if_unsupported(&plan)?;
     let mut tools: Vec<JsValue> = array(field(request, "tools"))
         .iter()
         .map(|tool| {
@@ -266,7 +152,7 @@ pub(crate) fn build_request(
         ),
         (
             "output_config",
-            match (&plan.effort, plan.anthropic_output_effort) {
+            match (&plan.effort, plan.use_anthropic_output_effort) {
                 (Some(effort), true) => object([("effort", JsValue::String(effort.clone()))]),
                 _ => JsValue::Undefined,
             },
@@ -323,32 +209,6 @@ fn usage(raw: &JsValue) -> Option<JsValue> {
         );
     }
     Some(JsValue::Object(out))
-}
-
-/// UTF-16 JSON text as a Rust string for `parse_json`. A lone surrogate is
-/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
-/// that would follow an escaping backslash stays invalid (U+FFFD), and
-/// anywhere else both forms are a syntax error, as in `JSON.parse`.
-fn json_text(units: &[u16]) -> String {
-    let mut out = String::with_capacity(units.len());
-    let mut backslashes = 0usize;
-    for item in char::decode_utf16(units.iter().copied()) {
-        match item {
-            Ok(c) => {
-                out.push(c);
-                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
-            }
-            Err(error) => {
-                if backslashes % 2 == 1 {
-                    out.push('\u{FFFD}');
-                } else {
-                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
-                }
-                backslashes = 0;
-            }
-        }
-    }
-    out
 }
 
 /// JS `Map` keys compare with SameValueZero.
@@ -530,7 +390,7 @@ pub(crate) fn normalize_stream_event(
                 return Ok(Vec::new());
             };
             // `JSON.parse(rawInput)`, then `JSON.parse(jsonrepair(rawInput))`.
-            let parse = |units: &[u16]| parse_json(&json_text(units)).ok();
+            let parse = |units: &[u16]| parse_json(&super::json_text(units)).ok();
             let (input, was_repaired) = if call.input_buffer.is_empty() {
                 (Some(JsValue::Object(JsObject::new())), false)
             } else if let Some(input) = parse(&call.input_buffer) {
