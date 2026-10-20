@@ -27,6 +27,9 @@ use pilotdeck_gateway::{
                     web_fetch_permission,
                 },
                 fetcher::shared_cache,
+                network::{
+                    FetchOptions, HttpRequest, RetryOptions, network_fetch, node_timer_delay_ms,
+                },
                 preapproved_hosts::{PREAPPROVED_ENTRIES, is_preapproved_url},
                 search::web_search_permission,
                 url_validation::{is_permitted_redirect, upgrade_http_to_https, validate_url},
@@ -1151,8 +1154,9 @@ fn delayed_search(timeout_ms: f64, delay: Duration) -> (WebSearchTool, Arc<Mutex
 /// and NaN are clamped to an immediate timer and abort the provider call,
 /// while `networkFetch`'s own retry timer stays disabled. The baseline probe
 /// (`probes/search-timeout.out`) returns `tool_timeout` with the raw value in
-/// the message for all three.
-#[tokio::test]
+/// the message for all three. The paused clock keeps the race with the
+/// transport's 60 ms sleep deterministic.
+#[tokio::test(start_paused = true)]
 async fn web_search_non_positive_timeout_still_arms_the_outer_timer() {
     for (timeout_ms, shown) in [(0.0, "0"), (-1.0, "-1"), (f64::NAN, "NaN")] {
         let (tool, calls) = delayed_search(timeout_ms, Duration::from_millis(60));
@@ -1180,7 +1184,7 @@ async fn web_search_non_positive_timeout_still_arms_the_outer_timer() {
 
 /// Negative control: the same 60 ms transport with a positive budget returns
 /// the search result, so the three timeouts above are the timer's doing.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn negative_control_positive_timeout_lets_delayed_response_through() {
     let (tool, calls) = delayed_search(100.0, Duration::from_millis(60));
     let result = run(
@@ -1191,6 +1195,187 @@ async fn negative_control_positive_timeout_lets_delayed_response_through() {
     .await;
     let ok = get(&result, "ok");
     assert_eq!(json(get(ok, "data")), r#"{"query":"q","organic":[]}"#);
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+/// `Duration::from_secs_f64` panics on non-finite or overflowing seconds.
+/// Node's `setTimeout` instead clamps to `[1, 2^31-1]` ms, keeping fractional
+/// delays inside that range, and turns `NaN`, `±Infinity` and everything
+/// outside it into 1 ms (`probes/timer-clamp.out`).
+#[test]
+fn node_set_timeout_clamp_boundaries() {
+    let cases = [
+        (0.0, 1.0),
+        (0.5, 1.0),
+        (0.9, 1.0),
+        (-1.0, 1.0),
+        (f64::NAN, 1.0),
+        (f64::NEG_INFINITY, 1.0),
+        (1.0, 1.0),
+        (1.9, 1.9),
+        (2.0, 2.0),
+        (60.0, 60.0),
+        (i32::MAX as f64, i32::MAX as f64),
+        (i32::MAX as f64 + 0.5, 1.0),
+        (i32::MAX as f64 + 1.0, 1.0),
+        (1e23, 1.0),
+        (f64::INFINITY, 1.0),
+    ];
+    for (requested, armed) in cases {
+        assert_eq!(
+            node_timer_delay_ms(requested),
+            armed,
+            "requested {requested}"
+        );
+    }
+}
+
+/// A transport that never settles: only a timer can end the call.
+struct NeverTransport;
+impl ModelHttpTransport for NeverTransport {
+    fn send(&self, _request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        Box::pin(std::future::pending())
+    }
+}
+
+fn network_fetch_options(timeout_ms: f64) -> FetchOptions<'static> {
+    FetchOptions {
+        timeout_ms,
+        parent: None,
+        retry: RetryOptions {
+            max_retries: 0,
+            base_delay_ms: 1.0,
+            max_delay_ms: 1.0,
+            retry_on_post: false,
+        },
+        random: random(),
+    }
+}
+
+/// Regression for the panic on `network.rs`'s per-attempt timer: `Infinity`
+/// and `1e23` must produce Node's 1 ms timeout, not reach
+/// `Duration::from_secs_f64`. The 2^31 case is the clamp boundary Node warns
+/// about (`TimeoutOverflowWarning ... set to 1`).
+#[tokio::test(start_paused = true)]
+async fn network_fetch_clamps_non_finite_and_overflowing_timeout() {
+    let transport = NeverTransport;
+    let request = HttpRequest {
+        method: "GET",
+        url: "http://example.com/".into(),
+        headers: Vec::new(),
+        body: None,
+    };
+    for (timeout_ms, shown) in [
+        (f64::INFINITY, "Infinity"),
+        (1e23, "1e+23"),
+        (i32::MAX as f64 + 1.0, "2147483648"),
+    ] {
+        let options = network_fetch_options(timeout_ms);
+        let error = network_fetch(&transport, &request, &options)
+            .await
+            .err()
+            .expect("the timer must fire");
+        assert_eq!(error.code, "network_timeout", "timeoutMs={shown}");
+        assert_eq!(
+            error.message.to_utf8().unwrap(),
+            format!("Network request timed out after {shown}ms."),
+            "timeoutMs={shown}"
+        );
+    }
+}
+
+/// Negative control for the clamp boundary: `2^31-1` ms is still a valid
+/// delay (Node only overflows above it), so a 60 ms response is not collapsed
+/// into an immediate 1 ms timeout.
+#[tokio::test(start_paused = true)]
+async fn negative_control_max_valid_timeout_lets_response_through() {
+    let (tool, calls) = delayed_search(i32::MAX as f64, Duration::from_millis(60));
+    let result = run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), None),
+    )
+    .await;
+    let ok = get(&result, "ok");
+    assert_eq!(json(get(ok, "data")), r#"{"query":"q","organic":[]}"#);
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+/// The reported P1: a huge `timeoutMs` used to panic in the inner timer. The
+/// baseline (`probes/search-timeout-block.out`) reports `tool_timeout` with
+/// the raw value for both `Infinity` and `1e23`, because Node clamps both to
+/// 1 ms.
+#[tokio::test(start_paused = true)]
+async fn web_search_infinite_or_overflowing_timeout_is_clamped_not_panicking() {
+    for (timeout_ms, shown) in [(f64::INFINITY, "Infinity"), (1e23, "1e+23")] {
+        let (tool, calls) = delayed_search(timeout_ms, Duration::from_millis(60));
+        let result = run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), None),
+        )
+        .await;
+        let error = get(&result, "error");
+        assert_eq!(
+            text(get(error, "code")),
+            "tool_timeout",
+            "timeoutMs={shown}: {}",
+            json(&result)
+        );
+        assert_eq!(
+            text(get(error, "message")),
+            format!("web_search timed out after {shown}ms."),
+            "timeoutMs={shown}"
+        );
+        assert_eq!(*calls.lock().unwrap(), 1, "timeoutMs={shown}");
+    }
+}
+
+/// The reviewer's starvation case, made deterministic with the paused clock:
+/// the 1 ms abort timer and the transport's 60 ms timer are both already due
+/// when the tool is polled again. The baseline keeps their order — the abort
+/// wins — so an expired timeout must not be replaced by the late response.
+/// `negative_control_max_valid_timeout_lets_response_through` shows the
+/// opposite order (response first, 60 < 100).
+#[tokio::test(start_paused = true)]
+async fn web_search_expired_timeout_is_not_replaced_by_a_later_response() {
+    let (tool, calls) = delayed_search(1.0, Duration::from_millis(60));
+    let driver = {
+        let calls = calls.clone();
+        async move {
+            while *calls.lock().unwrap() == 0 {
+                tokio::task::yield_now().await;
+            }
+            // `send` recorded the call before the transport future was
+            // polled; one more yield so the 60 ms sleep and both outer select
+            // branches have been registered.
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_millis(120)).await;
+        }
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            run(
+                &tool,
+                object(vec![("query", JsValue::from("q"))]),
+                context(None, empty_env(), None),
+            ),
+            driver
+        )
+    })
+    .await
+    .expect("the tool settles");
+    let error = get(&result, "error");
+    assert_eq!(
+        text(get(error, "code")),
+        "tool_timeout",
+        "{}",
+        json(&result)
+    );
+    assert_eq!(
+        text(get(error, "message")),
+        "web_search timed out after 1ms."
+    );
     assert_eq!(*calls.lock().unwrap(), 1);
 }
 
