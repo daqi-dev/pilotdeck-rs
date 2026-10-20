@@ -344,6 +344,8 @@ impl Phase {
 
 struct RuntimeState {
     entries: Vec<(JsString, Arc<Entry>)>,
+    /// Capacity reserved by starts that have not published their entry yet.
+    pending_starts: usize,
     phase: Phase,
     dispose_started: bool,
 }
@@ -431,6 +433,8 @@ pub type TaskAccess<'a> = Option<&'a JsValue>;
 #[derive(Clone)]
 pub struct BackgroundTaskRuntime {
     inner: Arc<Inner>,
+    #[cfg(test)]
+    before_spawn: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Default for BackgroundTaskRuntime {
@@ -455,6 +459,7 @@ impl BackgroundTaskRuntime {
             inner: Arc::new(Inner {
                 state: Mutex::new(RuntimeState {
                     entries: Vec::new(),
+                    pending_starts: 0,
                     phase: Phase::Active,
                     dispose_started: false,
                 }),
@@ -467,6 +472,8 @@ impl BackgroundTaskRuntime {
                     .completion_preview_bytes
                     .unwrap_or(DEFAULT_COMPLETION_PREVIEW_BYTES),
             }),
+            #[cfg(test)]
+            before_spawn: None,
         }
     }
 
@@ -581,7 +588,7 @@ impl BackgroundTaskRuntime {
         spec: StartTaskSpec,
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
         let (task_id, entry) = {
-            let state = self.inner.state.lock().unwrap();
+            let mut state = self.inner.state.lock().unwrap();
             if state.phase != Phase::Active {
                 return Err(BackgroundTaskError::error(JsString::from(
                     format!(
@@ -601,7 +608,7 @@ impl BackgroundTaskRuntime {
                     )
                 })
                 .count();
-            if active >= self.inner.max_tasks {
+            if active + state.pending_starts >= self.inner.max_tasks {
                 return Err(BackgroundTaskError::error(JsString::from(
                     format!(
                         "BackgroundTaskRuntime: max tasks ({}) exceeded.",
@@ -630,8 +637,13 @@ impl BackgroundTaskRuntime {
                 ended_at: None,
                 output_bytes: 0,
             };
+            state.pending_starts += 1;
             (task_id, task)
         };
+        #[cfg(test)]
+        if let Some(before_spawn) = &self.before_spawn {
+            before_spawn();
+        }
         let result = self.spawn_task(task_id, entry, spec);
         self.inner.starts.send_modify(|starts| *starts -= 1);
         result
@@ -639,12 +651,9 @@ impl BackgroundTaskRuntime {
 
     fn insert(&self, task_id: &JsString, entry: Entry) -> Arc<Entry> {
         let entry = Arc::new(entry);
-        self.inner
-            .state
-            .lock()
-            .unwrap()
-            .entries
-            .push((task_id.clone(), Arc::clone(&entry)));
+        let mut state = self.inner.state.lock().unwrap();
+        state.entries.push((task_id.clone(), Arc::clone(&entry)));
+        state.pending_starts -= 1;
         entry
     }
 
@@ -1143,6 +1152,8 @@ pub struct SubagentListFilter {
 pub struct BackgroundSubagentRuntime {
     entries: Arc<Mutex<Vec<Arc<SubagentEntry>>>>,
     now: Clock,
+    #[cfg(test)]
+    before_cancel: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Default for BackgroundSubagentRuntime {
@@ -1157,6 +1168,8 @@ impl BackgroundSubagentRuntime {
         Self {
             entries: Arc::default(),
             now: now.unwrap_or_else(|| Arc::new(system_now)),
+            #[cfg(test)]
+            before_cancel: None,
         }
     }
 
@@ -1204,7 +1217,10 @@ impl BackgroundSubagentRuntime {
                 let mut task = entry.task.lock().unwrap();
                 match result {
                     Ok(()) => {
-                        if !entry.controller.is_cancelled() {
+                        // `stop` commits cancellation under this same lock
+                        // before signalling the body. Preserve that decision
+                        // even when the signal has not been delivered yet.
+                        if task.status != TaskStatus::Cancelled {
                             task.status = TaskStatus::Completed;
                         }
                     }
@@ -1276,6 +1292,10 @@ impl BackgroundSubagentRuntime {
         task.status = TaskStatus::Cancelled;
         task.ended_at = Some((self.now)());
         drop(task);
+        #[cfg(test)]
+        if let Some(before_cancel) = &self.before_cancel {
+            before_cancel();
+        }
         entry.controller.cancel();
         true
     }
@@ -1520,6 +1540,156 @@ pub fn background_tasks_in_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::oneshot;
+
+    fn pause_once(
+        entered: oneshot::Sender<()>,
+        resume: std::sync::mpsc::Receiver<()>,
+    ) -> Arc<dyn Fn() + Send + Sync> {
+        let gate = Mutex::new(Some((entered, resume)));
+        Arc::new(move || {
+            if let Some((entered, resume)) = gate.lock().unwrap().take() {
+                let _ = entered.send(());
+                // Dropping the sender also releases the worker on test failure.
+                let _ = resume.recv();
+            }
+        })
+    }
+
+    fn subagent_input(run: SubagentRun) -> StartBackgroundSubagentInput {
+        StartBackgroundSubagentInput {
+            kind: None,
+            session_id: "session".into(),
+            parent_turn_id: "turn".into(),
+            subagent_id: "child".into(),
+            subagent_type: "general".into(),
+            observed_subagent_id: None,
+            run,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn subagent_stop_wins_completion_before_cancel_signal() {
+        let tick = std::sync::atomic::AtomicU64::new(1000);
+        let mut runtime = BackgroundSubagentRuntime::new(Some(Arc::new(move || {
+            tick.fetch_add(1, std::sync::atomic::Ordering::SeqCst) as f64
+        })));
+        let (stopping, stopped) = oneshot::channel();
+        let (resume, paused) = std::sync::mpsc::channel();
+        runtime.before_cancel = Some(pause_once(stopping, paused));
+        let (started, running) = oneshot::channel();
+        let (finish, finished) = oneshot::channel();
+        let task = runtime.start(subagent_input(Box::new(move |signal| {
+            Box::pin(async move {
+                assert!(started.send(signal).is_ok());
+                finished.await.unwrap();
+                Ok(())
+            })
+        })));
+        let signal = running.await.unwrap();
+        let entry = runtime.find(&task.task_id).unwrap();
+        let stop_runtime = runtime.clone();
+        let task_id = task.task_id.clone();
+        let stop = tokio::spawn(async move { stop_runtime.stop_and_wait(&task_id).await });
+
+        tokio::time::timeout(Duration::from_secs(5), stopped)
+            .await
+            .unwrap()
+            .unwrap();
+        let at_stop = runtime.get(&task.task_id).unwrap();
+        finish.send(()).unwrap();
+        let mut done = entry.done.subscribe();
+        tokio::time::timeout(Duration::from_secs(5), done.wait_for(|done| *done))
+            .await
+            .unwrap()
+            .unwrap();
+        let at_completion = runtime.get(&task.task_id).unwrap();
+        let signalled_before_resume = signal.is_cancelled();
+        resume.send(()).unwrap();
+        let stopped = stop.await.unwrap();
+
+        assert_eq!(at_stop.status, TaskStatus::Cancelled);
+        assert!(!signalled_before_resume, "completion must precede cancel()");
+        assert!(stopped);
+        assert_eq!(at_completion.status, TaskStatus::Cancelled);
+        assert_eq!(at_completion.ended_at, at_stop.ended_at);
+        assert_eq!(at_completion.error, None);
+        assert!(signal.is_cancelled());
+        let final_task = runtime.get(&task.task_id).unwrap();
+        assert_eq!(final_task.status, TaskStatus::Cancelled);
+        assert_eq!(final_task.ended_at, at_stop.ended_at);
+        assert!(!runtime.stop_and_wait(&task.task_id).await);
+    }
+
+    #[tokio::test]
+    async fn subagent_completion_before_stop_remains_completed() {
+        let runtime = BackgroundSubagentRuntime::default();
+        let task = runtime.start(subagent_input(Box::new(|_| Box::pin(async { Ok(()) }))));
+        let entry = runtime.find(&task.task_id).unwrap();
+        let mut done = entry.done.subscribe();
+        tokio::time::timeout(Duration::from_secs(5), done.wait_for(|done| *done))
+            .await
+            .unwrap()
+            .unwrap();
+        let completed = runtime.get(&task.task_id).unwrap();
+
+        assert!(!runtime.stop_and_wait(&task.task_id).await);
+        let after_stop = runtime.get(&task.task_id).unwrap();
+        assert_eq!(completed.status, TaskStatus::Completed);
+        assert_eq!(after_stop.status, TaskStatus::Completed);
+        assert_eq!(after_stop.ended_at, completed.ended_at);
+        assert!(!entry.controller.is_cancelled());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_start_reserves_capacity_before_publishing() {
+        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            max_tasks: Some(1),
+            ..Default::default()
+        });
+        let spec = StartTaskSpec {
+            command: JsValue::from("exit 0"),
+            cwd: "/".into(),
+            env: None,
+            session_id: JsValue::Undefined,
+            agent_id: JsValue::Undefined,
+            kind: JsValue::Undefined,
+        };
+        let mut starting_runtime = runtime.clone();
+        let (enter, entered) = oneshot::channel();
+        let (resume, paused) = std::sync::mpsc::channel();
+        starting_runtime.before_spawn = Some(pause_once(enter, paused));
+        let first_spec = spec.clone();
+        let start = tokio::spawn(async move { starting_runtime.start(first_spec).await });
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let listed = runtime.list(&TaskListFilter::default(), None);
+        let second = runtime.start(spec.clone()).await;
+        resume.send(()).unwrap();
+        let first = start.await.unwrap().unwrap();
+        runtime
+            .wait(&first.task_id, &JsValue::Number(5000.0), None, None)
+            .await
+            .unwrap();
+        // Publishing transfers the reservation to the entry; completion
+        // frees the capacity so another start can use it.
+        let replacement = runtime.start(spec).await;
+        runtime.dispose().await;
+
+        assert!(
+            listed.is_empty(),
+            "the first start must still be unpublished"
+        );
+        assert_eq!(
+            second.unwrap_err().message,
+            JsString::from("BackgroundTaskRuntime: max tasks (1) exceeded.")
+        );
+        assert!(replacement.is_ok());
+        assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
+    }
 
     #[test]
     fn output_ring_drops_oldest_bytes_and_reports_the_gap() {
