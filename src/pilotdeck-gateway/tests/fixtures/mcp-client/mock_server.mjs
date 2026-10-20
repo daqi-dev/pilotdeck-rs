@@ -16,8 +16,11 @@
 //   {"send": value}   JSON.stringify(value) with every "$id" string -> request id
 //   {"line": "text"}  raw line, "$ID" replaced with JSON.stringify(id)
 //   {"sleep": ms}     wait
+//   {"wait_file": n}  wait until MOCK_DIR/<n> exists (a gate the Rust tests
+//                     open; the TS recorder never uses it)
 //   {"exit": code}    process.exit(code)
-// A request without a handler is left unanswered (hang).
+// A request without a handler is left unanswered (hang). The "stdin-end"
+// key (Rust tests only) runs its steps after stdin ends, before exiting.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -182,6 +185,10 @@ if (process.argv[2] === '--http') {
       else if ('sleep' in step) {
         flush();
         await new Promise((resolve) => setTimeout(resolve, step.sleep));
+      } else if ('wait_file' in step) {
+        flush();
+        const gate = path.join(dir, step.wait_file);
+        while (!fs.existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 5));
       } else if ('exit' in step) {
         flush();
         process.exit(step.exit);
@@ -211,6 +218,6 @@ if (process.argv[2] === '--http') {
   });
   process.stdin.on('end', () => {
     log({ event: 'stdin-end' });
-    queue.then(() => process.exit(0));
+    queue.then(() => run(handlers['stdin-end'] ?? [], null)).then(() => process.exit(0));
   });
 }

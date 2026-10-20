@@ -579,22 +579,21 @@ fn generator_reproduces_the_committed_oracle_twice() {
     }
 }
 
-/// gate2 P1-1 (intentional difference from TS): `close()` during a handshake,
-/// then `start()` again. Only the second connection may be installed; the
-/// first one's process is closed when its handshake lands.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn close_during_handshake_then_start_keeps_one_connection() {
-    let scratch = Scratch::new("mcp-client-close-race");
-    let dir = std::fs::canonicalize(scratch.path()).unwrap();
-    let init = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"m","version":"1"}}}}"#;
+// ---------------------------------------------------------------------------
+// Connect/close/reconnect interleavings. Ordering comes from the
+// current-thread runtime's poll order (`join!` polls left to right) and from
+// file gates the mock waits on (`wait_file`); bounded polling only observes
+// events, it never decides who goes first.
+
+const INIT_REPLY: &str = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"m","version":"1"}}}}"#;
+
+fn race_client(dir: &Path, procs: &[String], handshake_timeout_ms: Option<f64>) -> McpClient {
     std::fs::write(
         dir.join("script.json"),
-        format!(
-            r#"{{"procs":[{{"initialize":[{{"sleep":300}},{init}]}},{{"initialize":[{init}]}}]}}"#
-        ),
+        format!(r#"{{"procs":[{}]}}"#, procs.join(",")),
     )
     .unwrap();
-    let client = McpClient::new(
+    McpClient::new(
         McpServerSpec {
             id: "mock".into(),
             transport: McpTransportSpec::Stdio {
@@ -609,40 +608,225 @@ async fn close_during_handshake_then_start_keeps_one_connection() {
             },
             call_timeout_ms: None,
         },
-        McpClientOptions::default(),
+        McpClientOptions {
+            handshake_timeout_ms,
+            ..McpClientOptions::default()
+        },
+    )
+}
+
+fn logged(dir: &Path, index: usize, event: &str) -> bool {
+    read_logs(dir).get(index).is_some_and(|log| {
+        log.iter().any(|e| {
+            field(e, "event")
+                .as_string()
+                .is_some_and(|k| k.equals_str(event))
+        })
+    })
+}
+
+async fn wait_logged(dir: &Path, index: usize, event: &str) {
+    for _ in 0..400 {
+        if logged(dir, index, event) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("process {index} never logged {event:?}");
+}
+
+fn open_gate(dir: &Path, name: &str) {
+    std::fs::write(dir.join(name), "").unwrap();
+}
+
+const ABORTED: &str = "MCP handshake aborted: client closed during connect (server=mock)";
+
+/// GLM r3 P1-1 (a): `close()` completes after `start()` published its
+/// attempt but before the spawned connect task first ran. The attempt's
+/// epoch is taken when it is published, so it is already stale and spawns
+/// nothing.
+#[tokio::test]
+async fn close_before_the_connect_task_runs_aborts_it() {
+    let scratch = Scratch::new("mcp-client-race-a");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(&dir, &[format!(r#"{{"initialize":[{INIT_REPLY}]}}"#)], None);
+    // `start` publishes and spawns (the task cannot run before this poll
+    // yields); `close` then runs to completion without awaiting.
+    let (started, ()) = tokio::join!(client.start(), client.close());
+    assert_eq!(started.expect_err("superseded").message(), ABORTED);
+    assert_eq!(client.status().as_str(), "idle");
+    assert!(read_logs(&dir).is_empty(), "no process may be spawned");
+    // The next start connects normally, with exactly one process.
+    client.start().await.expect("fresh connect");
+    assert_eq!(client.status().as_str(), "ready");
+    client.close().await;
+    settle(&dir, false).await;
+    assert_eq!(read_logs(&dir).len(), 1);
+}
+
+/// gate2 P1-1 (intentional difference from TS, which installs it): `close()`
+/// while the first handshake is in flight, then a second `start()`; the
+/// first connection lands last (gated, not timed) and must be closed, not
+/// installed over the second.
+#[tokio::test]
+async fn close_during_handshake_then_start_keeps_one_connection() {
+    let scratch = Scratch::new("mcp-client-race-b");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(
+        &dir,
+        &[
+            format!(r#"{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+        ],
+        None,
     );
     let first = tokio::spawn({
         let client = client.clone();
         async move { client.start().await }
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_logged(&dir, 0, "frame").await;
     client.close().await;
     client.start().await.expect("second connection");
+    open_gate(&dir, "g0");
     let first = first.await.unwrap().expect_err("first attempt is aborted");
-    assert_eq!(
-        first.message(),
-        "MCP handshake aborted: client closed during connect (server=mock)"
-    );
+    assert_eq!(first.message(), ABORTED);
     assert_eq!(client.status().as_str(), "ready");
-    // The first process exits on its own once its late handshake is closed;
-    // the second is still serving.
-    let has = |index: usize, event: &str| {
-        read_logs(&dir).get(index).is_some_and(|log| {
-            log.iter().any(|e| {
-                field(e, "event")
-                    .as_string()
-                    .is_some_and(|k| k.equals_str(event))
-            })
-        })
-    };
-    for _ in 0..200 {
-        if has(0, "exit") {
+    wait_logged(&dir, 0, "exit").await;
+    assert!(
+        !logged(&dir, 1, "exit"),
+        "the live connection keeps running"
+    );
+    client.close().await;
+    settle(&dir, false).await;
+    assert_eq!(read_logs(&dir).len(), 2);
+}
+
+/// GLM r3 P1-1 (b): a `start()` arrives while `close()` is still awaiting
+/// the old connection's shutdown. It must open a new connection (not join
+/// the closed one's memo), and `close()`'s tail must not mark it idle.
+#[tokio::test]
+async fn start_while_close_awaits_the_old_connection_keeps_the_new_one() {
+    let scratch = Scratch::new("mcp-client-race-c");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(
+        &dir,
+        &[
+            // proc 0 lingers after stdin ends until the gate opens.
+            format!(r#"{{"initialize":[{INIT_REPLY}],"stdin-end":[{{"wait_file":"g0"}}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+        ],
+        None,
+    );
+    client.start().await.expect("first connection");
+    let ((), status_after_start) = tokio::join!(client.close(), async {
+        client.start().await.expect("new connection");
+        let status = client.status().as_str();
+        open_gate(&dir, "g0");
+        status
+    });
+    assert_eq!(status_after_start, "ready");
+    assert_eq!(
+        client.status().as_str(),
+        "ready",
+        "close() must not clobber"
+    );
+    assert!(logged(&dir, 0, "exit"), "close() awaited the old process");
+    assert!(!logged(&dir, 1, "exit"), "the new connection is live");
+    assert_eq!(read_logs(&dir).len(), 2);
+    client.close().await;
+    settle(&dir, false).await;
+}
+
+/// GLM r3 P2-1: a `start()` racing a session-expired reconnect while the old
+/// connection closes. The reconnect drops the old slot first, so the racing
+/// `start()` publishes the new attempt and the reconnect joins it: one new
+/// process, and `start()` never reports success without a connection.
+#[tokio::test]
+async fn start_racing_a_reconnect_shares_one_new_connection() {
+    let scratch = Scratch::new("mcp-client-race-d");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let expired = r#"{"send":{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"Session expired"}}}"#;
+    let after = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"content":[{"type":"text","text":"after reconnect"}]}}}"#;
+    let client = race_client(
+        &dir,
+        &[
+            format!(
+                r#"{{"initialize":[{INIT_REPLY}],"tools/call:x":[{expired}],"stdin-end":[{{"wait_file":"g0"}}]}}"#
+            ),
+            format!(r#"{{"initialize":[{INIT_REPLY}],"tools/call:x":[{after}]}}"#),
+        ],
+        None,
+    );
+    client.start().await.expect("first connection");
+    let name = JsString::from("x");
+    let args = JsValue::Undefined;
+    let (called, connected) = tokio::join!(
+        client.call_tool(&name, &args, McpCallOptions::default()),
+        async {
+            wait_logged(&dir, 0, "stdin-end").await;
+            client.start().await.expect("racing start");
+            let connected = client.status().as_str();
+            open_gate(&dir, "g0");
+            connected
+        }
+    );
+    assert_eq!(
+        connected, "ready",
+        "start() returned before a connection existed"
+    );
+    let called = called.expect("call after reconnect");
+    assert_eq!(
+        text(&called.content),
+        r#"[{"type":"text","text":"after reconnect"}]"#
+    );
+    assert_eq!(read_logs(&dir).len(), 2, "exactly one new connection");
+    assert_eq!(client.status().as_str(), "ready");
+    client.close().await;
+    settle(&dir, false).await;
+}
+
+/// gate1 P1: a handshake that lands after the handshake timeout belongs to
+/// no attempt; its connection is closed so the child is reaped.
+#[tokio::test]
+async fn late_handshake_after_timeout_is_closed() {
+    let scratch = Scratch::new("mcp-client-race-e");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(
+        &dir,
+        &[
+            format!(r#"{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+        ],
+        Some(200.0),
+    );
+    let error = client.start().await.expect_err("timed out");
+    assert_eq!(
+        error.message(),
+        "MCP handshake timed out after 200ms (server=mock)"
+    );
+    // The handshake can only finish now, strictly after the timeout.
+    open_gate(&dir, "g0");
+    for _ in 0..400 {
+        if logged(&dir, 0, "exit") {
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    assert!(has(0, "exit"), "the aborted connection's process must exit");
-    assert!(!has(1, "exit"), "the live connection keeps running");
+    assert!(
+        logged(&dir, 0, "exit"),
+        "the late connection's process must exit"
+    );
+    let frames = read_logs(&dir)[0]
+        .iter()
+        .filter(|e| {
+            field(e, "event")
+                .as_string()
+                .is_some_and(|k| k.equals_str("frame"))
+        })
+        .count();
+    assert_eq!(frames, 2, "initialize, then notifications/initialized");
+    client.start().await.expect("retry connects");
     client.close().await;
     settle(&dir, false).await;
+    assert_eq!(read_logs(&dir).len(), 2);
 }

@@ -31,8 +31,9 @@
 //! - `getInstructions()` is always empty: the baseline reads
 //!   `getServerCapabilities().instructions` (stripped by the capabilities
 //!   schema) and then `_serverInstructions`, which SDK 1.29 renamed.
-//! - A handshake timeout leaves the handshake running; its process is only
-//!   closed when the 60 s initialize request itself fails.
+//! - A handshake timeout leaves the handshake running (not cancelled); its
+//!   process is closed when the 60 s initialize request itself fails, or —
+//!   see below — when the handshake succeeds late.
 //! - Any error whose message matches `/timed out|timeout/i` is treated as a
 //!   timeout and recycles the transport. HTTP 404 is not a session expiry by
 //!   itself: the baseline checks `statusCode`, which the SDK never sets.
@@ -53,7 +54,11 @@
 //! one; the loser's child is never closed. Here `close()` bumps an epoch: the
 //! late connection is closed and that `start()` fails with
 //! `mcp_handshake_failed` ("MCP handshake aborted: client closed during
-//! connect"), so at most one connection is live.
+//! connect"), so at most one connection is live. The epoch is taken when an
+//! attempt is published (`start()` / `reconnect()`), so a `close()` that runs
+//! before the connect task is first polled also aborts it, and `close()`'s
+//! tail never marks a newer attempt idle. A handshake that succeeds after
+//! the handshake timeout is closed rather than left unowned.
 
 use super::http::{HttpKind, HttpLink, parse_endpoint};
 use super::naming::{
@@ -491,8 +496,9 @@ struct State {
     list_tools_cache: Option<(Instant, Vec<McpToolSpec>)>,
     server_instructions: JsString,
     connect: Option<watch::Receiver<ConnectResult>>,
-    /// Bumped by `close()`; a connect that started in an older epoch does
-    /// not install its connection.
+    /// Connection generation. Bumped when a connect attempt is published
+    /// (`start`, `reconnect`) and by `close()`; an attempt only installs its
+    /// connection while the epoch is still the one it was published under.
     epoch: u64,
     reconnect_in_flight: bool,
     per_session_dir: Option<PathBuf>,
@@ -675,10 +681,15 @@ impl McpClient {
                 None => {
                     let (sender, receiver) = watch::channel(None);
                     state.connect = Some(receiver.clone());
+                    // The attempt's generation is fixed here, under the lock
+                    // that publishes it, not when the task is first polled.
+                    state.epoch += 1;
+                    let epoch = state.epoch;
+                    state.status = McpStatus::Connecting;
                     let client = self.clone();
                     let mine = receiver.clone();
                     tokio::spawn(async move {
-                        let result = client.run_connect().await;
+                        let result = client.run_connect(epoch).await;
                         if result.is_err() {
                             // Forget only this attempt, never a newer one.
                             let mut state = client.state();
@@ -709,36 +720,58 @@ impl McpClient {
         })
     }
 
-    async fn run_connect(&self) -> Result<(), McpClientError> {
-        let epoch = {
-            let mut state = self.state();
-            state.status = McpStatus::Connecting;
-            state.epoch
-        };
+    fn aborted(&self) -> McpClientError {
+        McpClientError::client(
+            McpClientErrorCode::HandshakeFailed,
+            format!(
+                "MCP handshake aborted: client closed during connect (server={})",
+                self.id()
+            ),
+            self.id(),
+        )
+    }
+
+    async fn run_connect(&self, epoch: u64) -> Result<(), McpClientError> {
+        // Superseded before the task first ran: spawn nothing.
+        if self.state().epoch != epoch {
+            return Err(self.aborted());
+        }
         // `buildTransport()` throws outside the handshake try: unwrapped,
         // status stays `connecting`.
-        let wire = self.build_transport()?;
+        let mut dir = None;
+        let wire = self.build_transport(&mut dir)?;
         let handshake_ms = self
             .inner
             .options
             .handshake_timeout_ms
             .unwrap_or(DEFAULT_HANDSHAKE_TIMEOUT_MS);
-        let handshake = tokio::spawn(async move {
+        let mut handshake = tokio::spawn(async move {
             match wire {
                 Ok(wire) => SdkClient::connect(wire).await,
                 Err(error) => Err(error),
             }
         });
-        let outcome = match tokio::time::timeout(node_delay(handshake_ms), handshake).await {
-            Err(_) => Err(McpClientError::client(
-                McpClientErrorCode::HandshakeFailed,
-                format!(
-                    "MCP handshake timed out after {}ms (server={})",
-                    js_value::number_string(handshake_ms),
-                    self.id()
-                ),
-                self.id(),
-            )),
+        let outcome = match tokio::time::timeout(node_delay(handshake_ms), &mut handshake).await {
+            Err(_) => {
+                // gate1: the handshake keeps running after the timeout (the
+                // baseline's race loser is not cancelled). This attempt has
+                // already failed, so a connection that still lands is owned
+                // by nobody: close it so its child process is reaped.
+                tokio::spawn(async move {
+                    if let Ok(Ok(late)) = handshake.await {
+                        late.close().await;
+                    }
+                });
+                Err(McpClientError::client(
+                    McpClientErrorCode::HandshakeFailed,
+                    format!(
+                        "MCP handshake timed out after {}ms (server={})",
+                        js_value::number_string(handshake_ms),
+                        self.id()
+                    ),
+                    self.id(),
+                ))
+            }
             Ok(Err(join)) => Err(McpClientError::plain("Error", join.to_string())),
             Ok(Ok(result)) => result.map_err(|error| {
                 if error.client_code().is_some() {
@@ -759,17 +792,20 @@ impl McpClient {
             // install a second one); here the late connection is closed and
             // the attempt fails, so at most one connection is ever live.
             drop(state);
-            if let Ok(client) = outcome {
-                tokio::spawn(async move { client.close().await });
-            }
-            return Err(McpClientError::client(
-                McpClientErrorCode::HandshakeFailed,
-                format!(
-                    "MCP handshake aborted: client closed during connect (server={})",
-                    self.id()
-                ),
-                self.id(),
-            ));
+            tokio::spawn(async move {
+                if let Ok(client) = outcome {
+                    client.close().await;
+                }
+                if let Some(dir) = dir {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            });
+            return Err(self.aborted());
+        }
+        // Installed under the epoch-checked lock, so `close()` either takes
+        // it or this attempt was superseded and removed it above.
+        if dir.is_some() {
+            state.per_session_dir = dir;
         }
         match outcome {
             Ok(client) => {
@@ -790,7 +826,10 @@ impl McpClient {
     /// wrapped); the inner one is the spawn failure, which surfaces through
     /// the handshake like the SDK's rejected `start()`.
     #[allow(clippy::type_complexity)]
-    fn build_transport(&self) -> Result<Result<Arc<Wire>, McpClientError>, McpClientError> {
+    fn build_transport(
+        &self,
+        per_session_dir: &mut Option<PathBuf>,
+    ) -> Result<Result<Arc<Wire>, McpClientError>, McpClientError> {
         let spec = &self.inner.spec;
         match &spec.transport {
             McpTransportSpec::Stdio {
@@ -819,7 +858,7 @@ impl McpClient {
                         McpClientError::errno(&error, message)
                     })?;
                     args.push(format!("--user-data-dir={dir}"));
-                    self.state().per_session_dir = Some(PathBuf::from(dir));
+                    *per_session_dir = Some(PathBuf::from(dir));
                 }
                 Ok(Wire::spawn_stdio(
                     command,
@@ -1003,21 +1042,21 @@ impl McpClient {
         });
     }
 
-    /// M5 — close the existing connection and connect again.
+    /// M5 — close the existing connection and connect again. The old
+    /// connection and slot are dropped under one lock; the new attempt is
+    /// published by `start()`, which moves the epoch and so supersedes any
+    /// attempt still in flight. If another caller published an attempt while
+    /// the old connection closed, `start()` joins it instead of adding one.
     async fn reconnect(&self) -> Result<(), McpClientError> {
         let client = {
             let mut state = self.state();
             state.status = McpStatus::Connecting;
             state.list_tools_cache = None;
-            state.client.clone()
+            state.connect = None;
+            state.client.take()
         };
         if let Some(client) = client {
             client.close().await;
-        }
-        {
-            let mut state = self.state();
-            state.client = None;
-            state.connect = None;
         }
         self.start().await
     }
@@ -1025,22 +1064,30 @@ impl McpClient {
     pub async fn close(&self) {
         // The epoch moves before the first await, so an in-flight connect is
         // invalidated even when the caller drops this future.
-        let client = {
+        let (client, epoch, dir) = {
             let mut state = self.state();
             state.epoch += 1;
-            state.client.clone()
+            state.list_tools_cache = None;
+            // Unpublish now so a `start()` arriving while the old connection
+            // closes begins a fresh attempt instead of joining the old one.
+            state.connect = None;
+            (
+                state.client.take(),
+                state.epoch,
+                state.per_session_dir.take(),
+            )
         };
         if let Some(client) = client {
             client.close().await;
         }
-        let dir = {
+        {
+            // A `start()` published while the old connection closed owns the
+            // status now; leave it to that attempt.
             let mut state = self.state();
-            state.client = None;
-            state.connect = None;
-            state.status = McpStatus::Idle;
-            state.list_tools_cache = None;
-            state.per_session_dir.take()
-        };
+            if state.epoch == epoch {
+                state.status = McpStatus::Idle;
+            }
+        }
         if let Some(dir) = dir {
             let _ = std::fs::remove_dir_all(dir);
         }
