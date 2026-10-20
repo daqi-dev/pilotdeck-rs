@@ -258,7 +258,14 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
         // object-shaped backups under the project root are tokenized.
         if (!underRoot(path)) continue;
         if (!backup || typeof backup !== 'object') continue;
-        backup.backupFileName = normalizeBackup(backup.backupFileName, path, backup.version);
+        // Non-string `backupFileName` values (number/boolean/object/array) are
+        // the P2-1 type-error fixtures: keep them verbatim so the replay sees
+        // the same `path.join` argument type as TS.
+        if (backup.backupFileName === null) {
+          backup.backupFileName = null;
+        } else if (typeof backup.backupFileName === 'string') {
+          backup.backupFileName = normalizeBackup(backup.backupFileName, path, backup.version);
+        }
       }
     }
     return replaceRoot(copy, root);
@@ -485,8 +492,113 @@ async function finish(run: any, inputs: Array<{ userMessageId: string; dryRun: b
   await finish(run, [{ userMessageId: 'msg-1', dryRun: false }]);
 }
 
-assert.equal(scenarios.length, 14, 'scenario count');
-assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 21, 'call count');
+
+// 15. `trackedFileBackups` is an array with a `null` element. `Object.entries`
+//     yields ["0", null]; replay reads `backup.backupFileName` and throws V8's
+//     property-access TypeError, which the SDK catch returns. No file effects.
+{
+  const run = begin('entry-tracked-backups-null-element');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    { messageId: 'msg-1', trackedFileBackups: [null] } as any,
+    'create',
+  );
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 16. A `null` value inside an object container: same replay-time TypeError as
+//     the array element case (`{x: null}`), before conflict/diff/rewind.
+{
+  const run = begin('entry-tracked-backups-null-value');
+  const a = resolve(run.__projectRoot, 'a.txt');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    { messageId: 'msg-1', trackedFileBackups: { [a]: null } } as any,
+    'create',
+  );
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 17. A non-BMP (surrogate pair) path: the real write tool records and
+//     rewinds a file whose name round-trips through UTF-16 property names and
+//     UTF-8 filesystem bytes.
+{
+  const run = begin('success-astral-path');
+  const path = '\u{1F600}.txt';
+  await seed(run, path, 'alpha\nbeta\n');
+  await callTool(run, 'msg-1', 'read_file', { file_path: path });
+  await callTool(run, 'msg-1', 'edit_file', { file_path: path, old_string: 'beta', new_string: 'BETA' });
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 18. A non-BMP string container: `Object.entries("😀")` enumerates the two
+//     UTF-16 code units as keys "0"/"1" (not one code point). The character
+//     values are primitives with an `undefined` backupFileName, so the real
+//     rewind reports the same `path.join` TypeError as the "ab" fixture.
+{
+  const run = begin('entry-tracked-backups-string-astral');
+  await run.__writer.recordFileHistorySnapshot(
+    SESSION,
+    'msg-1',
+    { messageId: 'msg-1', trackedFileBackups: '\u{1F600}' } as any,
+    'create',
+  );
+  await finish(run, [
+    { userMessageId: 'msg-1', dryRun: true },
+    { userMessageId: 'msg-1', dryRun: false },
+  ]);
+}
+
+// 19. `backupFileName` is not a string. `getDiffStats` checks JS truthiness:
+//     number 5 / boolean true / object are truthy and reach `path.join`, whose
+//     TypeError text names the received type. Boolean false is falsy, so the
+//     dry run previews normally and only the real rewind reaches `path.join`
+//     (restoreBackup special-cases only `=== null`).
+{
+  const run = begin('entry-backup-file-name-types');
+  const a = resolve(run.__projectRoot, 'a.txt');
+  await seed(run, 'a.txt', 'alpha\n');
+  const types: Array<[string, unknown]> = [
+    ['msg-number', 5],
+    ['msg-bool', true],
+    ['msg-object', {}],
+    ['msg-false', false],
+  ];
+  for (const [messageId, backupFileName] of types) {
+    await run.__writer.recordFileHistorySnapshot(
+      SESSION,
+      messageId,
+      {
+        messageId,
+        trackedFileBackups: {
+          [a]: { backupFileName, version: 1, backupTime: '2026-01-01T00:00:00.000Z' },
+        },
+      } as any,
+      'create',
+    );
+  }
+  await finish(run, [
+    { userMessageId: 'msg-number', dryRun: true },
+    { userMessageId: 'msg-bool', dryRun: true },
+    { userMessageId: 'msg-object', dryRun: true },
+    { userMessageId: 'msg-false', dryRun: true },
+    { userMessageId: 'msg-false', dryRun: false },
+  ]);
+}
+
+assert.equal(scenarios.length, 19, 'scenario count');
+assert.equal(scenarios.reduce((total: number, run: any) => total + run.calls.length, 0), 34, 'call count');
 
 const oracle = {
   sourceCommit: commit,

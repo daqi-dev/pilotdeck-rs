@@ -27,34 +27,86 @@ pub type SnapshotRecorded = Arc<dyn Fn(JsObject, &str) -> FileHistoryResult<()> 
 pub type FileHistoryWarn = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// `backupFileName` after replay. The transcript is untrusted: the key can be
-/// `null` (file absent at snapshot time), absent (`undefined`), or a string.
-/// TS keeps all three in the snapshot object; `restoreBackup` only special
-/// cases `null` and passes `undefined` to `path.join`, which throws. Keeping
-/// the three states apart is required to reproduce that error instead of
-/// silently unlinking the tracked path.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `null` (file absent at snapshot time), absent (`undefined`), a string, or
+/// a non-string value from an untrusted transcript. TS keeps the raw value:
+/// `getDiffStats` checks JS truthiness before `path.join`, `restoreBackup`
+/// only special-cases `=== null`, and `path.join` then throws a TypeError
+/// whose text depends on the value's type (`Received type number (5)`,
+/// `Received an instance of Object`, ...). Keeping those states apart is
+/// required to reproduce the same error text instead of silently unlinking
+/// the tracked path or reporting `undefined`.
+#[derive(Clone, Debug, PartialEq)]
 pub enum BackupFileName {
     Null,
     Undefined,
     Named(String),
+    /// A JSON value that is neither a string nor `null`/`undefined`.
+    Other(JsValue),
 }
 impl BackupFileName {
     pub fn as_name(&self) -> Option<&str> {
         match self {
             Self::Named(name) => Some(name),
-            Self::Null | Self::Undefined => None,
+            Self::Null | Self::Undefined | Self::Other(_) => None,
         }
     }
-    fn display(&self) -> &str {
+    /// JS truthiness of `backup.backupFileName`, which gates `readBackupText`
+    /// in `getDiffStats` (an empty string, `0`, `false`, and `NaN` are all
+    /// falsy, so they preview as "no backup file").
+    fn is_truthy(&self) -> bool {
         match self {
+            Self::Null | Self::Undefined => false,
+            Self::Named(name) => !name.is_empty(),
+            Self::Other(value) => match value {
+                JsValue::Bool(value) => *value,
+                JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+                JsValue::String(value) => !value.units().is_empty(),
+                JsValue::Object(_) | JsValue::Array(_) => true,
+                JsValue::Null | JsValue::Undefined => false,
+            },
+        }
+    }
+    /// `path.join(backupDir, value)`'s TypeError message (Node 22). `None`
+    /// means the value is a string and `path.join` would accept it.
+    fn path_join_error(&self) -> Option<String> {
+        let received = match self {
+            Self::Named(_) => return None,
             Self::Null => "null",
             Self::Undefined => "undefined",
-            Self::Named(name) => name,
+            Self::Other(JsValue::Bool(value)) => {
+                return Some(path_argument_error(&format!("type boolean ({value})")));
+            }
+            Self::Other(JsValue::Number(value)) => {
+                return Some(path_argument_error(&format!(
+                    "type number ({})",
+                    crate::js_value::number_string(*value)
+                )));
+            }
+            Self::Other(JsValue::String(_)) => return None,
+            Self::Other(JsValue::Array(_)) => "an instance of Array",
+            Self::Other(JsValue::Object(_)) => "an instance of Object",
+            Self::Other(JsValue::Null) => "null",
+            Self::Other(JsValue::Undefined) => "undefined",
+        };
+        Some(path_argument_error(received))
+    }
+    fn display(&self) -> String {
+        match self {
+            Self::Null => "null".into(),
+            Self::Undefined => "undefined".into(),
+            Self::Named(name) => name.clone(),
+            Self::Other(value) => {
+                crate::js_value::display(value).unwrap_or_else(|_| "undefined".into())
+            }
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+fn path_argument_error(received: &str) -> String {
+    format!("The \"path\" argument must be of type string. Received {received}")
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct FileHistoryBackup {
     pub backup_file_name: BackupFileName,
     pub version: u64,
@@ -456,11 +508,23 @@ impl FileHistoryStore {
         let mut deletions = 0usize;
         let mut files_changed = 0usize;
         for (abs_path, backup) in &snapshot.tracked_file_backups {
-            // TS `backup.backupFileName ? readBackupText(...) : null`: both
-            // `null` and `undefined` are falsy, so neither reads a blob.
-            let before = match &backup.backup_file_name {
-                BackupFileName::Named(name) => safe_read_text(&self.options.backup_dir.join(name))?,
-                BackupFileName::Null | BackupFileName::Undefined => None,
+            // TS `backup.backupFileName ? readBackupText(...) : null`. Falsy
+            // values (`null`, `undefined`, "", 0, false, NaN) skip the read;
+            // a truthy non-string reaches `path.join` and throws its TypeError.
+            let before = if backup.backup_file_name.is_truthy() {
+                match &backup.backup_file_name {
+                    BackupFileName::Named(name) => {
+                        safe_read_text(&self.options.backup_dir.join(name))?
+                    }
+                    other => {
+                        let message = other
+                            .path_join_error()
+                            .ok_or_else(|| FileHistoryError::Fs(PATH_JOIN_UNDEFINED.to_string()))?;
+                        return Err(FileHistoryError::Fs(message));
+                    }
+                }
+            } else {
+                None
             };
             let after = safe_read_text(Path::new(abs_path))?;
             match (before, after) {
@@ -558,6 +622,8 @@ impl FileHistoryStore {
                     // `JSON.stringify({backupFileName: undefined})` drops the
                     // key, exactly like the TS writer.
                     BackupFileName::Undefined => JsValue::Undefined,
+                    // Replayed corrupt values keep their original JSON shape.
+                    BackupFileName::Other(value) => value.clone(),
                 },
             );
             value.insert("version".into(), JsValue::Number(backup.version as f64));
@@ -843,10 +909,16 @@ fn restore_backup(
             }
             return Ok(RestoreOutcome::Deleted);
         }
-        BackupFileName::Undefined => {
-            return Err(FileHistoryError::Fs(PATH_JOIN_UNDEFINED.to_string()));
-        }
         BackupFileName::Named(name) => name,
+        // `restoreBackup` does not test truthiness: only `=== null` unlinks,
+        // so even a falsy non-string (`0`, `false`, "") reaches `path.join`.
+        other => {
+            return Err(FileHistoryError::Fs(
+                other
+                    .path_join_error()
+                    .unwrap_or_else(|| PATH_JOIN_UNDEFINED.to_string()),
+            ));
+        }
     };
     let backup_path = backup_dir.join(backup_file_name);
     match fs::metadata(&backup_path) {
