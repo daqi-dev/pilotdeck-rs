@@ -1079,7 +1079,9 @@ fn find_units(haystack: &[u16], needle: &[u16]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn expand_replacement(
+/// JS `GetSubstitution` over UTF-16 units (`$$`, `$&`, `` $` ``, `$'`; no
+/// capture groups for a string pattern). Shared with hook `$ARGUMENTS`.
+pub(crate) fn expand_replacement(
     output: &mut Vec<u16>,
     replacement: &[u16],
     input: &[u16],
