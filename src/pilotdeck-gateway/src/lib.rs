@@ -2,6 +2,7 @@
 mod acceptor;
 pub mod config;
 mod dispatch;
+mod fetch_redirect;
 mod frame;
 pub mod hooks;
 pub mod host;

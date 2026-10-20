@@ -458,6 +458,38 @@ const server = createServer((req, res) => {
       if (values.length > 0) headerLines[name] = values;
     }
     requests.push({ method: req.method, path: req.url, headers: selectHeaders(req.headers), headerLines, body });
+    // Redirects: the response body is never read by fetch; Location is
+    // relative, path-absolute or absolute; /chain/N counts down N hops.
+    const redirect = (status: number, location?: string) => {
+      res.writeHead(status, {
+        'content-type': 'application/json',
+        ...(location === undefined ? {} : { location }),
+      });
+      res.end('{"systemMessage":"redirect body"}');
+    };
+    const redirects: Record<string, [number, string?]> = {
+      '/redirect/301': [301, '/echo'],
+      '/redirect/302': [302, '/echo'],
+      '/redirect/303': [303, '/echo'],
+      '/redirect/307': [307, '/echo'],
+      '/redirect/308': [308, `http://127.0.0.1:${port}/echo`],
+      '/redirect/300': [300, '/echo'],
+      '/redirect/no-location': [302],
+      '/redirect/307-to-302': [307, '/redirect/302'],
+      '/redirect/slow': [307, '/slow'],
+      '/redirect/refused': [302, `http://127.0.0.1:${closedPort}/x`],
+      '/redirect/blocked-port': [302, 'http://127.0.0.1:6000/x'],
+      '/nested/deep/relative': [302, '../../echo'],
+    };
+    const chain = /^\/chain\/(\d+)$/.exec(req.url ?? '');
+    if (chain && Number(chain[1]) > 0) {
+      redirect(302, `/chain/${Number(chain[1]) - 1}`);
+      return;
+    }
+    if (req.url! in redirects) {
+      redirect(...redirects[req.url!]);
+      return;
+    }
     if (req.url === '/bad') {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end('{"continue":false,"reason":"bad"}');
@@ -539,6 +571,8 @@ async function httpCase(input: {
     ...(input.abortAtMs !== undefined ? { abortAtMs: input.abortAtMs } : {}),
     expected: json(result),
     request: requests.length > before ? requests[before] : null,
+    // Every request after the first is a followed redirect hop.
+    ...(requests.length > before + 1 ? { followed: requests.slice(before + 1) } : {}),
   });
 }
 await httpCase({ name: 'ok-json', target: '<url>/ok' });
@@ -585,6 +619,22 @@ await httpCase({ name: 'header-control-0x7f', target: '<url>/ok', headers: { 'X-
 await httpCase({ name: 'header-nul', target: '<url>/ok', headers: { 'X-A': 'a\u0000b' } });
 await httpCase({ name: 'header-inner-lf', target: '<url>/ok', headers: { 'X-A': 'a\nb' } });
 await httpCase({ name: 'pre-aborted-control-0x01', target: '<url>/ok', headers: { 'X-A': 'a\u0001b' }, abortAtMs: 0 });
+// Default fetch follows redirects (undici, at most 20): 301/302 turn POST into
+// GET and drop the body and content-* headers, 303 too, 307/308 resend both.
+await httpCase({ name: 'redirect-301', target: '<url>/redirect/301', headers: { 'X-A': 'a' } });
+await httpCase({ name: 'redirect-302', target: '<url>/redirect/302', headers: { 'X-A': 'a' } });
+await httpCase({ name: 'redirect-303', target: '<url>/redirect/303', headers: { 'X-A': 'a' } });
+await httpCase({ name: 'redirect-307', target: '<url>/redirect/307', headers: { 'X-A': 'a' } });
+await httpCase({ name: 'redirect-308-absolute', target: '<url>/redirect/308', headers: { 'X-A': 'a' } });
+await httpCase({ name: 'redirect-307-then-302', target: '<url>/redirect/307-to-302' });
+await httpCase({ name: 'redirect-relative', target: '<url>/nested/deep/relative' });
+await httpCase({ name: 'redirect-300-not-followed', target: '<url>/redirect/300' });
+await httpCase({ name: 'redirect-no-location', target: '<url>/redirect/no-location' });
+await httpCase({ name: 'redirect-chain-20', target: '<url>/chain/20' });
+await httpCase({ name: 'redirect-chain-21', target: '<url>/chain/21' });
+await httpCase({ name: 'redirect-refused', target: '<url>/redirect/refused' });
+await httpCase({ name: 'redirect-blocked-port', target: '<url>/redirect/blocked-port' });
+await httpCase({ name: 'redirect-abort-during', target: '<url>/redirect/slow', abortAtMs: 500 });
 
 // ------------------------------------------------- prompt $ARGUMENTS replace
 // String.prototype.replace(string, string): first match only, replacement

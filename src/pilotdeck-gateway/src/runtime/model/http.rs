@@ -704,7 +704,9 @@ fn build_http_request(
         ));
     }
     if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.port().is_some_and(super::count_http::blocked_port)
+        || parsed
+            .port()
+            .is_some_and(crate::fetch_redirect::blocked_port)
     {
         return Err(failed());
     }

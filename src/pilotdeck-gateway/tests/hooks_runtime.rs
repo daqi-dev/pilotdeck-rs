@@ -501,14 +501,44 @@ fn headers_json(headers: &[(String, String)]) -> String {
     format!("{{{}}}", entries.join(","))
 }
 
+/// Mirrors the generator's redirect table: (status, Location) by path.
+fn redirect_for(path: &str, base: &str, refused: &str) -> Option<(u16, Option<String>)> {
+    if let Some(n) = path
+        .strip_prefix("/chain/")
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| *n > 0)
+    {
+        return Some((302, Some(format!("/chain/{}", n - 1))));
+    }
+    let (status, location) = match path {
+        "/redirect/301" => (301, Some("/echo".to_owned())),
+        "/redirect/302" => (302, Some("/echo".to_owned())),
+        "/redirect/303" => (303, Some("/echo".to_owned())),
+        "/redirect/307" => (307, Some("/echo".to_owned())),
+        "/redirect/308" => (308, Some(format!("{base}/echo"))),
+        "/redirect/300" => (300, Some("/echo".to_owned())),
+        "/redirect/no-location" => (302, None),
+        "/redirect/307-to-302" => (307, Some("/redirect/302".to_owned())),
+        "/redirect/slow" => (307, Some("/slow".to_owned())),
+        "/redirect/refused" => (302, Some(format!("{refused}/x"))),
+        "/redirect/blocked-port" => (302, Some("http://127.0.0.1:6000/x".to_owned())),
+        "/nested/deep/relative" => (302, Some("../../echo".to_owned())),
+        _ => return None,
+    };
+    Some((status, location))
+}
+
 async fn serve_connection(
     stream: tokio::net::TcpStream,
     recorded: Arc<Mutex<Vec<JsValue>>>,
+    base: Arc<str>,
+    refused: Arc<str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use http_body_util::BodyExt;
     let service =
         hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
             let recorded = recorded.clone();
+            let (base, refused) = (base.clone(), refused.clone());
             async move {
                 let path = request.uri().path().to_owned();
                 let method = request.method().as_str().to_owned();
@@ -535,6 +565,16 @@ async fn serve_connection(
                     .unwrap()
                     .push(JsValue::Object(recorded_request));
 
+                if let Some((status, location)) = redirect_for(&path, &base, &refused) {
+                    let mut redirect =
+                        response(status, br#"{"systemMessage":"redirect body"}"#.to_vec());
+                    if let Some(location) = location {
+                        redirect
+                            .headers_mut()
+                            .insert(hyper::header::LOCATION, location.parse().unwrap());
+                    }
+                    return Ok::<_, Infallible>(redirect);
+                }
                 let response = match path.as_str() {
                     "/bad" => response(400, br#"{"continue":false,"reason":"bad"}"#.to_vec()),
                     "/empty" => response(204, Vec::new()),
@@ -563,21 +603,26 @@ async fn serve_connection(
     Ok(())
 }
 
-async fn mock_server(recorded: Arc<Mutex<Vec<JsValue>>>) -> (String, tokio::task::JoinHandle<()>) {
+async fn mock_server(
+    recorded: Arc<Mutex<Vec<JsValue>>>,
+    refused: &str,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let address = listener.local_addr().unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (shared_base, refused): (Arc<str>, Arc<str>) = (base.as_str().into(), refused.into());
     let task = tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 break;
             };
             let recorded = recorded.clone();
+            let (base, refused) = (shared_base.clone(), refused.clone());
             tokio::spawn(async move {
-                let _ = serve_connection(stream, recorded).await;
+                let _ = serve_connection(stream, recorded, base, refused).await;
             });
         }
     });
-    (format!("http://{address}"), task)
+    (base, task)
 }
 
 /// Echoes the prompt it receives, like the generator's evaluator.
@@ -616,12 +661,12 @@ async fn prompt_arguments_replace_matches_real_ts() {
 async fn http_executor_matches_real_ts_and_records_requests() {
     let oracle = oracle();
     let recorded = Arc::new(Mutex::new(Vec::new()));
-    let (base, server) = mock_server(recorded.clone()).await;
     let closed = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let refused = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
+    let (base, server) = mock_server(recorded.clone(), &refused).await;
     let cases = array(field(field(&oracle, "http"), "cases"));
-    assert_eq!(cases.len(), 27);
+    assert_eq!(cases.len(), 41);
     let executor = HttpHookExecutor::new();
     for case in cases {
         let name = text(field(case, "name"));
@@ -670,12 +715,26 @@ async fn http_executor_matches_real_ts_and_records_requests() {
         let expected_request = field(case, "request");
         if !expected_request.is_undefined() && !matches!(expected_request, JsValue::Null) {
             let requests = recorded.lock().unwrap();
-            assert_eq!(requests.len(), before + 1, "http request count {name}");
+            // Redirect hops: every request after the first, in order, with
+            // the method/body the follow policy chose (POST→GET drops body).
+            let followed = case.get("followed").map(array).unwrap_or_default();
+            assert_eq!(
+                requests.len(),
+                before + 1 + followed.len(),
+                "http request count {name}"
+            );
             assert_eq!(
                 json(&requests[before]),
                 json(expected_request),
                 "http request {name}"
             );
+            for (hop, expected) in followed.iter().enumerate() {
+                assert_eq!(
+                    json(&requests[before + 1 + hop]),
+                    json(expected),
+                    "http redirect hop {hop} {name}"
+                );
+            }
             if name == "headers-env" {
                 // Negative control: only allow-listed variables interpolate.
                 let headers = field(&requests[before], "headers").clone();

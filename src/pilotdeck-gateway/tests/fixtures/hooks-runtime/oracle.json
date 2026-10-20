@@ -1392,6 +1392,791 @@
         "abortAtMs": 0,
         "expected": "{\"stdout\":\"\",\"stderr\":\"This operation was aborted\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
         "request": null
+      },
+      {
+        "name": "redirect-301",
+        "target": "<url>/redirect/301",
+        "headers": {
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"\\\",\\\"headers\\\":{\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"\",\"headers\":{\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/301",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/echo",
+            "headers": {
+              "x-a": "a"
+            },
+            "headerLines": {
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-302",
+        "target": "<url>/redirect/302",
+        "headers": {
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"\\\",\\\"headers\\\":{\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"\",\"headers\":{\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/302",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/echo",
+            "headers": {
+              "x-a": "a"
+            },
+            "headerLines": {
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-303",
+        "target": "<url>/redirect/303",
+        "headers": {
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"\\\",\\\"headers\\\":{\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"\",\"headers\":{\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/303",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/echo",
+            "headers": {
+              "x-a": "a"
+            },
+            "headerLines": {
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-307",
+        "target": "<url>/redirect/307",
+        "headers": {
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/307",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "POST",
+            "path": "/echo",
+            "headers": {
+              "content-type": "application/json",
+              "x-a": "a"
+            },
+            "headerLines": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+          }
+        ]
+      },
+      {
+        "name": "redirect-308-absolute",
+        "target": "<url>/redirect/308",
+        "headers": {
+          "X-A": "a"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"a\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"a\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/308",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "POST",
+            "path": "/echo",
+            "headers": {
+              "content-type": "application/json",
+              "x-a": "a"
+            },
+            "headerLines": {
+              "content-type": [
+                "application/json"
+              ],
+              "x-a": [
+                "a"
+              ]
+            },
+            "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+          }
+        ]
+      },
+      {
+        "name": "redirect-307-then-302",
+        "target": "<url>/redirect/307-to-302",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"\\\",\\\"headers\\\":{}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"\",\"headers\":{}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/307-to-302",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "POST",
+            "path": "/redirect/302",
+            "headers": {
+              "content-type": "application/json"
+            },
+            "headerLines": {
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+          },
+          {
+            "method": "GET",
+            "path": "/echo",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-relative",
+        "target": "<url>/nested/deep/relative",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"\\\",\\\"headers\\\":{}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"\",\"headers\":{}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/nested/deep/relative",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/echo",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-300-not-followed",
+        "target": "<url>/redirect/300",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"systemMessage\\\":\\\"redirect body\\\"}\",\"stderr\":\"HTTP hook returned 300.\",\"exitCode\":1,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\",\"systemMessage\":\"redirect body\",\"raw\":{\"systemMessage\":\"redirect body\"}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/300",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "redirect-no-location",
+        "target": "<url>/redirect/no-location",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"systemMessage\\\":\\\"redirect body\\\"}\",\"stderr\":\"HTTP hook returned 302.\",\"exitCode\":1,\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\",\"systemMessage\":\"redirect body\",\"raw\":{\"systemMessage\":\"redirect body\"}}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/no-location",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "redirect-chain-20",
+        "target": "<url>/chain/20",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"systemMessage\\\":\\\"hello\\\"}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"systemMessage\":\"hello\",\"raw\":{\"systemMessage\":\"hello\"}}}",
+        "request": {
+          "method": "POST",
+          "path": "/chain/20",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/chain/19",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/18",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/17",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/16",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/15",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/14",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/13",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/12",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/11",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/10",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/9",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/8",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/7",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/6",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/5",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/4",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/3",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/2",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/1",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/0",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-chain-21",
+        "target": "<url>/chain/21",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/chain/21",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "GET",
+            "path": "/chain/20",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/19",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/18",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/17",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/16",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/15",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/14",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/13",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/12",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/11",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/10",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/9",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/8",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/7",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/6",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/5",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/4",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/3",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/2",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          },
+          {
+            "method": "GET",
+            "path": "/chain/1",
+            "headers": {},
+            "headerLines": {},
+            "body": ""
+          }
+        ]
+      },
+      {
+        "name": "redirect-refused",
+        "target": "<url>/redirect/refused",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/refused",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "redirect-blocked-port",
+        "target": "<url>/redirect/blocked-port",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/blocked-port",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "redirect-abort-during",
+        "target": "<url>/redirect/slow",
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "abortAtMs": 500,
+        "expected": "{\"stdout\":\"\",\"stderr\":\"This operation was aborted\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
+        "request": {
+          "method": "POST",
+          "path": "/redirect/slow",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        },
+        "followed": [
+          {
+            "method": "POST",
+            "path": "/slow",
+            "headers": {
+              "content-type": "application/json"
+            },
+            "headerLines": {
+              "content-type": [
+                "application/json"
+              ]
+            },
+            "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+          }
+        ]
       }
     ]
   },

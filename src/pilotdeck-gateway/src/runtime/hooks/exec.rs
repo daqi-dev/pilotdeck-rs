@@ -4,7 +4,8 @@
 //! new process group, so timeout/abort cleanup reaps descendants rather than
 //! only the shell. HTTP hooks use the workspace's existing hyper client: plain
 //! `http://` only, because adding a TLS crate is outside this change's
-//! dependency budget. Prompt/agent execution needs a model runner (A7); this
+//! dependency budget (a redirect to `https://` fails the same way). Redirects
+//! follow undici's default policy through `crate::fetch_redirect`. Prompt/agent execution needs a model runner (A7); this
 //! module keeps TS's explicit "not configured" result instead of inventing a
 //! different failure mode.
 use crate::hooks::protocol::{
@@ -1077,31 +1078,48 @@ impl HttpHookExecutor {
         {
             return Err("This operation was aborted".into());
         }
-        let mut request = hyper::Request::builder().method("POST").uri(url.as_str());
+        let mut wire_headers = hyper::HeaderMap::with_capacity(merged.len());
         for (name, _, value) in merged {
             let value = hyper::header::HeaderValue::from_bytes(&value)
                 .map_err(|_| JsString::from("fetch failed"))?;
-            request = request.header(name, value);
+            wire_headers.append(name, value);
         }
-        let request = request
-            .body(http_body_util::Full::new(bytes::Bytes::from(body)))
-            .map_err(|error| JsString::from(error.to_string()))?;
-        let response = {
-            let send = self.client.request(request);
-            if let Some(signal) = &options.signal {
-                tokio::select! {
-                    response = tokio::time::timeout(self.timeout, send) => match response {
-                        Ok(response) => response.map_err(|_| JsString::from("fetch failed"))?,
-                        Err(_) => return Err("fetch failed".into()),
-                    },
-                    _ = signal.cancelled() => return Err("This operation was aborted".into()),
+        // Default `fetch` follows redirects (undici, 20 hops); every hop shares
+        // the one abort signal and the one headers deadline below. Only plain
+        // http is wired (no TLS connector), so a hop to https reports the same
+        // scheme error as an https hook URL.
+        let client = &self.client;
+        let send = crate::fetch_redirect::follow(
+            url,
+            hyper::Method::POST,
+            wire_headers,
+            bytes::Bytes::from(body),
+            || JsString::from("fetch failed"),
+            |request: hyper::Request<http_body_util::Full<bytes::Bytes>>| {
+                let scheme = request.uri().scheme_str().unwrap_or_default().to_owned();
+                let sent = (scheme == "http").then(|| client.request(request));
+                async move {
+                    match sent {
+                        Some(sent) => sent.await.map_err(|_| JsString::from("fetch failed")),
+                        None => Err(JsString::from(format!(
+                            "Unsupported HTTP hook URL scheme: {scheme}"
+                        ))),
+                    }
                 }
-            } else {
-                tokio::time::timeout(self.timeout, send)
-                    .await
-                    .map_err(|_| JsString::from("fetch failed"))?
-                    .map_err(|_| JsString::from("fetch failed"))?
+            },
+        );
+        let response = if let Some(signal) = &options.signal {
+            tokio::select! {
+                response = tokio::time::timeout(self.timeout, send) => match response {
+                    Ok(response) => response?,
+                    Err(_) => return Err("fetch failed".into()),
+                },
+                _ = signal.cancelled() => return Err("This operation was aborted".into()),
             }
+        } else {
+            tokio::time::timeout(self.timeout, send)
+                .await
+                .map_err(|_| JsString::from("fetch failed"))??
         };
         let status = response.status();
         let ok = status.is_success();
