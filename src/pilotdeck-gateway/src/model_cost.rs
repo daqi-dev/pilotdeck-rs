@@ -551,24 +551,8 @@ fn append_tool_result_item(units: &mut Vec<u16>, item: &ToolResultItem) {
     }
 }
 
-/// ECMAScript `String(number)` / `Number::toString`. `stringify_json` already
-/// routes finite numbers through the protocol's JS-compatible number formatter
-/// (`ryu-js`) and spells `-0` as `"0"`, so only the three non-finite values
-/// need a local branch: `JSON.stringify` would write them as `null`.
 fn js_number_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value == f64::INFINITY {
-        return "Infinity".to_string();
-    }
-    if value == f64::NEG_INFINITY {
-        return "-Infinity".to_string();
-    }
-    match stringify_json(&JsValue::Number(value)) {
-        Ok(Some(text)) => text,
-        _ => unreachable!("a finite number always has JSON text"),
-    }
+    pilotdeck_protocol::number::number_to_string(value)
 }
 
 fn estimate_delimited_blocks(text: &JsString, name: &str) -> Result<usize, TokenizeError> {

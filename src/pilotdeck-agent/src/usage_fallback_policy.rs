@@ -47,20 +47,7 @@ fn label(value: &JsValue, text: &str) -> bool {
     value.as_string().is_some_and(|s| s.equals_str(text))
 }
 fn number_text(value: f64) -> JsString {
-    if value.is_nan() {
-        return "NaN".into();
-    }
-    if value == f64::INFINITY {
-        return "Infinity".into();
-    }
-    if value == f64::NEG_INFINITY {
-        return "-Infinity".into();
-    }
-    // Finite protocol number formatting has the pinned ECMAScript spelling.
-    stringify_json(&JsValue::Number(value))
-        .expect("finite number formatting")
-        .expect("finite number is defined")
-        .into()
+    pilotdeck_protocol::number::number_to_string(value).into()
 }
 fn join_text(value: &JsValue) -> PortResult<JsString> {
     enum Step<'a> {

@@ -308,6 +308,17 @@ pub(crate) fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<O
     }
 }
 
+/// Materialized property read for callers that need an owned value (config
+/// source merging). Inherited function members cannot be merged as records, so
+/// they map to `undefined` exactly like a miss at that call site.
+pub(crate) fn property_value(receiver: &JsObject, key: &JsString) -> JsValue {
+    match object_property(receiver, key) {
+        Some(Operand::Value(value)) => value.clone(),
+        Some(Operand::Number(number)) => JsValue::Number(number),
+        Some(Operand::Function(_) | Operand::ObjectPrototype) | None => JsValue::Undefined,
+    }
+}
+
 pub(crate) fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand<'a>> {
     let mut current = Some(receiver);
     let mut array_prototype = false;

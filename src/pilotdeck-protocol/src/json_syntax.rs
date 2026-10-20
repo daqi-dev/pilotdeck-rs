@@ -1,6 +1,8 @@
 //! SyntaxError messages of V8 12.x (Node 22) JSON.parse, over UTF-16 code units.
 //! Only validates; the parsed value is not needed before the SDK call.
 
+use crate::JsString;
+
 const MAX_CONTEXT: usize = 10;
 const MIN_LENGTH_FOR_CONTEXT: usize = MAX_CONTEXT * 2 + 1;
 
@@ -40,9 +42,16 @@ fn is_digit(unit: Option<u16>) -> bool {
 }
 
 /// None when the text is valid JSON; otherwise the exact SyntaxError message.
+/// This string API is lossy for a message that quotes a lone surrogate; callers
+/// that need the original units use [`parse_error_units`].
 pub fn parse_error(source: &str) -> Option<String> {
     let units: Vec<u16> = source.encode_utf16().collect();
-    Scanner { s: &units, i: 0 }.parse().err()
+    parse_error_units(&units).map(|message| String::from_utf16_lossy(message.units()))
+}
+
+/// UTF-16 entry point: keeps lone surrogates that V8 quotes in the diagnostic.
+pub fn parse_error_units(source: &[u16]) -> Option<JsString> {
+    Scanner { s: source, i: 0 }.parse().err()
 }
 
 struct Scanner<'a> {
@@ -50,7 +59,19 @@ struct Scanner<'a> {
     i: usize,
 }
 
-type Scan = Result<(), String>;
+type Scan = Result<(), JsString>;
+
+fn push_str(out: &mut Vec<u16>, text: &str) {
+    out.extend(text.encode_utf16());
+}
+
+fn quoted(units: &[u16]) -> JsString {
+    let mut out = Vec::with_capacity(units.len() + 2);
+    out.push(u16::from(b'"'));
+    out.extend_from_slice(units);
+    out.push(u16::from(b'"'));
+    JsString::from_utf16(out)
+}
 
 impl Scanner<'_> {
     fn peek(&self) -> Option<u16> {
@@ -78,15 +99,18 @@ impl Scanner<'_> {
         (line, 1 + self.i - last_break)
     }
 
-    fn at_position(&self, prefix: &str) -> String {
+    fn at_position(&self, prefix: &str) -> JsString {
         let (line, column) = self.line_column();
-        format!(
-            "{prefix} at position {} (line {line} column {column})",
-            self.i
-        )
+        let mut out = Vec::new();
+        push_str(&mut out, prefix);
+        push_str(
+            &mut out,
+            &format!(" at position {} (line {line} column {column})", self.i),
+        );
+        JsString::from_utf16(out)
     }
 
-    fn report(&self, token: Token, message: Option<&str>) -> String {
+    fn report(&self, token: Token, message: Option<&str>) -> JsString {
         if let Some(prefix) = message {
             return self.at_position(prefix);
         }
@@ -98,38 +122,41 @@ impl Scanner<'_> {
         }
     }
 
-    fn unexpected_token(&self) -> String {
-        let text = |units: &[u16]| String::from_utf16_lossy(units);
+    fn unexpected_token(&self) -> JsString {
         let source = self.s;
         if ["[object Object]", "undefined", "Infinity", "NaN"]
             .iter()
             .any(|special| special.encode_utf16().eq(source.iter().copied()))
         {
-            return format!("\"{}\" is not valid JSON", text(source));
+            let mut out = Vec::new();
+            out.extend(quoted(source).units());
+            push_str(&mut out, " is not valid JSON");
+            return JsString::from_utf16(out);
         }
         let (pos, len) = (self.i, source.len());
-        let token = text(&source[pos..pos + 1]);
-        if len < MIN_LENGTH_FOR_CONTEXT {
-            format!(
-                "Unexpected token '{token}', \"{}\" is not valid JSON",
-                text(source)
-            )
+        let token = &source[pos..pos + 1];
+        let (before, ellipsis_before, ellipsis_after) = if len < MIN_LENGTH_FOR_CONTEXT {
+            (source, false, false)
         } else if pos < MAX_CONTEXT {
-            format!(
-                "Unexpected token '{token}', \"{}\"... is not valid JSON",
-                text(&source[..pos + MAX_CONTEXT])
-            )
+            (&source[..pos + MAX_CONTEXT], false, true)
         } else if pos < len - MAX_CONTEXT {
-            format!(
-                "Unexpected token '{token}', ...\"{}\"... is not valid JSON",
-                text(&source[pos - MAX_CONTEXT..pos + MAX_CONTEXT])
-            )
+            (&source[pos - MAX_CONTEXT..pos + MAX_CONTEXT], true, true)
         } else {
-            format!(
-                "Unexpected token '{token}', ...\"{}\" is not valid JSON",
-                text(&source[pos - MAX_CONTEXT..])
-            )
+            (&source[pos - MAX_CONTEXT..], true, false)
+        };
+        let mut out = Vec::new();
+        push_str(&mut out, "Unexpected token '");
+        out.extend_from_slice(token);
+        push_str(&mut out, "', ");
+        if ellipsis_before {
+            push_str(&mut out, "...");
         }
+        out.extend(quoted(before).units());
+        if ellipsis_after {
+            push_str(&mut out, "...");
+        }
+        push_str(&mut out, " is not valid JSON");
+        JsString::from_utf16(out)
     }
 
     fn fail(&self, message: &str) -> Scan {
@@ -243,6 +270,11 @@ impl Scanner<'_> {
                             }
                             self.i += 1;
                         }
+                        // V8 >=256 prints "Unexpected token '<unit>'" for a
+                        // backslash before a non-ASCII unit instead of "Bad
+                        // escaped character" (measured Node 22; http oracle
+                        // json-invalid-81 pins this).
+                        Some(0x100..) => return self.unexpected(),
                         Some(_) => return self.fail(BAD_ESCAPED_CHARACTER),
                     }
                 }
@@ -351,6 +383,28 @@ mod tests {
         assert_eq!(
             parse_error("{").as_deref(),
             Some("Expected property name or '}' in JSON at position 1 (line 1 column 2)")
+        );
+    }
+
+    #[test]
+    fn utf16_entry_point_keeps_lone_surrogates_that_string_api_loses() {
+        // `"\<lone high surrogate>"` (not a `\u` escape): V8 quotes the raw
+        // code unit in the token and context.
+        let source = [0x22, 0x5c, 0xd800, 0x22];
+        let message = super::parse_error_units(&source).unwrap();
+        assert_eq!(
+            message.units(),
+            &[
+                0x55, 0x6e, 0x65, 0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x20, 0x74, 0x6f, 0x6b,
+                0x65, 0x6e, 0x20, 0x27, 0xd800, 0x27, 0x2c, 0x20, 0x22, 0x22, 0x5c, 0xd800, 0x22,
+                0x22, 0x20, 0x69, 0x73, 0x20, 0x6e, 0x6f, 0x74, 0x20, 0x76, 0x61, 0x6c, 0x69, 0x64,
+                0x20, 0x4a, 0x53, 0x4f, 0x4e
+            ]
+        );
+        assert!(
+            super::parse_error(&String::from_utf16_lossy(&source))
+                .unwrap()
+                .contains('\u{fffd}')
         );
     }
 

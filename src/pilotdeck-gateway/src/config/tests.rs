@@ -335,6 +335,22 @@ fn load_project_reports_legacy_webui_proxy_migration_like_ts() {
         ("webui: {runtime: {httpsProxy: ''}}\n", vec![]),
         ("webui: {runtime: {httpsProxy: 5}}\n", vec![]),
         ("webui: {runtime: [a]}\n", vec![]),
+        // #330: TS checks `raw === undefined`, not falsiness. `null` therefore
+        // stops the legacy migration and is rejected as a non-record; an empty
+        // string still migrates nothing but is a valid (empty) proxy string.
+        (
+            "proxy: null\nwebui: {runtime: {httpsProxy: http://legacy}}\n",
+            vec![(
+                "CONFIG_PROXY_INVALID",
+                "warning",
+                "proxy must be a string or an object with a url field.",
+                "proxy",
+            )],
+        ),
+        (
+            "proxy: ''\nwebui: {runtime: {httpsProxy: http://legacy}}\n",
+            vec![],
+        ),
         (
             "webui: {staffdeckCopy: {enabled: true}, runtime: {other: {x: 1}}}\n",
             vec![],
@@ -407,4 +423,29 @@ fn load_project_anchors_relative_cwd_like_load_snapshot() {
         root.display()
     )));
     assert_eq!(diagnostics(&relative), absolute);
+}
+
+/// #261: config-source merging must read `output[key]` through the explicit
+/// prototype chain and keep the key's UTF-16 units. Here a lone-surrogate key
+/// lives on the prototype object and is then overridden: the old
+/// `to_utf8().unwrap_or_default()` read `""`, replaced the record instead of
+/// merging it. Expected value from the real TS `mergeConfigSources`
+/// (`_tmp/20261020-p2-sweep-7/probe-261.out`).
+#[test]
+fn merge_reads_prototype_values_with_utf16_keys_like_javascript() {
+    let key = JsString::from_utf16(vec![0xd800]);
+    let mut prototype = JsObject::new();
+    prototype.insert(key.clone(), super::object([("a", JsValue::Number(1.0))]));
+    let mut right = JsObject::new();
+    right.insert("__proto__".into(), JsValue::Object(prototype));
+    right.insert(key.clone(), super::object([("b", JsValue::Number(2.0))]));
+    let mut left = JsValue::Object(JsObject::new());
+    super::merge(&mut left, JsValue::Object(right));
+    let merged = left
+        .as_object()
+        .unwrap()
+        .get_key(&key)
+        .expect("merged surrogate key");
+    assert_eq!(field(merged, "a"), &JsValue::Number(1.0), "{left:?}");
+    assert_eq!(field(merged, "b"), &JsValue::Number(2.0));
 }

@@ -88,10 +88,10 @@ fn merge(left: &mut JsValue, right: JsValue) {
             let mut previous = if k.equals_str("__proto__") && !output.contains_key("__proto__") {
                 output.prototype().cloned().unwrap_or_else(|| object([]))
             } else {
-                output
-                    .get_property(&k.to_utf8().unwrap_or_default())
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined)
+                // #261: merge reads `output[key]` with the same JavaScript
+                // lookup as the diff (own, explicit prototype chain, builtin
+                // members), not the narrower object-only helper.
+                changes::property_value(&output, k)
             };
             let value = if record(&previous) && record(v) {
                 merge(&mut previous, v.clone());

@@ -5,7 +5,7 @@ use crate::ports::{PortError, PortResult};
 use crate::turn::TurnStopReason;
 use crate::{MessageProjection, ProjectedMessage, ProjectionGap};
 use pilotdeck_protocol::model::BoundarySnapshot;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 fn object(fields: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue {
     let mut object = JsObject::new();
@@ -38,23 +38,7 @@ fn property<'a>(value: &'a JsValue, name: &str) -> PortResult<Option<&'a JsValue
     }
 }
 fn number_text(number: f64) -> PortResult<String> {
-    if number.is_nan() {
-        return Ok("NaN".into());
-    }
-    if number == f64::INFINITY {
-        return Ok("Infinity".into());
-    }
-    if number == f64::NEG_INFINITY {
-        return Ok("-Infinity".into());
-    }
-    // Accepted protocol codec uses ryu-js Number::toString, not Rust Display.
-    stringify_json(&JsValue::Number(number))
-        .map_err(|error| PortError::InvalidResponse {
-            message: error.to_string().into(),
-        })?
-        .ok_or_else(|| PortError::InvalidResponse {
-            message: "Number formatter returned undefined.".into(),
-        })
+    Ok(pilotdeck_protocol::number::number_to_string(number))
 }
 /// Array.join nullish elements are empty. Iterative traversal avoids imposing
 /// an invented recursion limit on ordinary lossless values. Native callable

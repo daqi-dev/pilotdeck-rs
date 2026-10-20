@@ -505,6 +505,11 @@ fn snapshot_path(step: &JsValue, root: &Path, marker_dirs: &HashMap<String, Stri
 #[test]
 fn scenarios_match_ts_outcomes_and_trees() {
     let oracle = oracle();
+    assert_eq!(
+        s(field(&oracle, "node")),
+        "v22.22.0",
+        "workspace-snapshot oracle must record the Node that produced it"
+    );
     // Secondary sentinel check: pre-place the old fixed names in a per-run
     // directory. On its own this cannot see the legacy `/tmp/pdrs-r9-*`
     // delete (round-4 P1); `out_of_bounds_removal_is_refused_and_sentinel_survives`
@@ -525,7 +530,13 @@ fn scenarios_match_ts_outcomes_and_trees() {
         sentinel
     })
     .collect();
-    for scenario in arr(field(&oracle, "scenarios")) {
+    let scenarios = arr(field(&oracle, "scenarios"));
+    assert!(
+        scenarios.len() >= 27,
+        "oracle lost its scenario set: {}",
+        scenarios.len()
+    );
+    for scenario in scenarios {
         replay_scenario(scenario);
     }
     for sentinel in &sentinels {
@@ -757,11 +768,20 @@ fn replay_scenario(scenario: &JsValue) {
                 fs::create_dir_all(root.join(s(field(step, "path")))).unwrap();
             }
             "symlinkSnapshot" => {
-                let path = root.join(s(field(step, "path")));
+                // Same ownership guard as remove/writeSnapshot: a step path
+                // outside the run tree is refused before any mkdir/symlink.
+                let path = owned_path(&root, &root.join(s(field(step, "path"))))
+                    .expect("symlinkSnapshot path inside run")
+                    .to_path_buf();
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 if fs::symlink_metadata(&path).is_ok() {
-                    let _ = remove_owned(&root, &path, true);
-                    let _ = remove_owned(&root, &path, false);
+                    for recursive in [true, false] {
+                        match remove_owned(&root, &path, recursive) {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(e) => panic!("{context}: {e}"),
+                        }
+                    }
                 }
                 symlink(s(field(step, "target")), &path).unwrap();
             }
@@ -901,7 +921,13 @@ fn config_env_table_matches_ts() {
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    for case in arr(field(&oracle, "configCases")) {
+    let cases = arr(field(&oracle, "configCases"));
+    assert!(
+        cases.len() >= 7,
+        "oracle lost its config case set: {}",
+        cases.len()
+    );
+    for case in cases {
         let mut env = HashMap::new();
         if let Some(table) = field(case, "env").as_object() {
             for (key, value) in table.entries() {
