@@ -216,7 +216,7 @@ fn unicode_escape(unit: u16, output: &mut String) {
     }
 }
 
-fn quoted(value: &JsString, output: &mut String) {
+pub(crate) fn quoted(value: &JsString, output: &mut String) {
     output.push('"');
     let mut units = value.units().iter().copied().peekable();
     while let Some(unit) = units.next() {

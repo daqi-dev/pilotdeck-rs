@@ -2,7 +2,7 @@
 //! Inputs are immutable wire/domain values, not native getter/prototype graphs.
 use crate::ProjectionError;
 use crate::tool_error_recovery::{ToolErrorRecoveryInput, ToolErrorRecoveryResult};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, model::BoundarySnapshot, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, model::BoundarySnapshot};
 use std::collections::HashSet;
 
 fn cat(parts: &[JsString]) -> JsString {
@@ -193,23 +193,7 @@ fn number(details: Option<&JsValue>, name: &str) -> Option<f64> {
     field(details, name).and_then(JsValue::as_number)
 }
 fn number_string(n: f64) -> Result<JsString, ProjectionError> {
-    if n.is_nan() {
-        return Ok("NaN".into());
-    }
-    if n == f64::INFINITY {
-        return Ok("Infinity".into());
-    }
-    if n == f64::NEG_INFINITY {
-        return Ok("-Infinity".into());
-    }
-    stringify_json(&JsValue::Number(n))
-        .map_err(|e| ProjectionError::Codec {
-            message: e.to_string().into(),
-        })?
-        .map(|s| s.into())
-        .ok_or_else(|| ProjectionError::Codec {
-            message: "Number stringify was undefined".into(),
-        })
+    Ok(pilotdeck_protocol::number::number_to_string(n).into())
 }
 struct Issue {
     path: JsString,

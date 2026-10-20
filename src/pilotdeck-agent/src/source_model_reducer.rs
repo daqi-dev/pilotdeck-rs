@@ -278,22 +278,8 @@ fn add(first: &SourceField, second: &JsValue) -> Result<SourceField> {
     Ok(present(&plus(a, b)?))
 }
 fn index(key: &JsString) -> Option<u32> {
-    let u = key.units();
-    if u.is_empty() || u.len() > 10 || u.len() > 1 && u[0] == 48 {
-        return None;
-    }
-    let mut n = 0u64;
-    for c in u {
-        if !(48..=57).contains(c) {
-            return None;
-        }
-        n = n * 10 + u64::from(*c - 48);
-    }
-    if n < u64::from(u32::MAX) {
-        Some(n as u32)
-    } else {
-        None
-    }
+    // Canonical array-index key, shared with every other JS-order seam (#330).
+    key.array_index()
 }
 fn spread(to: &mut JsObject, from: &JsValue) {
     match from {

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { bindSourceTree } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
+assert.equal(process.versions.node.split('.')[0], '22', 'oracle is calibrated on Node 22');
 assert.ok(process.argv[2], 'provide the fixture directory or Rust snapshot root');
 const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const baseline = resolve(process.env.PDRS_BASELINE);
@@ -133,6 +134,12 @@ async function removeOwned(
     const prefix = Buffer.from(root.endsWith(sep) ? root : `${root}${sep}`);
     if (!value.subarray(0, prefix.length).equals(prefix)) {
       throw new Error(`remove refused: ${value.toString('hex')} is outside the run directory ${root}`);
+    }
+    // The byte-prefix check alone accepts `<root>/../outside`. Path segments
+    // are ASCII, so the deliberately non-UTF-8 name can be inspected as latin1.
+    const rest: string[] = value.subarray(prefix.length).toString('latin1').split(sep);
+    if (rest.includes('..')) {
+      throw new Error(`remove refused: ${value.toString('hex')} escapes the run directory ${root}`);
     }
     path = value;
   }
@@ -1634,7 +1641,7 @@ try {
     assert.equal(await readFile(join(scratch, name), 'utf8'), 'keep\n', `sentinel ${name} was removed`);
   }
 
-  const oracle = { sourceCommit, sourceSha256, configCases, scenarios, hostBoundaryCases, cross };
+  const oracle = { sourceCommit, sourceSha256, node: process.version, configCases, scenarios, hostBoundaryCases, cross };
   const json = JSON.stringify(oracle, null, 2);
   for (const leak of [scratch, output, baseline, process.cwd()]) assert.ok(!json.includes(leak), 'oracle.json leaks a generation path');
   await writeFile(join(output, 'oracle.json'), `${json}\n`);

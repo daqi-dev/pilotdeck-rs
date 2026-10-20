@@ -305,6 +305,13 @@ pub fn parse_json(raw: &str) -> Result<JsValue, CodecError> {
 pub fn stringify_json(value: &JsValue) -> Result<Option<String>, CodecError> {
     codec::stringify(value)
 }
+/// JSON string literal quoting (including lone-surrogate escapes), shared by
+/// callers that write the same wire text without going through `JsValue`.
+pub fn quote_json_string(value: &JsString) -> String {
+    let mut output = String::new();
+    codec::quoted(value, &mut output);
+    output
+}
 
 #[cfg(test)]
 mod prototype_tests {

@@ -301,13 +301,20 @@ impl Metadata {
 }
 
 pub(crate) fn resolve(cwd: &Path, value: &str) -> PathBuf {
-    let path = if Path::new(value).is_absolute() {
-        PathBuf::from(value)
+    resolve_path(cwd, Path::new(value))
+}
+
+/// Node `path.resolve` lexical normalization over an already-typed path.
+/// Shared by config/session paths and the project-key registry so the copy
+/// cannot drift (#301).
+pub(crate) fn resolve_path(cwd: &Path, path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
     } else {
-        cwd.join(value)
+        cwd.join(path)
     };
     let mut output = PathBuf::new();
-    for component in path.components() {
+    for component in absolute.components() {
         match component {
             Component::ParentDir => {
                 output.pop();

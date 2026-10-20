@@ -8,7 +8,7 @@ use std::{
     any::Any,
     fmt,
     future::Future,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex, Weak},
 };
@@ -547,25 +547,10 @@ impl ProjectRuntimeRegistry {
 }
 
 // Node path.resolve is lexical and does not require the project to exist.
+// The normalization itself is shared with the config/session path seams.
 fn resolve_path(path: &Path) -> Result<PathBuf, RuntimeError> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| RuntimeError::new(error.to_string()))?
-            .join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for part in absolute.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            component => normalized.push(component.as_os_str()),
-        }
-    }
-    Ok(normalized)
+    let cwd = std::env::current_dir().map_err(|error| RuntimeError::new(error.to_string()))?;
+    Ok(crate::metadata::resolve_path(&cwd, path))
 }
 
 #[cfg(test)]

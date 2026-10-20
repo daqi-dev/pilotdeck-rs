@@ -1381,49 +1381,10 @@ fn indent(depth: usize, out: &mut String) {
     }
 }
 
-/// The protocol codec's JSON string quoting, duplicated because it is
-/// private to `pilotdeck-protocol`.
+/// JSON string quoting shared with the protocol codec; the manifest and
+/// `_FAILED.json` bytes must stay identical, including lone surrogates.
 fn quoted(value: &JsString, out: &mut String) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let escape = |unit: u16, out: &mut String| {
-        out.push_str("\\u");
-        for shift in [12, 8, 4, 0] {
-            out.push(char::from(HEX[usize::from((unit >> shift) & 15)]));
-        }
-    };
-    out.push('"');
-    let mut units = value.units().iter().copied().peekable();
-    while let Some(unit) = units.next() {
-        match unit {
-            8 => out.push_str("\\b"),
-            9 => out.push_str("\\t"),
-            10 => out.push_str("\\n"),
-            12 => out.push_str("\\f"),
-            13 => out.push_str("\\r"),
-            0..=31 => escape(unit, out),
-            34 => out.push_str("\\\""),
-            92 => out.push_str("\\\\"),
-            0xd800..=0xdbff => {
-                if let Some(low @ 0xdc00..=0xdfff) = units.peek().copied() {
-                    units.next();
-                    let scalar =
-                        0x10000 + ((u32::from(unit) - 0xd800) << 10) + (u32::from(low) - 0xdc00);
-                    if let Some(character) = char::from_u32(scalar) {
-                        out.push(character);
-                    }
-                } else {
-                    escape(unit, out);
-                }
-            }
-            0xdc00..=0xdfff => escape(unit, out),
-            _ => {
-                if let Some(character) = char::from_u32(u32::from(unit)) {
-                    out.push(character);
-                }
-            }
-        }
-    }
-    out.push('"');
+    out.push_str(&pilotdeck_protocol::quote_json_string(value));
 }
 
 #[cfg(test)]

@@ -18,15 +18,7 @@ pub(crate) fn scalar_string(v: &ScalarValue) -> JsString {
     }
 }
 pub(crate) fn number_string(n: f64) -> JsString {
-    if n.is_nan() {
-        "NaN".into()
-    } else if n == f64::INFINITY {
-        "Infinity".into()
-    } else if n == f64::NEG_INFINITY {
-        "-Infinity".into()
-    } else {
-        ryu_js::Buffer::new().format(n).into()
-    }
+    pilotdeck_protocol::number::number_to_string(n).into()
 }
 pub(crate) fn date_string(ms: i64) -> JsString {
     use chrono::{Datelike, Timelike};

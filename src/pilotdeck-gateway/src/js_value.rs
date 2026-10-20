@@ -27,19 +27,7 @@ impl StackOverflow {
 
 /// JS Number#toString (radix 10).
 pub(crate) fn number_string(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".into()
-    } else if n.is_infinite() {
-        (if n > 0.0 { "Infinity" } else { "-Infinity" }).into()
-    } else if n == 0.0 {
-        "0".into()
-    } else {
-        // JSON.stringify uses Number::toString for finite values.
-        stringify_json(&JsValue::Number(n))
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }
+    pilotdeck_protocol::number::number_to_string(n)
 }
 
 /// ECMAScript `GetSubstitution` for `String.prototype.replace` when the

@@ -457,3 +457,57 @@ fn compaction_replaces_the_inode_after_appending() {
     );
     assert_eq!(fs::read_to_string(store.path()).unwrap().lines().count(), 1);
 }
+
+/// #270: TS parses the environment with `readPositiveIntegerEnv` and falls back
+/// to 512 for 0 (`ProjectRuntimeRegistry.ts:2206-2209`), so `Some(0)` must mean
+/// the default rather than "compact after every record".
+#[test]
+fn zero_compact_threshold_selects_the_default() {
+    let scratch = Scratch::new();
+    for (name, threshold) in [("none", None), ("zero", Some(0))] {
+        let home = scratch.0.join(name);
+        let mut store = TaskBudgetStore::new(&home, threshold);
+        for run in ["a", "b"] {
+            store
+                .settle(
+                    &ROOT.into(),
+                    TaskBudgetScope::Session,
+                    &"s".into(),
+                    &run.into(),
+                    1.0,
+                    NOW,
+                )
+                .unwrap();
+        }
+        let lines: Vec<_> = fs::read_to_string(store.path())
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(lines.len(), 2, "{name}: no compaction below 512");
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.contains("\"kind\":\"settled\"")),
+            "{name}: {lines:?}"
+        );
+    }
+    // Negative control: an explicit positive threshold still compacts.
+    let home = scratch.0.join("one");
+    let mut store = TaskBudgetStore::new(&home, Some(1));
+    for run in ["a", "b"] {
+        store
+            .settle(
+                &ROOT.into(),
+                TaskBudgetScope::Session,
+                &"s".into(),
+                &run.into(),
+                1.0,
+                NOW,
+            )
+            .unwrap();
+    }
+    let text = fs::read_to_string(store.path()).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    assert!(text.contains("\"kind\":\"snapshot\""));
+}

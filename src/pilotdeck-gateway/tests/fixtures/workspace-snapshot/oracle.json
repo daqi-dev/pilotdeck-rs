@@ -3,6 +3,7 @@
   "sourceSha256": {
     "src/storage/workspaceSnapshot.ts": "e6364694245dc9f3f98378161b4de0f891d6efa022c1e7c5b018855f68931a93"
   },
+  "node": "v22.22.0",
   "configCases": [
     {
       "env": {},
