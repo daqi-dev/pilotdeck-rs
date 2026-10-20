@@ -73,6 +73,46 @@ fn to_fixed(number: f64, digits: usize) -> String {
 mod tests {
     use super::*;
 
+    /// Expected strings recorded from Node v22.22.0 `v.toFixed(3)`.
+    /// Probe and raw output: `_tmp/20261020-a66-pr8b/fix1/probe-number.{mjs,json}`.
+    #[test]
+    fn to_fixed_3_matches_node() {
+        for (value, expected) in [
+            (0.0, "0.000"),
+            (-0.0, "0.000"),
+            // Decimal .0005 boundaries fall on either side of the binary tie.
+            (0.0005, "0.001"),
+            (-0.0005, "-0.001"),
+            (1.0005, "1.000"),
+            (-1.0005, "-1.000"),
+            (0.0015, "0.002"),
+            (-0.0015, "-0.002"),
+            // Exact binary ties round the magnitude up, including negatives.
+            (0.0625, "0.063"),
+            (-0.0625, "-0.063"),
+            (0.8125, "0.813"),
+            (-0.8125, "-0.813"),
+            (0.0001, "0.000"),
+            (-0.0001, "-0.000"),
+            (5e-324, "0.000"),
+            (-5e-324, "-0.000"),
+            (0.123456789, "0.123"),
+            (123456789.1235, "123456789.124"),
+            (9007199254740992.0, "9007199254740992.000"),
+            (1000000000000000128.0, "1000000000000000128.000"),
+            (1e20, "100000000000000000000.000"),
+            (-1e20, "-100000000000000000000.000"),
+            (1e21, "1e+21"),
+            (-1e21, "-1e+21"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+        ] {
+            assert_eq!(to_fixed_3(value), expected, "{value:e}");
+        }
+    }
+
     /// Expected strings recorded from Node v22 `String(v)` / `v.toFixed(6)`
     /// (`_tmp/20261019-p2-sweep-6/probe-270.mjs`, real run).
     #[test]

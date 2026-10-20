@@ -429,7 +429,7 @@ fn recorder(scratch: &Scratch) -> Arc<Recorder> {
 async fn orchestrator_and_durable_transcript_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = a(f(&oracle, "orchestrationCases"));
-    assert_eq!(cases.len(), 32);
+    assert_eq!(cases.len(), 34);
     for case in cases {
         let def = f(case, "definition");
         let name = s(f(def, "name"));

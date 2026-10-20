@@ -91,6 +91,7 @@ export async function record(baseline: string, run: string) {
     {name:'warning-micro-rewrite',ratios:[.8,.7],micro:true,tools:true},
     {name:'blocking-full',ratios:[.9,.5]},
     {name:'blocking-micro-full',ratios:[.95,.91,.5],micro:true,tools:true},
+    {name:'blocking-micro-exact-threshold',ratios:[.95,.90,.5],micro:true,tools:true},
     {name:'no-summary',ratios:[.95],noSummary:true},
     {name:'failed-summary-skips',ratios:[.95,.65],modes:['error']},
     {name:'target-not-reached',ratios:[.95,.65]},
@@ -103,6 +104,7 @@ export async function record(baseline: string, run: string) {
     {name:'emergency-micro',ratios:[.95,.95,.95,.95,.95,.5],micro:true,tools:true},
     {name:'emergency-truncate',ratios:[.95,.95,.95,.95,.7]},
     {name:'emergency-overflow',ratios:[.95,1.05,1.05,1.05,1.05]},
+    {name:'emergency-overflow-exact-one',ratios:[.95,.95,.95,.95,1]},
     {name:'failed-emergency-overflow',ratios:[.95,1.05,1.05,1.05],modes:['error','error']},
     {name:'manual-policy-bypass',ratios:[.1,.65],manual:true,noPolicy:true,micro:true},
     {name:'manual-post-snip',ratios:[.1,.7,.55],manual:true,snip:true,builderMany:true},
@@ -226,7 +228,7 @@ export async function record(baseline: string, run: string) {
     hostCases.push({mode,input,expected:{response,calls}});
     await dispatcher.dispose();native.dispose();
   }
-  assert.equal(orchestrationCases.length,32);
+  assert.equal(orchestrationCases.length,34);
   assert.equal(recoveryCases.length,41);
   assert.equal(fallbackCases.length,20);
   const loopCases=await recordLoops(baseline,turns,summary);
