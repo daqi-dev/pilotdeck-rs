@@ -32,8 +32,7 @@
 //!   `getServerCapabilities().instructions` (stripped by the capabilities
 //!   schema) and then `_serverInstructions`, which SDK 1.29 renamed.
 //! - A handshake timeout leaves the handshake running; its process is only
-//!   closed when the 60 s initialize request itself fails. `close()` during
-//!   a handshake does not stop it either.
+//!   closed when the 60 s initialize request itself fails.
 //! - Any error whose message matches `/timed out|timeout/i` is treated as a
 //!   timeout and recycles the transport. HTTP 404 is not a session expiry by
 //!   itself: the baseline checks `statusCode`, which the SDK never sets.
@@ -46,6 +45,15 @@
 //!   accepted unvalidated.
 //! - `callTool`'s `AbortSignal` option; OAuth (`authProvider` is never set by
 //!   the baseline).
+//!
+//! ## Intentional difference
+//!
+//! `close()` while a handshake is in flight: the baseline installs the late
+//! connection and reports `ready`, and a `start()` racing it opens a second
+//! one; the loser's child is never closed. Here `close()` bumps an epoch: the
+//! late connection is closed and that `start()` fails with
+//! `mcp_handshake_failed` ("MCP handshake aborted: client closed during
+//! connect"), so at most one connection is live.
 
 use super::http::{HttpKind, HttpLink, parse_endpoint};
 use super::naming::{
@@ -483,6 +491,9 @@ struct State {
     list_tools_cache: Option<(Instant, Vec<McpToolSpec>)>,
     server_instructions: JsString,
     connect: Option<watch::Receiver<ConnectResult>>,
+    /// Bumped by `close()`; a connect that started in an older epoch does
+    /// not install its connection.
+    epoch: u64,
     reconnect_in_flight: bool,
     per_session_dir: Option<PathBuf>,
 }
@@ -619,6 +630,7 @@ impl McpClient {
                     list_tools_cache: None,
                     server_instructions: JsString::default(),
                     connect: None,
+                    epoch: 0,
                     reconnect_in_flight: false,
                     per_session_dir: None,
                 }),
@@ -664,10 +676,19 @@ impl McpClient {
                     let (sender, receiver) = watch::channel(None);
                     state.connect = Some(receiver.clone());
                     let client = self.clone();
+                    let mine = receiver.clone();
                     tokio::spawn(async move {
                         let result = client.run_connect().await;
                         if result.is_err() {
-                            client.state().connect = None;
+                            // Forget only this attempt, never a newer one.
+                            let mut state = client.state();
+                            if state
+                                .connect
+                                .as_ref()
+                                .is_some_and(|current| current.same_channel(&mine))
+                            {
+                                state.connect = None;
+                            }
                         }
                         sender.send_replace(Some(result));
                     });
@@ -689,7 +710,11 @@ impl McpClient {
     }
 
     async fn run_connect(&self) -> Result<(), McpClientError> {
-        self.state().status = McpStatus::Connecting;
+        let epoch = {
+            let mut state = self.state();
+            state.status = McpStatus::Connecting;
+            state.epoch
+        };
         // `buildTransport()` throws outside the handshake try: unwrapped,
         // status stays `connecting`.
         let wire = self.build_transport()?;
@@ -728,6 +753,24 @@ impl McpClient {
             }),
         };
         let mut state = self.state();
+        if state.epoch != epoch {
+            // gate2 P1-1: `close()` ran during this handshake. The baseline
+            // still installs the connection (and a racing `start()` could
+            // install a second one); here the late connection is closed and
+            // the attempt fails, so at most one connection is ever live.
+            drop(state);
+            if let Ok(client) = outcome {
+                tokio::spawn(async move { client.close().await });
+            }
+            return Err(McpClientError::client(
+                McpClientErrorCode::HandshakeFailed,
+                format!(
+                    "MCP handshake aborted: client closed during connect (server={})",
+                    self.id()
+                ),
+                self.id(),
+            ));
+        }
         match outcome {
             Ok(client) => {
                 state.client = Some(client);
@@ -980,7 +1023,13 @@ impl McpClient {
     }
 
     pub async fn close(&self) {
-        let client = self.state().client.clone();
+        // The epoch moves before the first await, so an in-flight connect is
+        // invalidated even when the caller drops this future.
+        let client = {
+            let mut state = self.state();
+            state.epoch += 1;
+            state.client.clone()
+        };
         if let Some(client) = client {
             client.close().await;
         }
