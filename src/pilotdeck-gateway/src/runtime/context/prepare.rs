@@ -56,6 +56,8 @@ impl RuntimeContextSurface {
 }
 
 pub struct Options {
+    pub compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
+    pub max_context_tokens: f64,
     pub extension: Option<Arc<dyn ExtensionResolver>>,
     pub include_extensions_with_custom_system_prompt: bool,
     pub runtime_context_surface: RuntimeContextSurface,
@@ -75,6 +77,8 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            compaction: None,
+            max_context_tokens: 8192.0,
             extension: None,
             include_extensions_with_custom_system_prompt: false,
             runtime_context_surface: RuntimeContextSurface::SystemPrompt,
@@ -90,6 +94,8 @@ impl Default for Options {
 }
 
 struct Inner {
+    compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
+    max_context_tokens: f64,
     assembler: PromptAssembler,
     include_extensions_with_custom_system_prompt: bool,
     runtime_context_surface: RuntimeContextSurface,
@@ -128,6 +134,8 @@ impl DefaultContextRuntime {
         );
         Self {
             inner: Arc::new(Inner {
+                compaction: options.compaction,
+                max_context_tokens: options.max_context_tokens,
                 assembler,
                 include_extensions_with_custom_system_prompt: options
                     .include_extensions_with_custom_system_prompt,
@@ -554,7 +562,18 @@ impl ContextRuntime for DefaultContextRuntime {
         matches!(
             operation,
             Operation::PrepareForModel | Operation::ApplyToolResults
-        )
+        ) || (operation == Operation::TryAutoCompact && self.inner.compaction.is_some())
+    }
+    fn try_auto_compact(&self, input: ContextInput) -> HostFuture<JsValue> {
+        match &self.inner.compaction {
+            Some(port) => port.try_auto_compact(input, self.inner.max_context_tokens),
+            None => Box::pin(async {
+                Err(
+                    ModuleError::new("Host context capability does not support try_auto_compact.")
+                        .into(),
+                )
+            }),
+        }
     }
     fn apply_tool_results(&self, input: ContextInput) -> HostFuture<JsValue> {
         let runtime = self.clone();
