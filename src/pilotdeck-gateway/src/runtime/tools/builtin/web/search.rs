@@ -711,9 +711,6 @@ async fn send(
         },
         random: Arc::clone(&options.random),
     };
-    // `options.timeoutMs && options.timeoutMs > 0` in the baseline: a
-    // non-positive value disables the local timer rather than arming one
-    // that fires immediately.
     let timed = async {
         let result = network_fetch(options.transport.as_ref(), request, &fetch).await;
         match result {
@@ -723,14 +720,24 @@ async fn send(
             Err(error) => Err(Some(error)),
         }
     };
-    if timeout_ms > 0.0 {
-        tokio::select! {
-            biased;
-            () = tokio::time::sleep(Duration::from_secs_f64(timeout_ms / 1000.0)) => Err(None),
-            result = timed => result,
-        }
+    // `setTimeout(() => controller.abort(), timeoutMs)` in every provider is
+    // unconditional: 0, a negative value and NaN still abort the call. Only
+    // `networkFetch`'s own per-attempt timer is gated on `timeoutMs > 0`.
+    // Node clamps the delay to [1, 2^31-1] ms (NaN and non-finite values
+    // become 1 ms), so an overflowing number never reaches
+    // `Duration::from_secs_f64`, which panics. `timed` is polled first so an
+    // already-resolved transport wins over the immediate timer, as a microtask
+    // beats a timer callback in the baseline.
+    let delay_ms = timeout_ms.trunc();
+    let delay_ms = if delay_ms.is_finite() && (1.0..=i32::MAX as f64).contains(&delay_ms) {
+        delay_ms
     } else {
-        timed.await
+        1.0
+    };
+    tokio::select! {
+        biased;
+        result = timed => result,
+        () = tokio::time::sleep(Duration::from_secs_f64(delay_ms / 1000.0)) => Err(None),
     }
 }
 
