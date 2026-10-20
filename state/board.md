@@ -1,21 +1,21 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 14:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr7 | gate | ready | PR #366 已入队（四轮收敛，GLM/DeepSeek）
-- p2-sweep-7 | gate | ready | PR #367 已入队（两轮收敛，Claude/Grok）
-- A6.7-pr4-fixes | review | ready | #351 提前合入（auto-merge 遗留），5 个修复提交 rebase 成 claude/a67-pr4-fixes（解了 count_http 冲突，702 测试全绿）；gate9 中；Grok r3 0/0、gate8 0/0 已有，开 PR 时带上并关 #312 #289 #277
-- A6.5-pr6 | impl | ready | 修复轮 2（DeepSeek）：Grok r2 P1 trackedFileBackups 值为字符串/数组
-- A6.5-pr10a | impl | ready | GLM r3 P1：epoch 捕获位置（Claude 修，wt-a6-x0）
-- A6.5-pr10b | impl | ready | DeepSeek P1×3（new_cyclic 竞态、outputSchema 不等价 Ajv 等），rebase 到 pr10a 修复后修（Claude）
-- A6.4-pr6 | review | ready | openai（DeepSeek，已 rebase 到 pr5）：Claude 0/0，GLM 第二家与 gate1 中；pr5 已入 main，开 PR 前 rebase main
-- A6.4-pr7 | review | ready | openai-responses（Claude）：DeepSeek 0/0，GLM 第二家与 gate1 中；同上
-- A6.5-pr12 | review | ready | 后台任务（Claude，叠在 pr7 上）：DeepSeek 评审与 gate1 中
-- A6.5-pr9 | impl | ready | web_fetch/search（Claude，wt-a64-pr11）：HTML 转换先走注入边界
-- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层自写移植；接 pr9
-- A6.4-pr8 | impl | ready | google provider；A6.4-pr5 已入 main，可开工（等空闲实现方与 worktree）
+updated: 2026-10-20 17:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- accepted-diffs-371 | gate | ready | PR #372：冻结件追加 #4 #5（待批）；codex 0/0，GLM 在审；前置于 A6.5-pr10b / pr12 合并
+- A6.5-pr6 | gate | ready | rewind_files：Grok r4 0/0、gate4 0/0；rebase main 后 731 全绿（48009b5），gate5 在新 HEAD 排队，过即开 PR
+- A6.4-pr6 | gate | ready | openai：闸门/Claude/GLM r1 收敛；GLM r2 的唯一 P1 是提交信息与实现相反，已 amend（39969c3，树不变）；gate4 排队，过即开 PR
+- #342-tool-pair | review | ready | toolPairIntegrity 收编（Claude 起头、DeepSeek 完成，wt-a6-recorder）：gate1 0/0、GLM 0/0；codex 第二家在审
+- A6.5-pr12 | gate | ready | 后台任务：代码类 P0/P1 全清（GLM r2、Grok r2 确认）；仅剩登记 P1 → #372 合入后在新 HEAD 重跑闸门
+- A6.5-pr10a | review | ready | MCP 客户端：codex 修复轮 4（终审 P1×5）+ rebase main（6104af5，752 全绿）；GLM r5 + gate6 在跑
+- A6.5-pr10b | impl | ready | MCP 运行时：codex 接手 rebase 到新 pr10a（client.rs 真冲突，按补丁手工合）+ GLM P1-A（pattern 正则语义）+ gate2 停机竞态 P1；旧版保留在 claude/a65-pr10b-pre-rebase
+- A6.4-pr8 | review | ready | google：gate1 0/0；GLM r1 在审，Grok r1 因 SSL 中断待重派
+- A6.4-pr7 | review | ready | openai-responses：修复轮 1 + rebase main 已推（3696cc4）；DeepSeek r2 + gate2 结果待收
+- A6.5-pr9 | impl | ready | web_fetch/search：gate1 P1×4（body 读取不看取消/无总时限、secondary signal 丢失、重试注释同 pr10a 实为 P3）；作者 Claude 子代理被上游限流，待重派
+- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层；接 pr9
+- A6.6-pr8a | impl | ready | compaction engine + stripMultimedia；接 #342
+- A6.6-pr8b | impl | ready | policy/orchestrator/recovery；接 pr8a
 - A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr6~pr8
-- A6.6-pr8 | impl | ready | 全量 compaction（辅助模型经 A6.4）；可开工
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -24,6 +24,14 @@ updated: 2026-10-20 14:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
+
+> ## 2026-10-20 17:30 · /loop 两小时交接（自 14:30 起）
+> **合并**：#366 A6.5-pr7、#367 p2-sweep-7（关 13 张 P2-跟进）、#368、#369（#351 漏掉的 5 个修复提交）、#370。
+> **通道**：14:47 GLM 撞 5 小时额度（429/1308，闸门全 ERROR「模型不符 <synthetic>」，见 memory 20261020-glm-5h-quota）；约 15:10 起 Claude 子代理撞上游限流，三条实现线停在半成品上——现场先存成 WIP 提交，再由 DeepSeek / codex 接手（看板重派次数 5）。用户告知 GLM、DeepSeek、codex（Astra / 6.1-sol）均可用：实现改用 DeepSeek + codex，评审用 GLM + Grok + codex，派活前核作者谱系。
+> **冻结件**：pr10b、pr12 两处有意偏离（TS 泄漏 / 永久挂起）开 #371 → PR #372，只追加待批条目，check_frozen 通过；**人批前不算已接受**。
+> **在途（持有人：协调者本会话）**：见 READY。后台：codex 修 pr10b（wt-a65-pr10b，`_tmp/20261020-a65-pr10b/fix-codex.status`），闸门池 + GLM / Grok 串行评审队列（`_tmp/20261020-review-chain.sh`）。
+> **教训**：zsh 里 `nohup bash x.sh $x` 不按空格拆分变量，闸门收到空参数直接退出——派闸门一律显式传三个参数。
+> **资源**：worktree 12/12；磁盘每轮涨到 100 GiB 上下，每轮清空闲 worktree 的 incremental；cargo 槽 ≤4。
 
 > ## 2026-10-20 14:30 · /loop
 > **合并**：#364 A6.4-pr5（provider HTTP + rustls，三轮收敛）、#362、#365。入队：#366 A6.5-pr7（四轮）、#367 p2-sweep-7（15 张清账）。
