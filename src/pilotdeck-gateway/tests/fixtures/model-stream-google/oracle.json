@@ -474,6 +474,173 @@
    ]
   },
   {
+   "name": "prototype-schema-and-extra-body",
+   "target": "mock",
+   "request": {
+    "tools": [
+     {
+      "name": "lookup",
+      "inputSchema": {
+       "properties": {
+        "__proto__": {
+         "type": "string"
+        },
+        "safe": {
+         "const": "ok"
+        }
+       },
+       "required": [
+        "__proto__",
+        "type",
+        "safe"
+       ]
+      }
+     }
+    ],
+    "outputSchema": {
+     "name": "answer",
+     "schema": {
+      "properties": {
+       "__proto__": null,
+       "safe": {
+        "const": "ok"
+       }
+      },
+      "required": [
+       "__proto__",
+       "safe"
+      ]
+     }
+    }
+   },
+   "provider": {
+    "extraBody": {
+     "__proto__": {
+      "ghost": {
+       "keep": 1
+      }
+     },
+     "ghost": {
+      "live": 2
+     },
+     "nested": {
+      "__proto__": {
+       "keep": 1
+      },
+      "safe": 2
+     }
+    }
+   },
+   "replies": [
+    {
+     "chunks": [
+      {
+       "text": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+      }
+     ]
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/models/gemini-3-pro-preview:streamGenerateContent?alt=sse",
+     "headers": [
+      [
+       "content-type",
+       "application/json"
+      ],
+      [
+       "x-fixture",
+       "1"
+      ],
+      [
+       "x-goog-api-client",
+       "google-genai-sdk/2.10.0 gl-node/v22.22.0"
+      ],
+      [
+       "x-goog-api-key",
+       "sk-fixture"
+      ]
+     ],
+     "body": "{\"contents\":[{\"parts\":[{\"text\":\"Say hi 你好\"}],\"role\":\"user\"},{\"parts\":[{\"text\":\"prior\",\"thought\":true,\"thoughtSignature\":\"old-sig\"},{\"text\":\"Hi\"},{\"functionCall\":{\"id\":\"call_1\",\"args\":{\"q\":\"prior\"},\"name\":\"lookup\"}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"id\":\"call_1\",\"name\":\"lookup\",\"response\":{\"output\":\"result\"}}}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"You are terse.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"lookup\",\"parametersJsonSchema\":{\"properties\":{\"safe\":{\"enum\":[\"ok\"]}},\"required\":[\"__proto__\",\"type\",\"safe\"],\"type\":\"object\"}}]}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"AUTO\"}},\"generationConfig\":{\"maxOutputTokens\":256,\"responseMimeType\":\"application/json\",\"responseJsonSchema\":{\"properties\":{\"safe\":{\"enum\":[\"ok\"]}},\"required\":[\"safe\"]},\"thinkingConfig\":{\"includeThoughts\":true,\"thinkingLevel\":\"high\"}},\"ghost\":{\"live\":2},\"nested\":{\"__proto__\":{\"keep\":1},\"safe\":2}}"
+    }
+   ],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "google-fixture",
+      "model": "gemini-3-pro",
+      "providerBaseUrl": "$MOCK",
+      "requestFingerprint": "6ec666bbc560f32a88e9ad9be1622547900abc1e5238f31562193f66872397a7"
+     }
+    },
+    {
+     "event": {
+      "type": "message_start",
+      "role": "assistant",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "text_delta",
+      "text": "ok",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "event": {
+      "type": "message_end",
+      "finishReason": "stop",
+      "raw": {
+       "candidates": [
+        {
+         "content": {
+          "role": "model",
+          "parts": [
+           {
+            "text": "ok"
+           }
+          ]
+         },
+         "finishReason": "STOP"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "text",
    "target": "mock",
    "replies": [
@@ -4266,6 +4433,875 @@
     "enum": [
      "leaf"
     ]
+   }
+  }
+ ],
+ "prototypeSchemaCases": [
+  {
+   "name": "property-proto-record",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "__proto__": {
+      "type": "string"
+     },
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "__proto__",
+     "type",
+     "constructor",
+     "safe",
+     "missing"
+    ]
+   },
+   "cleaned": {
+    "type": "object",
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "__proto__",
+     "type",
+     "constructor",
+     "safe"
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "__proto__",
+     "type",
+     "constructor",
+     "safe"
+    ]
+   }
+  },
+  {
+   "name": "property-proto-null",
+   "schema": {
+    "properties": {
+     "__proto__": null,
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "__proto__",
+     "constructor",
+     "safe"
+    ]
+   },
+   "cleaned": {
+    "properties": {
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "safe"
+    ]
+   },
+   "normalized": {
+    "properties": {
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "safe"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "property-proto-scalar",
+   "schema": {
+    "properties": {
+     "__proto__": 17,
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "__proto__",
+     "constructor",
+     "safe"
+    ]
+   },
+   "cleaned": {
+    "properties": {
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "__proto__",
+     "constructor",
+     "safe"
+    ]
+   },
+   "normalized": {
+    "properties": {
+     "safe": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "__proto__",
+     "constructor",
+     "safe"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "schema-proto-array",
+   "schema": {
+    "__proto__": {
+     "type": "array"
+    },
+    "description": "keep"
+   },
+   "cleaned": {
+    "description": "keep"
+   },
+   "normalized": {
+    "description": "keep",
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "schema-proto-properties",
+   "schema": {
+    "__proto__": {
+     "properties": {
+      "safe": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "safe"
+    ]
+   },
+   "cleaned": {
+    "required": [
+     "safe"
+    ]
+   },
+   "normalized": {
+    "required": [
+     "safe"
+    ],
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "schema-proto-item-inherited",
+   "schema": {
+    "__proto__": {
+     "items": {
+      "type": "string"
+     }
+    },
+    "type": "array"
+   },
+   "cleaned": {
+    "type": "array"
+   },
+   "normalized": {
+    "type": "array",
+    "properties": {}
+   }
+  },
+  {
+   "name": "proto-is-const-payload",
+   "schema": {
+    "const": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "cleaned": {
+    "enum": [
+     {
+      "__proto__": {
+       "keep": 1
+      },
+      "safe": 2
+     }
+    ]
+   },
+   "normalized": {
+    "enum": [
+     {
+      "__proto__": {
+       "keep": 1
+      },
+      "safe": 2
+     }
+    ],
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "proto-is-default-meta",
+   "schema": {
+    "anyOf": [
+     {
+      "const": "x"
+     },
+     {
+      "const": "y"
+     }
+    ],
+    "default": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "cleaned": {
+    "type": "string",
+    "enum": [
+     "x",
+     "y"
+    ],
+    "default": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "normalized": {
+    "type": "string",
+    "enum": [
+     "x",
+     "y"
+    ],
+    "default": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    },
+    "properties": {}
+   }
+  },
+  {
+   "name": "union-proto-no-enum",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "__proto__": {
+        "type": "string"
+       },
+       "safe": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "__proto__",
+       "safe"
+      ]
+     }
+    ]
+   },
+   "cleaned": {
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "__proto__",
+     "safe"
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "__proto__",
+     "safe"
+    ]
+   }
+  },
+  {
+   "name": "union-proto-enum",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "__proto__": {
+        "enum": [
+         "p"
+        ]
+       },
+       "enum": {
+        "type": "string"
+       },
+       "type": {
+        "const": "v"
+       },
+       "safe": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   },
+   "cleaned": {
+    "properties": {
+     "enum": {
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "v"
+      ]
+     },
+     "safe": {
+      "type": "string"
+     }
+    }
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {
+     "enum": [
+      "p"
+     ],
+     "type": {
+      "enum": [
+       "v"
+      ],
+      "type": "string"
+     },
+     "safe": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "union-proto-inherited-schema",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "__proto__": {
+        "const": {
+         "__proto__": {
+          "data": 1
+         }
+        }
+       },
+       "safe": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "__proto__": {
+        "const": "q"
+       },
+       "safe": {
+        "enum": [
+         "a"
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "cleaned": {
+    "anyOf": [
+     {
+      "properties": {
+       "safe": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "safe": {
+        "enum": [
+         "a"
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {
+     "safe": {
+      "enum": [
+       "a"
+      ],
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "inherited-required-default",
+   "schema": {
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "constructor",
+     "__proto__",
+     "toString",
+     "safe",
+     "missing"
+    ]
+   },
+   "cleaned": {
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "constructor",
+     "__proto__",
+     "toString",
+     "safe"
+    ]
+   },
+   "normalized": {
+    "properties": {
+     "safe": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "constructor",
+     "__proto__",
+     "toString",
+     "safe"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "ref-spread-resets-proto",
+   "schema": {
+    "$defs": {
+     "x": {
+      "__proto__": {
+       "description": "inherited",
+       "type": "array"
+      }
+     }
+    },
+    "$ref": "#/$defs/x",
+    "description": "outer"
+   },
+   "cleaned": {
+    "description": "outer"
+   },
+   "normalized": {
+    "description": "outer",
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "union-spread-resets-proto",
+   "schema": {
+    "anyOf": [
+     {
+      "__proto__": {
+       "description": "inherited",
+       "type": "array"
+      }
+     }
+    ],
+    "description": "outer"
+   },
+   "cleaned": {
+    "description": "outer"
+   },
+   "normalized": {
+    "description": "outer",
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
+   "name": "repeat-inherited-constructor",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       },
+       "toString": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "constructor",
+       "toString"
+      ]
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "number"
+       },
+       "toString": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "constructor",
+       "toString"
+      ]
+     }
+    ]
+   },
+   "cleaned": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       },
+       "toString": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "constructor",
+       "toString"
+      ]
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "number"
+       },
+       "toString": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "constructor",
+       "toString"
+      ]
+     }
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {},
+    "required": [
+     "constructor",
+     "toString"
+    ]
+   }
+  },
+  {
+   "name": "repeat-inherited-constructor-enum-control",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "const": "valid"
+       }
+      }
+     }
+    ]
+   },
+   "cleaned": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "enum": [
+         "valid"
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {
+     "constructor": {
+      "enum": [
+       "valid"
+      ],
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "repeat-inherited-constructor-third",
+   "schema": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "number"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "integer"
+       }
+      }
+     }
+    ]
+   },
+   "cleaned": {
+    "anyOf": [
+     {
+      "properties": {
+       "constructor": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "number"
+       }
+      }
+     },
+     {
+      "properties": {
+       "constructor": {
+        "type": "integer"
+       }
+      }
+     }
+    ]
+   },
+   "normalized": {
+    "type": "object",
+    "properties": {}
+   }
+  }
+ ],
+ "prototypeMergeCases": [
+  {
+   "name": "merge-source-proto-record",
+   "target": {},
+   "source": {
+    "__proto__": {
+     "ghost": {
+      "keep": 1
+     }
+    },
+    "ghost": {
+     "live": 2
+    }
+   },
+   "expected": {
+    "ghost": {
+     "keep": 1,
+     "live": 2
+    }
+   }
+  },
+  {
+   "name": "merge-source-proto-scalar",
+   "target": {},
+   "source": {
+    "__proto__": 17,
+    "safe": 1
+   },
+   "expected": {
+    "safe": 1
+   }
+  },
+  {
+   "name": "merge-target-own-proto",
+   "target": {
+    "__proto__": {
+     "ghost": {
+      "keep": 1
+     }
+    },
+    "safe": 1
+   },
+   "source": {
+    "ghost": {
+     "live": 2
+    }
+   },
+   "expected": {
+    "safe": 1,
+    "ghost": {
+     "keep": 1,
+     "live": 2
+    }
+   }
+  },
+  {
+   "name": "merge-source-nested-no-merge-preserves-own",
+   "target": {},
+   "source": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "expected": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   }
+  },
+  {
+   "name": "merge-source-nested-merge-drops-own",
+   "target": {
+    "nested": {
+     "old": 1
+    }
+   },
+   "source": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "expected": {
+    "nested": {
+     "old": 1,
+     "safe": 2
+    }
+   }
+  },
+  {
+   "name": "merge-target-nested-no-merge-preserves-own",
+   "target": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "source": {
+    "other": 1
+   },
+   "expected": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    },
+    "other": 1
+   }
+  },
+  {
+   "name": "merge-target-nested-merge-drops-own",
+   "target": {
+    "nested": {
+     "__proto__": {
+      "keep": 1
+     },
+     "safe": 2
+    }
+   },
+   "source": {
+    "nested": {
+     "other": 1
+    }
+   },
+   "expected": {
+    "nested": {
+     "safe": 2,
+     "other": 1
+    }
+   }
+  },
+  {
+   "name": "merge-target-proto-null-source-own",
+   "target": {
+    "__proto__": null
+   },
+   "source": {
+    "__proto__": {
+     "keep": 1
+    },
+    "safe": 2
+   },
+   "expected": {
+    "__proto__": {
+     "keep": 1
+    },
+    "safe": 2
    }
   }
  ]
