@@ -31,9 +31,10 @@
 - **选择**：B。可撤回，不动尺子。「崩溃 / 进程退出」在分级表里属于 P0 类结果，对拍不复制基线的崩溃；可观察输出（丢块、后续块照常追加、子进程不被杀）仍与 TS 一致。
 - **原则**：**基线因未捕获异常导致整个进程退出的路径，Rust 不复刻退出，只对齐退出前可观察的输出；差异登记为已接受。** 断言：`bash_tool` 用真实上限的那条测试。
 
-## A6.5-pr9：web_fetch 的 HTML→markdown 需要 HTML5 解析器（暂不执行，待人批）
+## A6.5-pr9：web_fetch 的 HTML→markdown 需要 HTML5 解析器（人批 A，2026-10-20）
 - **卡在哪**：TS `urlFetcher.ts:134` 动态 import npm `turndown` 7.2.4（规则层 774 行）。turndown 在 Node 上用 `@mixmark-io/domino` 2.2.0 解析 HTML：完整的 WHATWG HTML5 解析器加 DOM，16,732 行，其中 HTMLParser.js 7,254 行。锁文件里没有任何 HTML 解析 crate。
 - **谁受影响**：只影响 web_fetch 对 text/html 的转换；URL 校验、抓取、缓存、web_search 不受影响。
 - **选项**：A 新增 html5ever（Servo 的 WHATWG 解析器，新外部依赖），turndown 规则层自写移植，用 TS 金样对拍；B 自写 HTML5 解析器，约万行，误差面大；C 本单不做转换，走注入 trait，无注入时按 TS 动态 import 失败的路径报错，转换另开单。
 - **建议**：A。批下来之前按 C 推进。
 - **档位**：A 属于新外部依赖，暂不执行，等人批；C 自决。
+- **人批（2026-10-20，用户本人在协调者会话）**：选 A——新增 html5ever；turndown 规则层自写移植，TS 金样逐条对拍。依赖单独在 A6.5-pr9b 引入（版本 `=` 精确钉、只开所需 feature、源码构建、不用预编译二进制），PR 描述单列锁文件增量。pr9 本单按 C 先交付（转换走注入边界）。
