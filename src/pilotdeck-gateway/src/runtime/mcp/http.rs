@@ -16,13 +16,13 @@
 //! transport also drops its open event streams (undici keeps a body open
 //! after `networkFetch` detached the abort signal); a legacy `EventSource`
 //! whose first connection fails stops instead of retrying every 3 s in the
-//! background; redirects are not followed; the proxy dispatcher of
+//! background; the proxy dispatcher of
 //! `src/cli/proxy.ts` is not consulted.
 
 use super::client::{McpClientError, McpErrorCode};
 use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
-use crate::js_value;
+use crate::{fetch_redirect, js_value};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request, StatusCode, body::Incoming, header};
@@ -161,9 +161,41 @@ async fn fetch_once(
     headers: &HeaderList,
     body: Option<String>,
 ) -> Result<hyper::Response<Incoming>, McpClientError> {
-    let mut target = url.clone();
-    target.set_fragment(None);
-    let mut request = Request::builder().method(method).uri(target.as_str());
+    fetch_with(method, url, headers, body, |request| async move {
+        let target = request.uri().clone();
+        client.request(request).await.map_err(|error| {
+            let refused = std::error::Error::source(&error)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+                || format!("{error:?}").contains("ConnectionRefused");
+            if refused {
+                let host = target.host().unwrap_or_default();
+                let port = target.port_u16().unwrap_or(80);
+                network_error(
+                    "network_connection_refused",
+                    format!("fetch failed\u{0}connect ECONNREFUSED {host}:{port}"),
+                )
+            } else {
+                network_error("network_fetch_failed", "fetch failed".into())
+            }
+        })
+    })
+    .await
+}
+
+/// The exchange is injectable so fetch policy is tested without TCP timing.
+async fn fetch_with<B, F, Fut>(
+    method: Method,
+    url: &Url,
+    headers: &HeaderList,
+    body: Option<String>,
+    send: F,
+) -> Result<hyper::Response<B>, McpClientError>
+where
+    F: FnMut(Request<Full<Bytes>>) -> Fut,
+    Fut: std::future::Future<Output = Result<hyper::Response<B>, McpClientError>>,
+{
+    let mut request = Request::builder();
     for (name, value) in &headers.0 {
         request = request.header(name.as_str(), value.as_str());
     }
@@ -171,30 +203,57 @@ async fn fetch_once(
     if !headers.0.iter().any(|(name, _)| name == "accept") {
         request = request.header("accept", "*/*");
     }
-    let body = Full::new(Bytes::from(body.unwrap_or_default()));
-    let request = request.body(body).map_err(|error| {
+    let request = request.body(()).map_err(|error| {
         McpClientError::with_code(
             "TypeError",
             McpErrorCode::Text("ERR_INVALID_ARG_VALUE"),
             error.to_string(),
         )
     })?;
-    client.request(request).await.map_err(|error| {
-        let refused = std::error::Error::source(&error)
-            .and_then(|source| source.downcast_ref::<std::io::Error>())
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
-            || format!("{error:?}").contains("ConnectionRefused");
-        if refused {
-            let host = url.host_str().unwrap_or_default();
-            let port = url.port_or_known_default().unwrap_or(80);
-            network_error(
-                "network_connection_refused",
-                format!("fetch failed\u{0}connect ECONNREFUSED {host}:{port}"),
-            )
-        } else {
-            network_error("network_fetch_failed", "fetch failed".into())
-        }
-    })
+    fetch_redirect::follow(
+        url.clone(),
+        method,
+        request.into_parts().0.headers,
+        Bytes::from(body.unwrap_or_default()),
+        || network_error("network_fetch_failed", "fetch failed".into()),
+        send,
+    )
+    .await
+}
+
+/// Legacy fetch keeps its abort signal attached while response.text() reads.
+async fn legacy_post_response<B: hyper::body::Body<Data = Bytes>>(
+    response: hyper::Response<B>,
+    aborted: &watch::Sender<bool>,
+) -> Result<(), McpClientError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let mut aborted = aborted.subscribe();
+    let bytes = tokio::select! {
+        biased;
+        _ = aborted.wait_for(|aborted| *aborted) => Err(fetch_redirect::BodyError::Terminated),
+        bytes = fetch_redirect::read_body(response.into_body(), fetch_redirect::MAX_STRING_LENGTH, None) => bytes,
+    };
+    let text = bytes
+        .map(|bytes| decode_text(&bytes))
+        .map_err(|error| match error {
+            fetch_redirect::BodyError::TooLong => {
+                McpClientError::plain("RangeError", fetch_redirect::STRING_TOO_LONG)
+            }
+            fetch_redirect::BodyError::Terminated => {
+                McpClientError::plain("TypeError", "terminated")
+            }
+        })
+        .unwrap_or_else(|_| "null".into());
+    Err(McpClientError::plain(
+        "Error",
+        format!(
+            "Error POSTing to endpoint (HTTP {}): {text}",
+            status.as_u16()
+        ),
+    ))
 }
 
 /// Splits the refused-connection detail kept for the legacy transport's
@@ -448,18 +507,20 @@ impl Utf8Stream {
 
 /// Reads an event stream to its end (or until the transport aborts).
 /// Returns `false` when it ended because of an abort or a read error.
-async fn read_events(
-    mut body: Incoming,
+async fn read_events<B: hyper::body::Body<Data = Bytes>>(
+    body: B,
     aborted: &watch::Sender<bool>,
     mut on_item: impl FnMut(SseItem),
 ) -> bool {
     let mut aborted = aborted.subscribe();
+    let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
     loop {
         let frame = tokio::select! {
-            frame = body.frame() => frame,
+            biased;
             _ = aborted.wait_for(|aborted| *aborted) => return false,
+            frame = body.frame() => frame,
         };
         match frame {
             None => return true,
@@ -470,6 +531,9 @@ async fn read_events(
                     parser.feed(&decoder.push(&data), &mut items);
                     for item in items {
                         on_item(item);
+                        if *aborted.borrow() {
+                            return false;
+                        }
                     }
                 }
             }
@@ -697,23 +761,7 @@ impl HttpLink {
             let (message, _) = fetch_message(&error);
             McpClientError::plain("TypeError", message.to_owned())
         })?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response
-                .into_body()
-                .collect()
-                .await
-                .map(|body| decode_text(&body.to_bytes()))
-                .unwrap_or_else(|_| "null".into());
-            return Err(McpClientError::plain(
-                "Error",
-                format!(
-                    "Error POSTing to endpoint (HTTP {}): {text}",
-                    status.as_u16()
-                ),
-            ));
-        }
-        Ok(())
+        legacy_post_response(response, &self.aborted).await
     }
 
     /// `_getNextReconnectionDelay(attempt)`.
@@ -835,16 +883,20 @@ fn schedule_reconnection(wire: Weak<Wire>, resumption: Option<String>, attempt: 
     });
 }
 
+fn settle(
+    ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>,
+    outcome: Result<(), McpClientError>,
+) {
+    if let Some(ready) = ready.take() {
+        let _ = ready.send(outcome);
+    }
+}
+
 /// The legacy transport's `EventSource`: connect, report the first outcome
 /// through `ready`, dispatch messages, reconnect after a clean end.
 async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpClientError>>) {
     let mut ready = Some(ready);
     let mut interval = Duration::from_millis(EVENT_SOURCE_RECONNECT_MS);
-    let settle = |ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>, outcome| {
-        if let Some(ready) = ready.take() {
-            let _ = ready.send(outcome);
-        }
-    };
     let sse_error =
         |message: String| McpClientError::plain("Error", format!("SSE error: {message}"));
     loop {
@@ -907,61 +959,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         let aborted = link.aborted.clone();
         let base = link.url.clone();
         drop(strong);
-        let mut retry = None;
-        let mut endpoint_failure = None;
-        read_events(response.into_body(), &aborted, |item| {
-            let Some(wire) = wire.upgrade() else {
-                return;
-            };
-            match item {
-                SseItem::Retry(ms) => retry = Some(ms),
-                SseItem::Event { event, data, .. } => match event.as_deref() {
-                    Some("endpoint") => {
-                        let resolved = match base.join(&data) {
-                            Err(_) => Err(McpClientError::with_code(
-                                "TypeError",
-                                McpErrorCode::Text("ERR_INVALID_URL"),
-                                "Invalid URL".into(),
-                            )),
-                            Ok(url) if url.origin() != base.origin() => Err(McpClientError::plain(
-                                "Error",
-                                format!(
-                                    "Endpoint origin does not match connection origin: {}",
-                                    url.origin().ascii_serialization()
-                                ),
-                            )),
-                            Ok(url) => Ok(url),
-                        };
-                        match resolved {
-                            Ok(url) => {
-                                lock(&link_of(&wire).state).endpoint = Some(url);
-                                settle(&mut ready, Ok(()));
-                            }
-                            Err(error) => {
-                                if ready.is_some() {
-                                    settle(&mut ready, Err(error));
-                                    endpoint_failure = Some(());
-                                }
-                            }
-                        }
-                    }
-                    None | Some("message") => {
-                        if let Ok(message) = parse_message(&data) {
-                            wire.dispatch_http(vec![message]);
-                        }
-                    }
-                    Some(_) => {}
-                },
-            }
-        })
-        .await;
-        if endpoint_failure.is_some() {
-            // `void this.close()`.
-            if let Some(wire) = wire.upgrade() {
-                wire.close().await;
-            }
-            return;
-        }
+        let retry = legacy_stream(&wire, response.into_body(), &aborted, &base, &mut ready).await;
         if *aborted.borrow() {
             return;
         }
@@ -975,9 +973,293 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
     }
 }
 
+/// Handle one EventSource body. Endpoint errors close immediately, including
+/// after the initial endpoint has resolved start().
+async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
+    wire: &Weak<Wire>,
+    body: B,
+    aborted: &watch::Sender<bool>,
+    base: &Url,
+    ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>,
+) -> Option<f64> {
+    let mut retry = None;
+    let mut endpoint_failure = None;
+    read_events(body, aborted, |item| {
+        let Some(wire) = wire.upgrade() else {
+            return;
+        };
+        match item {
+            SseItem::Retry(ms) => retry = Some(ms),
+            SseItem::Event { event, data, .. } => match event.as_deref() {
+                Some("endpoint") => {
+                    let resolved = match base.join(&data) {
+                        Err(_) => Err(McpClientError::with_code(
+                            "TypeError",
+                            McpErrorCode::Text("ERR_INVALID_URL"),
+                            "Invalid URL".into(),
+                        )),
+                        Ok(url) if url.origin() != base.origin() => Err(McpClientError::plain(
+                            "Error",
+                            format!(
+                                "Endpoint origin does not match connection origin: {}",
+                                url.origin().ascii_serialization()
+                            ),
+                        )),
+                        Ok(url) => Ok(url),
+                    };
+                    match resolved {
+                        Ok(url) => {
+                            lock(&link_of(&wire).state).endpoint = Some(url);
+                            settle(ready, Ok(()));
+                        }
+                        Err(error) => {
+                            settle(ready, Err(error));
+                            endpoint_failure = Some(());
+                            // EventSource.close() aborts now, even after
+                            // start() resolved and even if the peer never
+                            // ends this stream.
+                            link_of(&wire).close();
+                        }
+                    }
+                }
+                None | Some("message") => {
+                    if let Ok(message) = parse_message(&data) {
+                        wire.dispatch_http(vec![message]);
+                    }
+                }
+                Some(_) => {}
+            },
+        }
+    })
+    .await;
+    if endpoint_failure.is_some() {
+        // `void this.close()`.
+        if let Some(wire) = wire.upgrade() {
+            wire.close().await;
+        }
+    }
+    retry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        convert::Infallible,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tokio::sync::mpsc;
+
+    /// A stream that remains open while its sender exists; no clock or socket
+    /// timing is involved. Dropping the body is observable at the sender.
+    struct EventBody(mpsc::UnboundedReceiver<Bytes>);
+    impl hyper::body::Body for EventBody {
+        type Data = Bytes;
+        type Error = Infallible;
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, Infallible>>> {
+            self.0
+                .poll_recv(cx)
+                .map(|data| data.map(|data| Ok(hyper::body::Frame::data(data))))
+        }
+    }
+
+    /// Real SDK + networkFetch records the two requests. A body with no EOF
+    /// proves redirect following never waits for response.text().
+    #[tokio::test]
+    async fn fetch_follows_redirect_without_waiting_for_its_body() {
+        for status in [301, 302, 303, 307, 308] {
+            let url = Url::parse("http://mcp.invalid/redirect").unwrap();
+            let (keep_open, body) = mpsc::unbounded_channel();
+            keep_open.send(Bytes::from_static(b"partial")).unwrap();
+            let responses = Mutex::new(std::collections::VecDeque::from([
+                hyper::Response::builder()
+                    .status(status)
+                    .header("location", "/mcp")
+                    .body(EventBody(body))
+                    .unwrap(),
+                hyper::Response::new(EventBody(mpsc::unbounded_channel().1)),
+            ]));
+            let requests = Mutex::new(Vec::new());
+            let mut headers = HeaderList::default();
+            headers.set("content-type", "application/json");
+            let message = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                fetch_with(
+                    Method::POST,
+                    &url,
+                    &headers,
+                    Some(message.into()),
+                    |request| async {
+                        let (parts, body) = request.into_parts();
+                        let body = body.collect().await.unwrap().to_bytes();
+                        lock(&requests).push((parts, body));
+                        Ok(lock(&responses).pop_front().expect("at most two exchanges"))
+                    },
+                ),
+            )
+            .await
+            .expect("redirect body must not block")
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(keep_open.is_closed(), "redirect body must be dropped");
+            let requests = requests.into_inner().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].0.method, Method::POST);
+            assert_eq!(requests[0].0.uri.path(), "/redirect");
+            assert_eq!(requests[0].1, message);
+            let (second, body) = &requests[1];
+            assert_eq!(second.uri.path(), "/mcp");
+            if matches!(status, 307 | 308) {
+                assert_eq!(second.method, Method::POST);
+                assert_eq!(second.headers["content-type"], "application/json");
+                assert_eq!(body, message);
+            } else {
+                assert_eq!(second.method, Method::GET);
+                assert!(!second.headers.contains_key("content-type"));
+                assert!(body.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_legacy_endpoint_closes_an_open_stream_before_and_after_ready() {
+        for after_ready in [false, true] {
+            for endpoint in ["http://[", "http://other.invalid/messages"] {
+                let url = Url::parse("http://mcp.invalid/sse").unwrap();
+                let wire = Wire::http(HttpLink::new(
+                    HttpKind::LegacySse,
+                    url.clone(),
+                    vec![],
+                    0.0,
+                    0.0,
+                ));
+                let (ready, outcome) = oneshot::channel();
+                let (events, body) = mpsc::unbounded_channel();
+                let weak = Arc::downgrade(&wire);
+                let aborted = link_of(&wire).aborted.clone();
+                let task = tokio::spawn(async move {
+                    legacy_stream(&weak, EventBody(body), &aborted, &url, &mut Some(ready)).await
+                });
+                if after_ready {
+                    events
+                        .send(Bytes::from_static(b"event: endpoint\ndata: /messages\n\n"))
+                        .unwrap();
+                    outcome.await.unwrap().unwrap();
+                    events.send(Bytes::from(format!(
+                        "event: endpoint\ndata: {endpoint}\n\nevent: endpoint\ndata: /must-not-install\n\n"
+                    ))).unwrap();
+                } else {
+                    events.send(Bytes::from(format!(
+                        "event: endpoint\ndata: {endpoint}\n\nevent: endpoint\ndata: /must-not-install\n\n"
+                    ))).unwrap();
+                    let error = outcome.await.unwrap().unwrap_err();
+                    assert_eq!(
+                        error.message(),
+                        if endpoint == "http://[" {
+                            "Invalid URL"
+                        } else {
+                            "Endpoint origin does not match connection origin: http://other.invalid"
+                        }
+                    );
+                }
+                let finished = tokio::time::timeout(Duration::from_secs(5), task).await;
+                if finished.is_err() {
+                    wire.close().await;
+                }
+                finished.expect("invalid endpoint waited for EOF").unwrap();
+                assert!(
+                    events.is_closed(),
+                    "EventSource body must be dropped without EOF"
+                );
+                assert!(link_of(&wire).is_aborted());
+                let endpoint = lock(&link_of(&wire).state).endpoint.clone();
+                assert_eq!(
+                    endpoint.as_ref().map(Url::path),
+                    after_ready.then_some("/messages")
+                );
+                assert_eq!(
+                    wire.notification("ping").await.unwrap_err().message(),
+                    "Not connected"
+                );
+            }
+        }
+    }
+
+    /// An observable Body poll, rather than a delay, establishes that
+    /// response.text() is waiting when close arrives.
+    #[tokio::test]
+    async fn legacy_post_error_body_is_dropped_on_close() {
+        use std::{
+            convert::Infallible,
+            pin::Pin,
+            task::{Context, Poll},
+        };
+        struct PendingBody {
+            polled: Option<oneshot::Sender<()>>,
+            dropped: Option<oneshot::Sender<()>>,
+        }
+        impl hyper::body::Body for PendingBody {
+            type Data = Bytes;
+            type Error = Infallible;
+            fn poll_frame(
+                mut self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+            ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, Infallible>>> {
+                if let Some(polled) = self.polled.take() {
+                    polled.send(()).unwrap();
+                    return Poll::Ready(Some(Ok(hyper::body::Frame::data(Bytes::from_static(
+                        b"partial",
+                    )))));
+                }
+                Poll::Pending
+            }
+        }
+        impl Drop for PendingBody {
+            fn drop(&mut self) {
+                if let Some(dropped) = self.dropped.take() {
+                    let _ = dropped.send(());
+                }
+            }
+        }
+        let link = HttpLink::new(
+            HttpKind::LegacySse,
+            Url::parse("http://localhost/mcp").unwrap(),
+            vec![],
+            0.0,
+            0.0,
+        );
+        let (polled, waiting) = oneshot::channel();
+        let (dropped, freed) = oneshot::channel();
+        let response = hyper::Response::builder()
+            .status(500)
+            .body(PendingBody {
+                polled: Some(polled),
+                dropped: Some(dropped),
+            })
+            .unwrap();
+        let mut read = Box::pin(legacy_post_response(response, &link.aborted));
+        tokio::select! {
+            biased;
+            result = &mut read => panic!("unfinished body returned {result:?}"),
+            result = waiting => result.unwrap(),
+        }
+        link.close();
+        let result = tokio::time::timeout(Duration::from_secs(5), &mut read).await;
+        drop(read);
+        assert_eq!(
+            result
+                .expect("close must cancel response.text()")
+                .unwrap_err()
+                .message(),
+            "Error POSTing to endpoint (HTTP 500): null"
+        );
+        freed.await.expect("body must be dropped");
+    }
 
     fn events(chunks: &[&str]) -> Vec<SseItem> {
         let mut parser = SseParser::default();

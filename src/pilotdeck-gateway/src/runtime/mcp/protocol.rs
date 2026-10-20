@@ -427,6 +427,10 @@ impl Schema {
                 let mut out = JsObject::new();
                 let mut issues = Vec::new();
                 for (key, element) in object.own_entries() {
+                    // ZodRecord skips this own key before validating its value.
+                    if key.equals_str("__proto__") {
+                        continue;
+                    }
                     let parsed = item.parse(element);
                     issues.extend(prefixed(parsed.issues, &Segment::Key(key.clone())));
                     out.insert(key.clone(), parsed.value);
@@ -462,7 +466,10 @@ impl Schema {
                 let extra: Vec<_> = object
                     .own_entries()
                     .into_iter()
-                    .filter(|(key, _)| !fields.iter().any(|f| key.equals_str(f.name)))
+                    .filter(|(key, _)| {
+                        !key.equals_str("__proto__")
+                            && !fields.iter().any(|f| key.equals_str(f.name))
+                    })
                     .collect();
                 match rest {
                     Rest::Strip => {}
@@ -1346,6 +1353,44 @@ pub(crate) fn errno_text(error: &std::io::Error) -> (&'static str, &'static str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real SDK/zod probe values are recorded in the round-4 evidence.
+    /// Unknown values keep their own nested keys; only the schema's own
+    /// object/record boundary removes the special key.
+    #[test]
+    fn zod_skips_proto_before_record_validation_and_object_extra_keys() {
+        let raw = parse_json(r#"{"tools":[{"name":"x","inputSchema":{"type":"object","properties":{"__proto__":1,"constructor":{},"prototype":{},"q":{"__proto__":1}},"__proto__":1}}]}"#).unwrap();
+        let parsed = parse_result(ResultSchema::ListTools, &raw).unwrap();
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&parsed)
+                .unwrap()
+                .unwrap(),
+            r#"{"tools":[{"name":"x","inputSchema":{"type":"object","properties":{"constructor":{},"prototype":{},"q":{"__proto__":1}}}}]}"#
+        );
+        let parsed = JSONRPC_MESSAGE
+            .parse(&parse_json(r#"{"jsonrpc":"2.0","id":1,"result":{},"__proto__":1}"#).unwrap());
+        assert!(parsed.issues.is_empty());
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&parsed.value)
+                .unwrap()
+                .unwrap(),
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+        );
+        let parsed = parse_result(ResultSchema::CallTool, &parse_json(
+            r#"{"content":[],"structuredContent":{"__proto__":1,"constructor":2,"q":{"__proto__":3}},"__proto__":1,"constructor":2,"prototype":3}"#
+        ).unwrap()).unwrap();
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&parsed)
+                .unwrap()
+                .unwrap(),
+            r#"{"content":[],"structuredContent":{"constructor":2,"q":{"__proto__":3}},"constructor":2,"prototype":3}"#
+        );
+        // Near misses must still be validated or rejected as extra keys.
+        assert!(parse_result(ResultSchema::ListTools, &parse_json(
+            r#"{"tools":[{"name":"x","inputSchema":{"type":"object","properties":{"__proto___":1}}}]}"#
+        ).unwrap()).is_err());
+        assert!(parse_inbound(r#"{"jsonrpc":"2.0","id":1,"result":{},"__proto___":1}"#).is_none());
+    }
 
     #[test]
     fn atob_acceptance_follows_forgiving_base64() {

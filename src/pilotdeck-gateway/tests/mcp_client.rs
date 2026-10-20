@@ -830,3 +830,156 @@ async fn late_handshake_after_timeout_is_closed() {
     settle(&dir, false).await;
     assert_eq!(read_logs(&dir).len(), 2);
 }
+
+/// Two real request timers on W1 expire on opposite sides of W2 publishing
+/// its handshake. Virtual time moves only at the explicit advance calls;
+/// file events establish that each process/request reached the right point.
+#[tokio::test(start_paused = true)]
+async fn second_old_timeout_does_not_discard_the_new_handshake() {
+    bounded_double_timeout(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn second_old_timeout_does_not_recycle_the_new_ready_client() {
+    bounded_double_timeout(true).await;
+}
+
+async fn bounded_double_timeout(after_ready: bool) {
+    // The virtual clock is deliberately held. Use wall time only as a failure
+    // bound, including for awaits on start/close that a regression could hang.
+    let watchdog = async {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::select! {
+        () = double_timeout(after_ready) => {}
+        () = watchdog => panic!("double-timeout scenario exceeded its wall-time bound"),
+    }
+}
+
+async fn double_timeout(after_ready: bool) {
+    // Node is an external process. Keep virtual time from automatically
+    // jumping while the runtime waits for its I/O.
+    struct ClockHold(tokio::task::JoinHandle<()>);
+    impl Drop for ClockHold {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _clock = ClockHold(tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    }));
+    async fn until(mut check: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !check() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "mock event did not arrive"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+    let scratch = Scratch::new("mcp-client-double-timeout");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let client = race_client(
+        &dir,
+        &[
+            format!(r#"{{"initialize":[{INIT_REPLY}],"stdin-end":[{{"wait_file":"old-exit"}}]}}"#),
+            format!(r#"{{"initialize":[{{"wait_file":"new-init"}},{INIT_REPLY}]}}"#),
+            format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
+        ],
+        None,
+    );
+    client.start().await.unwrap();
+    let call = |name: &'static str, timeout_ms| {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .call_tool(
+                    &name.into(),
+                    &JsValue::Null,
+                    McpCallOptions {
+                        timeout_ms: Some(timeout_ms),
+                    },
+                )
+                .await
+        })
+    };
+    let first = call("first", 10.0);
+    let second = call("second", 100.0);
+    until(|| {
+        read_logs(&dir).first().is_some_and(|log| {
+            log.iter()
+                .filter(|entry| {
+                    field(entry, "line").as_string().is_some_and(|line| {
+                        line.to_utf8()
+                            .unwrap()
+                            .contains("\"method\":\"tools/call\"")
+                    })
+                })
+                .count()
+                == 2
+        })
+    })
+    .await;
+    tokio::time::advance(Duration::from_millis(10)).await;
+    assert_eq!(
+        first
+            .await
+            .unwrap()
+            .unwrap_err()
+            .client_code()
+            .unwrap()
+            .as_str(),
+        "mcp_call_timeout"
+    );
+    until(|| logged(&dir, 0, "stdin-end")).await;
+    let mut start = Some(tokio::spawn({
+        let client = client.clone();
+        async move { client.start().await }
+    }));
+    until(|| logged(&dir, 1, "frame")).await;
+    if after_ready {
+        open_gate(&dir, "new-init");
+        start.take().unwrap().await.unwrap().unwrap();
+    }
+    tokio::time::advance(Duration::from_millis(90)).await;
+    assert_eq!(
+        second
+            .await
+            .unwrap()
+            .unwrap_err()
+            .client_code()
+            .unwrap()
+            .as_str(),
+        "mcp_call_timeout"
+    );
+    // A third caller must join W2. Poll it before opening W2's gate; the
+    // broken implementation instead publishes W3, superseding W2.
+    let (joined, started) = tokio::join!(client.start(), async {
+        open_gate(&dir, "new-init");
+        open_gate(&dir, "old-exit");
+        match start {
+            Some(start) => start.await.unwrap(),
+            None => Ok(()),
+        }
+    });
+    client.close().await;
+    until(|| {
+        read_logs(&dir).iter().all(|log| {
+            log.iter().any(|e| {
+                field(e, "event")
+                    .as_string()
+                    .is_some_and(|e| e.equals_str("exit"))
+            })
+        })
+    })
+    .await;
+    joined.expect("third caller joins W2");
+    started.expect("W2 must not be superseded by a stale timeout");
+    assert_eq!(read_logs(&dir).len(), 2, "only W1 and W2 may exist");
+}
