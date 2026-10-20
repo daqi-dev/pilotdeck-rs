@@ -315,6 +315,927 @@
       "actualCompileError": "Invalid regular expression: /[/u: Unterminated character class"
     },
     {
+      "id": "invalid-pattern/grok/invalid-escape-hyphen",
+      "schema": {
+        "type": "string",
+        "pattern": "\\-"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\-/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-underscore",
+      "schema": {
+        "type": "string",
+        "pattern": "\\_"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\_/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-hash",
+      "schema": {
+        "type": "string",
+        "pattern": "\\#"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\#/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-ampersand",
+      "schema": {
+        "type": "string",
+        "pattern": "\\&"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\&/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-tilde",
+      "schema": {
+        "type": "string",
+        "pattern": "\\~"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\~/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-at",
+      "schema": {
+        "type": "string",
+        "pattern": "\\@"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\@/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-percent",
+      "schema": {
+        "type": "string",
+        "pattern": "\\%"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\%/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/invalid-escape-space",
+      "schema": {
+        "type": "string",
+        "pattern": "\\ "
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\ /u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/grok/lone-close-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "a]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /a]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/grok/lone-close-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/grok/nothing-to-repeat",
+      "schema": {
+        "type": "string",
+        "pattern": "a**"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /a**/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/grok/rust-word-boundary",
+      "schema": {
+        "type": "string",
+        "pattern": "\\<a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\<a/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/lone-close-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/edge/lone-open-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "{"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /{/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-star",
+      "schema": {
+        "type": "string",
+        "pattern": "*a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /*a/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-plus",
+      "schema": {
+        "type": "string",
+        "pattern": "+a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /+a/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-question",
+      "schema": {
+        "type": "string",
+        "pattern": "?a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /?a/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-double-plus",
+      "schema": {
+        "type": "string",
+        "pattern": "a++"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /a++/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-star-plus",
+      "schema": {
+        "type": "string",
+        "pattern": "a*+"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /a*+/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-double-lazy",
+      "schema": {
+        "type": "string",
+        "pattern": "a*??"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /a*??/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-range-double-lazy",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2,3}??"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /a{2,3}??/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-quantified-lookahead",
+      "schema": {
+        "type": "string",
+        "pattern": "(?=a)*"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "actualCompileError": "Invalid regular expression: /(?=a)*/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-boundary",
+      "schema": {
+        "type": "string",
+        "pattern": "\\b*"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /\\b*/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-bare-exact",
+      "schema": {
+        "type": "string",
+        "pattern": "{2}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /{2}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/nothing-to-repeat-bare-range",
+      "schema": {
+        "type": "string",
+        "pattern": "{2,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /{2,3}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-open",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{2x}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-no-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "a{,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{,3}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-comma",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2,"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{2,/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-eof",
+      "schema": {
+        "type": "string",
+        "pattern": "a{1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{1/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-range-eof",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2,3"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{2,3/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/incomplete-quantifier-space",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2, 3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "actualCompileError": "Invalid regular expression: /a{2, 3}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/quantifier-reversed",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2,1}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "numbers out of order in {} quantifier",
+      "actualCompileError": "Invalid regular expression: /a{2,1}/u: numbers out of order in {} quantifier"
+    },
+    {
+      "id": "invalid-pattern/edge/quantifier-after-quantifier",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2}{3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "actualCompileError": "Invalid regular expression: /a{2}{3}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-decimal-escape",
+      "schema": {
+        "type": "string",
+        "pattern": "\\01"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid decimal escape",
+      "actualCompileError": "Invalid regular expression: /\\01/u: Invalid decimal escape"
+    },
+    {
+      "id": "invalid-pattern/edge/backreference-ten-missing",
+      "schema": {
+        "type": "string",
+        "pattern": "\\10"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\10/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-escape",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\_]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /[\\_]/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-hash",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\#]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /[\\#]/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-space",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\ ]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /[\\ ]/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-k",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\k]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /[\\k]/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-B",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\B]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /[\\B]/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/invalid-class-decimal",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\1]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid class escape",
+      "actualCompileError": "Invalid regular expression: /[\\1]/u: Invalid class escape"
+    },
+    {
+      "id": "invalid-pattern/edge/backreference-missing",
+      "schema": {
+        "type": "string",
+        "pattern": "\\1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\1/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/backreference-too-large",
+      "schema": {
+        "type": "string",
+        "pattern": "(a)(b)\\10"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /(a)(b)\\10/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/noncapturing-not-counted",
+      "schema": {
+        "type": "string",
+        "pattern": "(?:a)\\1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /(?:a)\\1/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/named-reference-missing",
+      "schema": {
+        "type": "string",
+        "pattern": "\\k<x>"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid named capture referenced",
+      "actualCompileError": "Invalid regular expression: /\\k<x>/u: Invalid named capture referenced"
+    },
+    {
+      "id": "invalid-pattern/edge/named-reference-unknown",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<x>a)\\k<y>"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid named capture referenced",
+      "actualCompileError": "Invalid regular expression: /(?<x>a)\\k<y>/u: Invalid named capture referenced"
+    },
+    {
+      "id": "invalid-pattern/edge/group-name-digit-first",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<1a>x)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "actualCompileError": "Invalid regular expression: /(?<1a>x)/u: Invalid capture group name"
+    },
+    {
+      "id": "invalid-pattern/edge/group-name-empty",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<>)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid capture group name",
+      "actualCompileError": "Invalid regular expression: /(?<>)/u: Invalid capture group name"
+    },
+    {
+      "id": "invalid-pattern/edge/group-name-duplicate",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<x>a)(?<x>b)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Duplicate capture group name",
+      "actualCompileError": "Invalid regular expression: /(?<x>a)(?<x>b)/u: Duplicate capture group name"
+    },
+    {
+      "id": "invalid-pattern/edge/group-inline-flag",
+      "schema": {
+        "type": "string",
+        "pattern": "(?i:a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid group",
+      "actualCompileError": "Invalid regular expression: /(?i:a)/u: Invalid group"
+    },
+    {
+      "id": "invalid-pattern/edge/group-rust-name",
+      "schema": {
+        "type": "string",
+        "pattern": "(?P<x>a)"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid group",
+      "actualCompileError": "Invalid regular expression: /(?P<x>a)/u: Invalid group"
+    },
+    {
+      "id": "invalid-pattern/edge/rust-anchor",
+      "schema": {
+        "type": "string",
+        "pattern": "\\A"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\A/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/rust-anchor-z",
+      "schema": {
+        "type": "string",
+        "pattern": "\\z"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\z/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/rust-bell",
+      "schema": {
+        "type": "string",
+        "pattern": "\\a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\a/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/rust-escape",
+      "schema": {
+        "type": "string",
+        "pattern": "\\e"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\e/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/rust-hex-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "\\x{41}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\x{41}/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/hex-short",
+      "schema": {
+        "type": "string",
+        "pattern": "\\x1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\x1/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/hex-bad",
+      "schema": {
+        "type": "string",
+        "pattern": "\\xG1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "actualCompileError": "Invalid regular expression: /\\xG1/u: Invalid escape"
+    },
+    {
+      "id": "invalid-pattern/edge/unicode-too-large",
+      "schema": {
+        "type": "string",
+        "pattern": "\\u{110000}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid Unicode escape",
+      "actualCompileError": "Invalid regular expression: /\\u{110000}/u: Invalid Unicode escape"
+    },
+    {
+      "id": "invalid-pattern/edge/control-bad",
+      "schema": {
+        "type": "string",
+        "pattern": "\\c1"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid Unicode escape",
+      "actualCompileError": "Invalid regular expression: /\\c1/u: Invalid Unicode escape"
+    },
+    {
+      "id": "invalid-pattern/edge/control-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "\\c["
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid Unicode escape",
+      "actualCompileError": "Invalid regular expression: /\\c[/u: Invalid Unicode escape"
+    },
+    {
+      "id": "invalid-pattern/edge/control-underscore",
+      "schema": {
+        "type": "string",
+        "pattern": "\\c_"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid Unicode escape",
+      "actualCompileError": "Invalid regular expression: /\\c_/u: Invalid Unicode escape"
+    },
+    {
+      "id": "invalid-pattern/edge/control-alone",
+      "schema": {
+        "type": "string",
+        "pattern": "\\c"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid Unicode escape",
+      "actualCompileError": "Invalid regular expression: /\\c/u: Invalid Unicode escape"
+    },
+    {
+      "id": "invalid-pattern/edge/property-missing-braces",
+      "schema": {
+        "type": "string",
+        "pattern": "\\p"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid property name",
+      "actualCompileError": "Invalid regular expression: /\\p/u: Invalid property name"
+    },
+    {
+      "id": "invalid-pattern/edge/class-shorthand-range-left",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\w-a]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid character class",
+      "actualCompileError": "Invalid regular expression: /[\\w-a]/u: Invalid character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-shorthand-range-right",
+      "schema": {
+        "type": "string",
+        "pattern": "[a-\\w]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid character class",
+      "actualCompileError": "Invalid regular expression: /[a-\\w]/u: Invalid character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-two-shorthand-range",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\d-\\w]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid character class",
+      "actualCompileError": "Invalid regular expression: /[\\d-\\w]/u: Invalid character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-range-to-close",
+      "schema": {
+        "type": "string",
+        "pattern": "[a-\\]]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Range out of order in character class",
+      "actualCompileError": "Invalid regular expression: /[a-\\]]/u: Range out of order in character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-range-to-hyphen",
+      "schema": {
+        "type": "string",
+        "pattern": "[a-\\-]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Range out of order in character class",
+      "actualCompileError": "Invalid regular expression: /[a-\\-]/u: Range out of order in character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-double-dash",
+      "schema": {
+        "type": "string",
+        "pattern": "[a--b]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Range out of order in character class",
+      "actualCompileError": "Invalid regular expression: /[a--b]/u: Range out of order in character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-reversed-astral",
+      "schema": {
+        "type": "string",
+        "pattern": "[😁-😀]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Range out of order in character class",
+      "actualCompileError": "Invalid regular expression: /[😁-😀]/u: Range out of order in character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "[a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated character class",
+      "actualCompileError": "Invalid regular expression: /[a/u: Unterminated character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-negated-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "[^a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated character class",
+      "actualCompileError": "Invalid regular expression: /[^a/u: Unterminated character class"
+    },
+    {
+      "id": "invalid-pattern/edge/class-backslash-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated character class",
+      "actualCompileError": "Invalid regular expression: /[\\]/u: Unterminated character class"
+    },
+    {
+      "id": "invalid-pattern/edge/group-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "(a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated group",
+      "actualCompileError": "Invalid regular expression: /(a/u: Unterminated group"
+    },
+    {
+      "id": "invalid-pattern/edge/noncapturing-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "(?:a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated group",
+      "actualCompileError": "Invalid regular expression: /(?:a/u: Unterminated group"
+    },
+    {
+      "id": "invalid-pattern/edge/lookahead-unterminated",
+      "schema": {
+        "type": "string",
+        "pattern": "(?=a"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Unterminated group",
+      "actualCompileError": "Invalid regular expression: /(?=a/u: Unterminated group"
+    },
+    {
+      "id": "invalid-pattern/edge/class-empty-then-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "[]]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /[]]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/edge/class-negated-empty-then-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "[^]]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /[^]]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/edge/class-empty-then-literal",
+      "schema": {
+        "type": "string",
+        "pattern": "[]a]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /[]a]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/edge/class-negated-empty-then-literal",
+      "schema": {
+        "type": "string",
+        "pattern": "[^]a]"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "actualCompileError": "Invalid regular expression: /[^]a]/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/grok-property-pattern",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "\\-": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "x": 1
+      },
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid escape",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\-/u: Invalid escape"
+    },
+    {
       "id": "nullable/null",
       "schema": {
         "type": "string",
@@ -3159,6 +4080,294 @@
       "errorText": "data must NOT have additional properties"
     },
     {
+      "id": "escape/control-j",
+      "schema": {
+        "type": "string",
+        "pattern": "\\cJ"
+      },
+      "data": "\n"
+    },
+    {
+      "id": "escape/control-j-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "\\cj"
+      },
+      "data": "\n"
+    },
+    {
+      "id": "escape/nul",
+      "schema": {
+        "type": "string",
+        "pattern": "\\0"
+      },
+      "data": "\u0000"
+    },
+    {
+      "id": "escape/hex-latin1",
+      "schema": {
+        "type": "string",
+        "pattern": "\\xFF"
+      },
+      "data": "ÿ"
+    },
+    {
+      "id": "escape/class-control-j",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\cJ]"
+      },
+      "data": "\n"
+    },
+    {
+      "id": "escape/class-nul",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\0]"
+      },
+      "data": "\u0000"
+    },
+    {
+      "id": "escape/class-hex",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\x41]"
+      },
+      "data": "A"
+    },
+    {
+      "id": "escape/class-escaped-hyphen",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\-]"
+      },
+      "data": "-"
+    },
+    {
+      "id": "escape/class-escaped-hyphen-then-a",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\-a]"
+      },
+      "data": "-"
+    },
+    {
+      "id": "escape/class-dash-range",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\--a]"
+      },
+      "data": "-"
+    },
+    {
+      "id": "escape/class-range-from-close",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\]-a]"
+      },
+      "data": "a"
+    },
+    {
+      "id": "escape/class-escaped-close-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\]]"
+      },
+      "data": "]"
+    },
+    {
+      "id": "escape/class-escaped-open-bracket",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\[]"
+      },
+      "data": "["
+    },
+    {
+      "id": "escape/class-escaped-dot",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\.]"
+      },
+      "data": "."
+    },
+    {
+      "id": "escape/class-backslash",
+      "schema": {
+        "type": "string",
+        "pattern": "[\\\\]"
+      },
+      "data": "\\"
+    },
+    {
+      "id": "escape/quantifier-leading-zero",
+      "schema": {
+        "type": "string",
+        "pattern": "a{01}"
+      },
+      "data": "aa"
+    },
+    {
+      "id": "escape/triple-range",
+      "schema": {
+        "type": "string",
+        "pattern": "[a-b-c]"
+      },
+      "data": "-"
+    },
+    {
+      "id": "escape/class-only-dash",
+      "schema": {
+        "type": "string",
+        "pattern": "[-]"
+      },
+      "data": "-"
+    },
+    {
+      "id": "escape/class-star",
+      "schema": {
+        "type": "string",
+        "pattern": "[*]"
+      },
+      "data": "*"
+    },
+    {
+      "id": "escape/class-open-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "[{]"
+      },
+      "data": "{"
+    },
+    {
+      "id": "escape/class-close-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "[}]"
+      },
+      "data": "}"
+    },
+    {
+      "id": "escape/class-ampersand",
+      "schema": {
+        "type": "string",
+        "pattern": "[a&b]"
+      },
+      "data": "&"
+    },
+    {
+      "id": "escape/class-pipe",
+      "schema": {
+        "type": "string",
+        "pattern": "[a|b]"
+      },
+      "data": "|"
+    },
+    {
+      "id": "escape/class-caret",
+      "schema": {
+        "type": "string",
+        "pattern": "[a^b]"
+      },
+      "data": "^"
+    },
+    {
+      "id": "escape/class-quantifier-braces",
+      "schema": {
+        "type": "string",
+        "pattern": "[a{2}]"
+      },
+      "data": "2"
+    },
+    {
+      "id": "escape/class-negated-star",
+      "schema": {
+        "type": "string",
+        "pattern": "[^*]"
+      },
+      "data": "a"
+    },
+    {
+      "id": "escape/astral-range",
+      "schema": {
+        "type": "string",
+        "pattern": "[😀-😁]"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "escape/astral-single",
+      "schema": {
+        "type": "string",
+        "pattern": "😀"
+      },
+      "data": "😀"
+    },
+    {
+      "id": "escape/empty-pattern",
+      "schema": {
+        "type": "string",
+        "pattern": ""
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/alternation-trailing",
+      "schema": {
+        "type": "string",
+        "pattern": "a|"
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/alternation-leading",
+      "schema": {
+        "type": "string",
+        "pattern": "|a"
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/alternation-empty-group",
+      "schema": {
+        "type": "string",
+        "pattern": "(a|)"
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/empty-group",
+      "schema": {
+        "type": "string",
+        "pattern": "()"
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/noncapturing-empty",
+      "schema": {
+        "type": "string",
+        "pattern": "(?:)"
+      },
+      "data": ""
+    },
+    {
+      "id": "escape/lazy-star",
+      "schema": {
+        "type": "string",
+        "pattern": "a*?"
+      },
+      "data": "aa"
+    },
+    {
+      "id": "escape/lazy-range",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2,3}?"
+      },
+      "data": "aaa"
+    },
+    {
       "id": "type/array-mismatch",
       "schema": {
         "type": [
@@ -3388,7 +4597,7 @@
       "data": "0000-02-29"
     },
     {
-      "id": "unsupported-class/intersection-not",
+      "id": "unsupported-pattern/intersection-not",
       "schema": {
         "not": {
           "pattern": "[\\w&&a]"
@@ -3399,7 +4608,7 @@
       "errorText": "data must NOT be valid"
     },
     {
-      "id": "unsupported-class/intersection-property",
+      "id": "unsupported-pattern/intersection-property",
       "schema": {
         "patternProperties": {
           "[\\w&&a]": {
@@ -3414,7 +4623,7 @@
       "errorText": "data/b must be number"
     },
     {
-      "id": "unsupported-class/symmetric-difference",
+      "id": "unsupported-pattern/symmetric-difference",
       "schema": {
         "pattern": "[a~~b]"
       },
@@ -3422,25 +4631,7 @@
       "portUnsupported": true
     },
     {
-      "id": "unsupported-class/shorthand-range",
-      "schema": {
-        "pattern": "[\\w-a]"
-      },
-      "data": "-",
-      "portUnsupported": true,
-      "compileError": "Invalid regular expression: /[\\w-a]/u: Invalid character class"
-    },
-    {
-      "id": "unsupported-class/two-shorthand-range",
-      "schema": {
-        "pattern": "[\\d-\\w]"
-      },
-      "data": "-",
-      "portUnsupported": true,
-      "compileError": "Invalid regular expression: /[\\d-\\w]/u: Invalid character class"
-    },
-    {
-      "id": "unsupported-class/nested-class",
+      "id": "unsupported-pattern/nested-class",
       "schema": {
         "pattern": "[[]"
       },
@@ -3448,7 +4639,7 @@
       "portUnsupported": true
     },
     {
-      "id": "unsupported-class/empty-class",
+      "id": "unsupported-pattern/empty-class",
       "schema": {
         "pattern": "[]"
       },
@@ -3457,12 +4648,170 @@
       "errorText": "data must match pattern \"[]\""
     },
     {
-      "id": "unsupported-class/negated-empty-class",
+      "id": "unsupported-pattern/negated-empty-class",
       "schema": {
         "pattern": "^[^]$"
       },
       "data": "\n",
       "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/double-dash-start",
+      "schema": {
+        "pattern": "[--a]"
+      },
+      "data": "-",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/lookahead",
+      "schema": {
+        "pattern": "(?=a)"
+      },
+      "data": "a",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/lookbehind",
+      "schema": {
+        "pattern": "(?<=a)b"
+      },
+      "data": "ab",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/backreference",
+      "schema": {
+        "pattern": "(a)\\1"
+      },
+      "data": "aa",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/forward-backreference",
+      "schema": {
+        "pattern": "\\1(a)"
+      },
+      "data": "a",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/forward-backreference-two",
+      "schema": {
+        "pattern": "\\2(a)(b)"
+      },
+      "data": "b",
+      "portUnsupported": true,
+      "errorText": "data must match pattern \"\\2(a)(b)\""
+    },
+    {
+      "id": "unsupported-pattern/backreference-two-groups",
+      "schema": {
+        "pattern": "(a)(b)\\2"
+      },
+      "data": "ab",
+      "portUnsupported": true,
+      "errorText": "data must match pattern \"(a)(b)\\2\""
+    },
+    {
+      "id": "unsupported-pattern/named-group",
+      "schema": {
+        "pattern": "(?<x>a)\\k<x>"
+      },
+      "data": "a",
+      "portUnsupported": true,
+      "errorText": "data must match pattern \"(?<x>a)\\k<x>\""
+    },
+    {
+      "id": "unsupported-pattern/named-forward-reference",
+      "schema": {
+        "pattern": "\\k<x>(?<x>a)"
+      },
+      "data": "a",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/named-group-nonascii",
+      "schema": {
+        "pattern": "(?<é>x)"
+      },
+      "data": "x",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/unicode-escape",
+      "schema": {
+        "pattern": "\\u0041"
+      },
+      "data": "A",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/unicode-brace-escape",
+      "schema": {
+        "pattern": "\\u{1F600}"
+      },
+      "data": "😀",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/lone-surrogate-escape",
+      "schema": {
+        "pattern": "\\uD83D"
+      },
+      "data": "\ud83d",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/surrogate-pair-escape",
+      "schema": {
+        "pattern": "\\uD83D\\uDE00"
+      },
+      "data": "😀",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/property-escape",
+      "schema": {
+        "pattern": "\\p{L}"
+      },
+      "data": "a",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/property-escape-in-class",
+      "schema": {
+        "pattern": "[\\p{L}]"
+      },
+      "data": "a",
+      "portUnsupported": true
+    },
+    {
+      "id": "unsupported-pattern/property-name-not-validated",
+      "schema": {
+        "pattern": "\\p{NotAProperty}"
+      },
+      "data": "a",
+      "portUnsupported": true,
+      "compileError": "Invalid regular expression: /\\p{NotAProperty}/u: Invalid property name"
+    },
+    {
+      "id": "unsupported-pattern/property-name-not-validated-in-class",
+      "schema": {
+        "pattern": "[\\p{NotAProperty}]"
+      },
+      "data": "a",
+      "portUnsupported": true,
+      "compileError": "Invalid regular expression: /[\\p{NotAProperty}]/u: Invalid property name in character class"
+    },
+    {
+      "id": "unsupported-pattern/huge-quantifier",
+      "schema": {
+        "pattern": "a{1000000000}"
+      },
+      "data": "a",
+      "portUnsupported": true,
+      "errorText": "data must match pattern \"a{1000000000}\""
     },
     {
       "id": "length/astral-max-equal",
