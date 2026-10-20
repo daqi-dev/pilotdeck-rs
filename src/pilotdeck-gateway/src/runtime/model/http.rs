@@ -358,6 +358,8 @@ pub struct StreamOptions {
     /// undici `bodyTimeout` of the global dispatcher (PilotDeck installs
     /// 600000 ms in `cli/proxy.ts`): a body read that sees no bytes for this
     /// long fails with `TypeError: terminated`.
+    /// Production always uses `UNDICI_BODY_TIMEOUT_MS`; undici's zero disables
+    /// this timeout, but zero is not supported by our Node timer normalization.
     pub body_timeout_ms: f64,
 }
 impl Default for StreamOptions {

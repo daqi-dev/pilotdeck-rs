@@ -29,7 +29,7 @@ use tokio::time::Instant;
 /// body can outlive it (same probe).
 const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
 
-use crate::runtime::network::{Exchange, exchange};
+use crate::runtime::network::{Exchange, delay, exchange};
 pub use crate::runtime::network::{node_timer_delay_ms, node_timer_duration};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,43 +308,28 @@ fn timeout_error(timeout_ms: f64) -> NetworkFetchError {
     )
 }
 
-/// `delay(ms, parentSignal)`, including the provider's outer abort timer.
-/// An earlier retry timer runs its continuation before a later abort callback,
-/// even when both are overdue. The next attempt may fulfill synchronously.
-async fn delay(
+/// Map the shared retry wait's event ordering to the web/provider errors.
+async fn retry_wait(
     ms: f64,
     options: &FetchOptions<'_>,
     outer_deadline: Option<OuterDeadline>,
     continuation_before_abort: bool,
 ) -> Result<bool, NetworkFetchError> {
-    let parent = options.parent;
-    if !continuation_before_abort && parent.is_some_and(ToolRunContext::is_aborted) {
-        return Err(abort_error("Network retry aborted."));
-    }
-    let retry_at = Instant::now() + node_timer_duration(ms);
-    let outer_first = outer_deadline.filter(|deadline| deadline.at <= retry_at);
-    let next = outer_deadline.map_or(retry_at, |deadline| deadline.at.min(retry_at));
-    let mut abort = Box::pin(parent_aborted(parent));
-    let mut timer = Box::pin(tokio::time::sleep_until(next));
-    std::future::poll_fn(|cx| {
-        let aborted = abort.as_mut().poll(cx).is_ready();
-        let timer_first = !aborted
-            || parent
-                .and_then(ToolRunContext::abort_event_at)
-                .is_some_and(|at| next <= at);
-        if timer_first && timer.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(if let Some(outer) = outer_first {
-                Err(outer.error(options.timeout_ms))
-            } else {
-                Ok(aborted)
-            });
-        }
-        if aborted {
-            return Poll::Ready(Err(abort_error("Network retry aborted.")));
-        }
-        Poll::Pending
-    })
+    match delay(
+        node_timer_duration(ms),
+        parent_aborted(options.parent),
+        || options.parent.and_then(ToolRunContext::abort_event_at),
+        outer_deadline.map(|outer| outer.at),
+        continuation_before_abort,
+    )
     .await
+    {
+        Exchange::Response((), before_abort) => Ok(before_abort),
+        Exchange::Aborted => Err(abort_error("Network retry aborted.")),
+        Exchange::Timeout => Err(outer_deadline
+            .expect("only a surrounding deadline can time out a retry wait")
+            .error(options.timeout_ms)),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -500,7 +485,7 @@ async fn network_fetch_inner(
                         (!values.is_empty()).then(|| values.join(", "))
                     };
                     drop(response);
-                    continuation_before_abort = delay(
+                    continuation_before_abort = retry_wait(
                         retry_delay(attempt, &retry, retry_after.as_deref(), &options.random),
                         options,
                         outer_deadline,
@@ -525,7 +510,7 @@ async fn network_fetch_inner(
                 if !can_retry_method || attempt >= retry.max_retries || !retryable {
                     return Err(error);
                 }
-                continuation_before_abort = delay(
+                continuation_before_abort = retry_wait(
                     retry_delay(attempt, &retry, None, &options.random),
                     options,
                     outer_deadline,

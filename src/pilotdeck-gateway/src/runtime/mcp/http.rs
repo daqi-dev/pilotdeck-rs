@@ -24,7 +24,7 @@ use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
     model::http::retry_after_header_ms,
-    network::{Exchange, ExchangeFuture, exchange, node_timer_duration},
+    network::{Exchange, ExchangeFuture, delay, exchange, node_timer_duration},
     tools::ToolCancellation,
 };
 use crate::{fetch_redirect, js_value};
@@ -333,8 +333,9 @@ async fn network_fetch_with<B: Send + 'static>(
         Fetch::Plain => (0.0, false),
     };
     let retryable_method = retries && method == Method::GET;
+    let mut continuation_before_abort = false;
     for attempt in 0..=1 {
-        if aborted.is_cancelled() {
+        if !continuation_before_abort && aborted.is_cancelled() {
             return Err(network_error(
                 "network_abort",
                 "Network request aborted by parent signal.".into(),
@@ -350,25 +351,31 @@ async fn network_fetch_with<B: Send + 'static>(
         )
         .await
         {
-            Exchange::Response(outcome, _) => outcome,
-            Exchange::Timeout => Err(network_error(
-                "network_timeout",
-                format!(
-                    "Network request timed out after {}ms.",
-                    js_value::number_string(timeout_ms)
-                ),
-            )),
+            Exchange::Response(outcome, before_abort) => {
+                continuation_before_abort = before_abort;
+                outcome
+            }
+            Exchange::Timeout => {
+                continuation_before_abort = aborted.is_cancelled();
+                Err(network_error(
+                    "network_timeout",
+                    format!(
+                        "Network request timed out after {}ms.",
+                        js_value::number_string(timeout_ms)
+                    ),
+                ))
+            }
             Exchange::Aborted => Err(network_error(
                 "network_abort",
                 "Network request aborted by parent signal.".into(),
             )),
         };
         let last = attempt == 1 || !retryable_method;
-        match outcome {
+        let wait = match outcome {
             Ok(response) if !last && RETRY_STATUSES.contains(&response.status().as_u16()) => {
                 let retry_after = header_value(response.headers(), "retry-after");
                 drop(response);
-                tokio::time::sleep(retry_delay(retry_after.as_deref())).await;
+                retry_delay(retry_after.as_deref())
             }
             Ok(response) => return Ok(response),
             Err(error) => {
@@ -380,9 +387,27 @@ async fn network_fetch_with<B: Send + 'static>(
                 if last || !retryable {
                     return Err(error);
                 }
-                tokio::time::sleep(retry_delay(None)).await;
+                retry_delay(None)
             }
-        }
+        };
+        continuation_before_abort = match delay(
+            wait,
+            aborted.cancelled(),
+            || aborted.abort_event_at(),
+            None,
+            continuation_before_abort,
+        )
+        .await
+        {
+            Exchange::Response((), before_abort) => before_abort,
+            Exchange::Aborted => {
+                return Err(network_error(
+                    "network_abort",
+                    "Network retry aborted.".into(),
+                ));
+            }
+            Exchange::Timeout => unreachable!("MCP retry waits have no surrounding deadline"),
+        };
     }
     unreachable!("the last attempt returns")
 }
@@ -1071,6 +1096,136 @@ mod tests {
             std::task::Poll::Ready(())
         })
         .await;
+    }
+
+    async fn poll_ready<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) -> F::Output {
+        std::future::poll_fn(|cx| match future.as_mut().poll(cx) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+            std::task::Poll::Pending => panic!("must complete without advancing the paused clock"),
+        })
+        .await
+    }
+
+    fn retry_outcome(status_retry: bool) -> Result<hyper::Response<()>, McpClientError> {
+        if status_retry {
+            Ok(hyper::Response::builder()
+                .status(429)
+                .header("retry-after", "5")
+                .body(())
+                .unwrap())
+        } else {
+            Err(network_error(
+                "network_connection_reset",
+                "socket hang up".into(),
+            ))
+        }
+    }
+
+    fn assert_retry_aborted(result: Result<hyper::Response<()>, McpClientError>) {
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), Some(&McpErrorCode::Text("network_abort")));
+        assert_eq!(error.to_string(), "Network retry aborted.");
+    }
+
+    /// Both the Retry-After and network-error backoff must wake on close().
+    /// A single poll prevents paused-time auto-advance from hiding bare sleep.
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_retry_wait_close_aborts_immediately() {
+        for status_retry in [true, false] {
+            let link = HttpLink::new(
+                HttpKind::Streamable,
+                Url::parse("http://example.com/").unwrap(),
+                Vec::new(),
+                100.0,
+                100.0,
+            );
+            let attempts = std::cell::Cell::new(0);
+            let started = tokio::time::Instant::now();
+            let mut pending = Box::pin(network_fetch_with(
+                Method::GET,
+                Fetch::Network { timeout_ms: 100.0 },
+                &link.aborted,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    ExchangeFuture::ready(retry_outcome(status_retry))
+                },
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(100)).await;
+            link.close();
+            assert_retry_aborted(poll_ready(pending.as_mut()).await);
+            assert_eq!(attempts.get(), 1);
+            assert_eq!(started.elapsed(), Duration::from_millis(100));
+        }
+    }
+
+    /// Real TS delay removes its listener when its already registered timer
+    /// fires. A later parent timer (including a tie) cannot reject that wait;
+    /// a synchronous close before dispatch still can.
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_retry_wait_orders_expiry_and_parent_abort() {
+        for (parent_ms, synchronous, succeeds) in [
+            (4999, false, false),
+            (5000, false, true),
+            (5001, false, true),
+            (5000, true, false),
+        ] {
+            let signal = ToolCancellation::default();
+            let started = tokio::time::Instant::now();
+            let attempts = std::cell::Cell::new(0);
+            let mut pending = Box::pin(network_fetch_with(
+                Method::GET,
+                Fetch::Network { timeout_ms: 100.0 },
+                &signal,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    ExchangeFuture::ready(if attempts.get() == 1 {
+                        retry_outcome(true)
+                    } else {
+                        Ok(hyper::Response::new(()))
+                    })
+                },
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(parent_ms.max(5000))).await;
+            if synchronous {
+                signal.cancel_synchronously();
+            } else {
+                signal.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            let result = poll_ready(pending.as_mut()).await;
+            if succeeds {
+                assert_eq!(result.unwrap().status(), 200);
+                assert_eq!(attempts.get(), 2);
+            } else {
+                assert_retry_aborted(result);
+                assert_eq!(attempts.get(), 1);
+            }
+        }
+    }
+
+    /// Cancel after fetch is entered but before delay starts. Unlike a parent
+    /// cancelled before the whole request, TS reports "Network retry aborted.".
+    #[tokio::test(start_paused = true)]
+    async fn network_fetch_retry_wait_rejects_already_cancelled_parent() {
+        for status_retry in [true, false] {
+            let signal = ToolCancellation::default();
+            let started = tokio::time::Instant::now();
+            let attempts = std::cell::Cell::new(0);
+            let mut pending = Box::pin(network_fetch_with(
+                Method::GET,
+                Fetch::Network { timeout_ms: 100.0 },
+                &signal,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    signal.cancel_synchronously();
+                    ExchangeFuture::ready(retry_outcome(status_retry))
+                },
+            ));
+            assert_retry_aborted(poll_ready(pending.as_mut()).await);
+            assert_eq!(attempts.get(), 1);
+            assert_eq!(started.elapsed(), Duration::ZERO);
+        }
     }
 
     /// Real TS networkFetch probe: response/timeout/parent timers retain their
