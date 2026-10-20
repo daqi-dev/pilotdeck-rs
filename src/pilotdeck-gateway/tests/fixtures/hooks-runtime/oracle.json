@@ -795,6 +795,11 @@
           "headers": {
             "content-type": "application/json"
           },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
       },
@@ -813,6 +818,11 @@
           "path": "/bad",
           "headers": {
             "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
           },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
@@ -833,6 +843,11 @@
           "headers": {
             "content-type": "application/json"
           },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
       },
@@ -851,6 +866,11 @@
           "path": "/invalid-utf8",
           "headers": {
             "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
           },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
@@ -885,6 +905,23 @@
             "x-c": "",
             "x-d": "pret-post"
           },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "t"
+            ],
+            "x-b": [
+              "t"
+            ],
+            "x-c": [
+              ""
+            ],
+            "x-d": [
+              "pret-post"
+            ]
+          },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\",\"extra\":\"v\"}"
         }
       },
@@ -903,6 +940,11 @@
           "path": "/server-error",
           "headers": {
             "content-type": "application/json"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
           },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
@@ -969,6 +1011,14 @@
             "content-type": "application/json",
             "x-a": "José"
           },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "José"
+            ]
+          },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
       },
@@ -1033,6 +1083,11 @@
           "headers": {
             "content-type": "application/json"
           },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ]
+          },
           "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
         }
       },
@@ -1047,6 +1102,92 @@
         },
         "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}",
         "request": null
+      },
+      {
+        "name": "header-content-type-case",
+        "target": "<url>/echo",
+        "headers": {
+          "Content-Type": "text/x-custom"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json, text/x-custom\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json, text/x-custom\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json, text/x-custom"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json, text/x-custom"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-same-name-case",
+        "target": "<url>/echo",
+        "headers": {
+          "X-A": "a",
+          "x-a": "b"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"application/json\\\",\\\"x-a\\\":\\\"a, b\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"application/json\",\"x-a\":\"a, b\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "application/json",
+            "x-a": "a, b"
+          },
+          "headerLines": {
+            "content-type": [
+              "application/json"
+            ],
+            "x-a": [
+              "a, b"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
+      },
+      {
+        "name": "header-content-type-exact",
+        "target": "<url>/echo",
+        "headers": {
+          "content-type": "z"
+        },
+        "hookInput": {
+          "sessionId": "session-1",
+          "transcriptPath": "",
+          "cwd": "/tmp",
+          "permissionMode": "default"
+        },
+        "expected": "{\"stdout\":\"{\\\"body\\\":\\\"{\\\\\\\"sessionId\\\\\\\":\\\\\\\"session-1\\\\\\\",\\\\\\\"transcriptPath\\\\\\\":\\\\\\\"\\\\\\\",\\\\\\\"cwd\\\\\\\":\\\\\\\"/tmp\\\\\\\",\\\\\\\"permissionMode\\\\\\\":\\\\\\\"default\\\\\\\"}\\\",\\\"headers\\\":{\\\"content-type\\\":\\\"z\\\"}}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{\"body\":\"{\\\"sessionId\\\":\\\"session-1\\\",\\\"transcriptPath\\\":\\\"\\\",\\\"cwd\\\":\\\"/tmp\\\",\\\"permissionMode\\\":\\\"default\\\"}\",\"headers\":{\"content-type\":\"z\"}}}}",
+        "request": {
+          "method": "POST",
+          "path": "/echo",
+          "headers": {
+            "content-type": "z"
+          },
+          "headerLines": {
+            "content-type": [
+              "z"
+            ]
+          },
+          "body": "{\"sessionId\":\"session-1\",\"transcriptPath\":\"\",\"cwd\":\"/tmp\",\"permissionMode\":\"default\"}"
+        }
       }
     ]
   },

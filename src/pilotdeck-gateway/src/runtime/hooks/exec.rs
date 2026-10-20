@@ -1163,7 +1163,25 @@ fn resolve_headers(
             output.push((key, JsString::from_utf16(resolved)));
         }
     }
-    Ok(output)
+    // The spread above is a plain object (exact-key override). `fetch` then
+    // builds `Headers` from it, which appends case-insensitively: one header,
+    // first-seen name spelling, values joined with ", " (node probe in
+    // _tmp/20261019-a67-pr4/probe-p1/probe.out).
+    let mut merged: Vec<(String, JsString)> = Vec::with_capacity(output.len());
+    for (name, value) in output {
+        if let Some(entry) = merged
+            .iter_mut()
+            .find(|(seen, _)| seen.eq_ignore_ascii_case(&name))
+        {
+            let mut joined = entry.1.units().to_vec();
+            joined.extend(", ".encode_utf16());
+            joined.extend_from_slice(value.units());
+            entry.1 = JsString::from_utf16(joined);
+        } else {
+            merged.push((name, value));
+        }
+    }
+    Ok(merged)
 }
 
 fn substitute_env(
@@ -1582,6 +1600,8 @@ where
     }
 }
 
+/// `String.prototype.replace(string, string)`: first occurrence only, and the
+/// replacement goes through `GetSubstitution` (`$&`, `` $` ``, `$'`, `$$`).
 fn replace_first(value: &JsString, needle: &str, replacement: &str) -> JsString {
     let units = value.units();
     let needle: Vec<u16> = needle.encode_utf16().collect();
@@ -1591,9 +1611,40 @@ fn replace_first(value: &JsString, needle: &str, replacement: &str) -> JsString 
     else {
         return value.clone();
     };
+    let replacement: Vec<u16> = replacement.encode_utf16().collect();
     let mut output = Vec::with_capacity(units.len() + replacement.len());
     output.extend_from_slice(&units[..index]);
-    output.extend(replacement.encode_utf16());
+    crate::runtime::mcp::sdk::expand_replacement(
+        &mut output,
+        &replacement,
+        units,
+        index,
+        index + needle.len(),
+    );
     output.extend_from_slice(&units[index + needle.len()..]);
     JsString::from_utf16(output)
+}
+
+#[cfg(test)]
+mod replace_tests {
+    use super::*;
+
+    /// Node v22.22.0: `"pre $ARGUMENTS post".replace("$ARGUMENTS",
+    /// JSON.stringify({a:"$&|$`|$'|$$|$1"}))` (probe in
+    /// _tmp/20261019-a67-pr4/probe-p1/probe.out).
+    #[test]
+    fn arguments_replacement_uses_get_substitution() {
+        let out = replace_first(
+            &JsString::from("pre $ARGUMENTS post"),
+            "$ARGUMENTS",
+            r#"{"a":"$&|$`|$'|$$|$1"}"#,
+        );
+        assert_eq!(
+            out,
+            JsString::from(r#"pre {"a":"$ARGUMENTS|pre | post|$|$1"} post"#)
+        );
+        // Only the first occurrence is replaced.
+        let out = replace_first(&JsString::from("$ARGUMENTS $ARGUMENTS"), "$ARGUMENTS", "x");
+        assert_eq!(out, JsString::from("x $ARGUMENTS"));
+    }
 }

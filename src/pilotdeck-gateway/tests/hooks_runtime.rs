@@ -466,6 +466,26 @@ fn selected_headers(headers: &hyper::HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Every wire line of each selected name (mirrors the generator's
+/// `rawHeaders` scan), so a header split into two lines cannot pass.
+fn selected_header_lines(headers: &hyper::HeaderMap) -> JsObject {
+    let mut lines = JsObject::new();
+    for name in ["content-type", "x-a", "x-b", "x-c", "x-d"] {
+        let values: Vec<JsValue> = headers
+            .get_all(name)
+            .iter()
+            .map(|value| {
+                let text: String = value.as_bytes().iter().map(|b| char::from(*b)).collect();
+                JsValue::String(text.into())
+            })
+            .collect();
+        if !values.is_empty() {
+            lines.insert(name.into(), JsValue::Array(values));
+        }
+    }
+    lines
+}
+
 fn headers_json(headers: &[(String, String)]) -> String {
     let entries: Vec<String> = headers
         .iter()
@@ -492,6 +512,7 @@ async fn serve_connection(
                 let path = request.uri().path().to_owned();
                 let method = request.method().as_str().to_owned();
                 let headers = selected_headers(request.headers());
+                let header_lines = selected_header_lines(request.headers());
                 let body = match request.into_body().collect().await {
                     Ok(body) => body.to_bytes().to_vec(),
                     Err(_) => Vec::new(),
@@ -506,6 +527,7 @@ async fn serve_connection(
                         .insert(name.clone().into(), JsValue::String(value.clone().into()));
                 }
                 recorded_request.insert("headers".into(), JsValue::Object(header_object));
+                recorded_request.insert("headerLines".into(), JsValue::Object(header_lines));
                 recorded_request.insert("body".into(), JsValue::String(body_text.clone().into()));
                 recorded
                     .lock()
@@ -566,7 +588,7 @@ async fn http_executor_matches_real_ts_and_records_requests() {
     let refused = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
     let cases = array(field(field(&oracle, "http"), "cases"));
-    assert_eq!(cases.len(), 15);
+    assert_eq!(cases.len(), 18);
     let executor = HttpHookExecutor::new();
     for case in cases {
         let name = text(field(case, "name"));
