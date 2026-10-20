@@ -1,21 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-20 17:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- accepted-diffs-371 | gate | ready | PR #372：冻结件追加 #4 #5（待批）；codex 0/0，GLM 在审；前置于 A6.5-pr10b / pr12 合并
-- A6.5-pr6 | gate | ready | rewind_files：Grok r4 0/0、gate4 0/0；rebase main 后 731 全绿（48009b5），gate5 在新 HEAD 排队，过即开 PR
-- A6.4-pr6 | gate | ready | openai：闸门/Claude/GLM r1 收敛；GLM r2 的唯一 P1 是提交信息与实现相反，已 amend（39969c3，树不变）；gate4 排队，过即开 PR
-- #342-tool-pair | review | ready | toolPairIntegrity 收编（Claude 起头、DeepSeek 完成，wt-a6-recorder）：gate1 0/0、GLM 0/0；codex 第二家在审
-- A6.5-pr12 | gate | ready | 后台任务：代码类 P0/P1 全清（GLM r2、Grok r2 确认）；仅剩登记 P1 → #372 合入后在新 HEAD 重跑闸门
-- A6.5-pr10a | review | ready | MCP 客户端：codex 修复轮 4（终审 P1×5）+ rebase main（6104af5，752 全绿）；GLM r5 + gate6 在跑
-- A6.5-pr10b | impl | ready | MCP 运行时：codex 接手 rebase 到新 pr10a（client.rs 真冲突，按补丁手工合）+ GLM P1-A（pattern 正则语义）+ gate2 停机竞态 P1；旧版保留在 claude/a65-pr10b-pre-rebase
-- A6.4-pr8 | review | ready | google：gate1 0/0；GLM r1 在审，Grok r1 因 SSL 中断待重派
-- A6.4-pr7 | review | ready | openai-responses：修复轮 1 + rebase main 已推（3696cc4）；DeepSeek r2 + gate2 结果待收
-- A6.5-pr9 | impl | ready | web_fetch/search：gate1 P1×4（body 读取不看取消/无总时限、secondary signal 丢失、重试注释同 pr10a 实为 P3）；作者 Claude 子代理被上游限流，待重派
-- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层；接 pr9
-- A6.6-pr8a | impl | ready | compaction engine + stripMultimedia；接 #342
+updated: 2026-10-20 19:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.4-pr7 | impl | ready | PR #379 与 main（含 A6.4-pr6）冲突：Claude 子代理 rebase 并把两份 resolveThinkingPlan 合成一份（唯一编码）；之后重跑闸门
+- A6.4-pr8 | impl | ready | google：修复轮 1 已推（0651ea2，Grok P1×3），与 main 冲突；**等 A6.4-pr7 合入后再 rebase**（三个 provider 共改 providers/mod.rs、http.rs，按顺序合避免反复冲突）
+- A6.5-pr9 | impl | ready | web_fetch/search 修复轮 2（DeepSeek）：codex r2 P1×2（timeoutMs<=0、取消覆盖 provider 异常）
+- A6.5-pr10b | impl | ready | MCP 运行时修复轮 3（DeepSeek，排在 pr9 之后）：Grok r3 P1 /u 非法 pattern 放行；停机租约、手工合并、栈溢出均确认修好
+- A6.6-pr8a | impl | ready | compaction engine + stripMultimedia（codex，wt-a63-pr1，叠在已合入的 #342 上）
 - A6.6-pr8b | impl | ready | policy/orchestrator/recovery；接 pr8a
-- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr6~pr8
+- A6.5-pr9b | impl | ready | html5ever（人批 A）+ turndown 规则层；接 pr9
+- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr7/pr8
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -23,7 +17,13 @@ updated: 2026-10-20 17:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - D4 | impl | blocked | 已人批（10-15 D4→B）；待 A5.4 定标时排期
 - #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
+- accepted-diffs-4-5 | coord | human | #372 已合入的两条「待批」条目（handshakeClose、background-task-async-spawn），等人批
 <!-- READY:END -->
+
+> ## 2026-10-20 19:00 · /loop
+> **合并**：#372（accepted-diffs #4 #5，待批）、#373、#374 A6.5-pr6、#375 A6.4-pr6、#376 A6.5-pr10a、#377 #342 tool_pair、#378 A6.5-pr12、#380（CLAUDE.md 精简，用户本人确认草稿全文）。
+> **GLM 第二次撞 5 小时额度**（18:37，19:49 重置）：pr10b gate3、pr9 gate2 及两路 GLM 评审作废，改名 `-429` 保留；重置前评审只用 codex / Grok，闸门等重置后重排。
+> **provider 三单合并顺序**：A6.4-pr6 已入 main；pr7、pr8 都和它在 providers/mod.rs、http.rs、anthropic.rs 冲突，还各带一份 resolveThinkingPlan 移植。先合 pr7（合并时把移植收成一份），再 rebase pr8。
 
 > ## 2026-10-20 17:30 · /loop 两小时交接（自 14:30 起）
 > **合并**：#366 A6.5-pr7、#367 p2-sweep-7（关 13 张 P2-跟进）、#368、#369（#351 漏掉的 5 个修复提交）、#370。
