@@ -1,6 +1,4 @@
-//! Compaction capability contract and a single manual summary pass.
-//! Post-summary pressure handling, including for manual force, and automatic
-//! policy/stage orchestration are supplied by pr8b through `auto_compact`.
+//! Compaction capability contract; stage-only ports use the shared orchestrator.
 use super::*;
 use crate::host::modules::context::ContextInput;
 use crate::runtime::model::token_accounting::TokenBudgetManager;
@@ -107,7 +105,13 @@ impl CompactionSnipPort for SnipEngine {
     }
 }
 pub type PostCompactBuilder = Arc<dyn Fn(&CompactionResult) -> Vec<JsValue> + Send + Sync>;
-pub type CheckpointTruncator = Arc<dyn Fn(&[JsValue], f64) -> Vec<JsValue> + Send + Sync>;
+/// Rust message values do not retain JS object identity. A custom truncator
+/// explicitly reports whether it replaced any message reference or position.
+pub struct CheckpointTruncation {
+    pub messages: Vec<JsValue>,
+    pub changed: bool,
+}
+pub type CheckpointTruncator = Arc<dyn Fn(&[JsValue], f64) -> CheckpointTruncation + Send + Sync>;
 
 #[derive(Clone)]
 pub struct CompactionPort {
@@ -134,7 +138,7 @@ impl Default for CompactionPort {
             snip: None,
             recovery: None,
             build_post_compact_messages: Arc::new(build_post_compact_messages),
-            truncate_head_preserving_checkpoint: Arc::new(truncate_head_preserving_checkpoint),
+            truncate_head_preserving_checkpoint: Arc::new(truncate_checkpoint_with_change),
         }
     }
 }
@@ -147,7 +151,7 @@ impl CompactionPort {
         messages: &[JsValue],
         ratio: f64,
     ) -> Vec<JsValue> {
-        (self.truncate_head_preserving_checkpoint)(messages, ratio)
+        (self.truncate_head_preserving_checkpoint)(messages, ratio).messages
     }
     pub fn try_auto_compact(
         &self,
@@ -157,94 +161,9 @@ impl CompactionPort {
         if let Some(runner) = &self.auto_compact {
             return runner.auto_compact(input);
         }
-        let port = self.clone();
-        Box::pin(async move { port.manual(input, default_max_context_tokens).await })
+        use crate::runtime::context::compaction::orchestrator::CompactionOrchestrator;
+        CompactionOrchestrator::new(self.clone(), default_max_context_tokens).auto_compact(input)
     }
-    async fn manual(
-        &self,
-        input: ContextInput,
-        default_context: f64,
-    ) -> Result<JsValue, HostError> {
-        let fields = JsValue::Object(input.fields);
-        let context = field(&fields, "maxContextTokens")
-            .as_number()
-            .unwrap_or(default_context);
-        let manual = string_field(&fields, "trigger").is_some_and(|s| s.equals_str("manual"))
-            && field(&fields, "manualForce") == &JsValue::Bool(true);
-        let Some(budget) = self.budget.as_ref().filter(|_| manual) else {
-            return Ok(skipped(empty_snapshot(context)));
-        };
-        let messages = match field(&fields, "messages") {
-            JsValue::Array(messages) => messages,
-            _ => return Err(failure("Compaction input messages must be an array.")),
-        };
-        let reserved = field(&fields, "reservedOutputTokens").as_number();
-        let evaluate = |messages: Vec<JsValue>| {
-            let evaluator = input.budget_evaluator.clone();
-            async move {
-                if let Some(evaluator) = evaluator {
-                    evaluator.evaluate(JsValue::Array(messages)).await
-                } else {
-                    budget.evaluate(&messages, context, reserved)
-                }
-            }
-        };
-        let initial = evaluate(messages.clone()).await?;
-        let Some(summary) = &self.summary else {
-            return Ok(skipped(initial));
-        };
-        let effective = js_max(
-            1.0,
-            field(&initial, "effectiveContextTokens")
-                .as_number()
-                .or_else(|| field(&initial, "maxContextTokens").as_number())
-                .unwrap_or(context)
-                .floor(),
-        );
-        let mut summary_input = CompactionInput::new("manual", messages.clone());
-        summary_input.effective_context_tokens = Some(effective);
-        summary_input.target_post_tokens = Some(js_max(1.0, (effective * 0.60).floor()));
-        summary_input.session_id = Some(
-            string_field(&fields, "sessionId")
-                .cloned()
-                .unwrap_or_default(),
-        );
-        summary_input.turn_id = Some(string_field(&fields, "turnId").cloned().unwrap_or_default());
-        summary_input.signal = input
-            .abort_signal
-            .as_ref()
-            .and_then(|signal| signal.downcast_ref::<Cancellation>())
-            .cloned();
-        let result = summary.run(summary_input).await?;
-        if result.error.is_some() || result.summary_message.is_none() {
-            // No fabricated boundary or head truncation on a failed manual
-            // summary. The original transcript remains the active surface.
-            let _ = evaluate(messages.clone()).await?;
-            return Ok(skipped(initial));
-        }
-        let messages = ensure_trailing_user_message(self.build_post_compact_messages(&result));
-        let snapshot = evaluate(messages.clone()).await?;
-        Ok(object([
-            ("type", text("compacted")),
-            ("messages", JsValue::Array(messages)),
-            ("tier", text("full")),
-            ("snapshot", snapshot),
-            ("result", result.to_value()),
-        ]))
-    }
-}
-fn skipped(snapshot: JsValue) -> JsValue {
-    object([("type", text("skipped")), ("snapshot", snapshot)])
-}
-fn empty_snapshot(context: f64) -> JsValue {
-    object([
-        ("tokens", JsValue::Number(0.0)),
-        ("maxContextTokens", JsValue::Number(context)),
-        ("warningRatio", JsValue::Number(0.0)),
-        ("blockingRatio", JsValue::Number(0.0)),
-        ("state", text("ok")),
-        ("ratio", JsValue::Number(0.0)),
-    ])
 }
 
 /// Serializable budget intent; preserve explicitly supplied false/zero.

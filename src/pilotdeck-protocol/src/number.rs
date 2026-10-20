@@ -28,6 +28,15 @@ pub fn number_to_string(number: f64) -> String {
 /// does not. For `|x| < 1e21`, `x * 1e6 < 2^90` and the significand times
 /// 1e6 is below `2^73`, so the `u128` arithmetic cannot overflow.
 pub fn to_fixed_6(number: f64) -> String {
+    to_fixed(number, 6)
+}
+
+/// `Number.prototype.toFixed(3)`, sharing the exact rational rounding above.
+pub fn to_fixed_3(number: f64) -> String {
+    to_fixed(number, 3)
+}
+
+fn to_fixed(number: f64, digits: usize) -> String {
     if !number.is_finite() || number.abs() >= 1e21 {
         return number_to_string(number);
     }
@@ -39,7 +48,8 @@ pub fn to_fixed_6(number: f64) -> String {
     } else {
         (fraction | (1_u64 << 52), biased - 1023 - 52)
     };
-    let scaled = u128::from(significand) * 1_000_000;
+    let scale = 10_u128.pow(digits as u32);
+    let scaled = u128::from(significand) * scale;
     let integer = if exponent >= 0 {
         scaled << exponent as u32
     } else {
@@ -52,10 +62,10 @@ pub fn to_fixed_6(number: f64) -> String {
         }
     };
     format!(
-        "{}{}.{:06}",
+        "{}{}.{:0digits$}",
         if number < 0.0 { "-" } else { "" },
-        integer / 1_000_000,
-        integer % 1_000_000
+        integer / scale,
+        integer % scale
     )
 }
 

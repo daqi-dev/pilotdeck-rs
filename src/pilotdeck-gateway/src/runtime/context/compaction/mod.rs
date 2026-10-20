@@ -14,6 +14,9 @@
 
 pub mod engine;
 mod micro;
+pub mod orchestrator;
+pub mod policy;
+pub mod recovery;
 mod snip;
 pub mod tool_pair;
 
