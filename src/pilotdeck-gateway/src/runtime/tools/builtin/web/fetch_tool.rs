@@ -55,10 +55,11 @@ pub trait SecondaryStream: Send {
 
 /// `PilotDeckToolModelClient.stream` for the secondary call.
 ///
-/// `signal` is the tool call's `AbortSignal`; a real client aborts the
-/// underlying provider request when it fires (the tool additionally races
-/// `next()` against the same signal, so cancellation settles even if the
-/// client ignores it).
+/// `signal` is the tool call's `AbortSignal`; the client must abort the
+/// underlying provider request when it fires so a pending `next()` settles.
+/// Like `for await` in the baseline, the tool awaits `next()` and has no
+/// cancellation path of its own: a provider that ignores the signal would
+/// keep the call pending in TypeScript too.
 pub trait SecondaryModel: Send + Sync {
     fn stream(&self, request: JsValue, signal: Option<ToolRunContext>) -> Box<dyn SecondaryStream>;
 }
@@ -554,21 +555,22 @@ async fn execute(
     let mut model_text: Vec<u16> = Vec::new();
     let mut events = model.stream(request, Some(context.clone()));
     loop {
-        if context.is_aborted() {
-            return Err(aborted_error());
-        }
-        let next = tokio::select! {
-            biased;
-            () = context.cancelled() => return Err(aborted_error()),
-            next = events.next() => next,
-        };
+        // The baseline is `for await (const event of model.stream(...))`:
+        // cancellation itself never settles the loop, the provider's `next()`
+        // must. A signal-aware client aborts the provider request and rejects
+        // `next()`, which `for await` routes straight to `catch`; only a
+        // *yielded* event reaches the `signal.aborted` check at the top of the
+        // body. Awaiting `next()` (instead of racing it against the signal)
+        // keeps that order: an abort-induced throw is wrapped as a secondary
+        // model failure, not replaced by `tool_aborted`.
+        let next = events.next().await;
         let Some(item) = next else { break };
-        // `if (signal.aborted)` at the top of every iteration in the baseline.
-        if context.is_aborted() {
-            return Err(aborted_error());
-        }
         match item {
             SecondaryModelEvent::Event(event) => {
+                // `if (signal.aborted)` at the top of every iteration.
+                if context.is_aborted() {
+                    return Err(aborted_error());
+                }
                 let kind = field(&event, "type");
                 if kind.as_string().is_some_and(|k| k.equals_str("text_delta")) {
                     let text = display(field(&event, "text"))?;

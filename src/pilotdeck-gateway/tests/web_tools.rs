@@ -6,13 +6,15 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
 use pilotdeck_gateway::{
     host::modules::{
         capability::ToolDefinition,
         tool_context::{HostToolCheckpoint, ToolRuntimeContext},
     },
     runtime::{
-        model::http::{HyperModelTransport, ModelHttpTransport},
+        model::http::{BodyFailure, HyperModelTransport, ModelHttpTransport, TransportFuture},
         tools::{
             ExecutableTool, ToolCancellation, ToolRunContext,
             builtin::web::{
@@ -1104,32 +1106,95 @@ async fn web_search_body_read_observes_parent_cancellation() {
     );
 }
 
-/// A model whose async iterable never yields: the tool must pass the call's
-/// signal through and race `next()` against it.
-struct PendingModel {
-    signal_seen: Arc<Mutex<Option<bool>>>,
-    started: Arc<tokio::sync::Notify>,
+// ---- timeoutMs boundaries / cancellation order (fix round 2) ---------------
+
+/// One reply that the transport returns after `delay`, recording that the
+/// request was really started (the outer timer must abort an issued call, not
+/// skip it).
+struct DelayedTransport {
+    delay: Duration,
+    calls: Arc<Mutex<usize>>,
 }
-struct PendingStream;
-impl SecondaryModel for PendingModel {
-    fn stream(
-        &self,
-        _request: JsValue,
-        signal: Option<ToolRunContext>,
-    ) -> Box<dyn SecondaryStream> {
-        *self.signal_seen.lock().unwrap() = Some(signal.is_some());
-        self.started.notify_one();
-        Box::new(PendingStream)
-    }
-}
-impl SecondaryStream for PendingStream {
-    fn next(&mut self) -> SecondaryNext<'_> {
-        Box::pin(std::future::pending())
+impl ModelHttpTransport for DelayedTransport {
+    fn send(&self, _request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        *self.calls.lock().unwrap() += 1;
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            let body = Full::new(Bytes::from_static(br#"{"search_result":[]}"#))
+                .map_err(|never: std::convert::Infallible| -> BodyFailure { match never {} })
+                .boxed();
+            Ok(hyper::Response::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap())
+        })
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn secondary_stream_receives_signal_and_cancels_pending_next() {
+fn delayed_search(timeout_ms: f64, delay: Duration) -> (WebSearchTool, Arc<Mutex<usize>>) {
+    let calls = Arc::new(Mutex::new(0));
+    let transport: Arc<dyn ModelHttpTransport> = Arc::new(DelayedTransport {
+        delay,
+        calls: calls.clone(),
+    });
+    let mut options = WebSearchOptions::new(transport);
+    options.provider = Some("glm".into());
+    options.api_key = Some("k".into());
+    options.timeout_ms = Some(timeout_ms);
+    options.random = random();
+    (WebSearchTool::new(options), calls)
+}
+
+/// Node's `setTimeout(..., timeoutMs)` is unconditional: 0, a negative value
+/// and NaN are clamped to an immediate timer and abort the provider call,
+/// while `networkFetch`'s own retry timer stays disabled. The baseline probe
+/// (`probes/search-timeout.out`) returns `tool_timeout` with the raw value in
+/// the message for all three.
+#[tokio::test]
+async fn web_search_non_positive_timeout_still_arms_the_outer_timer() {
+    for (timeout_ms, shown) in [(0.0, "0"), (-1.0, "-1"), (f64::NAN, "NaN")] {
+        let (tool, calls) = delayed_search(timeout_ms, Duration::from_millis(60));
+        let result = run(
+            &tool,
+            object(vec![("query", JsValue::from("q"))]),
+            context(None, empty_env(), None),
+        )
+        .await;
+        let error = get(&result, "error");
+        assert_eq!(
+            text(get(error, "code")),
+            "tool_timeout",
+            "timeoutMs={shown}: {}",
+            json(&result)
+        );
+        assert_eq!(
+            text(get(error, "message")),
+            format!("web_search timed out after {shown}ms."),
+            "timeoutMs={shown}"
+        );
+        assert_eq!(*calls.lock().unwrap(), 1, "timeoutMs={shown}");
+    }
+}
+
+/// Negative control: the same 60 ms transport with a positive budget returns
+/// the search result, so the three timeouts above are the timer's doing.
+#[tokio::test]
+async fn negative_control_positive_timeout_lets_delayed_response_through() {
+    let (tool, calls) = delayed_search(100.0, Duration::from_millis(60));
+    let result = run(
+        &tool,
+        object(vec![("query", JsValue::from("q"))]),
+        context(None, empty_env(), None),
+    )
+    .await;
+    let ok = get(&result, "ok");
+    assert_eq!(json(get(ok, "data")), r#"{"query":"q","organic":[]}"#);
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+fn doc_harness() -> Harness {
     let h = Harness::new();
     h.begin(
         &object(vec![(
@@ -1146,19 +1211,74 @@ async fn secondary_stream_receives_signal_and_cancels_pending_next() {
         )]),
         None,
     );
-    let signal_seen = Arc::new(Mutex::new(None));
-    let started = Arc::new(tokio::sync::Notify::new());
-    let model: Arc<dyn SecondaryModel> = Arc::new(PendingModel {
-        signal_seen: signal_seen.clone(),
-        started: started.clone(),
-    });
-    let tool = WebFetchTool::new(WebFetchToolOptions {
+    h
+}
+
+fn fetch_tool_with_model(h: &Harness, model: Arc<dyn SecondaryModel>) -> WebFetchTool {
+    WebFetchTool::new(WebFetchToolOptions {
         model: Some(model),
         provider: None,
         model_id: None,
         max_output_tokens: None,
-        fetcher: plain_fetcher(&h),
+        fetcher: plain_fetcher(h),
+    })
+}
+
+fn secondary_abort_error() -> SecondaryModelEvent {
+    SecondaryModelEvent::Throw {
+        is_error: true,
+        value: object(vec![
+            ("name", JsValue::from("AbortError")),
+            ("message", JsValue::from("This operation was aborted")),
+        ]),
+    }
+}
+
+/// A provider that, like the real client, aborts a pending request when the
+/// call's signal fires and rejects `next()` with its AbortError. The tool is
+/// `for await`-shaped, so that rejection reaches the catch and is wrapped as
+/// a secondary model failure (probe `fetch-cancel-order.out`,
+/// `abort-throw`).
+struct AbortThrowModel {
+    signal_seen: Arc<Mutex<Option<bool>>>,
+    started: Arc<tokio::sync::Notify>,
+}
+struct AbortThrowStream {
+    context: ToolRunContext,
+}
+impl SecondaryModel for AbortThrowModel {
+    fn stream(
+        &self,
+        _request: JsValue,
+        signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
+        *self.signal_seen.lock().unwrap() = Some(signal.is_some());
+        self.started.notify_one();
+        Box::new(AbortThrowStream {
+            context: signal.expect("the tool passes its signal"),
+        })
+    }
+}
+impl SecondaryStream for AbortThrowStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        let context = self.context.clone();
+        Box::pin(async move {
+            context.cancelled().await;
+            Some(secondary_abort_error())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secondary_stream_cancel_maps_provider_abort_error() {
+    let h = doc_harness();
+    let signal_seen = Arc::new(Mutex::new(None));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let model: Arc<dyn SecondaryModel> = Arc::new(AbortThrowModel {
+        signal_seen: signal_seen.clone(),
+        started: started.clone(),
     });
+    let tool = fetch_tool_with_model(&h, model);
     let signal = ToolCancellation::default();
     let context = context(None, empty_env(), Some(signal.clone()));
     let cancel = signal.clone();
@@ -1171,20 +1291,219 @@ async fn secondary_stream_receives_signal_and_cancels_pending_next() {
         ("url", JsValue::from("$TLS/doc")),
         ("prompt", JsValue::from("Q")),
     ]));
-    let started = Instant::now();
+    let started_at = Instant::now();
     let result = tokio::time::timeout(Duration::from_secs(2), run(&tool, input, context))
         .await
-        .expect("a pending model stream must be interruptible");
+        .expect("a signal-aware provider must interrupt the pending next()");
     assert!(
-        started.elapsed() < Duration::from_millis(1500),
+        started_at.elapsed() < Duration::from_millis(1500),
         "{:?}",
-        started.elapsed()
+        started_at.elapsed()
     );
     assert_eq!(*signal_seen.lock().unwrap(), Some(true), "signal passed");
     let error = get(&result, "error");
-    assert_eq!(text(get(error, "code")), "tool_aborted");
+    assert_eq!(
+        text(get(error, "code")),
+        "tool_execution_failed",
+        "{}",
+        json(&result)
+    );
+    assert_eq!(
+        text(get(error, "message")),
+        "web_fetch secondary model failed: This operation was aborted"
+    );
+    assert_eq!(
+        json(get(error, "details")),
+        r#"{"stage":"secondary_model","message":"This operation was aborted"}"#
+    );
+}
+
+/// The other `for await` order: `next()` resolves with an event after the
+/// signal fired. That event reaches the top-of-body `signal.aborted` check,
+/// which wins over the event (probe `fetch-cancel-order.out`, `abort-event`).
+struct LateEventModel {
+    started: Arc<tokio::sync::Notify>,
+}
+struct LateEventStream {
+    context: ToolRunContext,
+}
+impl SecondaryModel for LateEventModel {
+    fn stream(
+        &self,
+        _request: JsValue,
+        signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
+        self.started.notify_one();
+        Box::new(LateEventStream {
+            context: signal.expect("the tool passes its signal"),
+        })
+    }
+}
+impl SecondaryStream for LateEventStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        let context = self.context.clone();
+        Box::pin(async move {
+            context.cancelled().await;
+            Some(SecondaryModelEvent::Event(object(vec![
+                ("type", JsValue::from("text_delta")),
+                ("text", JsValue::from("late")),
+            ])))
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secondary_stream_event_after_cancel_is_tool_aborted() {
+    let h = doc_harness();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let model: Arc<dyn SecondaryModel> = Arc::new(LateEventModel {
+        started: started.clone(),
+    });
+    let tool = fetch_tool_with_model(&h, model);
+    let signal = ToolCancellation::default();
+    let context = context(None, empty_env(), Some(signal.clone()));
+    let cancel = signal.clone();
+    let wait_started = started.clone();
+    tokio::spawn(async move {
+        wait_started.notified().await;
+        cancel.cancel();
+    });
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/doc")),
+        ("prompt", JsValue::from("Q")),
+    ]));
+    let result = tokio::time::timeout(Duration::from_secs(2), run(&tool, input, context))
+        .await
+        .expect("the event arrives after the signal");
+    let error = get(&result, "error");
+    assert_eq!(
+        text(get(error, "code")),
+        "tool_aborted",
+        "{}",
+        json(&result)
+    );
     assert_eq!(
         text(get(error, "message")),
         "web_fetch aborted before completion."
+    );
+    assert!(matches!(get(error, "details"), JsValue::Undefined));
+}
+
+/// Third `for await` order: `next()` resolves done after the signal fired.
+/// The loop exits without a body iteration, so no `signal.aborted` check runs
+/// and the empty-text check reports (probe `fetch-cancel-order.out`,
+/// `abort-done`).
+struct AbortDoneModel {
+    started: Arc<tokio::sync::Notify>,
+}
+struct AbortDoneStream {
+    context: ToolRunContext,
+}
+impl SecondaryModel for AbortDoneModel {
+    fn stream(
+        &self,
+        _request: JsValue,
+        signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
+        self.started.notify_one();
+        Box::new(AbortDoneStream {
+            context: signal.expect("the tool passes its signal"),
+        })
+    }
+}
+impl SecondaryStream for AbortDoneStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        let context = self.context.clone();
+        Box::pin(async move {
+            context.cancelled().await;
+            None
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secondary_stream_done_after_cancel_reaches_visible_text_check() {
+    let h = doc_harness();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let model: Arc<dyn SecondaryModel> = Arc::new(AbortDoneModel {
+        started: started.clone(),
+    });
+    let tool = fetch_tool_with_model(&h, model);
+    let signal = ToolCancellation::default();
+    let context = context(None, empty_env(), Some(signal.clone()));
+    let cancel = signal.clone();
+    let wait_started = started.clone();
+    tokio::spawn(async move {
+        wait_started.notified().await;
+        cancel.cancel();
+    });
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/doc")),
+        ("prompt", JsValue::from("Q")),
+    ]));
+    let result = tokio::time::timeout(Duration::from_secs(2), run(&tool, input, context))
+        .await
+        .expect("the stream ends after the signal");
+    let error = get(&result, "error");
+    assert_eq!(
+        text(get(error, "code")),
+        "tool_execution_failed",
+        "{}",
+        json(&result)
+    );
+    assert!(
+        text(get(error, "message")).contains("returned no visible text"),
+        "{}",
+        json(&result)
+    );
+    let details = get(error, "details");
+    assert_eq!(text(get(details, "stage")), "secondary_model");
+    assert_eq!(text(get(details, "mode")), "llm");
+}
+
+/// Negative control for the event order: the same `text_delta` without a
+/// cancellation is ordinary content, so `tool_aborted` above comes from the
+/// signal check and not from the event.
+struct ImmediateEventModel;
+struct ImmediateEventStream {
+    done: bool,
+}
+impl SecondaryModel for ImmediateEventModel {
+    fn stream(
+        &self,
+        _request: JsValue,
+        _signal: Option<ToolRunContext>,
+    ) -> Box<dyn SecondaryStream> {
+        Box::new(ImmediateEventStream { done: false })
+    }
+}
+impl SecondaryStream for ImmediateEventStream {
+    fn next(&mut self) -> SecondaryNext<'_> {
+        if self.done {
+            return Box::pin(async { None });
+        }
+        self.done = true;
+        Box::pin(async {
+            Some(SecondaryModelEvent::Event(object(vec![
+                ("type", JsValue::from("text_delta")),
+                ("text", JsValue::from("late")),
+            ])))
+        })
+    }
+}
+
+#[tokio::test]
+async fn negative_control_secondary_event_without_cancel_succeeds() {
+    let h = doc_harness();
+    let tool = fetch_tool_with_model(&h, Arc::new(ImmediateEventModel));
+    let input = h.real(&object(vec![
+        ("url", JsValue::from("$TLS/doc")),
+        ("prompt", JsValue::from("Q")),
+    ]));
+    let result = run(&tool, input, context(None, empty_env(), None)).await;
+    let ok = get(&result, "ok");
+    assert_eq!(
+        json(get(ok, "content")),
+        r#"[{"type":"text","text":"late"}]"#
     );
 }
