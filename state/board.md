@@ -8,7 +8,8 @@ updated: 2026-10-20 11:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - A6.5-pr10a | impl | ready | MCP 客户端协议层（wt-a6-x0，claude/a65-pr10a，Claude 子代理）；运行时与工具桥另开 pr10b
 - A6.5-pr10b | impl | ready | MCP 运行时 / 工具桥 / 会话 registry；接 pr10a
 - A6.5-pr12 | impl | ready | 后台任务 task_* 与 stop/list 投影；接 pr7（DetachedShell）
-- A6.4-pr5 | impl | human | Provider HTTP + anthropic：需新增 TLS 依赖，待人批（state/decisions-20261020.md）；连带 A6.4-pr6~pr9、A6.5-pr9、A6.6-pr8
+- A6.4-pr5 | impl | ready | Provider HTTP + anthropic，引入 rustls + hyper-rustls（人批 A，state/decisions-20261020.md）；Claude 子代理
+- A6.4-pr6..9 / A6.5-pr9 / A6.6-pr8 | impl | ready | TLS 已批；接 A6.4-pr5 合入后依次放出
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
