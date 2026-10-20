@@ -2,10 +2,13 @@
 //! `buildModelRequest.ts`, `normalizeStreamEvent.ts`, `providerEndpoint.ts`
 //! (chat endpoints), `sanitizeProviderBody.ts` and `buildProviderHeaders`.
 //!
-//! Only the Anthropic protocol is ported (A6.4-pr5). OpenAI, OpenAI Responses
-//! and Google arrive in A6.4-pr6..pr8; until then they are rejected before any
-//! HTTP exchange with a `ModelRequestError("protocol_not_ported")`.
+//! The Anthropic (A6.4-pr5) and OpenAI chat-completions (A6.4-pr6) protocols
+//! are ported. OpenAI Responses and Google arrive in A6.4-pr7/pr8; until then
+//! they are rejected before any HTTP exchange with a
+//! `ModelRequestError("protocol_not_ported")`.
 pub(crate) mod anthropic;
+pub(crate) mod openai;
+pub(crate) mod thinking;
 
 use super::count_body::{array, field, is, present, truthy};
 use super::http::ModelStreamError;
@@ -14,6 +17,34 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 fn units(value: &JsValue) -> Vec<u16> {
     crate::js_value::to_string_units(value).unwrap_or_default()
 }
+
+/// UTF-16 JSON text as a Rust string for `parse_json`. A lone surrogate is
+/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
+/// that would follow an escaping backslash stays invalid (U+FFFD), and
+/// anywhere else both forms are a syntax error, as in `JSON.parse`. Shared by
+/// the Anthropic and OpenAI tool-argument parsers (pr5).
+pub(crate) fn json_text(units: &[u16]) -> String {
+    let mut out = String::with_capacity(units.len());
+    let mut backslashes = 0usize;
+    for item in char::decode_utf16(units.iter().copied()) {
+        match item {
+            Ok(c) => {
+                out.push(c);
+                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+            }
+            Err(error) => {
+                if backslashes % 2 == 1 {
+                    out.push('\u{FFFD}');
+                } else {
+                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
+                }
+                backslashes = 0;
+            }
+        }
+    }
+    out
+}
+
 fn message(parts: &[(&str, Option<&JsValue>)]) -> JsString {
     let mut out = Vec::new();
     for (literal, value) in parts {
@@ -276,13 +307,19 @@ pub(crate) fn build_model_request(
     if is(field(provider, "protocol"), "anthropic") {
         return anthropic::build_request(request, model, provider);
     }
-    Err(request_error(
-        "protocol_not_ported",
-        message(&[
-            ("Provider protocol ", Some(field(provider, "protocol"))),
-            (" is not ported yet.", None),
-        ]),
-    ))
+    if is(field(provider, "protocol"), "google")
+        || is(field(provider, "protocol"), "openai-responses")
+    {
+        return Err(request_error(
+            "protocol_not_ported",
+            message(&[
+                ("Provider protocol ", Some(field(provider, "protocol"))),
+                (" is not ported yet.", None),
+            ]),
+        ));
+    }
+    // `buildModelRequest` falls through to the OpenAI request builder.
+    openai::build_request(request, model, provider)
 }
 
 /// `sanitizeProviderBody({ ...body, ...provider.extraBody })`.
@@ -379,7 +416,14 @@ fn append_anthropic_beta(headers: &mut JsObject, beta: &str) {
 /// `buildProviderChatEndpointCandidates` for the ported protocols.
 pub(crate) fn chat_endpoint_candidates(provider: &JsValue) -> Vec<String> {
     let base = String::from_utf16_lossy(&units(field(provider, "url")));
-    endpoint_candidates(&base, "v1", "messages")
+    let protocol = field(provider, "protocol");
+    if is(protocol, "anthropic") {
+        return endpoint_candidates(&base, "v1", "messages");
+    }
+    if is(protocol, "openai-responses") {
+        return endpoint_candidates(&base, "v1", "responses");
+    }
+    endpoint_candidates(&base, "v1", "chat/completions")
 }
 
 fn path_segments(base: &str) -> Vec<String> {
@@ -455,16 +499,23 @@ pub(crate) fn normalize_provider_base_url(raw: &JsValue) -> JsValue {
 /// Per-protocol stream normalizer state (`createStreamNormalizerState`).
 pub(crate) enum StreamState {
     Anthropic(anthropic::StreamState),
+    OpenAi(openai::StreamState),
 }
 impl StreamState {
     pub(crate) fn new(provider: &JsValue) -> Self {
-        debug_assert!(is(field(provider, "protocol"), "anthropic"));
-        Self::Anthropic(anthropic::StreamState::default())
+        if is(field(provider, "protocol"), "anthropic") {
+            Self::Anthropic(anthropic::StreamState::default())
+        } else {
+            Self::OpenAi(openai::StreamState::default())
+        }
     }
-    /// `Err` is what the TS normalizer throws (V8 string-limit RangeError).
+    /// `Err` is what the TS normalizer throws (V8 string-limit `RangeError`,
+    /// or the OpenAI tool-argument parse); the caller discards that chunk's
+    /// events, as the baseline generator does.
     pub(crate) fn normalize(&mut self, raw: &JsValue) -> Result<Vec<JsValue>, ModelStreamError> {
         match self {
             Self::Anthropic(state) => anthropic::normalize_stream_event(raw, state),
+            Self::OpenAi(state) => openai::normalize_stream_event(raw, state),
         }
     }
 }

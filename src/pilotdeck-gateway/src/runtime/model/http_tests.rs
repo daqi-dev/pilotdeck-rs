@@ -138,7 +138,7 @@ async fn abort_before_headers_cancels_the_exchange() {
 fn unported_protocols_fail_before_http() {
     let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
     let config = parse_json(
-        r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://x","apiKey":"k","headers":{},
+        r#"{"providers":{"p":{"id":"p","protocol":"openai-responses","url":"http://x","apiKey":"k","headers":{},
         "models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#,
     )
     .unwrap();

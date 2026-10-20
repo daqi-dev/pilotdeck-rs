@@ -8,7 +8,8 @@
 //! the config is a `ModelConfig` JSON (`{ providers: { id: ProviderConfig } }`).
 //! Events are delivered to a sink in order; an `Err` is what TS throws.
 //!
-//! Not ported here: the Google SDK path and the OpenAI protocols (pr6..pr8),
+//! Not ported here: the Google SDK path and the OpenAI Responses protocol
+//! (pr7; the OpenAI chat-completions protocol is ported in pr6),
 //! invocation audit staging (`options.invocation`, A6.4-pr10),
 //! `PILOTDECK_DUMP_REQUEST`, HTTP redirects (undici follows them; a 3xx is
 //! surfaced here as a non-OK status) and the proxy/global dispatcher.
