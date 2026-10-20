@@ -14,9 +14,9 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；临时进程目录带归属令牌，只删本次
 自建的树。连续两次逐字节一致才更新正本（提交时
-`sha256(oracle.json) = 2027d3ce61c813e6ef819fc354adb104b0e455a958f45e95818f7714a3823d9d`，
-两次运行均为此值）。分节条数：commands 199 · predicates 10 · decisions 24 ·
-scripted 118 · real 34。输入清单在 `cases.mjs`。
+`sha256(oracle.json) = 01e50bac0fadd7c743161832993ebb963ed0319cd7a5cb3001d25db5cef5f2aa`，
+四次运行均为此值）。分节条数：commands 199 · predicates 10 · decisions 24 ·
+scripted 118 · real 43。输入清单在 `cases.mjs`。
 
 ## 分节
 
@@ -29,7 +29,10 @@ scripted 118 · real 34。输入清单在 `cases.mjs`。
   后台命令拦截 82 条、非字符串命令的 TypeError、progress 事件与 runner 收到的参数。
 - **real**：真实进程：echo、多行、stderr、非零退出、信号退出、UTF-8 解码（BOM、非法字节、跨块）、
   300 000 字节输出（只比哈希 + 经调度器的 `previewLimit`）、超时（含孙进程、忽略 TERM 走 3 s SIGKILL）、
-  取消、预先取消、cwd 不存在 / 是文件、env、`PILOTDECK_SHELL_PATH`、stdin 关闭、NUL 命令、
+  取消、预先取消、cwd 不存在 / 是文件、env（含非字符串值）、`PILOTDECK_SHELL_PATH`、stdin 关闭、
+  NUL 字节在 argv / cwd / env 键与值 / shell 路径各入口（Node 校验顺序：args → cwd → env，env 按
+  `Object.keys` 序）、`util.inspect` 76/77 单位换行阈值、返回后 3 s SIGKILL 仍按时发出（`deferred-kill`：
+  忽略 TERM 且不占管道的后代在 1.5 s 写 early.txt、4.5 s 写 late.txt，6.5 s 检查为 `[true,false]`）、
   逃出进程组的作业触发 15 s 强制返回。
 
 ## 归一化与为什么
@@ -41,10 +44,26 @@ scripted 118 · real 34。输入清单在 `cases.mjs`。
   避免字节数随目录名变化。
 - **超大输出**：只记录归一后结果的 sha256、`stdout.length` 与 `applyResultSizeLimit` 元数据，避免 300 KB 入库。
 
+## 平台
+
+金样只在 macOS（`/bin/bash` 3.2）录制，生成器断言 `darwin`。回放在所有 Unix 上编译运行
+（`#![cfg(unix)]`，Linux CI 也跑），前四节与平台无关；real 节中只有两条标了 `darwinOnly`、
+在非 macOS 上跳过，测试精确断言跳过名单（`DARWIN_ONLY` 与夹具标记必须一致）与条数：
+
+| 场景 | 原因 | macOS | 其它 Unix |
+|---|---|---|---|
+| `not-found` | bash 3.2 写 `/bin/bash: x: command not found`，bash 5 多 `line 1:` | 回放 | 跳过（计入 41+1） |
+| `cancel-escaped` | 无 tty 的 `set -m` 作业控制随 bash 版本不同 | 回放 | 跳过 |
+
+macOS：real 42 条 + 强制返回 1 条；其它 Unix：41 条，`skipped == ["not-found"]`，强制返回测试直接返回。
+Linux 本机未实测（本机 colima 未运行、未拉镜像）；其余 41 条若在 Linux 上出现文本差异会如实变红，不会被跳过。
+
 ## 已知边界
 
-- **平台**：只在 macOS 录制与回放（`#![cfg(unix)]`）；Windows 的 cmd/pwsh/Git Bash 选择与 GB18030 解码未移植。
+- **Windows**：cmd/pwsh/Git Bash 选择与 GB18030 解码未移植。
 - **会话**：Node `detached` 调 `setsid()`；本 crate 禁 `unsafe`，子进程用 `process_group(0)` 建新进程组但仍在父会话。
-  对外可见的终止语义（信号发给整组）一致；夹具里 `ps -o sess` 之类不覆盖。
-- **3 s SIGKILL**：TS 在终止后 3 s 无条件再发 SIGKILL（即使已返回）；Rust 不能留分离任务，已终止且在 3 s 内
-  结束的运行改为在收尾时立即补发 SIGKILL（组长此时尚未回收，PGID 不会被复用）。
+  终止语义（信号发给整组）一致。不同的是控制终端：网关自身有控制终端时，子进程打开 `/dev/tty` 会成功
+  （TS 的 `setsid` 子进程得到 ENXIO），`sudo`/`ssh` 之类可能在用户终端提示乃至挂到超时。夹具不覆盖。
+- **3 s SIGKILL**：与 TS 同，返回后仍按时发出。实现是唯一一个比结果活得久的有界任务（3 s 内），只持有
+  未回收的组长僵尸和组守卫；运行时被丢弃时守卫立即杀组。这是「工具 future 不留分离任务」端口约定的一处
+  有意例外（否则 `deferred-kill` 与 TS 不同）。平台无 WNOWAIT 时退回收尾立即 SIGKILL。

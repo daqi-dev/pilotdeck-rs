@@ -217,12 +217,15 @@ fn parse_context(value: &JsValue) -> PermissionContext {
             ask: parse_rules(field(rules, "ask")),
         },
         cwd: field(value, "cwd").as_string().unwrap().clone(),
-        additional_working_directories: Vec::new(),
+        additional_working_directories: array(field(value, "additionalWorkingDirectories"))
+            .iter()
+            .map(|dir| dir.as_string().unwrap().clone())
+            .collect(),
         can_prompt: field(value, "canPrompt").as_bool().unwrap(),
         policy_can_prompt: field(value, "policyCanPrompt").as_bool(),
         bypass_available: field(value, "bypassAvailable").as_bool().unwrap(),
         accept_edits: field(value, "acceptEdits").as_bool(),
-        plan_directory_path: None,
+        plan_directory_path: field(value, "planDirectoryPath").as_string().cloned(),
     }
 }
 
@@ -448,6 +451,9 @@ fn substitute(value: &JsValue, root: &str) -> JsValue {
                 .replace("<root>", root)
                 .as_str(),
         ),
+        JsValue::Array(items) => {
+            JsValue::Array(items.iter().map(|item| substitute(item, root)).collect())
+        }
         JsValue::Object(entries) => {
             let mut out = JsObject::new();
             for (key, item) in entries.entries() {
@@ -457,6 +463,21 @@ fn substitute(value: &JsValue, root: &str) -> JsValue {
         }
         other => other.clone(),
     }
+}
+
+/// The corpus is recorded on macOS. Scenarios marked `darwinOnly` depend on
+/// the macOS `/bin/bash` 3.2 (diagnostic wording, job control without a tty)
+/// and are skipped elsewhere; every other scenario replays on every Unix.
+const DARWIN_ONLY: [&str; 2] = ["not-found", "cancel-escaped"];
+
+fn replays_here(scenario: &JsValue) -> bool {
+    let darwin_only = !field(scenario, "darwinOnly").is_undefined();
+    assert_eq!(
+        darwin_only,
+        DARWIN_ONLY.contains(&text(field(scenario, "name")).as_str()),
+        "darwinOnly set must be exactly {DARWIN_ONLY:?}"
+    );
+    cfg!(target_os = "macos") || !darwin_only
 }
 
 struct AllowAll;
@@ -625,6 +646,20 @@ async fn run_real(scenario: &JsValue, scratch: &Path) {
     } else {
         assert_eq!(wire(&actual), wire(expected), "real {name}");
     }
+    if let Some(at) = field(scenario, "postCheckAtMs").as_number() {
+        let wait = Duration::from_millis(at as u64).saturating_sub(started.elapsed());
+        assert!(!wait.is_zero(), "{name}: post check already late");
+        tokio::time::sleep(wait).await;
+        let exist: Vec<JsValue> = array(field(scenario, "postFiles"))
+            .iter()
+            .map(|file| JsValue::Bool(root.join(text(file)).exists()))
+            .collect();
+        assert_eq!(
+            wire(&JsValue::Array(exist)),
+            wire(field(scenario, "postFilesExist")),
+            "{name} files after the deferred SIGKILL"
+        );
+    }
     if let JsValue::Object(_) = field(scenario, "progressStreams") {
         let streams = streams.lock().unwrap();
         assert!(streams.2 > 0, "{name}: no progress events");
@@ -640,10 +675,11 @@ fn canonical_scratch(scratch: &scratch::Scratch) -> PathBuf {
 
 #[test]
 fn real_process_scenarios_replay() {
-    let scenarios = section("real", 34);
+    let scenarios = section("real", 43);
     let scratch = scratch::Scratch::new("bash-tool");
     let root = canonical_scratch(&scratch);
     let mut ran = 0;
+    let mut skipped = Vec::new();
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -651,23 +687,35 @@ fn real_process_scenarios_replay() {
         .unwrap()
         .block_on(async {
             for scenario in scenarios {
-                if text(field(scenario, "name")) == "cancel-escaped" {
+                let name = text(field(scenario, "name"));
+                if name == "cancel-escaped" {
+                    continue;
+                }
+                if !replays_here(scenario) {
+                    skipped.push(name);
                     continue;
                 }
                 run_real(scenario, &root).await;
                 ran += 1;
             }
         });
-    assert_eq!(ran, 33);
+    if cfg!(target_os = "macos") {
+        assert_eq!((ran, skipped.len()), (42, 0));
+    } else {
+        assert_eq!((ran, skipped), (41, vec!["not-found".to_string()]));
+    }
 }
 
 /// The 15 s force-resolve path, split out so it runs beside the others.
 #[test]
 fn real_force_resolve_after_escaped_job_replays() {
-    let scenario = section("real", 34)
+    let scenario = section("real", 43)
         .iter()
         .find(|scenario| text(field(scenario, "name")) == "cancel-escaped")
         .expect("cancel-escaped scenario");
+    if !replays_here(scenario) {
+        return;
+    }
     let scratch = scratch::Scratch::new("bash-tool");
     let root = canonical_scratch(&scratch);
     tokio::runtime::Builder::new_multi_thread()
@@ -713,4 +761,58 @@ fn dropped_run_kills_process_group() {
         // `run` was dropped when select! returned.
         assert_group_gone(pid, "dropped run").await;
     });
+}
+
+/// Rust-only: `bash.ts` wraps every progress emission in `try {} catch {}`,
+/// so a failing sink never fails the command.
+#[test]
+fn panicking_progress_sink_does_not_fail_the_run() {
+    let scratch = scratch::Scratch::new("bash-tool-sink");
+    let root = canonical_scratch(&scratch);
+    let calls = Arc::new(Mutex::new(0usize));
+    let sink = {
+        let calls = calls.clone();
+        Arc::new(move |_: JsObject| {
+            let count = {
+                let mut calls = calls.lock().unwrap();
+                *calls += 1;
+                *calls
+            };
+            if count > 0 {
+                panic!("sink failure");
+            }
+        }) as Arc<dyn Fn(JsObject) + Send + Sync>
+    };
+    let fields = object([
+        ("cwd", JsValue::from(root.to_string_lossy().as_ref())),
+        (
+            "env",
+            JsValue::Object(object([("PATH", JsValue::from("/usr/bin:/bin"))])),
+        ),
+    ]);
+    let context = host_context(fields, None, Some(sink));
+    let input = JsValue::Object(object([(
+        "command",
+        JsValue::from("echo out; echo err 1>&2"),
+    )]));
+    let result = block_on(BashTool::new().execute(input, context)).expect("bash run");
+    let data = result.data.expect("data");
+    assert_eq!(text(field(&data, "stdout")), "out\n");
+    assert_eq!(text(field(&data, "stderr")), "err\n");
+    assert!(*calls.lock().unwrap() >= 2);
+}
+
+#[test]
+fn shell_tools_register_in_catalog() {
+    let registry = ToolRegistry::default();
+    let registrations = pilotdeck_gateway::runtime::tools::builtin::register_shell_tools(&registry)
+        .expect("register shell tools");
+    assert_eq!(registrations.len(), 1);
+    let names: Vec<String> = registry
+        .list()
+        .unwrap()
+        .iter()
+        .map(|tool| text(field(&JsValue::Object(tool.fields().clone()), "name")))
+        .collect();
+    assert_eq!(names, vec!["bash"]);
 }

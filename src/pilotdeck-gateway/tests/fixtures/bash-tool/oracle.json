@@ -658,7 +658,7 @@
     "predicates": 10,
     "decisions": 24,
     "scripted": 118,
-    "real": 34
+    "real": 43
   },
   "definition": {
     "name": "bash",
@@ -10668,6 +10668,7 @@
         "LANG": "en_US.UTF-8",
         "HOME": "<root>"
       },
+      "darwinOnly": "bash 3.2 diagnostic text",
       "expected": {
         "error": {
           "code": "tool_execution_failed",
@@ -11446,12 +11447,214 @@
       "abortAfterMs": 300,
       "minWallMs": 15000,
       "maxWallMs": 25000,
+      "darwinOnly": "job control without a tty differs across bash versions",
       "expected": {
         "error": {
           "code": "tool_timeout",
           "message": "Command timed out after 60000ms."
         }
       }
+    },
+    {
+      "name": "nul-command-split",
+      "input": {
+        "command": "echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ny\u0000"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The argument 'args[1]' must be a string without null bytes. Received 'echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n' +\n  'y\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-env-value",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "A": "a\u0000b"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.env['A']' must be a string without null bytes. Received 'a\\x00b'"
+        }
+      }
+    },
+    {
+      "name": "nul-env-key",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "K\u0000Y": "v"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.env['K\u0000Y']' must be a string without null bytes. Received 'K\\x00Y'"
+        }
+      }
+    },
+    {
+      "name": "nul-env-index-order",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "7": "y\u0000",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "B": "x\u0000"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.env['7']' must be a string without null bytes. Received 'y\\x00'"
+        }
+      }
+    },
+    {
+      "name": "nul-cwd",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "cwd": "/nonexistent/a\u0000b",
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received '/nonexistent/a\\x00b'"
+        }
+      }
+    },
+    {
+      "name": "nul-cwd-and-env",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "A": "\u0000"
+      },
+      "cwd": "/nonexistent/a\u0000b",
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received '/nonexistent/a\\x00b'"
+        }
+      }
+    },
+    {
+      "name": "nul-shell-path",
+      "input": {
+        "command": "echo x"
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "PILOTDECK_SHELL_PATH": "/bin/sh\u0000x"
+      },
+      "expected": {
+        "error": {
+          "code": "tool_execution_failed",
+          "message": "Configured PilotDeck shell was not found: /bin/sh\u0000x"
+        }
+      }
+    },
+    {
+      "name": "env-non-string",
+      "input": {
+        "command": "echo \"$N|$T|$Z|${U-unset}|$A\""
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>",
+        "N": 5,
+        "T": true,
+        "Z": null,
+        "A": [
+          "a\u0000b"
+        ]
+      },
+      "expected": {
+        "ok": {
+          "content": [
+            {
+              "type": "text",
+              "text": "BASH_RESULT[success][stdout_data]\nAssertions:\n- exit_code: 0\n- stdout_visible: true\n- stderr_visible: false\n- retrieved_data_available: true\n- stdout_bytes: 20\n- stderr_bytes: 0\nInterpretation: Command succeeded and stdout contains visible data; use stdout as the primary evidence for the next step.\n\nstdout:\n5|true|null|unset|a"
+            }
+          ],
+          "data": {
+            "command": "echo \"$N|$T|$Z|${U-unset}|$A\"",
+            "exitCode": 0,
+            "stdout": "5|true|null|unset|a\n",
+            "stderr": "",
+            "timedOut": false,
+            "durationMs": "<duration>",
+            "outputState": "stdout_data",
+            "assertions": {
+              "commandSucceeded": true,
+              "stdoutVisible": true,
+              "stderrVisible": false,
+              "retrievedDataAvailable": true,
+              "stdoutBytes": 20,
+              "stderrBytes": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "deferred-kill",
+      "input": {
+        "command": "(trap '' TERM; sleep 1.5; echo early > early.txt; sleep 3; echo late > late.txt) >/dev/null 2>&1 </dev/null & sleep 10",
+        "timeout": 300
+      },
+      "env": {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "HOME": "<root>"
+      },
+      "timeout": 300,
+      "minWallMs": 300,
+      "maxWallMs": 1500,
+      "postCheckAtMs": 6500,
+      "postFiles": [
+        "early.txt",
+        "late.txt"
+      ],
+      "expected": {
+        "error": {
+          "code": "tool_timeout",
+          "message": "Command timed out after 300ms."
+        }
+      },
+      "postFilesExist": [
+        true,
+        false
+      ]
     }
   ]
 }
