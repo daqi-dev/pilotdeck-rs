@@ -103,6 +103,7 @@ export async function record(baseline: string, run: string) {
     {name:'emergency-entry-recheck',ratios:[.95,.95,.5]},
     {name:'emergency-micro',ratios:[.95,.95,.95,.95,.95,.5],micro:true,tools:true},
     {name:'emergency-truncate',ratios:[.95,.95,.95,.95,.7]},
+    {name:'emergency-final-tier-exact-threshold',ratios:[.95,.95,.95,.95,.90]},
     {name:'emergency-overflow',ratios:[.95,1.05,1.05,1.05,1.05]},
     {name:'emergency-overflow-exact-one',ratios:[.95,.95,.95,.95,1]},
     {name:'failed-emergency-overflow',ratios:[.95,1.05,1.05,1.05],modes:['error','error']},
@@ -228,7 +229,7 @@ export async function record(baseline: string, run: string) {
     hostCases.push({mode,input,expected:{response,calls}});
     await dispatcher.dispose();native.dispose();
   }
-  assert.equal(orchestrationCases.length,34);
+  assert.equal(orchestrationCases.length,35);
   assert.equal(recoveryCases.length,41);
   assert.equal(fallbackCases.length,20);
   const loopCases=await recordLoops(baseline,turns,summary);
