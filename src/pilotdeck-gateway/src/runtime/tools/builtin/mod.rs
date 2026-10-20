@@ -10,6 +10,7 @@ pub mod glob;
 pub mod read_file;
 pub mod task;
 pub mod time;
+pub mod web;
 pub mod write_file;
 
 use crate::{

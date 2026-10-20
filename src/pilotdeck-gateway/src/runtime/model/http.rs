@@ -32,6 +32,14 @@ mod errors;
 mod sse;
 pub use errors::NetworkFetchError;
 pub(crate) use errors::retry_after_from_message;
+
+/// `parseRetryAfterHeader(value)` against the system clock (`Date.now()`).
+pub(crate) fn retry_after_header_ms(value: Option<&str>) -> Option<f64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_millis() as f64);
+    errors::retry_after_header(value, now)
+}
 use errors::{ErrorInput, is_premature_stream_close, normalize_model_error};
 
 /// `Math.round`.
