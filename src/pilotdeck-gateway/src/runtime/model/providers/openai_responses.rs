@@ -45,11 +45,11 @@ fn metadata(value: &JsValue) -> Result<JsValue, ModelStreamError> {
         return Ok(JsValue::Undefined);
     }
     let string = |v: &JsValue| {
-        crate::js_value::to_string_units(v)
+        crate::js_value::to_string_units_checked(v)
             .map(|u| JsValue::String(JsString::from_utf16(u)))
-            .map_err(|_| ModelStreamError::Thrown {
-                name: "RangeError".into(),
-                message: crate::js_value::StackOverflow::MESSAGE.into(),
+            .map_err(|error| ModelStreamError::Thrown {
+                name: error.name().into(),
+                message: error.message().into(),
             })
     };
     let mut out = JsObject::new();

@@ -3106,6 +3106,84 @@
    ]
   },
   {
+   "name": "metadata-object-to-primitive",
+   "target": "mock",
+   "request": {
+    "metadata": {
+     "tag": {
+      "toString": 0
+     }
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "643e91bee128d3e7d03569fff01840c30ffca1f9539acaadc682671e08608600",
+      "metadata": {
+       "tag": {
+        "toString": 0
+       }
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "TypeError",
+      "message": "Cannot convert object to primitive value"
+     }
+    }
+   ]
+  },
+  {
+   "name": "metadata-array-nested-object",
+   "target": "mock",
+   "request": {
+    "metadata": {
+     "ok": "x",
+     "tag": [
+      1,
+      {
+       "toString": null
+      }
+     ]
+    }
+   },
+   "replies": [],
+   "requests": [],
+   "timeline": [
+    {
+     "event": {
+      "type": "request_started",
+      "provider": "responses-fixture",
+      "model": "gpt-5",
+      "providerBaseUrl": "$MOCK/v1",
+      "requestFingerprint": "b5e88b38fb69a8fd51f21ad206eb39fb0ef073abd7a542ee724103c93cbda253",
+      "metadata": {
+       "ok": "x",
+       "tag": [
+        1,
+        {
+         "toString": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "thrown": {
+      "name": "TypeError",
+      "message": "Cannot convert object to primitive value"
+     }
+    }
+   ]
+  },
+  {
    "name": "endpoint-fallback",
    "target": "mock",
    "url": "$MOCK",

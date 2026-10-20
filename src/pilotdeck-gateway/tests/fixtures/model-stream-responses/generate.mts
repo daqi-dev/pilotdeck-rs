@@ -126,6 +126,10 @@ const specs: Spec[] = [
       capabilities: { supportsStreaming: true, supportsSystemPrompt: true, supportsToolUse: true, supportsSpeed: true, maxOutputTokens: 64 },
       multimodal: { input: ['text', 'image', 'pdf'] } } } },
     replies: [] },
+  // codex r3 P1: String(value) runs ToPrimitive — an own toString (JSON cannot
+  // make it callable) throws before any fetch, also nested inside an array.
+  { name: 'metadata-object-to-primitive', request: { metadata: { tag: { toString: 0 } } }, replies: [] },
+  { name: 'metadata-array-nested-object', request: { metadata: { ok: 'x', tag: [1, { toString: null }] } }, replies: [] },
   { name: 'endpoint-fallback', url: '$MOCK', replies: [{ status: 404, chunks: [{ text: 'no v1 here' }] }, short('fallback')] },
 ];
 
@@ -261,6 +265,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, undici: JSON.parse(readFileSync(join(baseline, 'node_modules/undici/package.json'), 'utf8')).version,
   locale, random: 0.5, transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 19);
+assert.equal(cases.length, 21);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));
