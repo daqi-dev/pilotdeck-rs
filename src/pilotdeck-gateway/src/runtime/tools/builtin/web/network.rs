@@ -12,14 +12,16 @@
 //! fixture README).
 use crate::runtime::{
     model::http::{
-        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, UNDICI_BODY_TIMEOUT_MS,
+        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, TransportFuture,
+        UNDICI_BODY_TIMEOUT_MS,
     },
     tools::ToolRunContext,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use pilotdeck_protocol::{JsObject, JsValue};
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, task::Poll, time::Duration};
+use tokio::time::Instant;
 
 /// The global dispatcher's undici `bodyTimeout` (`cli/proxy.ts` installs
 /// 600000 ms, `probes/body-abort.out`): a body read that sees no bytes for
@@ -29,11 +31,12 @@ use std::{sync::Arc, time::Duration};
 const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
 
 /// The delay Node's `setTimeout` actually arms for a requested millisecond
-/// value: values inside `[1, 2^31-1]` are kept (fractional milliseconds
-/// included), everything else — `NaN`, `±Infinity`, values below 1 and values
+/// value: values inside `[1, 2^31-1]` are truncated to integer milliseconds;
+/// everything else — `NaN`, `±Infinity`, values below 1 and values
 /// above `2^31-1` — becomes 1 ms (the `TimeoutOverflowWarning` path).
-/// `probes/timer-clamp.out` records the armed delay for `0`, `0.5`, `1.9`,
-/// `2^31-2`, `2^31-1`, `2^31-0.5`, `2^31`, `1e23` and `Infinity`.
+/// Node validates the original value before `insert()` truncates it, so
+/// `2147483647.5` becomes 1, not `2147483647`. `_idleTimeout` alone still
+/// contains the fraction and does not describe the scheduled timer list.
 ///
 /// Both `networkFetch`'s per-attempt timer and the providers' outer abort
 /// timer go through this, so an overflowing `timeoutMs` never reaches
@@ -41,7 +44,7 @@ const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u
 /// input.
 pub fn node_timer_delay_ms(ms: f64) -> f64 {
     if ms.is_finite() && (1.0..=i32::MAX as f64).contains(&ms) {
-        ms
+        ms.trunc()
     } else {
         1.0
     }
@@ -49,7 +52,7 @@ pub fn node_timer_delay_ms(ms: f64) -> f64 {
 
 /// [`node_timer_delay_ms`] as a `Duration` for `tokio::time`.
 pub fn node_timer_duration(ms: f64) -> Duration {
-    Duration::from_secs_f64(node_timer_delay_ms(ms) / 1000.0)
+    Duration::from_millis(node_timer_delay_ms(ms) as u64)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -287,15 +290,85 @@ fn abort_error(message: &str) -> NetworkFetchError {
     )
 }
 
-/// `delay(ms, parentSignal)`.
-async fn delay(ms: f64, parent: Option<&ToolRunContext>) -> Result<(), NetworkFetchError> {
+fn timeout_error(timeout_ms: f64) -> NetworkFetchError {
+    NetworkFetchError::new(
+        "network_timeout",
+        format!(
+            "Network request timed out after {}ms.",
+            crate::js_value::number_string(timeout_ms)
+        ),
+        JsValue::Undefined,
+    )
+}
+
+/// `delay(ms, parentSignal)`, including the provider's outer abort timer.
+/// An earlier retry timer runs its continuation before a later abort callback,
+/// even when both are overdue. The next attempt may fulfill synchronously.
+async fn delay(
+    ms: f64,
+    options: &FetchOptions<'_>,
+    outer_deadline: Option<Instant>,
+) -> Result<(), NetworkFetchError> {
+    let parent = options.parent;
     if parent.is_some_and(ToolRunContext::is_aborted) {
         return Err(abort_error("Network retry aborted."));
     }
+    let retry_at = Instant::now() + node_timer_duration(ms);
+    let outer_first = outer_deadline.is_some_and(|deadline| deadline <= retry_at);
+    let next = outer_deadline.map_or(retry_at, |deadline| deadline.min(retry_at));
     tokio::select! {
-        () = tokio::time::sleep(Duration::from_secs_f64(ms.max(0.0) / 1000.0)) => Ok(()),
+        biased;
         () = parent_aborted(parent) => Err(abort_error("Network retry aborted.")),
+        () = tokio::time::sleep_until(next) => {
+            if outer_first { Err(timeout_error(options.timeout_ms)) } else { Ok(()) }
+        }
     }
+}
+
+enum Exchange {
+    Response(Result<hyper::Response<ModelBody>, TransportFailure>),
+    Aborted,
+    Timeout,
+}
+
+/// Dispatch pending events as Node does: synchronous parent aborts are already
+/// delivered; timers are ordered by deadline, with the abort registered first
+/// winning ties. A fulfilled fetch or queued promise continuation runs before
+/// timers. Socket readiness is polled after due timers in this dispatcher;
+/// transports must distinguish it from a queued continuation.
+/// `TransportFuture::after` makes a delayed response's deadline observable.
+async fn exchange(
+    mut send: TransportFuture,
+    parent: Option<&ToolRunContext>,
+    deadline: Option<Instant>,
+) -> Exchange {
+    let mut abort = Box::pin(parent_aborted(parent));
+    let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
+    let mut initial = true;
+    std::future::poll_fn(|cx| {
+        if abort.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Exchange::Aborted);
+        }
+        let response_first = match (send.scheduled_at(), deadline) {
+            (Some(response_at), Some(abort_at)) => response_at < abort_at,
+            (None, Some(_)) => initial || send.is_microtask(),
+            (_, None) => true,
+        };
+        initial = false;
+        if response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+            return Poll::Ready(Exchange::Response(result));
+        }
+        if let Some(timer) = &mut timer
+            && timer.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Exchange::Timeout);
+        }
+        if !response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+            return Poll::Ready(Exchange::Response(result));
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 /// `networkFetch(url, init, { timeoutMs, signal, retry })`.
@@ -303,6 +376,27 @@ pub async fn network_fetch(
     transport: &dyn ModelHttpTransport,
     request: &HttpRequest,
     options: &FetchOptions<'_>,
+) -> Result<HttpResponse, NetworkFetchError> {
+    network_fetch_inner(transport, request, options, None).await
+}
+
+/// The provider's timer surrounds all attempts and retry delays. Keeping it
+/// beside the transport's completion source avoids an outer `select!` throwing
+/// away the ordering established by the inner exchange.
+pub(super) async fn network_fetch_until(
+    transport: &dyn ModelHttpTransport,
+    request: &HttpRequest,
+    options: &FetchOptions<'_>,
+    deadline: Instant,
+) -> Result<HttpResponse, NetworkFetchError> {
+    network_fetch_inner(transport, request, options, Some(deadline)).await
+}
+
+async fn network_fetch_inner(
+    transport: &dyn ModelHttpTransport,
+    request: &HttpRequest,
+    options: &FetchOptions<'_>,
+    outer_deadline: Option<Instant>,
 ) -> Result<HttpResponse, NetworkFetchError> {
     let retry = options.retry;
     let method = request.method.to_ascii_uppercase();
@@ -317,39 +411,28 @@ pub async fn network_fetch(
             match built {
                 Err(error) => Err(error),
                 Ok(built) => {
-                    let send = transport.send(built);
-                    let timed = async {
-                        // `options.timeoutMs && options.timeoutMs > 0` in
-                        // `network/fetch.ts`: non-positive and NaN disable the
-                        // per-attempt timer; positive overflowing values are
-                        // clamped like `setTimeout`.
-                        if options.timeout_ms > 0.0 {
-                            tokio::time::timeout(node_timer_duration(options.timeout_ms), send)
-                                .await
-                                .map_err(|_| {
-                                    NetworkFetchError::new(
-                                        "network_timeout",
-                                        format!(
-                                            "Network request timed out after {}ms.",
-                                            crate::js_value::number_string(options.timeout_ms)
-                                        ),
-                                        JsValue::Undefined,
-                                    )
-                                })
-                        } else {
-                            Ok(send.await)
-                        }
+                    // Only the per-attempt timer is gated on `timeoutMs > 0`.
+                    let attempt_deadline = (options.timeout_ms > 0.0)
+                        .then(|| Instant::now() + node_timer_duration(options.timeout_ms));
+                    let deadline = match (outer_deadline, attempt_deadline) {
+                        (Some(outer), Some(attempt)) => Some(outer.min(attempt)),
+                        (outer, attempt) => outer.or(attempt),
                     };
-                    tokio::select! {
-                        result = timed => match result {
-                            Ok(Ok(response)) => Ok(response),
-                            Ok(Err(TransportFailure { cause_code, message })) => {
-                                Err(NetworkFetchError::classify(&message, cause_code))
-                            }
-                            Err(timeout) => Err(timeout),
-                        },
-                        () = parent_aborted(options.parent) => {
+                    match exchange(transport.send(built), options.parent, deadline).await {
+                        Exchange::Response(Ok(response)) => Ok(response),
+                        Exchange::Response(Err(TransportFailure {
+                            cause_code,
+                            message,
+                        })) => Err(NetworkFetchError::classify(&message, cause_code)),
+                        Exchange::Aborted => {
                             Err(abort_error("Network request aborted by parent signal."))
+                        }
+                        Exchange::Timeout => {
+                            let error = timeout_error(options.timeout_ms);
+                            if outer_deadline.is_some() && deadline == outer_deadline {
+                                return Err(error);
+                            }
+                            Err(error)
                         }
                     }
                 }
@@ -376,7 +459,8 @@ pub async fn network_fetch(
                     drop(response);
                     delay(
                         retry_delay(attempt, &retry, retry_after.as_deref(), &options.random),
-                        options.parent,
+                        options,
+                        outer_deadline,
                     )
                     .await?;
                     attempt += 1;
@@ -398,7 +482,8 @@ pub async fn network_fetch(
                 }
                 delay(
                     retry_delay(attempt, &retry, None, &options.random),
-                    options.parent,
+                    options,
+                    outer_deadline,
                 )
                 .await?;
                 attempt += 1;

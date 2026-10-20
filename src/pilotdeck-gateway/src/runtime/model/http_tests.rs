@@ -89,7 +89,7 @@ impl ModelHttpTransport for Never {
             }
         }
         let flag = Flag(self.0.clone());
-        Box::pin(async move {
+        TransportFuture::io(async move {
             let _flag = flag;
             std::future::pending().await
         })
@@ -159,7 +159,7 @@ impl ModelHttpTransport for Scripted {
     fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
         let (status, frames) = self.0.lock().unwrap().remove(0);
         let stream = futures_body(frames);
-        Box::pin(async move { Ok(Response::builder().status(status).body(stream).unwrap()) })
+        TransportFuture::ready(Ok(Response::builder().status(status).body(stream).unwrap()))
     }
 }
 fn futures_body(frames: Vec<Option<&'static [u8]>>) -> ModelBody {
