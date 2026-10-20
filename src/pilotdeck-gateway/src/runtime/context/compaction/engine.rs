@@ -660,10 +660,17 @@ pub fn truncate_head(messages: &[JsValue], keep_ratio: f64) -> Vec<JsValue> {
     messages[messages.len().saturating_sub(keep)..].to_vec()
 }
 pub fn truncate_head_preserving_checkpoint(messages: &[JsValue], ratio: f64) -> Vec<JsValue> {
+    truncate_checkpoint_with_change(messages, ratio).messages
+}
+pub fn truncate_checkpoint_with_change(
+    messages: &[JsValue],
+    ratio: f64,
+) -> port::CheckpointTruncation {
     let prefix = checkpoint_prefix_len(messages);
     let live = &messages[prefix..];
     let mut tail = truncate_head(live, ratio);
     let start = live.len() - tail.len();
+    let mut same_indices = start == 0;
     if !live.is_empty()
         && let Some(anchor) = (0..=start.min(live.len() - 1))
             .rev()
@@ -671,10 +678,24 @@ pub fn truncate_head_preserving_checkpoint(messages: &[JsValue], ratio: f64) -> 
         && anchor < start
     {
         tail.insert(0, live[anchor].clone());
+        same_indices = start == 1 && anchor == 0;
     }
+    let cleaned = pair_clean(&tail);
+    // Pair cleanup preserves object references exactly when it neither drops a
+    // message nor removes a block. This also works for NaN-valued metadata.
+    let same_references = cleaned.len() == tail.len()
+        && cleaned
+            .iter()
+            .zip(&tail)
+            .all(|(a, b)| content(a).len() == content(b).len());
     let mut out = messages[..prefix].to_vec();
-    out.extend(pair_clean(&tail));
-    ensure_trailing_user_message(out)
+    out.extend(cleaned);
+    let changed =
+        !same_indices || !same_references || out.last().is_some_and(|m| is_role(m, "assistant"));
+    port::CheckpointTruncation {
+        messages: ensure_trailing_user_message(out),
+        changed,
+    }
 }
 fn pair_clean(messages: &[JsValue]) -> Vec<JsValue> {
     let calls = strip_unpaired_tool_calls(messages, &collect_tool_result_ids(messages));

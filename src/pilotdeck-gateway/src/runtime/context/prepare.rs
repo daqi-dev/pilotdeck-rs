@@ -58,6 +58,7 @@ impl RuntimeContextSurface {
 pub struct Options {
     pub compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
     pub max_context_tokens: f64,
+    pub truncate_first_keep_ratio: f64,
     pub extension: Option<Arc<dyn ExtensionResolver>>,
     pub include_extensions_with_custom_system_prompt: bool,
     pub runtime_context_surface: RuntimeContextSurface,
@@ -79,6 +80,7 @@ impl Default for Options {
         Self {
             compaction: None,
             max_context_tokens: 8192.0,
+            truncate_first_keep_ratio: 0.5,
             extension: None,
             include_extensions_with_custom_system_prompt: false,
             runtime_context_surface: RuntimeContextSurface::SystemPrompt,
@@ -96,6 +98,7 @@ impl Default for Options {
 struct Inner {
     compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
     max_context_tokens: f64,
+    truncate_first_keep_ratio: f64,
     assembler: PromptAssembler,
     include_extensions_with_custom_system_prompt: bool,
     runtime_context_surface: RuntimeContextSurface,
@@ -136,6 +139,7 @@ impl DefaultContextRuntime {
             inner: Arc::new(Inner {
                 compaction: options.compaction,
                 max_context_tokens: options.max_context_tokens,
+                truncate_first_keep_ratio: options.truncate_first_keep_ratio,
                 assembler,
                 include_extensions_with_custom_system_prompt: options
                     .include_extensions_with_custom_system_prompt,
@@ -561,19 +565,43 @@ impl ContextRuntime for DefaultContextRuntime {
     fn supports(&self, operation: Operation) -> bool {
         matches!(
             operation,
-            Operation::PrepareForModel | Operation::ApplyToolResults
-        ) || (operation == Operation::TryAutoCompact && self.inner.compaction.is_some())
+            Operation::PrepareForModel
+                | Operation::ApplyToolResults
+                | Operation::TryAutoCompact
+                | Operation::RecoverFromModelError
+        )
     }
     fn try_auto_compact(&self, input: ContextInput) -> HostFuture<JsValue> {
         match &self.inner.compaction {
             Some(port) => port.try_auto_compact(input, self.inner.max_context_tokens),
-            None => Box::pin(async {
-                Err(
-                    ModuleError::new("Host context capability does not support try_auto_compact.")
-                        .into(),
-                )
-            }),
+            None => {
+                let context = input
+                    .fields
+                    .get("maxContextTokens")
+                    .and_then(JsValue::as_number)
+                    .unwrap_or(self.inner.max_context_tokens);
+                Box::pin(async move {
+                    Ok(super::compaction::orchestrator::skipped(
+                        super::compaction::orchestrator::empty_snapshot(context),
+                    ))
+                })
+            }
         }
+    }
+    fn recover_from_model_error(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let recovery = self
+            .inner
+            .compaction
+            .as_ref()
+            .and_then(|port| port.recovery.clone());
+        let first = self.inner.truncate_first_keep_ratio;
+        Box::pin(async move {
+            let input = JsValue::Object(input.fields);
+            match recovery {
+                Some(recovery) => recovery.decide(input),
+                None => super::compaction::recovery::fallback(&input, first),
+            }
+        })
     }
     fn apply_tool_results(&self, input: ContextInput) -> HostFuture<JsValue> {
         let runtime = self.clone();
