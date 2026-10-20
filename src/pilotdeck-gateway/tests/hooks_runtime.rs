@@ -17,8 +17,9 @@ use pilotdeck_gateway::{
     runtime::hooks::{
         exec::{
             CallbackFuture, CallbackHookHandler, CallbackInput, CallbackResult, Cancellation,
-            CommandHookExecutor, CommandHookOptions, HookOutcome, HttpHookExecutor,
-            HttpHookOptions, hook_output_to_value, parse_hook_output,
+            CommandHookExecutor, CommandHookOptions, EvaluatorFuture, EvaluatorInput, HookOutcome,
+            HttpHookExecutor, HttpHookOptions, PromptEvaluator, PromptHookExecutor,
+            hook_output_to_value, parse_hook_output,
         },
         pending::AsyncHookCompletion,
         runtime::{
@@ -579,6 +580,38 @@ async fn mock_server(recorded: Arc<Mutex<Vec<JsValue>>>) -> (String, tokio::task
     (format!("http://{address}"), task)
 }
 
+/// Echoes the prompt it receives, like the generator's evaluator.
+struct EchoEvaluator;
+impl PromptEvaluator for EchoEvaluator {
+    fn evaluate(&self, input: EvaluatorInput) -> EvaluatorFuture {
+        Box::pin(async move { Ok(input.prompt) })
+    }
+}
+
+#[tokio::test]
+async fn prompt_arguments_replace_matches_real_ts() {
+    let oracle = oracle();
+    let cases = array(field(field(&oracle, "prompt"), "cases"));
+    assert_eq!(cases.len(), 3);
+    let executor = PromptHookExecutor::new(Arc::new(EchoEvaluator));
+    for case in cases {
+        let name = text(field(case, "name"));
+        let result = executor
+            .execute(
+                &string(field(case, "prompt")),
+                None,
+                &object(field(case, "hookInput")),
+                None,
+            )
+            .await;
+        assert_eq!(
+            json(&result.to_value()),
+            text(field(case, "expected")),
+            "prompt case {name}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn http_executor_matches_real_ts_and_records_requests() {
     let oracle = oracle();
@@ -588,7 +621,7 @@ async fn http_executor_matches_real_ts_and_records_requests() {
     let refused = format!("http://{}", closed.local_addr().unwrap());
     drop(closed);
     let cases = array(field(field(&oracle, "http"), "cases"));
-    assert_eq!(cases.len(), 18);
+    assert_eq!(cases.len(), 27);
     let executor = HttpHookExecutor::new();
     for case in cases {
         let name = text(field(case, "name"));

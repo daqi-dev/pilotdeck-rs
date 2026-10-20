@@ -109,6 +109,7 @@ const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { HookRuntime } = await load('src/extension/hooks/execution/HookRuntime.ts');
 const { CommandHookExecutor } = await load('src/extension/hooks/execution/CommandHookExecutor.ts');
 const { HttpHookExecutor } = await load('src/extension/hooks/execution/HttpHookExecutor.ts');
+const { PromptHookExecutor } = await load('src/extension/hooks/execution/PromptHookExecutor.ts');
 const { CallbackHookExecutor } = await load('src/extension/hooks/execution/CallbackHookExecutor.ts');
 const { parseHookOutput } = await load('src/extension/hooks/execution/parseHookOutput.ts');
 const { HookExecutionEventBus } = await load('src/extension/hooks/events/HookExecutionEventBus.ts');
@@ -573,6 +574,33 @@ await httpCase({ name: 'refused', target: '<refused>/x' });
 await httpCase({ name: 'header-content-type-case', target: '<url>/echo', headers: { 'Content-Type': 'text/x-custom' } });
 await httpCase({ name: 'header-same-name-case', target: '<url>/echo', headers: { 'X-A': 'a', 'x-a': 'b' } });
 await httpCase({ name: 'header-content-type-exact', target: '<url>/echo', headers: { 'content-type': 'z' } });
+// appendHeader trims HTTP whitespace before validating and joining; only
+// NUL/CR/LF fail at Headers construction, other control bytes fail at send.
+await httpCase({ name: 'header-trim', target: '<url>/echo', headers: { 'X-A': '  spaced \t' } });
+await httpCase({ name: 'header-trim-join', target: '<url>/echo', headers: { 'X-B': ' a ', 'x-b': ' b ' } });
+await httpCase({ name: 'header-trim-crlf', target: '<url>/echo', headers: { 'X-C': '\r\nv\r\n' } });
+await httpCase({ name: 'header-trim-empty', target: '<url>/echo', headers: { 'X-D': ' $NOPE ' }, allowedEnvVars: ['NOPE'] });
+await httpCase({ name: 'header-control-0x01', target: '<url>/ok', headers: { 'X-A': 'a\u0001b' } });
+await httpCase({ name: 'header-control-0x7f', target: '<url>/ok', headers: { 'X-A': 'a\u007fb' } });
+await httpCase({ name: 'header-nul', target: '<url>/ok', headers: { 'X-A': 'a\u0000b' } });
+await httpCase({ name: 'header-inner-lf', target: '<url>/ok', headers: { 'X-A': 'a\nb' } });
+await httpCase({ name: 'pre-aborted-control-0x01', target: '<url>/ok', headers: { 'X-A': 'a\u0001b' }, abortAtMs: 0 });
+
+// ------------------------------------------------- prompt $ARGUMENTS replace
+// String.prototype.replace(string, string): first match only, replacement
+// through GetSubstitution. The evaluator echoes the prompt it received.
+const promptCases: any[] = [];
+{
+  const executor = new PromptHookExecutor(async (input: any) => input.prompt);
+  for (const [name, prompt, hookInput] of [
+    ['dollar-patterns', 'pre $ARGUMENTS post $ARGUMENTS', { ...baseInput, extra: "$&|$`|$'|$$|$1|$<n>|$0|${x}|$" }],
+    ['no-placeholder', 'nothing here', { ...baseInput, extra: '$&' }],
+    ['placeholder-at-start', '$ARGUMENTS!', { ...baseInput, extra: "$'$`" }],
+  ] as const) {
+    const result = await executor.execute({ hook: { type: 'prompt', prompt }, hookInput });
+    promptCases.push({ name, prompt, hookInput, expected: json(result) });
+  }
+}
 server.closeAllConnections();
 await new Promise<void>(resolve => server.close(() => resolve()));
 
@@ -987,6 +1015,7 @@ const oracle = {
   parse: parseCases,
   command: commandCases,
   http: { cases: httpCases },
+  prompt: { cases: promptCases },
   callback: { cases: callbackCases },
   runtime: {
     settings: JSON.parse(json(runtimeSettings)),
@@ -1007,4 +1036,4 @@ assert.ok(!text.includes(baseline), 'oracle leaked the baseline path');
 await writeFile(join(output, 'oracle.json'), text);
 assert.ok(root.startsWith(join(tmpdir(), 'pdrs-hr-')) && root !== tmpdir(), 'refuse to remove an unowned directory');
 await rm(root, { recursive: true, force: true });
-console.log(`hooks-runtime oracle: ${parseCases.length} parse, ${commandCases.length} command, ${httpCases.length} http, ${callbackCases.length} callback, ${runtimeRuns.length} runtime runs, ${hostClientCases.length} host client cases, ${envCases.length} env cases`);
+console.log(`hooks-runtime oracle: ${parseCases.length} parse, ${commandCases.length} command, ${httpCases.length} http, ${promptCases.length} prompt, ${callbackCases.length} callback, ${runtimeRuns.length} runtime runs, ${hostClientCases.length} host client cases, ${envCases.length} env cases`);
