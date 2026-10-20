@@ -578,3 +578,71 @@ fn generator_reproduces_the_committed_oracle_twice() {
         );
     }
 }
+
+/// gate2 P1-1 (intentional difference from TS): `close()` during a handshake,
+/// then `start()` again. Only the second connection may be installed; the
+/// first one's process is closed when its handshake lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn close_during_handshake_then_start_keeps_one_connection() {
+    let scratch = Scratch::new("mcp-client-close-race");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let init = r#"{"send":{"jsonrpc":"2.0","id":"$id","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"m","version":"1"}}}}"#;
+    std::fs::write(
+        dir.join("script.json"),
+        format!(
+            r#"{{"procs":[{{"initialize":[{{"sleep":300}},{init}]}},{{"initialize":[{init}]}}]}}"#
+        ),
+    )
+    .unwrap();
+    let client = McpClient::new(
+        McpServerSpec {
+            id: "mock".into(),
+            transport: McpTransportSpec::Stdio {
+                command: "node".into(),
+                args: Some(vec![mock_path()]),
+                env: Some(vec![(
+                    "MOCK_DIR".into(),
+                    dir.to_string_lossy().into_owned(),
+                )]),
+                cwd: None,
+                per_session: false,
+            },
+            call_timeout_ms: None,
+        },
+        McpClientOptions::default(),
+    );
+    let first = tokio::spawn({
+        let client = client.clone();
+        async move { client.start().await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    client.close().await;
+    client.start().await.expect("second connection");
+    let first = first.await.unwrap().expect_err("first attempt is aborted");
+    assert_eq!(
+        first.message(),
+        "MCP handshake aborted: client closed during connect (server=mock)"
+    );
+    assert_eq!(client.status().as_str(), "ready");
+    // The first process exits on its own once its late handshake is closed;
+    // the second is still serving.
+    let has = |index: usize, event: &str| {
+        read_logs(&dir).get(index).is_some_and(|log| {
+            log.iter().any(|e| {
+                field(e, "event")
+                    .as_string()
+                    .is_some_and(|k| k.equals_str(event))
+            })
+        })
+    };
+    for _ in 0..200 {
+        if has(0, "exit") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(has(0, "exit"), "the aborted connection's process must exit");
+    assert!(!has(1, "exit"), "the live connection keeps running");
+    client.close().await;
+    settle(&dir, false).await;
+}

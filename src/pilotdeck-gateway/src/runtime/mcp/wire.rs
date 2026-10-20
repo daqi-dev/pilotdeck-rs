@@ -521,26 +521,38 @@ impl Wire {
             }
             Link::Stdio(link) => {
                 // `stdin.end()`, then SIGTERM after 2 s and SIGKILL after 2 s
-                // more while the process has not exited.
+                // more while the process has not exited. The escalation runs
+                // on its own task: `closing` is already set, so a caller that
+                // drops this future must not disarm the signals (Node's
+                // timers cannot be cancelled either).
                 *lock(&link.writer) = None;
-                let mut closed = self.closed.subscribe();
-                for signal in [rustix::process::Signal::TERM, rustix::process::Signal::KILL] {
-                    if *closed.borrow() {
-                        return;
-                    }
-                    let _ =
-                        tokio::time::timeout(CLOSE_GRACE, closed.wait_for(|closed| *closed)).await;
-                    if *link.exited.borrow() {
-                        return;
-                    }
-                    if let Some(pid) = link
-                        .pid
-                        .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
-                    {
-                        let _ = rustix::process::kill_process(pid, signal);
-                    }
-                }
+                let escalation = tokio::spawn(escalate(
+                    link.pid,
+                    self.closed.subscribe(),
+                    link.exited.subscribe(),
+                ));
+                let _ = escalation.await;
             }
+        }
+    }
+}
+
+/// The signal half of `StdioClientTransport.close()`.
+async fn escalate(
+    pid: Option<u32>,
+    mut closed: watch::Receiver<bool>,
+    exited: watch::Receiver<bool>,
+) {
+    for signal in [rustix::process::Signal::TERM, rustix::process::Signal::KILL] {
+        if *closed.borrow() {
+            return;
+        }
+        let _ = tokio::time::timeout(CLOSE_GRACE, closed.wait_for(|closed| *closed)).await;
+        if *exited.borrow() {
+            return;
+        }
+        if let Some(pid) = pid.and_then(|pid| rustix::process::Pid::from_raw(pid as i32)) {
+            let _ = rustix::process::kill_process(pid, signal);
         }
     }
 }
@@ -562,6 +574,28 @@ async fn write_queue(stdin: Option<ChildStdin>, mut queue: mpsc::UnboundedReceiv
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// gate2 P1-2: dropping `close()` mid-grace must not disarm SIGTERM. The
+    /// child (`sleep`) ignores stdin EOF, so only the signal ends it.
+    #[tokio::test]
+    async fn dropped_close_still_terminates_the_child() {
+        let wire = Wire::spawn_stdio("sleep", &["30".into()], &[], None).expect("spawn sleep");
+        let mut exited = wire.stdio().exited.subscribe();
+        let started = std::time::Instant::now();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), wire.close())
+                .await
+                .is_err(),
+            "close waits for the grace period"
+        );
+        // A second close is a no-op, like the TS transport.
+        wire.close().await;
+        tokio::time::timeout(Duration::from_secs(5), exited.wait_for(|e| *e))
+            .await
+            .expect("SIGTERM after the 2 s grace")
+            .unwrap();
+        assert!(started.elapsed() >= CLOSE_GRACE);
+    }
 
     #[test]
     fn node_delay_clamps_like_set_timeout() {
