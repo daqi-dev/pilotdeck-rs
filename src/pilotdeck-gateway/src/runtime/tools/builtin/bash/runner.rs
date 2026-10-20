@@ -66,6 +66,43 @@ pub struct CommandOptions {
     pub signal: Option<AbortSignal>,
     pub on_stdout: Option<OutputCallback>,
     pub on_stderr: Option<OutputCallback>,
+    /// Per-stream cap in UTF-16 units; `None` is V8's `MAX_STRING_LENGTH`.
+    /// Only tests lower it (the real limit needs ~0.5 GB per stream).
+    pub max_output_units: Option<usize>,
+}
+
+/// `stdout += text` against V8's string length limit. The baseline's append
+/// throws `RangeError: Invalid string length` for a chunk that would not fit:
+/// that chunk is lost (and its progress callback never runs), later chunks
+/// that still fit are appended, and the child keeps running
+/// (`_tmp/20261020-a65-pr7/probes/oom-rule.out`). The throw itself is an
+/// uncaught exception in the data listener; the TS server shuts the whole
+/// gateway down on it (`cli/pilotdeck.ts:267`). Here only the overflowing
+/// chunk is dropped, which also bounds the memory a command can pin.
+struct StreamText {
+    text: String,
+    units: usize,
+    limit: usize,
+}
+
+impl StreamText {
+    fn new(limit: usize) -> Self {
+        Self {
+            text: String::new(),
+            units: 0,
+            limit,
+        }
+    }
+    /// Whether `chunk` was appended.
+    fn push(&mut self, chunk: &str) -> bool {
+        let units = chunk.encode_utf16().count();
+        if self.units.saturating_add(units) > self.limit {
+            return false;
+        }
+        self.units += units;
+        self.text.push_str(chunk);
+        true
+    }
 }
 
 /// `PilotDeckCommandResult`. `pid` is the shell's PID (and process group),
@@ -505,8 +542,11 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
         .is_some_and(|signal| !signal.aborted());
     let timeout_at = tokio::time::Instant::now() + timer_delay(options.timeout_ms);
 
-    let mut out_text = String::new();
-    let mut err_text = String::new();
+    let limit = options
+        .max_output_units
+        .unwrap_or(crate::runtime::model::MAX_STRING_LENGTH);
+    let mut out_text = StreamText::new(limit);
+    let mut err_text = StreamText::new(limit);
     let mut out_decoder = Utf8Stream::default();
     let mut err_decoder = Utf8Stream::default();
     let mut out_buffer = vec![0u8; 64 * 1024];
@@ -534,8 +574,9 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
                 match read {
                     Ok(length) if length > 0 => {
                         let text = out_decoder.decode(&out_buffer[..length]);
-                        out_text.push_str(&text);
-                        if let Some(callback) = &options.on_stdout {
+                        if out_text.push(&text)
+                            && let Some(callback) = &options.on_stdout
+                        {
                             fire_and_forget(callback, &text);
                         }
                     }
@@ -546,8 +587,9 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
                 match read {
                     Ok(length) if length > 0 => {
                         let text = err_decoder.decode(&err_buffer[..length]);
-                        err_text.push_str(&text);
-                        if let Some(callback) = &options.on_stderr {
+                        if err_text.push(&text)
+                            && let Some(callback) = &options.on_stderr
+                        {
                             fire_and_forget(callback, &text);
                         }
                     }
@@ -577,11 +619,13 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     guard.disarm();
                 }
-                err_text.push_str(FORCE_RESOLVE_NOTE);
+                // `stderr + note` throws past the limit in the baseline too
+                // (and the force-resolve never settles); the note is dropped.
+                err_text.push(FORCE_RESOLVE_NOTE);
                 return Ok(CommandResult {
                     exit_code: None,
-                    stdout: out_text,
-                    stderr: err_text,
+                    stdout: out_text.text,
+                    stderr: err_text.text,
                     timed_out: true,
                     duration_ms: elapsed_ms(started),
                     pid,
@@ -590,8 +634,10 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
         }
     }
 
-    out_text.push_str(&out_decoder.flush());
-    err_text.push_str(&err_decoder.flush());
+    // A flush that no longer fits throws inside the baseline's `close`
+    // handler, so its run never settles; the tail is dropped here instead.
+    out_text.push(&out_decoder.flush());
+    err_text.push(&err_decoder.flush());
     let exit_code = match (kill_at, leader_status) {
         // The baseline's 3 s SIGKILL is still pending after a terminated run
         // settled: it fires on schedule for group members that ignored TERM
@@ -621,8 +667,8 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     };
     Ok(CommandResult {
         exit_code,
-        stdout: out_text,
-        stderr: err_text,
+        stdout: out_text.text,
+        stderr: err_text.text,
         timed_out,
         duration_ms: elapsed_ms(started),
         pid,

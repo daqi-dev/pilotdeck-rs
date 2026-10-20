@@ -763,6 +763,7 @@ fn dropped_run_kills_process_group() {
             signal: None,
             on_stdout: None,
             on_stderr: None,
+            max_output_units: None,
         };
         let run = NodeShellCommandRunner.run(
             JsString::from("echo $$ > leader.pid; sleep 30 | sleep 30"),
@@ -839,4 +840,99 @@ fn shell_tools_register_in_catalog() {
         .map(|tool| text(field(&JsValue::Object(tool.fields().clone()), "name")))
         .collect();
     assert_eq!(names, vec!["bash"]);
+}
+
+/// Runs `command` with a per-stream cap and returns the result and the
+/// chunks each progress callback saw.
+fn run_capped(
+    root: &Path,
+    command: &str,
+    limit: Option<usize>,
+) -> (CommandResult, Vec<String>, Vec<String>) {
+    let seen = Arc::new(Mutex::new((Vec::new(), Vec::new())));
+    let callback = |stdout: bool| {
+        let seen = seen.clone();
+        Some(
+            Arc::new(move |chunk: &str| {
+                let mut seen = seen.lock().unwrap();
+                let list = if stdout { &mut seen.0 } else { &mut seen.1 };
+                list.push(chunk.to_string());
+            }) as pilotdeck_gateway::runtime::tools::builtin::bash::OutputCallback,
+        )
+    };
+    let options = CommandOptions {
+        cwd: JsString::from(root.to_string_lossy().as_ref()),
+        env: Some(vec![(
+            JsString::from("PATH"),
+            JsString::from("/usr/bin:/bin"),
+        )]),
+        timeout_ms: 120_000.0,
+        signal: None,
+        on_stdout: callback(true),
+        on_stderr: callback(false),
+        max_output_units: limit,
+    };
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let result = NodeShellCommandRunner
+                .run(JsString::from(command), options)
+                .await
+                .expect("capped run");
+            assert_group_gone(result.pid.expect("pid"), "capped run").await;
+            result
+        });
+    let seen = seen.lock().unwrap();
+    (result, seen.0.clone(), seen.1.clone())
+}
+
+/// The baseline's append past V8's string limit throws for that chunk only:
+/// the chunk and its progress callback are lost, later chunks that still fit
+/// are kept, the child runs to completion (probes/oom-rule.out:
+/// `tail: "xyzQ"`, `progressChunksAfterFill: ["xyz","Q"]`). Same shape here
+/// with the cap lowered to 10 units: 8 fit, 4 more do not, 1 does.
+#[test]
+fn stream_cap_drops_only_chunks_that_do_not_fit() {
+    let scratch = scratch::Scratch::new("bash-tool-cap");
+    let root = canonical_scratch(&scratch);
+    let (result, stdout_chunks, stderr_chunks) = run_capped(
+        &root,
+        "printf 'aaaaaaaa'; sleep 0.3; printf 'bbbb'; sleep 0.3; printf 'c'; \
+         printf 'eeeeeeeeeee' 1>&2; sleep 0.3; printf 'E' 1>&2; printf 'é' 1>&2",
+        Some(10),
+    );
+    assert_eq!(result.stdout, "aaaaaaaac");
+    assert_eq!(result.stderr, "Eé");
+    assert_eq!(result.exit_code, Some(0));
+    assert!(!result.timed_out);
+    assert_eq!(stdout_chunks, vec!["aaaaaaaa", "c"]);
+    assert_eq!(stderr_chunks.concat(), "Eé");
+}
+
+/// The real cap (V8 `MAX_STRING_LENGTH`), at the probe's exact sizes: the
+/// default runner keeps `fill` zeros plus "xyzQ" and drops the 11-byte chunk.
+#[test]
+fn stream_cap_defaults_to_v8_max_string_length() {
+    let scratch = scratch::Scratch::new("bash-tool-cap-real");
+    let root = canonical_scratch(&scratch);
+    let fill = 536_870_888 - 8;
+    let (result, stdout_chunks, _) = run_capped(
+        &root,
+        &format!(
+            "head -c {fill} /dev/zero; sleep 0.3; printf 'abcdefghijk'; sleep 0.3; \
+             printf 'xyz'; sleep 0.3; printf 'Q'"
+        ),
+        None,
+    );
+    assert_eq!(result.stdout.len(), 536_870_884);
+    assert_eq!(&result.stdout[fill..], "xyzQ");
+    assert_eq!(result.exit_code, Some(0));
+    let tail: Vec<&String> = stdout_chunks
+        .iter()
+        .filter(|chunk| !chunk.bytes().all(|byte| byte == 0))
+        .collect();
+    assert_eq!(tail, vec!["xyz", "Q"]);
 }
