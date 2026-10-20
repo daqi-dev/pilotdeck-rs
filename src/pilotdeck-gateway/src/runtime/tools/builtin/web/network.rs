@@ -28,6 +28,30 @@ use std::{sync::Arc, time::Duration};
 /// body can outlive it (same probe).
 const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
 
+/// The delay Node's `setTimeout` actually arms for a requested millisecond
+/// value: values inside `[1, 2^31-1]` are kept (fractional milliseconds
+/// included), everything else — `NaN`, `±Infinity`, values below 1 and values
+/// above `2^31-1` — becomes 1 ms (the `TimeoutOverflowWarning` path).
+/// `probes/timer-clamp.out` records the armed delay for `0`, `0.5`, `1.9`,
+/// `2^31-2`, `2^31-1`, `2^31-0.5`, `2^31`, `1e23` and `Infinity`.
+///
+/// Both `networkFetch`'s per-attempt timer and the providers' outer abort
+/// timer go through this, so an overflowing `timeoutMs` never reaches
+/// `Duration::from_secs_f64`, which panics on non-finite or overflowing
+/// input.
+pub fn node_timer_delay_ms(ms: f64) -> f64 {
+    if ms.is_finite() && (1.0..=i32::MAX as f64).contains(&ms) {
+        ms
+    } else {
+        1.0
+    }
+}
+
+/// [`node_timer_delay_ms`] as a `Duration` for `tokio::time`.
+pub fn node_timer_duration(ms: f64) -> Duration {
+    Duration::from_secs_f64(node_timer_delay_ms(ms) / 1000.0)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
     pub method: &'static str,
@@ -295,22 +319,23 @@ pub async fn network_fetch(
                 Ok(built) => {
                     let send = transport.send(built);
                     let timed = async {
+                        // `options.timeoutMs && options.timeoutMs > 0` in
+                        // `network/fetch.ts`: non-positive and NaN disable the
+                        // per-attempt timer; positive overflowing values are
+                        // clamped like `setTimeout`.
                         if options.timeout_ms > 0.0 {
-                            tokio::time::timeout(
-                                Duration::from_secs_f64(options.timeout_ms / 1000.0),
-                                send,
-                            )
-                            .await
-                            .map_err(|_| {
-                                NetworkFetchError::new(
-                                    "network_timeout",
-                                    format!(
-                                        "Network request timed out after {}ms.",
-                                        crate::js_value::number_string(options.timeout_ms)
-                                    ),
-                                    JsValue::Undefined,
-                                )
-                            })
+                            tokio::time::timeout(node_timer_duration(options.timeout_ms), send)
+                                .await
+                                .map_err(|_| {
+                                    NetworkFetchError::new(
+                                        "network_timeout",
+                                        format!(
+                                            "Network request timed out after {}ms.",
+                                            crate::js_value::number_string(options.timeout_ms)
+                                        ),
+                                        JsValue::Undefined,
+                                    )
+                                })
                         } else {
                             Ok(send.await)
                         }

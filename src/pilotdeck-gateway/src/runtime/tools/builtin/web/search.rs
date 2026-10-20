@@ -15,7 +15,7 @@ use super::{
     ask_permission,
     network::{
         BodyError, FetchOptions, HttpRequest, HttpResponse, Random, RetryOptions, network_fetch,
-        read_body,
+        node_timer_duration, read_body,
     },
 };
 use crate::{
@@ -28,7 +28,7 @@ use crate::{
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 const DESCRIPTION: &str = "- Searches the web for current information using the configured search provider\n- Takes a search query and optional country code (`gl`) as input\n- Returns structured search data including organic results and, when available, answer box content\n- Use this tool for current events, recent documentation, and information beyond the model's knowledge cutoff\n- Use this tool when API/SDK/framework usage is unknown, version-sensitive, or likely changed since training. Search with package/service name, version, framework, and the specific method/option/error.\n\nUsage notes:\n  - Configure `tools.webSearch.provider` as `glm`, `tavily`, `serper`, `brave`, `baidu`, `bocha`, `exa`, `serpapi`, or `custom` in `pilotdeck.yaml`\n  - Requires `tools.webSearch.apiKey`, the provider API key environment variable, or `CUSTOM_WEB_SEARCH_API_KEY` unless custom auth is `none`\n  - The optional `gl` parameter is forwarded only by providers that support localization\n  - This tool is read-only and does not modify files";
 
@@ -723,21 +723,26 @@ async fn send(
     // `setTimeout(() => controller.abort(), timeoutMs)` in every provider is
     // unconditional: 0, a negative value and NaN still abort the call. Only
     // `networkFetch`'s own per-attempt timer is gated on `timeoutMs > 0`.
-    // Node clamps the delay to [1, 2^31-1] ms (NaN and non-finite values
-    // become 1 ms), so an overflowing number never reaches
-    // `Duration::from_secs_f64`, which panics. `timed` is polled first so an
-    // already-resolved transport wins over the immediate timer, as a microtask
-    // beats a timer callback in the baseline.
-    let delay_ms = timeout_ms.trunc();
-    let delay_ms = if delay_ms.is_finite() && (1.0..=i32::MAX as f64).contains(&delay_ms) {
-        delay_ms
-    } else {
-        1.0
-    };
+    // Node clamps the delay to [1, 2^31-1] ms (NaN, ±Infinity, values below
+    // 1 and values above 2^31-1 become 1 ms), so an overflowing number never
+    // reaches `Duration::from_secs_f64`, which panics.
+    //
+    // Ordering (`probes/search-timeout-block.out`): with a 60 ms transport and
+    // a 120 ms synchronous event-loop block, 0/-1/NaN/1/60 return
+    // `tool_timeout` and 100 succeeds — the abort timer wins whenever it is
+    // due no later than the response, and it is armed before the fetch starts
+    // (the 60/60 tie goes to the timer). Rust cannot see the transport's
+    // internal deadline, so when both branches are ready in the same poll the
+    // timer is the one that has already expired and is polled first; an
+    // already-expired timeout is never silently replaced by a response. A
+    // response that is ready on an earlier wake-up still wins, which is the
+    // normal positive-timeout path (and real I/O, where an unblocked Node
+    // event loop runs the expired timers phase before I/O callbacks).
+    let delay = node_timer_duration(timeout_ms);
     tokio::select! {
         biased;
+        () = tokio::time::sleep(delay) => Err(None),
         result = timed => result,
-        () = tokio::time::sleep(Duration::from_secs_f64(delay_ms / 1000.0)) => Err(None),
     }
 }
 
