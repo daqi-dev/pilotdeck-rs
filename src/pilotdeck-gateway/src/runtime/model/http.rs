@@ -8,11 +8,10 @@
 //! the config is a `ModelConfig` JSON (`{ providers: { id: ProviderConfig } }`).
 //! Events are delivered to a sink in order; an `Err` is what TS throws.
 //!
-//! Not ported here: the Google SDK path and the OpenAI Responses protocol
-//! (pr7; the OpenAI chat-completions protocol is ported in pr6),
-//! invocation audit staging (`options.invocation`, A6.4-pr10),
-//! `PILOTDECK_DUMP_REQUEST`, HTTP redirects (undici follows them; a 3xx is
-//! surfaced here as a non-OK status) and the proxy/global dispatcher.
+//! HTTP redirects follow undici through `crate::fetch_redirect::follow`
+//! (#360-1). Not ported here: the Google SDK path (pr8), invocation audit
+//! staging (`options.invocation`, A6.4-pr10), `PILOTDECK_DUMP_REQUEST` and the
+//! proxy/global dispatcher.
 #![allow(clippy::result_large_err)]
 
 use bytes::Bytes;
@@ -689,11 +688,13 @@ fn retry_after(error: &ModelStreamError) -> Option<f64> {
 // ---------------------------------------------------------------------------
 // Request sending
 
+/// `new Request(url, init)` validation plus `new Headers(record)`: the
+/// initial URL and header map that `fetch_redirect::follow` then sends,
+/// re-checking scheme and bad ports on every hop.
 fn build_http_request(
     url: &str,
     headers: &[(JsString, JsValue)],
-    body: &Bytes,
-) -> Result<Request<Full<Bytes>>, NetworkFetchError> {
+) -> Result<(url::Url, hyper::HeaderMap), NetworkFetchError> {
     let failed = || NetworkFetchError::classify("fetch failed", None);
     let parsed = url::Url::parse(url).map_err(|_| {
         NetworkFetchError::classify(&format!("Failed to parse URL from {url}"), None)
@@ -704,22 +705,8 @@ fn build_http_request(
             None,
         ));
     }
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed
-            .port()
-            .is_some_and(crate::fetch_redirect::blocked_port)
-    {
-        return Err(failed());
-    }
-    let mut uri = parsed.clone();
-    uri.set_fragment(None);
-    let mut request = Request::builder()
-        .method(hyper::Method::POST)
-        .uri(uri.as_str())
-        .body(Full::new(body.clone()))
-        .map_err(|_| failed())?;
     // `new Headers(record)`: names are case-insensitive, later values append.
-    let map = request.headers_mut();
+    let mut map = hyper::HeaderMap::new();
     for (name, value) in headers {
         let name = hyper::header::HeaderName::from_bytes(
             String::from_utf16_lossy(name.units()).as_bytes(),
@@ -743,8 +730,7 @@ fn build_http_request(
             map.insert(name, value);
         }
     }
-    map.remove(hyper::header::HOST);
-    Ok(request)
+    Ok((parsed, map))
 }
 
 /// `sendProviderRequest` + `sendWithEndpointFallback` + `networkFetch`.
@@ -776,10 +762,21 @@ async fn send_provider_request(
     let exchange = async {
         let mut last = None;
         for endpoint in &endpoints {
-            let request = build_http_request(endpoint, &headers, &encoded)?;
-            let response = transport.send(request).await.map_err(|failure| {
-                NetworkFetchError::classify(&failure.message, failure.cause_code)
-            })?;
+            let (url, header_map) = build_http_request(endpoint, &headers)?;
+            // undici `redirect: "follow"` (shared with hooks and count).
+            let response = crate::fetch_redirect::follow(
+                url,
+                hyper::Method::POST,
+                header_map,
+                encoded.clone(),
+                || NetworkFetchError::classify("fetch failed", None),
+                |request| async move {
+                    transport.send(request).await.map_err(|failure| {
+                        NetworkFetchError::classify(&failure.message, failure.cause_code)
+                    })
+                },
+            )
+            .await?;
             let status = response.status().as_u16();
             let ok = (200..300).contains(&status);
             if !ok && count != 1 && matches!(status, 400 | 404 | 405) {

@@ -15,7 +15,7 @@ const ORACLE: &str = include_str!("fixtures/model-stream/oracle.json");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_ts_stream_model_over_loopback_http_and_tls() {
-    replay(&baseline::oracle(ORACLE), 27, 31).await;
+    replay(&baseline::oracle(ORACLE), 31, 38).await;
 }
 
 /// The production count transport shares the stream transport's rustls
