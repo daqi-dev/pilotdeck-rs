@@ -136,17 +136,22 @@ async fn abort_before_headers_cancels_the_exchange() {
 
 #[test]
 fn unported_protocols_fail_before_http() {
-    let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
-    let config = parse_json(
-        r#"{"providers":{"p":{"id":"p","protocol":"openai-responses","url":"http://x","apiKey":"k","headers":{},
-        "models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#,
-    )
-    .unwrap();
-    let (provider, model) = providers::validate_model_request(&request, &config).unwrap();
-    let error = providers::build_model_request(&request, &provider, &model).unwrap_err();
-    assert!(
-        matches!(error, ModelStreamError::Request { ref code, .. } if code.equals_str("protocol_not_ported"))
-    );
+    // Every protocol still behind the `protocol_not_ported` gate (pr7/pr8).
+    for protocol in ["openai-responses", "google"] {
+        let request = parse_json(r#"{"provider":"p","model":"m","messages":[]}"#).unwrap();
+        let config = parse_json(
+            &r#"{"providers":{"p":{"id":"p","protocol":"@PROTO@","url":"http://x","apiKey":"k","headers":{},
+            "models":{"m":{"id":"m","capabilities":{"supportsStreaming":true},"multimodal":{"input":["text"]}}}}}}"#
+                .replace("@PROTO@", protocol),
+        )
+        .unwrap();
+        let (provider, model) = providers::validate_model_request(&request, &config).unwrap();
+        let error = providers::build_model_request(&request, &provider, &model).unwrap_err();
+        assert!(
+            matches!(error, ModelStreamError::Request { ref code, .. } if code.equals_str("protocol_not_ported")),
+            "{protocol}"
+        );
+    }
 }
 
 /// Scripted transport: one response per call, body frames served in order;

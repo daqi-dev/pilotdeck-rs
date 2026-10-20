@@ -290,7 +290,7 @@ async fn real_ts_openai_stream_model_over_loopback_http() {
     };
 
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 23);
+    assert_eq!(cases.len(), 30);
     let mut request_count = 0;
     let mut names = std::collections::HashSet::new();
     for case in cases {
@@ -407,5 +407,5 @@ async fn real_ts_openai_stream_model_over_loopback_http() {
         assert_eq!(requests, expected, "{name}: request records");
         request_count += requests.len();
     }
-    assert_eq!(request_count, 28);
+    assert_eq!(request_count, 37);
 }

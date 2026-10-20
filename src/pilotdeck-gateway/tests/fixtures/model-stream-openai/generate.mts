@@ -152,6 +152,43 @@ const specs: Spec[] = [
   { name: 'stream-error-fatal', replies: [{ chunks: [
     errorEvent({ type: 'invalid_request_error', message: 'messages: field required' }),
   ] }] },
+  // `const error = asRecord(chunk.error); if (Object.keys(error).length > 0)`:
+  // empty objects and non-objects are data chunks, not provider errors.
+  { name: 'stream-error-shapes', replies: [{ chunks: [
+    sse(chunk({ role: 'assistant', content: 'before' })),
+    sse({ error: {} }),
+    sse({ error: 'boom' }),
+    sse({ error: [] }),
+    sse({ error: ['boom'] }),
+    sse({ error: null }),
+    sse(finishing('stop')),
+    done,
+  ] }] },
+  // rate_limit_error is retryable. The hint must NOT become retryAfterMs:
+  // only anthropic/stream.ts parses it; openai keeps the default backoff.
+  { name: 'stream-error-rate-limit-hint', replies: [
+    { chunks: [errorEvent({ type: 'rate_limit_error', message: 'slow down, try again in 1.5s' }), done] },
+    short('after rate limit'),
+  ] },
+  // Same hint with retries off: the emitted canonical error must not gain a
+  // `retryAfterMs` field either (the retry case only observes the delay).
+  { name: 'stream-error-rate-limit-hint-fatal', provider: { retry: { streamMaxRetries: 0 } }, replies: [{ chunks: [
+    errorEvent({ type: 'rate_limit_error', message: 'slow down, try again in 1.5s' }),
+  ] }] },
+  // The fourth retryable code, absent from the earlier fixtures.
+  { name: 'stream-error-overloaded', replies: [
+    { chunks: [errorEvent({ type: 'overloaded_error', message: 'overloaded' }), done] },
+    short('after overload'),
+  ] },
+  // readNonEmptyString trims only to test emptiness; non-numeric indices fall
+  // back to the array position / 0 rather than being coerced.
+  { name: 'stream-whitespace-fallbacks', replies: [{ chunks: [
+    sse({ id: '   ', choices: [{ index: '1', delta: { content: 'w' } }] }),
+    sse(chunk({ tool_calls: [
+      { index: '0', id: 'call_ws', function: { name: 'lookup', arguments: '{}' } },
+    ] })),
+    sse({ error: { type: '   ', message: '   ' } }),
+  ] }] },
   { name: 'http-429-retry-after', replies: [
     { status: 429, headers: { 'retry-after': '0.02', 'content-type': 'application/json' },
       chunks: [json({ error: { message: 'Rate limit reached for requests', type: 'rate_limit_error', code: 'rate_limit_exceeded' } })] },
@@ -175,6 +212,12 @@ const specs: Spec[] = [
   { name: 'tool-call-invalid-json-length', provider: { retry: { streamMaxRetries: 0 } }, replies: [{ chunks: [
     sse(chunk({ tool_calls: [{ index: 0, id: 'call_bad', function: { name: 'lookup', arguments: '{{' } }] })),
     sse(finishing('length')),
+  ] }] },
+  // Same unrepairable buffer without truncation: `invalid_tool_arguments`,
+  // still `retryable: true` (the earlier fixtures only pinned the length path).
+  { name: 'tool-call-invalid-json', provider: { retry: { streamMaxRetries: 0 } }, replies: [{ chunks: [
+    sse(chunk({ tool_calls: [{ index: 0, id: 'call_bad2', function: { name: 'lookup', arguments: '{{' } }] })),
+    sse(finishing('tool_calls')),
   ] }] },
   { name: 'tool-call-jsonrepair', replies: [{ chunks: [
     // Trailing comma: JSON.parse fails, jsonrepair succeeds, wasRepaired=true.
@@ -206,6 +249,14 @@ const specs: Spec[] = [
     { role: 'user', content: [{ type: 'text', text: 'middle' }] },
     { role: 'user', content: [
       { type: 'tool_result', toolCallId: 'call_0_0', content: [{ type: 'text', text: 'orphan' }] },
+    ] },
+  ] } },
+  { name: 'request-tool-id-whitespace', replies: [short('ws')], request: { messages: [
+    { role: 'assistant', content: [
+      { type: 'tool_call', id: '   ', name: 'lookup', input: {} },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', toolCallId: '   ', content: [{ type: 'text', text: 'ok' }] },
     ] },
   ] } },
   { name: 'request-validation', request: { provider: 'missing-provider' }, replies: [] },
@@ -353,6 +404,6 @@ const oracle = {
   sourceCommit, sourceSha256, node: process.version, v8: process.versions.v8, locale, random: 0.5,
   transportHeaders: TRANSPORT_HEADERS, request, provider, cases,
 };
-assert.equal(cases.length, 23);
+assert.equal(cases.length, 30);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n');
 console.log(JSON.stringify({ output: join(output, 'oracle.json'), cases: cases.length, requests: requestCount }));
