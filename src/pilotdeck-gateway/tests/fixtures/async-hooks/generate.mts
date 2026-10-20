@@ -1,13 +1,12 @@
 // Real fixed-baseline methods; no registry logic is reimplemented here.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
@@ -26,34 +25,9 @@ const assertTrackedClean = () => {
 const sourceCommit = bindSourceTree(baseline, commit, git).ref;
 assertTrackedClean();
 const sources = ['src/gateway/client/InProcessGateway.ts', 'src/agent/session/SteerMailbox.ts', 'src/gateway/dialog/GatewayAttachmentTurnComposer.ts'];
-// Like workspace-snapshot: hash the relative-import closure of the entries,
-// not the entries alone. Bare and node: specifiers are external.
-async function resolveSource(absolute: string): Promise<string | undefined> {
-  const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
-  for (const candidate of [absolute, `${absolute}.ts`, `${absolute}.tsx`, `${absolute}.mts`, join(absolute, 'index.ts'), ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : [])]) {
-    try { if ((await lstat(candidate)).isFile()) return candidate; } catch { /* next candidate */ }
-  }
-  return undefined;
-}
-const closure = new Set<string>(sources);
-for (const queue = [...sources]; queue.length > 0;) {
-  const file = queue.shift()!;
-  const text = await readFile(join(baseline, file), 'utf8');
-  for (const [, , specifier] of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g)) {
-    if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
-    const resolved = await resolveSource(join(baseline, dirname(file), specifier));
-    assert.ok(resolved, `unresolved baseline import ${specifier} in ${file}`);
-    const path = relative(baseline, resolved).split(sep).join('/');
-    if (!closure.has(path)) { closure.add(path); queue.push(path); }
-  }
-}
-const sourceSha256: Record<string, string> = {};
-for (const file of [...closure].sort()) {
-  assert.ok(file.startsWith('src/'), `import closure escaped src/: ${file}`);
-  const committed = runGit('show', `${commit}:${file}`);
-  assert.deepEqual(await readFile(join(baseline, file)), committed, `${file} differs from ${commit}`);
-  sourceSha256[file] = createHash('sha256').update(committed).digest('hex');
-}
+// Hash the relative-import closure of the entries (shared helper, same rule
+// as workspace-snapshot), each verified against the commit blob.
+const sourceSha256: Record<string, string> = sourceClosureSha256(baseline, commit, git, sources);
 const { InProcessGateway } = await import(pathToFileURL(join(baseline, sources[0])).href);
 const { SteerMailbox } = await import(pathToFileURL(join(baseline, sources[1])).href);
 const { GatewayAttachmentTurnComposer } = await import(pathToFileURL(join(baseline, sources[2])).href);
@@ -100,6 +74,10 @@ const specs = [
   { name: 'concurrent-duplicate', steps: [start(),reg(),block,begin('one',sub()),wait,begin('two',sub('a',null)),release,joinOp('one'),joinOp('two'),drain] },
   { name: 'run-switch-during-write', steps: [start(),reg(),block,begin('one',sub()),wait,begin('two',sub()),start('next'),release,joinOp('one'),joinOp('two'),{...drain,run:'next'}] },
   { name: 'expiry-during-write-then-accepted', steps: [start(),reg(),block,begin('one',sub()),wait,tick(10),sub(),tick(5),release,joinOp('one'),sub(),drain,tick(299999),sub(),tick(1),sub()] },
+  // An in-flight steer accepted after expiry + same-id re-registration: TS
+  // settles by identity (the new pending survives), overwrites the outcome by
+  // id, and the new timer later expires it again.
+  { name: 'expiry-during-write-reregister-then-accepted', steps: [start(),reg(),block,begin('one',sub()),wait,tick(10),reg(),sub(),release,joinOp('one'),sub(),drain,tick(10),sub(),drain] },
   { name: 'delivery-failure-retry', steps: [start(),reg(),{op:'fail'},sub(),sub(),drain] },
   { name: 'shared-delivery-failure-retry', steps: [start(),reg(),block,{op:'fail'},begin('one',sub()),wait,begin('two',sub()),release,joinOp('one'),joinOp('two'),sub(),drain] },
   { name: 'identity-and-payload-validation', steps: [sub('',{}),sub('a',{},' \ufeff'),start(),reg(),...[null,[],false,'x',{continue:false},{hookSpecificOutput:null},{hookSpecificOutput:[]},{hookSpecificOutput:{decision:'block'}},{hookSpecificOutput:{}},{hookSpecificOutput:{hookEventName:'Stop'}},{hookSpecificOutput:{hookEventName:{toString:42}}},{hookSpecificOutput:{hookEventName:[{toString:42}]}},{hookSpecificOutput:{hookEventName:['a',null,{}]}},{hookSpecificOutput:{hookEventName:'PreToolUse',additionalContext:1}}].map(output=>sub('a',output)),sub(),drain] },
@@ -187,7 +165,7 @@ try {
   process.chdir(scratch);
   const scenarios = [];
   for (const spec of specs) scenarios.push(await run(spec));
-  assert.equal(scenarios.length,37);
+  assert.equal(scenarios.length,38);
   bindSourceTree(baseline,commit,git);
   assertTrackedClean();
   const data = JSON.stringify({sourceCommit,sourceSha256,scenarios},null,2)+'\n';
