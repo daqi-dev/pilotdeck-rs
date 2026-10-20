@@ -1,13 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 01:25 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.6-pr8b | review | ready | PR #388 在合并队列（head bc14a47）；两家与 gate3 均 0/0，合入后核邮箱
-- A6.5-pr10b | impl | ready | PR #391 Draft；第六轮 GLM/Grok 0/0、gate5 0/0（P2×4）；codex 修复轮 6（`_tmp/20261020-a65-pr10b/fix6.md`：Ajv 深度断点按 P1、resolve_path 复用、旧目录删除时机），修完审增量后入队
-- A6.5-pr9 | impl | ready | 第六轮 Grok 0/0；GLM r6 输出为空需重跑；gate5 P1×1（MCP network_fetch 同源漏改）+ P2×5；codex 修复轮 6（`_tmp/20261020-a65-pr9/fix6-codex.md`）
-- A6.4-pr8 | impl | ready | google：第三轮两家与 gate3 均无 P0/P1；codex 修复轮 3 做三条便宜 P2（`_tmp/20261020-a64-pr8/fix3.md`），余项 #390
-- A6.5-pr9b | impl | ready | 已推送 c9f29d7；沙箱外 820/1（#389 时序抖动，单跑 3 次过）、溯源两次生成一致；两条解析器差异留 pr9c；接 pr9 合入后 rebase 再评审
-- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；接 pr8 合入
+updated: 2026-10-21 01:57 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.4-pr8 | review | ready | PR #395 已开 auto-merge（head c398aa0），四轮两家与 gate4 均 0/0；入队后核 MERGED 与邮箱
+- A6.5-pr9 | impl | ready | head 979344b；沙箱外 842/0；Grok r7 P1×1（web-tools generate.mts:237 断言仍为 41，实际 43，README 重生成跑不通，一行修）+ P2×1；GLM r7 在跑；gate6 P1 属 main 既有行为，已拆 #396（决策卡 decisions-20261021）。等 GLM r7 结束后改那一行、重生成两次、推送，再审增量
+- A6.5-pr10b | impl | ready | PR #391 Draft，head 756a408；Grok r7 P1（Ajv 断点随 schema 形状下降到约 2700 层）+ gate6 P1（bash timer_delay，即 #392）；codex 修复轮 7 在跑（`_tmp/20261020-a65-pr10b/fix7.md`）。深度上限已是第三次出问题，这轮不过即挂起
+- A6.5-pr9b | impl | ready | 已推送 c9f29d7，叠在 pr9 上；pr9 合入后 rebase 再评审
+- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；pr8 合入后开工
+- #396 | impl | ready | provider / hooks / count_http 改用共享 exchange 判定与 bodyTimeout（P1 口径，前置于 A6.4、A6.7 收尾）
+- #386 | impl | ready | 子进程未重置继承的信号处置（SIGINT 被忽略时后台任务退出状态与 TS 不一致）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
 - #150 | coord | human | draft PR，待人定
@@ -18,6 +19,17 @@ updated: 2026-10-21 01:25 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372 已合入的两条「待批」条目（handshakeClose、background-task-async-spawn），等人批
 - A6.6-pr10 | impl | human | EdgeClaw memory core：sqlite 依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 01:57 · /loop 两小时交接（自 10-20 23:56 起）
+> **合并**：#385、#388 A6.6-pr8b、#393。#395 A6.4-pr8 已开 auto-merge，四轮收敛。
+> **在途（持有人：协调者本会话；后台进程见下）**：
+> - wt-a65-pr10b（claude/a65-pr10b）：codex 修复轮 7，状态文件 `_tmp/20261020-a65-pr10b/fix7.status` 写入 exit= 即结束；修完先沙箱外验证，再派 gate7、GLM、Grok。
+> - wt-a64-pr11（claude/a65-pr9）：GLM r7 只读评审在跑（`rv-glm-r7.status`）；结束后改 `generate.mts:237` 为 43，按 README 用真实 TS 生成两次比对，提交署 Claude。
+> - wt-a66-pr3（deepseek/a64-pr8）：等 #395 合入；之后接 A6.4-pr9。
+> - wt-a6-x0（claude/a65-pr9b）：等 pr9。
+> **教训**：① codex / GLM / Grok 的 exit=0 只代表进程结束：GLM 有一次输出为空，Grok 要用 `--read --since-seq N` 取正式结论。② 合并队列会因 runner 网络抖动（npm ECONNRESET）把 PR 踢出，出队后要核原因再入队。③ 闸门 sibling 角色反复查出「已合入代码里的同类遗漏」，按 decisions-20261021 的原则另开单，不在当前 PR 里无限扩大范围。
+> **新登记**：#394（MCP bridge 同步读文件、lease 在已关停 runtime 上 spawn）、#396（共享 exchange 未覆盖的网络路径）；#392 并入 pr10b 修复轮 7。
+> **资源**：磁盘 89.7 GiB；worktree 12/12；cargo 槽 ≤4。DeepSeek dsh 直连 key 失效，实现全派 codex；评审用 GLM + Grok。**下一步**：两条修复轮回来 → 验证 → 增量评审 → 入队；pr8 合入后放出 A6.4-pr9、#396。
 
 > ## 2026-10-21 01:25 · /loop
 > **合并**：#385（board 00:20 + 评审通道改走 llm-center）。它在 00:35 被合并队列踢出过一次，原因是队列 CI 的 `npm ci` 撞上 runner 网络 ECONNRESET，不是代码问题，重新入队后合入。#388 A6.6-pr8b 已入队。
