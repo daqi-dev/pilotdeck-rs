@@ -164,16 +164,6 @@ pub(crate) struct LeaderExit {
     pub signal: Option<i32>,
 }
 
-/// Whether this platform can observe an exit without reaping. Owners decide
-/// the fallback: wait out a grace period, or kill at once.
-pub(crate) const WNOWAIT_SUPPORTED: bool = cfg!(not(any(
-    target_os = "cygwin",
-    target_os = "horizon",
-    target_os = "openbsd",
-    target_os = "redox",
-    target_os = "wasi"
-)));
-
 /// Resolves once `leader` has exited, without reaping it. `Ok(None)` when the
 /// platform has no WNOWAIT; `Err` for a non-EINTR `waitid` failure (for
 /// example ECHILD once someone else reaped it).
