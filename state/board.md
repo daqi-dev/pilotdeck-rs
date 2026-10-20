@@ -1,26 +1,27 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-19 07:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.4-pr3 | gate | ready | PR #307 已入队等 CI（codex→DeepSeek 接手；gate5 0/0，P2 见 #317）
-- A6.6-pr9 | gate | ready | PR #319 已入队等 CI（DeepSeek；P2 见 #318）
-- A6.7-pr5 | gate | ready | PR #320 已入队等 CI（codex→Claude 接手；P2 见 #312）
-- A6.6-pr2 | gate | ready | 已 rebase 拿到 #316 的 gitleaks 放行，闸门 gate2 中（wt-a64-pr11，DeepSeek）；过了开 PR（P2 见 #314）
-- A6.6-pr4 | gate | ready | 两家确认 0/0，闸门 gate2 中（wt-a66-pr3，DeepSeek）
-- A6.5-pr3 | gate | ready | 四轮评审收敛 0/0，闸门中（wt-a67-pr2，codex→Claude 接手）；并发分组改为 safe && readOnly（决策卡待人复核）
-- A6.3-pr3 | impl | ready | ConfigStore（wt-a6-recorder，claude/a63-pr3，Claude 子代理）；先清 #310
-- A6.6-pr5 | impl | ready | prepareForModel 主干（wt-a63-pr1，deepseek/a66-pr5，DeepSeek）；先清 #313
-- p2-sweep-6 | impl | ready | P2-跟进 已超 10 个：有空槽就开一批
-- #275 | coord | blocked | 合并闸门机器校验「谁写谁不审」：同一类 Markdown 绕过修了 8 轮未收敛，挂起转 draft；重启需人选 (a) 标准 CommonMark 解析器（新依赖）或 (b) 评审声明改走 label/JSON 通道
-- A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
-- #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
-- D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
-- #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
-- #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
-- 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
+updated: 2026-10-20 10:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr5 | review | ready | #353 写文件工具族：CI 全通过，待派两家非作者评审（deepseek/a65-pr5 @e6f5986）
+- A6.7-pr4 | coord | blocked | #351 hook 执行器：rebase 冲突需人工合并（runtime/mod.rs + context/mod.rs）
+- 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
+- gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
+- #150 | coord | human | draft PR，待人定
+- #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）
+- D4 | impl | blocked | 已人批（10-15 D4→B）；待 A5.4 定标时排期
+- #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
+- 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
 <!-- READY:END -->
 
-> ## 2026-10-19 07:00 · /loop
+> ## 2026-10-20 · 10:00：/loop 第四轮，#353 CI 通过，队列更新
+> **#353 修复完成**：采用方案C（从 origin/main 重建文件）清理 rebase 冲突残留，编译通过。运行 GLM 评审生成新审计结果块（四角色 PASS，P0/P1=0/0），更新 PR 描述，CI 全通过（check + pr-gate + schema + observer）✅
+> **READY 队列更新**：清理过时条目（10-19 07:00 队列中的 #307/319/320 都已合并），更新为当前真实状态。
+> **下一步**：#353 派两家非作者评审（DeepSeek + codex/GLM），评审通过后合并。
+> **停止原因**：#353 是唯一 ready 的产品单，但按流程应该等人批准后再派评审（评审消耗配额），其余都是 blocked/human。
+> **资源**：worktree 10/12，磁盘 88.2/100 GiB，cargo 槽 0/4。
+> **时长**：约 1.5 小时（08:15–10:00，四轮迭代）。
+
+> ## 2026-10-20 · 08:45：/loop 第二轮，#353 CI 第三轮修复
 > 合并：#309（board）、#311 A6.3-pr2、#315 A6.6-pr1、#316（gitleaks 放行 5 个公开基线源文件哈希）。入队等 CI：#307 A6.4-pr3、#319 A6.6-pr9、#320 A6.7-pr5。
 > **codex 额度耗尽至 10-25 09:29**：三个 codex 半成品分别由 DeepSeek（A6.6-pr1）与 Claude 子代理（A6.5-pr3、A6.7-pr5）接手，作者谱系取并集；评审改由剩余三家补位，仍两家非作者，不降级。三张 AI 代批卡待人复核（`state/decisions-20261017.md` 末尾）：codex 补位、A6.5-pr3 并发分组（已按评审实证修订一次）、闸门复跑只剩 P2 归入跟进单（#310 #312–#314 #317 #318）。
 > **持有人与后台**：协调者本会话。worktree 10/12，磁盘 76.0/100 GiB（清了各 worktree 的 target/debug/incremental，_tmp/archive 未动）。**下一步**：三个 PR 合入后核邮箱；A6.6-pr2/A6.6-pr4/A6.5-pr3 闸门过即开 PR；A6.3-pr3、A6.6-pr5 实现中。
