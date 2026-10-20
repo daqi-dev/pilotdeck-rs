@@ -4,7 +4,7 @@
 //! - `streamable_http` — `StreamableHTTPClientTransport` with the baseline's
 //!   `networkFetch` (`src/network/fetch.ts`): POST timeout `callTimeoutMs ??
 //!   DEFAULT_CALL_TIMEOUT_MS`, GET timeout `handshakeTimeoutMs ?? 10000`, one
-//!   retry for GETs on 408/409/425/429/5xx or retryable network errors;
+//!   retry for GETs on 408/409/425/429/500/502/503/504 (TS `DEFAULT_RETRY_STATUSES`, network/fetch.ts:48) or retryable network errors;
 //! - `sse` — the legacy `SSEClientTransport` over the `eventsource@3`
 //!   `EventSource`, posting with the global `fetch` (no timeout or retry).
 //!
