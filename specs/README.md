@@ -89,7 +89,7 @@ updated: YYYY-MM-DD HH:MM · by <谁>
 |---|---|
 | ref | issue 号（`#167`）或阶段码（`A6.1-pr1`）；无空格 |
 | kind | `impl` 实现 · `gate` 开 PR 前角色审计 · `review` 双谱系评审 · `research` 调研 · `docs` · `coord` 协调 |
-| state | `ready` 可取 · `blocked` 有前置（summary 写前置）· `human` 待人拍板（summary 写决策卡路径） |
+| state | `ready` 可取 · `doing` 已派出（summary 写持有人/worktree/任务书，不再派）· `blocked` 有前置（summary 写前置）· `human` 待人拍板（summary 写决策卡路径） |
 
 - 自上而下即优先级；队首 = 第一条 `ready`。summary 内不得出现 ` | `。
 - 每次改块必改 `updated` 行——接续者靠它判断上一轮有没有推进。
