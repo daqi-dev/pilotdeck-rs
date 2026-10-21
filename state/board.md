@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 17:57 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 18:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - #386 | review | ready | PR #407 修复轮 4 推 3d8cd3c：unsafe 例外移进两文件 crate pilotdeck-child-signals，gateway 恢复 forbid；协调者实测宏 include 绕过被编译器拒（E0453）；GLM r5 + Grok r5 + gate3 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr2 | review | ready | PR #412 修复轮 2 推 8c3b166（end_turn 身份复核、空串 project、admission 再生守卫）；GLM r3 + Grok r3 + gate2 在跑；拆出 #414、#416
 - A6.5-pr9b | impl | ready | PR #406 gate5 concurrency P1：250 层嵌套 code 加 10 MiB 内容，峰值 RSS 2690 MiB（单层只要 109 MiB；协调者实测，`_tmp/20261021-a65-pr9b/arb-inline-rss.txt`）→ codex 修复轮 3 在跑（`fix3.md`，输出逐字节不变，只改分配策略）
-- A6.4-pr9a | review | ready | PR #418（draft，@66560e2）：rebase 到 #396 之后的 main 并适配；协调者在沙箱外做了正式溯源，两次逐字节一致且与入库 oracle 相同；--http 金样两次一致，router_execute 含 ignored 7/7；GLM r1 + Grok r1 + gate1 + 全量测试在跑
+- A6.4-pr9a | review | ready | PR #418（draft，@66560e2）：全量测试 1764/1，失败的 sequences_replay 前台复跑 8/8；gate1 四角色全 PASS，有两条 P2（thinking.rs:309 缺 details、五个错误码 details 无断言），等两家评审结果后同批修；GLM r1 与 Grok r1 在跑
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -337,3 +337,5 @@ updated: 2026-10-21 17:57 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **17:30**：#403（#396）已合入 main（a07aaab，提交邮箱为账号主邮箱，同前）。#407 文本守卫第三次被绕过，换成独立 crate + forbid 方案，决策卡 AI 代批。#412 派修复轮 2，拆出 #416。#406 补跑三个角色中。下一步：#406 gate5 绿即入队；A6.4-pr9a 的阻塞已解除（#396 已合入），可以接着做。
 
 > **17:57**：A6.4-pr9a 已续上，开 PR #418（沙箱外补齐溯源与 HTTP 金样，7/7）。#406 gate5 的 P1 已实测确认是嵌套 code 内存放大，派修复轮 3。#407 修复轮 4（独立 crate + forbid）、#412 修复轮 2 已推送，各派下一轮评审。board PR #417 已开。
+
+> **18:00**：#418 全量测试与 gate1 完成，两条 P2 等评审后同批修。#417（board）的 CI check 未完成，下轮入队。其余线评审在跑。
