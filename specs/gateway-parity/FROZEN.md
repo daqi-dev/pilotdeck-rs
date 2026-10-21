@@ -21,7 +21,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-309650b0b6ebfa45f376fce2fea610a0c6899d3c5e1f7bef22fe28f573d57728  accepted-diffs.md
+d1890d2971fa23601e78a93889279748c79e71f663b664a37d4d2da24711f61d  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
@@ -37,3 +37,5 @@ e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/
 70f248715b6f3c3c20127df963999706e1432765340be411a0c98340089ba0bc  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 31d0fe7dd11da319bacd60cabff27053cc0d0e28d3c386adea4f931488099d16  ../../scripts/gateway-parity/controls/session_domain.py
+
+> **2026-10-22 修复轮 8 重登记（PR #406，透明披露补齐）**：按本轮明确授权，accepted-diffs.md 的「已知未对齐（未接受，待 pr9c）」表格只追加第三条（240 层格式化元素 + 宽 P 子树在真实 TS 抛 `Invalid array length`、Rust 成功返回 Markdown），保留原有条目原文，并追加适用范围说明；本条属 V8 数组上限运行时行为，与深度批准无关。真实 TS 重测 2 / 4 MiB 并二分至 256 KiB 区间，Rust 2 / 4 / 8 MiB 原值与输出 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。状态为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。

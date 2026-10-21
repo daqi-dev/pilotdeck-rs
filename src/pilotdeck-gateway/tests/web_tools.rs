@@ -2566,19 +2566,27 @@ async fn html_depth_limit_has_the_exact_ts_web_fetch_overflow_error() {
         ("<div>", "</div>"),
         ("<blockquote>", "</blockquote>"),
     ] {
-        let tool = conversion_tool(
-            format!(
-                "{}x{}",
-                open.repeat(MAX_DOM_DEPTH),
-                close.repeat(MAX_DOM_DEPTH)
-            ),
-            None,
+        let html = format!(
+            "{}x{}",
+            open.repeat(MAX_DOM_DEPTH),
+            close.repeat(MAX_DOM_DEPTH)
         );
+        let mut fetcher = UrlFetcher::new(Arc::new(ConversionTransport(html)));
+        let cache = Arc::new(UrlCache::default());
+        fetcher.cache = cache.clone();
+        let tool = WebFetchTool::new(WebFetchToolOptions {
+            model: None,
+            provider: None,
+            model_id: None,
+            max_output_tokens: None,
+            fetcher,
+        });
         let result = run(&tool, conversion_input(), context(None, empty_env(), None)).await;
         assert_eq!(
             json(get(&result, "error")),
             json(get(&items(get(&oracle, "errors"))[0], "error"))
         );
+        assert!(cache.get("https://example.com/page").is_none());
     }
 }
 
