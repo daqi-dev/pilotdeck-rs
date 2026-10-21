@@ -13,7 +13,7 @@ const redirect = (status, location) => ({ status, headers: location === undefine
 export const urls = [
   'https://example.com', 'http://example.com/a?b#c', 'https://localhost/x', 'https://127.0.0.1/', 'https://10.0.0.1/',
   'https://[::1]/', 'https://user:pass@example.com/', 'https://user@example.com/', 'ftp://example.com/', 'not a url',
-  'https://a./', 'https://.a.b/', 'https://a..b/', `https://example.com/${'x'.repeat(1981)}`, `https://example.com/${'x'.repeat(1982)}`,
+  'https://a./', 'https://.a.b/', 'https://a..b/', `https://example.com/${'x'.repeat(1980)}`, `https://example.com/${'x'.repeat(1981)}`, `https://example.com/${'x'.repeat(1982)}`,
   'https://例子.测试/', 'https://EXAMPLE.com:443/', 'http://example.com:80/', 'javascript:alert(1)', 'https://192.168.1.1:8080/x',
 ];
 
