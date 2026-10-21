@@ -192,39 +192,68 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate_errs(ok_block + "\n" + ok_block):
             fails.append(f"闸门：分批的两个合法块应接受：{gate_errs(ok_block + chr(10) + ok_block)}")
 
-        # 逐角色串行 + merge-review-roles.py：单角色块闸门拒收，合并块接受；元数据不一致/角色重复须拒绝合并
+        # 逐角色串行 + merge-review-roles.py：单角色块闸门拒收，合并块接受；任何源块错误都不得被合并洗白
         merger = ROOT / "scripts" / "merge-review-roles.py"
-        (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {}}))
-        per_role = []
-        for r in ROLES.split(","):
-            d = out_base / f"solo-{r}"
-            subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
-                            "--worktree", str(wt), "--base", "HEAD~1", "--out", str(d), "--roles", r],
-                            capture_output=True, text=True)
-            per_role.append(str(d))
-        if not gate_errs((Path(per_role[0]) / "summary.md").read_text(encoding="utf-8")):
-            fails.append("merge：单角色块应被闸门拒收（缺其余角色）")
+
+        def solo(name: str, role: str, mode: str = "ok", runner: str = "zai") -> str:
+            (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL, "keys": {}}))
+            d = out_base / name
+            subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
+                            "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1", "--out", str(d),
+                            "--roles", role], capture_output=True, text=True)
+            return str(d)
 
         def merge(name: str, dirs: list[str]) -> tuple[int, str]:
             o = out_base / name
             cp = subprocess.run([sys.executable, "-I", str(merger), "--out", str(o), *dirs], capture_output=True, text=True)
             return cp.returncode, (o / "summary.md").read_text(encoding="utf-8") if (o / "summary.md").exists() else ""
 
+        def forged(src: str, name: str, edit) -> str:
+            # 复制一个合法单角色目录，再按 edit 篡改 summary.md 或 status.json
+            d = out_base / name
+            shutil.copytree(src, d)
+            edit(d)
+            return str(d)
+
+        def sub(path: Path, old: str, new: str) -> None:
+            t = path.read_text(encoding="utf-8")
+            assert old in t, (path, old)
+            path.write_text(t.replace(old, new, 1), encoding="utf-8")
+
+        names = ROLES.split(",")
+        per_role = [solo(f"solo-{r}", r) for r in names]
+        if not gate_errs((Path(per_role[0]) / "summary.md").read_text(encoding="utf-8")):
+            fails.append("merge：单角色块应被闸门拒收（缺其余角色）")
         rc, s = merge("merged", per_role)
         if rc != 0 or gate_errs(s):
             fails.append(f"merge：四角色合并块应过闸（rc={rc}）：{gate_errs(s)}")
-        if merge("merged-dup", per_role + per_role[:1])[0] != 2:
-            fails.append("merge：角色重复应拒绝合并")
-        if merge("merged-mixed", per_role[:3] + [str(out_base / "anthropic-ok")])[0] != 2:
-            fails.append("merge：runner/model 不一致的目录应拒绝合并")
         rc, s = merge("merged-three", per_role[:3])
         if rc != 0 or not gate_errs(s):
             fails.append(f"merge：只合三个角色可以合并，但闸门应拒收（rc={rc}）")
-        tampered = out_base / "solo-tampered"
-        shutil.copytree(per_role[3], tampered)
-        (tampered / "diff.patch").write_text("另一份 diff\n", encoding="utf-8")
-        if merge("merged-tampered", per_role[:3] + [str(tampered)])[0] != 2:
-            fails.append("merge：被审 diff 不同的目录应拒绝合并")
+        # 非 PASS 角色：合并如实带出，rc=1，闸门拒收（#432 GLM P1）
+        partial = solo("solo-partial", names[3], mode="noverdict")
+        rc, s = merge("merged-partial", per_role[:3] + [partial])
+        if rc != 1 or f"{names[3]}:PARTIAL" not in s or not gate_errs(s):
+            fails.append(f"merge：含 PARTIAL 角色应 rc=1 且闸门拒收（rc={rc}）")
+        # 以下每例都用角色不重叠的目录，确保只有被测的那条校验在拦（#432 两家 P2：旧例被角色重复遮蔽）
+        anth = solo("solo-anth", names[3], runner="anthropic")
+        cases = [
+            ("dup", per_role + per_role[:1]),
+            ("mixed-runner", per_role[:3] + [anth]),
+            ("diff", per_role[:3] + [forged(per_role[3], "f-diff", lambda d: (d / "diff.patch").write_text("另一份 diff\n", encoding="utf-8"))]),
+            ("head", per_role[:3] + [forged(per_role[3], "f-head", lambda d: sub(d / "summary.md", " head=", " head=0000000"))]),
+            ("dup-key", per_role[:3] + [forged(per_role[3], "f-dupkey", lambda d: sub(d / "summary.md", " head=", " head=0000000 head="))]),
+            ("readonly", per_role[:3] + [forged(per_role[3], "f-ro", lambda d: sub(d / "summary.md", "readonly=tools", "readonly=snapshot"))]),
+            ("roles-vs-status", per_role[:3] + [forged(per_role[3], "f-roles", lambda d: sub(d / "summary.md", ":PASS", ":TIMEOUT"))]),
+            ("p1-vs-status", per_role[:3] + [forged(per_role[3], "f-p1", lambda d: sub(d / "summary.md", " p1=0", " p1=1"))]),
+            ("diff-lines", per_role[:3] + [forged(per_role[3], "f-lines", lambda d: sub(d / "summary.md", " diff_lines=", " diff_lines=9"))]),
+            ("empty-status", per_role[:3] + [forged(per_role[3], "f-empty", lambda d: (d / "status.json").write_text("{}", encoding="utf-8"))]),
+            ("missing", per_role[:3] + [forged(per_role[3], "f-missing", lambda d: (d / "status.json").unlink())]),
+        ]
+        for why, dirs in cases:
+            rc, s = merge(f"merged-{why}", dirs)
+            if rc != 2 or s:
+                fails.append(f"merge：{why} 应拒绝合并且不落 summary（rc={rc}）")
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
