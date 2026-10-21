@@ -368,3 +368,38 @@ fn nested_headings_match_real_ts_string_limit() {
         }
     }
 }
+
+#[test]
+fn reparented_wide_subtrees_stay_fast() {
+    // Distinct attributes defeat the active-formatting list's three-identical-
+    // entries rule. Closing each B moves the same wide P subtree via adoption
+    // agency, while its element depth remains below MAX_DOM_DEPTH.
+    let formatting = 240;
+    let prefix = (0..formatting)
+        .map(|i| format!("<b a={i}>"))
+        .collect::<String>()
+        + "<p>";
+    let suffix = "</b>".repeat(formatting);
+    let bytes = 8 * 1024 * 1024;
+    let count = (bytes - prefix.len() - suffix.len()) / "<span>x</span>".len();
+    let padding = bytes - prefix.len() - suffix.len() - count * "<span>x</span>".len();
+    let html = prefix + &"<span>x</span>".repeat(count) + &"x".repeat(padding) + &suffix;
+    assert_eq!(html.len(), bytes);
+    let started = std::time::Instant::now();
+    let actual = Turndown.convert(&html).unwrap();
+    let elapsed = started.elapsed();
+    // Real domino/turndown byte-compared at 1/2 MiB; the 4/8 MiB baseline
+    // throws Invalid array length. Rust's unchanged successful output follows
+    // the same lossless period, verified against the pre-fix implementation.
+    let bold = "**".repeat(formatting);
+    assert_eq!(
+        actual,
+        format!("{bold}{}{bold}", "x".repeat(count + padding))
+    );
+    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
+    eprintln!("reparent-wide-8mib: {bytes} HTML bytes, {elapsed:?}");
+    assert!(
+        elapsed.as_secs_f64() < budget,
+        "reparent wide subtree: took {elapsed:?}, budget {budget}s"
+    );
+}
