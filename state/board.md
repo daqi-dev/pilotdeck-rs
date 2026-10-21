@@ -1,15 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #400 | impl | ready | pr9 gate7 剩余P2（sibling×2前置A6.4、concurrency×1前置A6.7、boundary×2便宜）
-- #401 | impl | ready | pr10b gate7 剩余P2（concurrency×1、sibling×1）+ Grok r8重跑
-- A6.5-pr9 | review | ready | PR #398，head ac87059；八轮0/0，验证845/0，剩余P2已拆#400
-- A6.5-pr10b | review | ready | PR #391，head e5cf875；八轮GLM 0/0，已改Ready，剩余P2已拆#401
-- A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等pr9合入后rebase再评审
-- #396 | impl | ready | provider/hooks/count_http改用共享exchange（前置A6.4/A6.7收尾）
-- #386 | impl | ready | 子进程信号处置
-- A6.4-pr9a | impl | blocked | fallback+health候选(codex,wt-a66-pr3,805/14),缺正式溯源与HTTP对拍;stats+usage未启动
+updated: 2026-10-21 11:55 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8 接替 7e)
+- A6.5-pr9 | review | ready | PR #398 head 8e86640（CI 修复：oracle 真实 TS 重生成、计数 21/45/114）；GLM r9 + Grok r9 增量评审在跑（`_tmp/20261020-a65-pr9/rv-*-r9.status`）；两家 0/0 且 CI 绿即入队
+- A6.5-pr10b | impl | ready | PR #391 head 2e6a091（rustfmt 修 CI）；Grok r8 正式结论 P1×1（pattern 正则长串 V8 栈溢出→端口假 PASS，`_tmp/20261021-loop/grok-read-141.txt:27-41`）；codex 修复轮 8 在跑（`_tmp/20261020-a65-pr10b/fix8.status`）
+- #396 | impl | ready | 并 #400 第 1–3 条；codex 在 wt-a64-pr7（codex/a64-exchange，叠在 pr9 上），`_tmp/20261021-issue-396/task.status`
+- #386 | impl | ready | codex 在 wt-a63-pr1（codex/sig-reset），无 unsafe/新依赖做不到则停在选型交卡，`_tmp/20261021-issue-386/task.status`
+- #401 | impl | ready | pr10b gate7 剩余 P2（concurrency×1、sibling×1）；等 pr10b 修复轮 8 回来再排
+- A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等 pr9 合入后 rebase 再评审
+- A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -20,6 +19,16 @@ updated: 2026-10-21 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 11:55 · /loop（会话 pilotdeck-rs-d8 接替 7e）
+> **CI 修复**：#391 只差 rustfmt（2e6a091）；#398 是 ac87059 加了 URL 用例但测试仍断言 20、9689d2b 改了 cases 却没重生成 oracle（生成器断言 46，实际 45）。已用真实 TS 重生成两次逐字节一致（3315a10f…），web_tools 41/0（8e86640）。worktree 里那份旧草稿存 `_tmp/20261021-pr9-ci/stale-wip.diff`。
+> **漏读的结论**：10:12 交接写「pr10b Grok r8 只收到任务需重跑」，实际正式结论在 bot 会话第 145 条，是 P1（pattern 正则长串栈溢出，端口比 SDK 宽）。教训重申：Grok 必须 `--read --since-seq N` 取结论。已派 codex 修复轮 8，沿用「向严 + 登记」原则；pr10b 栈溢出这一类已是第四次出问题，本轮不过即挂起。
+> **补登记**：pr10b 深度预算向严差异决策卡此前只在 stash 里，未进库，本轮补进 `state/decisions-20261021.md`。
+> **派单**：#396（并 #400 第 1–3 条）、#386 交给 codex，复用已合并的 wt-a64-pr7、wt-a63-pr1。A6.4-pr9a 与 #396 同改文件，候选存成 WIP 后暂停。
+> **资源**：_build+_tmp 87.7 GiB；worktree 12/12；cargo 槽 0/4（派单前）。
+
+> ## 2026-10-21 11:43 · Codex 按用户澄清重核早期 rust-core 四 crate
+> 上轮七 crate 统计不是用户所指 rust-core；本轮限定 agent/transport/protocol/tokenizer，以 c6fe14d 原样导入（来源 0eba113）读取，90 个 Rust 文件全匹配来源哈希。共 53,050 行 Rust 文本，约 47% 测试；职责为 turn 策略、Sidecar/宿主协议、JS 语义兼容及分词，另有双轨校验等精简候选。华为云页面不可读，未核远端最新 HEAD；详细说明 `_tmp/20261021-progress-core/rust-core.md`。仅问答核查，READY 与产品开发现场不变。
 
 > ## 2026-10-21 11:05 · Codex 按用户提问核查进度与代码组成
 > 核查主仓 6c16ee8、最新 READY 与 GitHub：#395 已 MERGED（02:05 北京时间），#398/#391 仍 OPEN；主线处于 A6，A7/A8、B3–B6、前端业务迁移和 CLI 闭环继续未完成。七个后端 crate 共 212,295 行 Rust 文本，测试按目录/代码块识别约 42%，主要体量在 gateway；报告与可复算计数见 `_tmp/20261021-progress-core/report.md`。本轮是问答核查，未启动开发、编译或验收；下一开发任务仍按 READY 与持有人现场接续。
