@@ -380,6 +380,330 @@
       "actualCompileError": "Invalid regular expression: /[/u: Unterminated character class"
     },
     {
+      "id": "invalid-pattern/assertion/lookbehind-exact",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-open-upper",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2,}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2,}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-range",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2,3}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookahead-exact",
+      "schema": {
+        "type": "string",
+        "pattern": "(?=a){2}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?=a){2}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2x}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-no-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){,3}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookahead-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "(?=a){2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Incomplete quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?=a){2x}/u: Incomplete quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-reversed",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2,1}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "numbers out of order in {} quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2,1}/u: numbers out of order in {} quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-before-saturation",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2147483647,2147483646}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "numbers out of order in {} quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2147483647,2147483646}/u: numbers out of order in {} quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-at-saturation",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2147483648,2147483647}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2147483648,2147483647}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-above-saturation",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){99999999999,99999999998}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Invalid quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){99999999999,99999999998}/u: Invalid quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/lookbehind-saturated-reversed",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=a){2147483648,1}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "numbers out of order in {} quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /(?<=a){2147483648,1}/u: numbers out of order in {} quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/atom-saturated-reversed",
+      "schema": {
+        "type": "string",
+        "pattern": "a{2147483648,1}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "numbers out of order in {} quantifier",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /a{2147483648,1}/u: numbers out of order in {} quantifier"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-exact",
+      "schema": {
+        "type": "string",
+        "pattern": "^{2}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{2}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-reversed",
+      "schema": {
+        "type": "string",
+        "pattern": "^{2,1}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{2,1}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-saturated",
+      "schema": {
+        "type": "string",
+        "pattern": "^{2147483648,2147483647}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{2147483648,2147483647}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/assertion/boundary-open-upper",
+      "schema": {
+        "type": "string",
+        "pattern": "\\b{2,}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\b{2,}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/assertion/end-exact",
+      "schema": {
+        "type": "string",
+        "pattern": "${2}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Nothing to repeat",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /${2}/u: Nothing to repeat"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "^{2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{2x}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-no-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "^{,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{,3}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/start-brace",
+      "schema": {
+        "type": "string",
+        "pattern": "^{"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /^{/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/boundary-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "\\b{2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\b{2x}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/boundary-no-lower",
+      "schema": {
+        "type": "string",
+        "pattern": "\\b{,3}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\b{,3}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/nonboundary-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "\\B{2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /\\B{2x}/u: Lone quantifier brackets"
+    },
+    {
+      "id": "invalid-pattern/assertion/end-malformed",
+      "schema": {
+        "type": "string",
+        "pattern": "${2x}"
+      },
+      "data": "x",
+      "compileErrorPrefix": "Invalid regular expression",
+      "compileErrorDetail": "Lone quantifier brackets",
+      "exactCompileError": true,
+      "actualCompileError": "Invalid regular expression: /${2x}/u: Lone quantifier brackets"
+    },
+    {
       "id": "invalid-pattern/grok/invalid-escape-hyphen",
       "schema": {
         "type": "string",
@@ -5892,6 +6216,132 @@
         "format": "regex"
       },
       "data": "\\",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/lookbehind-exact",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){2}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/lookbehind-range",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){2,3}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/lookahead-malformed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?=a){2x}"
+    },
+    {
+      "id": "format-regex/assertion/lookbehind-brace",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){"
+    },
+    {
+      "id": "format-regex/assertion/lookbehind-lower",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){2"
+    },
+    {
+      "id": "format-regex/assertion/atom-at-saturation",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2147483648,2147483647}"
+    },
+    {
+      "id": "format-regex/assertion/atom-above-saturation",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{99999999999,99999999998}"
+    },
+    {
+      "id": "format-regex/assertion/atom-saturated-reversed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "a{2147483648,1}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/start-malformed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "^{2x}"
+    },
+    {
+      "id": "format-regex/assertion/boundary-no-lower",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\b{,3}"
+    },
+    {
+      "id": "format-regex/assertion/nonboundary-malformed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "\\B{2x}"
+    },
+    {
+      "id": "format-regex/assertion/end-malformed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "${2x}"
+    },
+    {
+      "id": "format-regex/assertion/start-exact",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "^{2}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/start-reversed",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "^{2,1}",
+      "errorText": "data must match format \"regex\""
+    },
+    {
+      "id": "format-regex/assertion/lookbehind-saturated",
+      "schema": {
+        "type": "string",
+        "format": "regex"
+      },
+      "data": "(?<=a){2147483648,2147483647}",
       "errorText": "data must match format \"regex\""
     },
     {

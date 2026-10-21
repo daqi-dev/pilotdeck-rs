@@ -181,9 +181,16 @@ pub(super) fn wrap_summary(mut message: JsValue, anchors: Option<JsString>) -> J
 
 pub(super) fn validate_structure(message: &JsValue) -> Vec<JsValue> {
     let text = encode_units(&raw_text(message)).replace(['\r', '\u{2028}', '\u{2029}'], "\n");
-    let missing: Vec<_> = ["Objective", "Current State", "Remaining", "Files And Artifacts"].into_iter().filter(|heading| {
-        !Regex::new(&format!(r"(?m)^#{{1,6}}[\t\n\x0b\x0c\r \u{{a0}}\u{{1680}}\u{{2000}}-\u{{200a}}\u{{2028}}\u{{2029}}\u{{202f}}\u{{205f}}\u{{3000}}\u{{feff}}]+(?i-u:{})[\t\n\x0b\x0c\r \u{{a0}}\u{{1680}}\u{{2000}}-\u{{200a}}\u{{2028}}\u{{2029}}\u{{202f}}\u{{205f}}\u{{3000}}\u{{feff}}]*$", regex::escape(heading))).unwrap().is_match(&text)
-    }).collect();
+    static REQUIRED_HEADINGS: LazyLock<[(&str, Regex); 4]> = LazyLock::new(|| {
+        ["Objective", "Current State", "Remaining", "Files And Artifacts"].map(|heading| {
+            (heading, Regex::new(&format!(r"(?m)^#{{1,6}}[\t\n\x0b\x0c\r \u{{a0}}\u{{1680}}\u{{2000}}-\u{{200a}}\u{{2028}}\u{{2029}}\u{{202f}}\u{{205f}}\u{{3000}}\u{{feff}}]+(?i-u:{})[\t\n\x0b\x0c\r \u{{a0}}\u{{1680}}\u{{2000}}-\u{{200a}}\u{{2028}}\u{{2029}}\u{{202f}}\u{{205f}}\u{{3000}}\u{{feff}}]*$", regex::escape(heading))).expect("static compact heading regex"))
+        })
+    });
+    let missing: Vec<_> = REQUIRED_HEADINGS
+        .iter()
+        .filter(|(_, pattern)| !pattern.is_match(&text))
+        .map(|(heading, _)| *heading)
+        .collect();
     if missing.is_empty() {
         Vec::new()
     } else {

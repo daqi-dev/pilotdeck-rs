@@ -1,7 +1,7 @@
 use super::{Diagnostics, Env, Error, value::*};
 use crate::metadata::object;
 use pilotdeck_protocol::{JsString, JsValue};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 pub(crate) struct Provider {
     pub id: JsString,
     pub available: bool,
@@ -81,8 +81,11 @@ pub(super) fn credential(value: &JsValue, env: &Env) -> Result<(), Error> {
         ));
     }
     if let Ok(s) = s.to_utf8() {
-        let re = regex::Regex::new(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$").unwrap();
-        if let Some(c) = re.captures(&s) {
+        static ENV_REFERENCE: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+                .expect("static env reference regex")
+        });
+        if let Some(c) = ENV_REFERENCE.captures(&s) {
             let name = &c[1];
             if env
                 .get(name)
