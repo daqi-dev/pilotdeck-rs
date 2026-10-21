@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 00:36 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-22 00:45 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - A6.5-pr9b | gate | ready | PR #406 @9e5d3316：修复轮 7 已推（8 MiB 误嵌套 32.03→0.88 s，负控 31.93 s 触发预算），待重跑 gate concurrency 并重写结果块
 - #401 | impl | doing | PR #429（Draft）@b381291c 延迟换算已推；codex 第二单 dispose 栅栏在跑（_tmp/20261022-issue-401/impl2.md），wt-a65-pr10b
 - #386 | impl | doing | PR #407 @8c49fa4a：gate6b boundary P1（unsafe 守卫闭包只从 gateway 出发）codex 修复轮 9 在跑（_tmp/20261022-issue-386-gate6b/fix9.md）；gate6c concurrency 0/0/0
@@ -15,7 +15,14 @@ updated: 2026-10-22 00:36 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
+- #390 | impl | doing | DeepSeek 在 wt-a66-pr3（codex/issue-390），任务书 _tmp/20261022-issue-390/impl.md
 <!-- READY:END -->
+
+> ## 2026-10-22 00:45 · /loop 协调轮
+> **关单**：#392 关闭——`bash/runner.rs:509` 已委托共享 `node_timer_duration`，`:703` 有截断单测（eac8d0e6），评论贴依据。
+> **派单**：#390（A6.4-pr8 遗留：openai 非字符串 url 先实测再定、三处正则改 LazyLock）派 DeepSeek，复用已合入的 wt-a66-pr3 开新分支。
+> **在跑**：codex×2（#407 修复轮 9、#401 第二单），DeepSeek×1（#390），闸门链剩 #421 concurrency/simplify。#428 等 CI `check`。
+> **READY**：加入 #390（doing）。
 
 > ## 2026-10-22 00:36 · /loop 协调轮
 > **合入准备**：#406 修复轮 7 提交 9e5d3316（署名 Codex）已推。#401 第一单提交 b381291c 开 Draft PR #429（wire.rs 取消码一条按 TS 实测不改：TS 同样回 -32001 并回收共享连接）；第二单 dispose 栅栏派 codex 同树接着做。
