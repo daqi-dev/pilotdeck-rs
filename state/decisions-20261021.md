@@ -93,7 +93,7 @@
 - **动不动尺子 / 意向**：不动，只收紧。
 - **选项**：
   - A. 继续往禁用词表里补 `rustc`、`linker`、`paths` 等键；
-  - B. 改成一律不许存在：仓内不得有任何 `.cargo/config*`、`rust-toolchain*`，现状两者都没有；环境变量 `RUSTC*`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`CARGO_BUILD_*`、`CARGO_TARGET_*_RUSTFLAGS`、`*_WRAPPER` 非空即失败。在报错里说明本地临时设了这些变量的人怎么绕开，例如只在跑这条测试时 `env -u`。脚本和 CI yml 里自己改编译器的写法，归 `.github` 与脚本的人工评审，不再由这条测试负责。
+  - B. 改成一律不许存在：仓内不得有任何 `.cargo/config*`，现状没有。**更正（19:12）**：原文写「`rust-toolchain*` 现状也没有」是错的。仓库根有冻结的 `rust-toolchain.toml`（specs/ui-server-parity/FROZEN.md:65），另有既有的 `src/pilotdeck-transport/build.rs`。这两份改为只许原文件存在，路径和 sha256 都固定，别处出现即失败；环境变量 `RUSTC*`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`CARGO_BUILD_*`、`CARGO_TARGET_*_RUSTFLAGS`、`*_WRAPPER` 非空即失败。在报错里说明本地临时设了这些变量的人怎么绕开，例如只在跑这条测试时 `env -u`。脚本和 CI yml 里自己改编译器的写法，归 `.github` 与脚本的人工评审，不再由这条测试负责。
 - **建议 / 执行**：B，派 codex 修复轮 7（`_tmp/20261021-issue-386/fix7.md`）。
 - **原则**：安全检查用「只许这几样」，不用「不许这几样」；守卫在注释和 PR 里写明负责哪些、不负责哪些，评审按写明的边界判，越界的写法不再算守卫假通过。
 - **可机检**：负控加入 `[build] rustc` 和 `RUSTC_WORKSPACE_WRAPPER`；守卫注释写明负责范围。
