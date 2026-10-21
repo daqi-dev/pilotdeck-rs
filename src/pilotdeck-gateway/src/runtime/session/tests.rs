@@ -31,6 +31,7 @@ async fn real_ts_admission_completion_and_gateway_abort() {
         let mut pending: Vec<(String, Pending<'_>)> = Vec::new();
         let aborts = Arc::new(Mutex::new(Vec::<String>::new()));
         let mut maintenance_key = None;
+        let mut reservations = BTreeMap::new();
         for (index, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
             let key = js(step, "key").unwrap_or_default();
             let run = js(step, "run");
@@ -38,12 +39,20 @@ async fn real_ts_admission_completion_and_gateway_abort() {
             let id = step["id"].as_str().unwrap_or_default();
             let mut value = Value::Null;
             match step["op"].as_str().unwrap() {
-                "begin" => value = json!(turns.admission.begin_turn(&key, run.as_ref().unwrap())),
+                "begin" => {
+                    let reservation = turns.admission.begin_turn(&key, run.as_ref().unwrap());
+                    value = json!(reservation.is_some());
+                    if let Some(reservation) = reservation {
+                        reservations.insert(key.clone(), reservation);
+                    }
+                }
                 "active" => {
                     value = json!({"active": turns.admission.has_active_turn(&key),
                         "run": turns.admission.active_turn_run_id(&key).as_ref().map(string)});
                 }
-                "end" => turns.admission.end_turn(&key, run.as_ref()),
+                "end" => turns
+                    .admission
+                    .end_turn(&key, run.as_ref(), reservations.get(&key)),
                 "shutdown" => turns.admission.shutdown(),
                 "maintenance_start" => {
                     let admitted = turns.admission.begin_maintenance(&key);
@@ -165,7 +174,7 @@ fn simultaneous_same_session_has_one_winner_and_other_sessions_admit() {
                 let same = admission.begin_turn(&"same".into(), &n.to_string().into());
                 let independent =
                     admission.begin_turn(&format!("session-{n}").into(), &"run".into());
-                (same, independent)
+                (same.is_some(), independent.is_some())
             })
         })
         .collect();
@@ -229,11 +238,11 @@ fn keys_preserve_utf16_and_maintenance_shares_turn_admission() {
     let other = JsString::from_utf16(vec![0xfffd]);
     assert!(admission.begin_maintenance(&key));
     assert!(!admission.begin_maintenance(&key));
-    assert!(!admission.begin_turn(&key, &"r".into()));
-    assert!(admission.begin_turn(&other, &"r".into()));
+    assert!(admission.begin_turn(&key, &"r".into()).is_none());
+    assert!(admission.begin_turn(&other, &"r".into()).is_some());
     assert!(!admission.begin_maintenance(&other));
     admission.end_maintenance(&key);
-    assert!(admission.begin_turn(&key, &"r".into()));
+    assert!(admission.begin_turn(&key, &"r".into()).is_some());
     admission.shutdown();
     assert!(!admission.begin_maintenance(&key));
 }
@@ -304,17 +313,19 @@ fn old_abort_never_targets_replacement_across_threads() {
             new_hits
         });
         for round in 0..ROUNDS {
-            assert!(turns.admission.begin_turn(&key, &old));
+            let old_reservation = turns.admission.begin_turn(&key, &old).unwrap();
             *owner.lock().unwrap() = old.clone();
             let old_handle = (round % 2 == 0).then(|| turns.completion.begin(&key, &old));
             start.wait();
             selected.wait();
-            turns.admission.end_turn(&key, Some(&old));
+            turns
+                .admission
+                .end_turn(&key, Some(&old), Some(&old_reservation));
             if let Some(handle) = old_handle {
                 assert!(handle.is_cancelled());
                 turns.completion.complete(&key, &handle);
             }
-            assert!(turns.admission.begin_turn(&key, &new));
+            let new_reservation = turns.admission.begin_turn(&key, &new).unwrap();
             let new_handle = turns.completion.begin(&key, &new);
             *owner.lock().unwrap() = new.clone();
             replaced.wait();
@@ -322,11 +333,46 @@ fn old_abort_never_targets_replacement_across_threads() {
             assert!(!new_handle.is_cancelled());
             assert_eq!(turns.aborted_reason(&key, &new), None);
             turns.completion.complete(&key, &new_handle);
-            turns.admission.end_turn(&key, Some(&new));
+            turns
+                .admission
+                .end_turn(&key, Some(&new), Some(&new_reservation));
             turns.clear_aborted_reason(&key, &old);
         }
         aborter.join().unwrap()
     });
     println!("replacement hits: {new_hits}/{ROUNDS}");
     assert_eq!(new_hits, 0, "an old abort reached the replacement owner");
+}
+
+#[test]
+#[ignore = "requires fixed TS checkout and its existing tsx loader"]
+fn real_ts_admission_regenerates_identically() {
+    crate::test_baseline::oracle(ORACLE);
+    crate::test_baseline::regenerates_identically("session-admission");
+}
+
+#[test]
+fn exact_end_requires_original_admission_identity_but_empty_end_is_unfenced() {
+    let admission = SessionAdmission::default();
+    let key = JsString::from("a");
+    let run = JsString::from("same");
+    let old = admission.begin_turn(&key, &run).unwrap();
+    admission.end_turn(&key, Some(&run), None);
+    assert!(admission.has_active_turn(&key));
+    admission.end_turn(&key, Some(&"wrong".into()), Some(&old));
+    assert!(admission.has_active_turn(&key));
+    admission.end_identity(&key, admission.turn_identity(&key).as_ref());
+    let fresh = admission.begin_turn(&key, &run).unwrap();
+    admission.end_turn(&key, Some(&run), Some(&old));
+    assert!(
+        admission.has_active_turn(&key),
+        "stale exact end released new identity"
+    );
+    admission.end_turn(&key, Some(&run), Some(&fresh));
+    assert!(!admission.has_active_turn(&key));
+    for unfenced in [None, Some(JsString::from(""))] {
+        assert!(admission.begin_turn(&key, &run).is_some());
+        admission.end_turn(&key, unfenced.as_ref(), Some(&old));
+        assert!(!admission.has_active_turn(&key));
+    }
 }

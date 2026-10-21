@@ -6,7 +6,7 @@ use super::super::{
     refresh::{BoxFuture, RefreshRouter},
 };
 use super::{
-    LiveSessionHandle, SessionTurns, TurnCompletionHandle,
+    LiveSessionHandle, SessionTurns, TurnCompletionHandle, TurnReservation,
     handle::{aggregate, wait_result},
 };
 use pilotdeck_protocol::{JsString, JsValue};
@@ -385,15 +385,25 @@ impl SessionOwner {
         }
     }
 
-    pub fn begin_turn(&self, key: &JsString, run: &JsString) -> bool {
+    pub fn begin_turn(&self, key: &JsString, run: &JsString) -> Option<TurnReservation> {
         self.sweep_idle();
         let state = self.0.state.lock().unwrap();
-        !state.stopped && self.0.turns.admission.begin_turn(key, run)
+        if state.stopped {
+            None
+        } else {
+            self.0.turns.admission.begin_turn(key, run)
+        }
     }
 
-    pub fn end_turn(&self, key: &JsString, run: Option<&JsString>) {
+    /// Consumers retain the identity returned by `begin_turn` until cleanup.
+    pub fn end_turn(
+        &self,
+        key: &JsString,
+        run: Option<&JsString>,
+        reservation: Option<&TurnReservation>,
+    ) {
         let mut state = self.0.state.lock().unwrap();
-        self.0.turns.admission.end_turn(key, run);
+        self.0.turns.admission.end_turn(key, run, reservation);
         if let Some(record) = state.records.get_mut(key) {
             record.last_used = (self.0.options.now_ms)();
         }
@@ -493,6 +503,8 @@ impl SessionOwner {
 
     /// Pause one project's new publications, drain its in-flight creations and
     /// closes, then close its cached writers. Other projects never join this wait.
+    /// TS treats an empty project as unscoped for pause checks, but still matches
+    /// it exactly when draining/closing. New empty-project writers remain allowed.
     pub fn close_project(
         &self,
         project: &JsString,

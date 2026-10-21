@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutate private /tmp copies of the production session module, never the tree.
+"""Mutate private /tmp copies of the production workspace, never the tree.
 
 Only existing workspace dependencies are used. Every mutant must compile and
 fail the real TS oracle or deterministic race test; a build error or timeout is not a caught mutant.
@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -30,11 +31,11 @@ def main():
     mutants = [
         ("skip-busy", "admission.rs", "            || state.turns.contains_key(session_key)\n", ""),
         ("global-key", "admission.rs",
-         "pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> bool {",
-         "pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> bool {\n"
+         "pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> Option<TurnReservation> {",
+         "pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> Option<TurnReservation> {\n"
          "        let session_key = &JsString::from(\"global\");"),
         ("ignore-end-run", "admission.rs",
-         "if run_id.is_none_or(|id| id.is_empty() || state.turns.get(session_key) == Some(id))", "if true"),
+         "state.turns.get(session_key) == Some(id)", "{ let _ = id; true }"),
         ("skip-shutdown", "admission.rs", "if state.shutdown\n            || state.turns.contains_key(session_key)",
          "if state.turns.contains_key(session_key)"),
         ("skip-maintenance", "admission.rs", "\n            || state.maintenance.contains(session_key)", ""),
@@ -88,23 +89,11 @@ def main():
     summary = []
     with tempfile.TemporaryDirectory(prefix="pdrs-a71-negative-", dir="/tmp") as directory:
         scratch = Path(directory)
-        (scratch / "src/runtime/session").mkdir(parents=True)
-        (scratch / "tests/fixtures/session-admission").mkdir(parents=True)
-        (scratch / "src/lib.rs").write_text(
-            '#[path = "runtime/session/mod.rs"] pub mod session;\n'
-            f'#[cfg(test)]\n#[path = {json.dumps(str(rust / "pilotdeck-gateway/tests/common/baseline.rs"))}] '
-            'mod test_baseline;\n')
-        # Same versions/features already present in pilotdeck-gateway. This
-        # temporary harness introduces no repository manifests or dependencies.
-        (scratch / "Cargo.toml").write_text(
-            '[package]\nname="pdrs-a71-negative"\nversion="0.0.0"\nedition="2024"\n'
-            '[dependencies]\n'
-            f'pilotdeck-protocol={{path={json.dumps(str(rust / "pilotdeck-protocol"))}}}\n'
-            'serde_json={version="=1.0.151",features=["float_roundtrip"]}\n'
-            'sha2="=0.10.9"\n'
-            'uuid={version="=1.27.0",features=["v4"]}\n'
-            'tokio={version="=1.48.0",features=["macros","rt-multi-thread","net","signal",'
-            '"time","io-util","sync","process","test-util"]}\n')
+        shutil.copytree(rust, scratch / "src", ignore=shutil.ignore_patterns(
+            "target", ".git", "node_modules", ".env*"))
+        shutil.copytree(rust.parent / "specs", scratch / "specs")
+        source_copy = scratch / "src/pilotdeck-gateway/src/runtime/session"
+        fixture_copy = scratch / "src/pilotdeck-gateway/tests/fixtures/session-admission"
         cases = [("baseline", None, None, None)] + mutants
         for name, filename, before, after in cases:
             for file, content in originals.items():
@@ -112,18 +101,17 @@ def main():
                     count = content.count(before)
                     assert count == (2 if name in ("run-id-is-identity", "discard-is-completion") else 1), (name, count)
                     content = content.replace(before, after)
-                destination = (scratch / "tests/fixtures/session-admission" if file == "oracle.json"
-                               else scratch / "src/runtime/session")
+                destination = (fixture_copy if file == "oracle.json" else source_copy)
                 (destination / file).write_text(content)
             gate = subprocess.run(
                 ["bash", "-c", "until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done"],
                 capture_output=True, text=True, check=True)
-            test = ("session::tests::old_abort_never_targets_replacement_across_threads"
+            test = ("runtime::session::tests::old_abort_never_targets_replacement_across_threads"
                     if name == "restore-original-abort" else
-                    "session::tests::" if name == "baseline" else
-                    "session::tests::real_ts_admission_completion_and_gateway_abort")
-            command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"),
-                       "--lib", test, "--", "--nocapture"]
+                    "runtime::session::tests::" if name == "baseline" else
+                    "runtime::session::tests::real_ts_admission_completion_and_gateway_abort")
+            command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "src/Cargo.toml"),
+                       "-p", "pilotdeck-gateway", "--lib", test, "--", "--nocapture"]
             result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=120)
             raw = result.stdout + result.stderr
             (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
