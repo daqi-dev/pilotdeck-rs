@@ -1460,7 +1460,9 @@ impl JsPatternParser {
     /// (after restoring the position) when the braces are not a quantifier.
     fn try_quantifier(&mut self) -> Result<Option<()>, JsPatternSyntaxError> {
         let start = self.position;
-        debug_assert_eq!(self.bump(), Some('{'));
+        // bump 必须在 debug_assert 之外：release 会整条去掉断言参数，量词起始 `{` 就不会被跳过
+        let opening = self.bump();
+        debug_assert_eq!(opening, Some('{'));
         let Some(minimum) = self.decimal_digits() else {
             self.position = start;
             return Ok(None);
