@@ -5,7 +5,7 @@ mod completion;
 mod handle;
 mod owner;
 
-pub use admission::SessionAdmission;
+pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
 pub use handle::{HandleActivity, HandleState, LiveSession, LiveSessionHandle};
 pub use owner::{

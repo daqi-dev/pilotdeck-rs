@@ -300,6 +300,25 @@ await record('completion_owner_without_router_reservation', async h => {
   fence.complete('a', handle); await abort;
   return { during, done };
 });
+await record('empty_project_pause_and_close', async h => {
+  await h.router.getOrCreate(context('existing', { projectKey: '' }));
+  await h.router.getOrCreate(context('unscoped', { projectKey: undefined }));
+  const gate = deferred(); h.creates.set('pending', gate);
+  const pending = h.router.getOrCreate(context('pending', { projectKey: '' }));
+  await until(() => h.events.includes('create:pending:3'));
+  let closed = false;
+  const closing = h.router.closeProject('').then((keys: string[]) => { closed = true; return keys; });
+  await Promise.resolve();
+  const waitedForCreation = !closed;
+  await h.router.getOrCreate(context('during', { projectKey: '' }));
+  gate.resolve(); await pending;
+  const keys = await closing;
+  const duringClosed = !h.router.hasSession('during');
+  await h.router.getOrCreate(context('after', { projectKey: '' }));
+  return { waitedForCreation, keys, existingClosed: !h.router.hasSession('existing'),
+    pendingClosed: !h.router.hasSession('pending'), duringClosed,
+    unscopedKept: h.router.hasSession('unscoped'), afterAllowed: h.router.hasSession('after') };
+});
 // Exercise the real registry's exact lease/retirement methods. Only its resource
 // bundle and background shutdown are fake; no generation/lease logic is copied.
 const projectEvents: string[] = [];

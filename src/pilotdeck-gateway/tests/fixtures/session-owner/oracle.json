@@ -287,6 +287,40 @@
       ]
     },
     {
+      "name": "empty_project_pause_and_close",
+      "value": {
+        "waitedForCreation": true,
+        "keys": [
+          "existing",
+          "during",
+          "pending"
+        ],
+        "existingClosed": true,
+        "pendingClosed": true,
+        "duringClosed": true,
+        "unscopedKept": true,
+        "afterAllowed": true
+      },
+      "events": [
+        "create:existing:1",
+        "setup:1",
+        "create:unscoped:2",
+        "setup:2",
+        "create:pending:3",
+        "create:during:4",
+        "setup:4",
+        "setup:3",
+        "dispose:1",
+        "dispose:4",
+        "dispose:3",
+        "evict:existing:closed",
+        "evict:during:closed",
+        "evict:pending:closed",
+        "create:after:5",
+        "setup:5"
+      ]
+    },
+    {
       "name": "project_lease_identity",
       "value": {
         "before": {

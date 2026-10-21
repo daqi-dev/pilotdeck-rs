@@ -11,6 +11,11 @@ struct State {
     maintenance: HashSet<JsString>,
 }
 
+/// Identity captured atomically when a turn is admitted. Dropping this token
+/// does not release admission; the consumer passes it to `end_turn` on cleanup.
+#[derive(Clone, Debug)]
+pub struct TurnReservation(Arc<()>);
+
 /// Admission only: this does not create a live session, write a durable run, or
 /// own completion. Each operation holds a short synchronous lock; no resource
 /// creation, abort callback or completion wait runs under it.
@@ -18,17 +23,20 @@ struct State {
 pub struct SessionAdmission(Mutex<State>);
 
 impl SessionAdmission {
-    pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> bool {
+    pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> Option<TurnReservation> {
         let mut state = self.0.lock().unwrap();
         if state.shutdown
             || state.turns.contains_key(session_key)
             || state.maintenance.contains(session_key)
         {
-            return false;
+            return None;
         }
         state.turns.insert(session_key.clone(), run_id.clone());
-        state.identities.insert(session_key.clone(), Arc::new(()));
-        true
+        let identity = Arc::new(());
+        state
+            .identities
+            .insert(session_key.clone(), identity.clone());
+        Some(TurnReservation(identity))
     }
 
     pub fn has_active_turn(&self, session_key: &JsString) -> bool {
@@ -41,9 +49,26 @@ impl SessionAdmission {
 
     /// SessionRouter.endTurn uses a truthiness check: an absent *or empty* ID
     /// clears the reservation. Fence cancellation deliberately differs.
-    pub fn end_turn(&self, session_key: &JsString, run_id: Option<&JsString>) {
+    /// A nonempty ID also requires the identity returned by `begin_turn`:
+    /// unlike TS's string-only cleanup, a stale consumer cannot clear a later
+    /// reservation that reused its runId after close. None/empty stay unfenced.
+    pub fn end_turn(
+        &self,
+        session_key: &JsString,
+        run_id: Option<&JsString>,
+        reservation: Option<&TurnReservation>,
+    ) {
         let mut state = self.0.lock().unwrap();
-        if run_id.is_none_or(|id| id.is_empty() || state.turns.get(session_key) == Some(id)) {
+        if run_id.is_none_or(|id| {
+            id.is_empty()
+                || (state.turns.get(session_key) == Some(id)
+                    && reservation.is_some_and(|reservation| {
+                        state
+                            .identities
+                            .get(session_key)
+                            .is_some_and(|current| Arc::ptr_eq(current, &reservation.0))
+                    }))
+        }) {
             state.turns.remove(session_key);
             state.identities.remove(session_key);
         }

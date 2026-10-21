@@ -339,8 +339,8 @@ async fn maintenance_blocks_turn_and_idle_matches_ts() {
     probe.event("maintenance:1");
     assert!(owner.begin_maintenance(&"a".into()).is_none());
     probe.time(101);
-    let during = json!({"same": owner.begin_turn(&"a".into(), &"blocked".into()),
-        "other": owner.begin_turn(&"b".into(), &"run".into()), "cached": sweep_count(&owner)});
+    let during = json!({"same": owner.begin_turn(&"a".into(), &"blocked".into()).is_some(),
+        "other": owner.begin_turn(&"b".into(), &"run".into()).is_some(), "cached": sweep_count(&owner)});
     probe.event(format!(
         "maintenance_done:1:{}",
         activity.cancellation_reason().is_some()
@@ -349,7 +349,7 @@ async fn maintenance_blocks_turn_and_idle_matches_ts() {
     drop(reservation);
     compare(
         "maintenance_blocks_turn_and_idle",
-        json!({"during": during, "after": owner.begin_turn(&"a".into(), &"run".into())}),
+        json!({"during": during, "after": owner.begin_turn(&"a".into(), &"run".into()).is_some()}),
         &probe,
     );
     owner.shutdown().await.unwrap();
@@ -375,7 +375,7 @@ async fn shutdown_during_creation_matches_ts() {
         "shutdown returned before pending creation drained"
     );
     let during = json!({"stopped": false,
-        "admitted": owner.begin_turn(&"b".into(), &"run".into()), "cached": count(&owner)});
+        "admitted": owner.begin_turn(&"b".into(), &"run".into()).is_some(), "cached": count(&owner)});
     gate.open();
     let error = failure(bounded(creating).await);
     bounded(shutdown).await.unwrap();
@@ -418,10 +418,10 @@ async fn idle_strict_boundary_and_turn_matches_ts() {
     owner.get_or_create(context("a")).await.unwrap();
     probe.time(100);
     let boundary = sweep_count(&owner);
-    assert!(owner.begin_turn(&"a".into(), &"run".into()));
+    let reservation = owner.begin_turn(&"a".into(), &"run".into()).unwrap();
     probe.time(101);
     let busy = sweep_count(&owner);
-    owner.end_turn(&"a".into(), Some(&"run".into()));
+    owner.end_turn(&"a".into(), Some(&"run".into()), Some(&reservation));
     probe.time(201);
     let touched = sweep_count(&owner);
     probe.time(202);
@@ -602,12 +602,12 @@ async fn live_abort_with_fence_matches_ts() {
     let owner = probe.owner();
     owner.get_or_create(context("a")).await.unwrap();
     let key = JsString::from("a");
-    assert!(owner.begin_turn(&key, &"old".into()));
+    assert!(owner.begin_turn(&key, &"old".into()).is_some());
     let old = owner.begin_completion(&key, &"old".into());
     owner.complete_turn(&key, &old);
     owner.mark_all_dirty("refresh");
     owner.get_or_create(context("a")).await.unwrap();
-    assert!(owner.begin_turn(&key, &"new".into()));
+    assert!(owner.begin_turn(&key, &"new".into()).is_some());
     let fresh = owner.begin_completion(&key, &"new".into());
     owner
         .abort_turn(&key, Some(&"old".into()), None)
@@ -682,7 +682,7 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
     for round in 0..ROUNDS {
         let old_run = JsString::from(format!("old-{round}"));
         let new_run = JsString::from(format!("new-{round}"));
-        assert!(owner.begin_turn(&key, &old_run));
+        let old_reservation = owner.begin_turn(&key, &old_run).unwrap();
         let old_fence = (round % 2 == 0).then(|| owner.begin_completion(&key, &old_run));
         std::thread::scope(|scope| {
             let aborter = scope.spawn(|| {
@@ -699,7 +699,7 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
                 drop(operation);
             });
             decided.wait();
-            owner.end_turn(&key, Some(&old_run));
+            owner.end_turn(&key, Some(&old_run), Some(&old_reservation));
             if let Some(old) = old_fence {
                 owner.complete_turn(&key, &old);
             }
@@ -707,10 +707,10 @@ fn live_sink_rechecks_owner_after_abort_decision_across_threads() {
             // Run the public replacement on the independent runtime workers.
             let fresh = runtime.block_on(owner.get_or_create(context("a"))).unwrap();
             assert!(owner.is_current(&key, &fresh));
-            assert!(owner.begin_turn(&key, &new_run));
+            let new_reservation = owner.begin_turn(&key, &new_run).unwrap();
             replaced.wait();
             aborter.join().unwrap();
-            owner.end_turn(&key, Some(&new_run));
+            owner.end_turn(&key, Some(&new_run), Some(&new_reservation));
         });
     }
     let hits = probe
@@ -730,7 +730,7 @@ async fn close_and_completion_cleanup_preserve_later_same_run_reservation() {
     let key = JsString::from("a");
     let run = JsString::from("same");
     owner.get_or_create(context("a")).await.unwrap();
-    assert!(owner.begin_turn(&key, &run));
+    let old_reservation = owner.begin_turn(&key, &run).unwrap();
     let old = owner.begin_completion(&key, &run);
     let drain = Gate::new();
     probe.0.disposals.lock().unwrap().insert(1, drain.clone());
@@ -740,8 +740,8 @@ async fn close_and_completion_cleanup_preserve_later_same_run_reservation() {
     let other_key = key.clone();
     let other_run = run.clone();
     std::thread::spawn(move || {
-        other.end_turn(&other_key, Some(&other_run));
-        assert!(other.begin_turn(&other_key, &other_run));
+        other.end_turn(&other_key, Some(&other_run), Some(&old_reservation));
+        assert!(other.begin_turn(&other_key, &other_run).is_some());
     })
     .join()
     .unwrap();
@@ -857,7 +857,7 @@ async fn abort_failure_does_not_wait_for_completion_matches_ts() {
     owner.get_or_create(context("a")).await.unwrap();
     let key = JsString::from("a");
     let run = JsString::from("run");
-    assert!(owner.begin_turn(&key, &run));
+    assert!(owner.begin_turn(&key, &run).is_some());
     probe.0.abort_failures.lock().unwrap().insert(1);
     let handle = owner.begin_completion(&key, &run);
     let error = failure(bounded(owner.abort_turn(&key, Some(&run), Some(&"stop".into()))).await);
@@ -1051,5 +1051,83 @@ async fn completion_owner_without_router_reservation_matches_ts() {
         json!({"during": during, "done": true}),
         &probe,
     );
+    owner.shutdown().await.unwrap();
+}
+
+/// TS SessionRouter.endTurn releases the new string-matched turn here.
+/// The consumer's captured identity is the explicit Rust concurrency safeguard.
+#[tokio::test]
+async fn stale_end_after_close_and_same_run_readmission_preserves_new_reservation() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    let run = JsString::from("same");
+    owner.get_or_create(context("a")).await.unwrap();
+    let old = owner.begin_turn(&key, &run).unwrap();
+    owner.close(&key).await.unwrap();
+    assert!(!owner.has_active_turn(&key));
+    let fresh = owner.begin_turn(&key, &run).unwrap();
+    owner.end_turn(&key, Some(&run), Some(&old));
+    assert!(
+        owner.has_active_turn(&key),
+        "stale end_turn released the readmitted same-run reservation"
+    );
+    owner.end_turn(&key, Some(&run), Some(&fresh));
+    assert!(!owner.has_active_turn(&key));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_project_pause_and_close_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let empty = |key| {
+        let mut ctx = context(key);
+        ctx.project_key = Some("".into());
+        ctx
+    };
+    owner.get_or_create(empty("existing")).await.unwrap();
+    let mut unscoped = context("unscoped");
+    unscoped.project_key = None;
+    owner.get_or_create(unscoped).await.unwrap();
+    let gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert("pending".into(), gate.clone());
+    let pending = owner.get_or_create(empty("pending"));
+    until(|| probe.seen("create:pending:3")).await;
+    let mut closing = owner.close_project(&"".into());
+    let waited_for_creation =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(closing.as_mut().poll(cx).is_pending()))
+            .await;
+    bounded(owner.get_or_create(empty("during"))).await.unwrap();
+    gate.open();
+    pending.await.unwrap();
+    let keys: Vec<_> = closing
+        .await
+        .unwrap()
+        .iter()
+        .map(|key| key.to_utf8().unwrap())
+        .collect();
+    let during_closed = owner.current_handle(&"during".into()).is_none();
+    owner.get_or_create(empty("after")).await.unwrap();
+    let value = json!({"waitedForCreation": waited_for_creation, "keys": keys,
+        "existingClosed": owner.current_handle(&"existing".into()).is_none(),
+        "pendingClosed": owner.current_handle(&"pending".into()).is_none(),
+        "duringClosed": during_closed,
+        "unscopedKept": owner.current_handle(&"unscoped".into()).is_some(),
+        "afterAllowed": owner.current_handle(&"after".into()).is_some()});
+    // close_project drains keys concurrently; compare the exact TS value and
+    // lifecycle event multiset without imposing a cross-key eviction order.
+    assert_eq!(value, case("empty_project_pause_and_close")["value"]);
+    let mut events = probe.events();
+    let mut expected: Vec<String> =
+        serde_json::from_value(case("empty_project_pause_and_close")["events"].clone()).unwrap();
+    events.sort();
+    expected.sort();
+    assert_eq!(events, expected);
     owner.shutdown().await.unwrap();
 }

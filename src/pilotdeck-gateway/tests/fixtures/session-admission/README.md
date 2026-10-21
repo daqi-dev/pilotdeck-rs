@@ -48,9 +48,9 @@ cd src
 cargo test -p pilotdeck-gateway --lib runtime::session::
 ```
 
-`negative.py <evidence-dir>` 在独占 `/tmp/pdrs-a71-negative-*` 下复制这四个产品源文件
-与 oracle，引用未修改的共享 `tests/common/baseline.rs`，以 workspace 已有的
-protocol/tokio/serde_json/sha2/uuid 依赖构建临时测试 crate，结束即删除。
+`negative.py <evidence-dir>` 在独占 `/tmp/pdrs-a71-negative-*` 下复制真实 Cargo workspace
+（排除 target、git、node_modules、env 文件）与 specs，复用原 manifests、依赖和
+共享 `tests/common/baseline.rs`；在当前生命周期模块中运行 admission 测试，结束即删除。
 不改工作区产品文件，不写基线或 node_modules。先跑原实现基线（含多线程回归），再串行注入 18 个
 变异：跳过 busy、全局键、忽略 end 的 runId、跳过 shutdown、跳过 maintenance、
 用 runId 当 handle 身份、旧 complete 删除新 handle、忽略 cancel 的 runId、
@@ -78,3 +78,17 @@ abort sink 签名为 `(Option<JsString>, JsString)`，分别传入请求 runId �
 范围仅为 A7.1-pr1 的内存组件。真实 session 创建/退役和 abort sink 由 pr2 接线，
 WS binding、auth/clientName、错误与无 runId socket close 由 pr3 验收；hello/describe
 共源留 pr4，RunRegistry 抢陈旧锁留 pr5。没有切换默认代理或接入 durable accept。
+
+`real_ts_admission_regenerates_identically` 是与 session-owner 相同的 ignored 再生守卫：
+
+```sh
+cd src
+TMPDIR=/tmp TSX_DISABLE_CACHE=1 cargo test --offline -p pilotdeck-gateway --lib \
+  runtime::session::tests::real_ts_admission_regenerates_identically -- --ignored
+```
+
+需先设置上述 `PDRS_BASELINE`。普通回放仍先经 `test_baseline::oracle` 核来源。
+Rust `begin_turn` 返回 `Option<TurnReservation>`；回放将其 `is_some()` 与 TS 布尔值比较，
+并保留成功凭证传回 `end_turn`。非空 runId 的释放同时核对凭证身份，保护 close 后
+同 runId 再接纳的预约；这是本轮明确要求的 Rust 防护，TS 原方法仅比较字符串。
+缺省/空 runId 的无身份限制释放仍与 TS 一致。
