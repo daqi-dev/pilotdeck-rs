@@ -38,7 +38,9 @@
     "coldStart": true,
     "defaultStack": true,
     "clientCallTool": true,
-    "validationBudget": 1024
+    "validationBudget": 1024,
+    "regexpStackUnits": 65536,
+    "regexpInputUnit": "UTF-16 code unit"
   },
   "cases": [
     {
@@ -15388,6 +15390,1664 @@
         "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
       },
       "portDepthLimit": true
+    },
+    {
+      "id": "regexp-input/alt-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/alt-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/alt-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/capture-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/capture-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/capture-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|b)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 2097152,
+        "length": 4194304,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/nested-10922",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^((a)|(b))*c?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 10922,
+        "length": 21844,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/nested-10923",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^((a)|(b))*c?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 10923,
+        "length": 21846,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/nested-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^((a)|(b))*c?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 1048576,
+        "length": 2097152,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/look-10922",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:(?:a|b)(?=.))*.?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 10922,
+        "length": 21844,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/look-10923",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:(?:a|b)(?=.))*.?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 10923,
+        "length": 21846,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/look-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:(?:a|b)(?=.))*.?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/countedSimple-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/countedSimple-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/countedSimple-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/countedAtom-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]{1,40000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/countedAtom-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]{1,40000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/countedAtom-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]{1,40000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/lazyCap-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/lazyCap-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/lazyCap-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/cap-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/cap-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/cap-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/optional-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab?)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/optional-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab?)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/optional-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab?)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/bounded-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/bounded-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/bounded-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:a|b){1,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/unicode-16384",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(😀|😁)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "😀😁",
+        "suffix": "",
+        "repeats": 16384,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/unicode-16385",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(😀|😁)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "😀😁",
+        "suffix": "",
+        "repeats": 16385,
+        "length": 65540,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/unicode-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(😀|😁)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "😀😁",
+        "suffix": "",
+        "repeats": 2097152,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/key-32768",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "key"
+      }
+    },
+    {
+      "id": "regexp-input/key-32769",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "key"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/key-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "key"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/additionalKey-32768",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {}
+        },
+        "additionalProperties": false
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "key"
+      }
+    },
+    {
+      "id": "regexp-input/additionalKey-32769",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {}
+        },
+        "additionalProperties": false
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "key"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/additionalKey-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {}
+        },
+        "additionalProperties": false
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "key"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/email-32761",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a.",
+        "suffix": "a@example.com",
+        "repeats": 32761,
+        "length": 65535,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/email-32762",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a.",
+        "suffix": "a@example.com",
+        "repeats": 32762,
+        "length": 65537,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/email-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a.",
+        "suffix": "a@example.com",
+        "repeats": 4194304,
+        "length": 8388621,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/uri-32767",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32767,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/uri-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/uri-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388610,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/uriReference-32767",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32767,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/uriReference-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/uriReference-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-reference"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "x:",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388610,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/uriTemplate-21845",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-template"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "{a}",
+        "suffix": "",
+        "repeats": 21845,
+        "length": 65535,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/uriTemplate-21846",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-template"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "{a}",
+        "suffix": "",
+        "repeats": 21846,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/uriTemplate-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "uri-template"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "{a}",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 25165824,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/jsonPointer-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/jsonPointer-32769",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32769,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/jsonPointer-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/fragment-32767",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer-uri-fragment"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "#",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32767,
+        "length": 65535,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/fragment-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer-uri-fragment"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "#",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65537,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/fragment-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "json-pointer-uri-fragment"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "#",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388609,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/relative-32767",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "relative-json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "0",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32767,
+        "length": 65535,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/relative-32768",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "relative-json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "0",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 32768,
+        "length": 65537,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/relative-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "relative-json-pointer"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "0",
+        "unit": "/a",
+        "suffix": "",
+        "repeats": 4194304,
+        "length": 8388609,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/byte-16384",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "YWJj",
+        "suffix": "",
+        "repeats": 16384,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/byte-16385",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "YWJj",
+        "suffix": "",
+        "repeats": 16385,
+        "length": 65540,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/byte-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "YWJj",
+        "suffix": "",
+        "repeats": 2097152,
+        "length": 8388608,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/url-32757",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "url"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "https://",
+        "unit": "a-",
+        "suffix": "a.example.com/",
+        "repeats": 32757,
+        "length": 65536,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/url-32758",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "url"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "https://",
+        "unit": "a-",
+        "suffix": "a.example.com/",
+        "repeats": 32758,
+        "length": 65538,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/url-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "url"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "https://",
+        "unit": "a-",
+        "suffix": "a.example.com/",
+        "repeats": 4194304,
+        "length": 8388630,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/plain-long-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/group-long-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^([ab]*)$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/simple-long-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/lazyAtom-long-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/lazySimple-long-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/skippedKey-long-valid",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:a|b)*$": {}
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 8388608,
+        "length": 16777216,
+        "target": "key"
+      }
     }
   ]
 }
