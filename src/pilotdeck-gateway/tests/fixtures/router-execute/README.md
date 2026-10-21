@@ -40,7 +40,7 @@ env -u PDRS_BASELINE TMPDIR=/tmp PDRS_ROUTER_HTTP_ORACLE=/tmp/<owned-http-1>/htt
 - 10 个真实 `streamModel` 请求验证错误：content 路径的 unsupported_modality、unsupported_image_mime_type、image_too_large、pdf_too_large、audio_too_long，以及 Anthropic / OpenAI / Responses / Google 的 unsupported_thinking。Google 两例分别为请求未设 mode、模型禁用 thinking（真实 TS details.thinkingMode 为 `off`），和请求显式 `high`、模型只支持 `low`（details 为 `high`）；Google 通过 canonical error 事件返回。逐项比较完整事件及错误对象（含 code、message、details/raw），传输层或 Google client 一旦被调用即失败。
 - 60 个错误准入组合；4 组逐步 health 轨迹；17 步 session / generation / dispose。health 冷却另用 Tokio 暂停时钟验证边界。
 - 7 个 HTTP 场景：429、503、拒绝连接、内容后断流、首 provider 超时后恢复、取消、整链失败。正式 Rust 回放复用 `common/model_mock.rs` 与 `HyperModelTransport`，比较全部 invocation calls、HTTP 请求体/头/顺序、canonical/router/health trace、最终错误与 session usage；保持中的响应还验证 clientClosed。
-- execute trace、eligibility、health 状态、portActions 的 skip 期望、validation code 各有一条金样篡改负控：先用同一个回放函数证明原样通过，再只改期望值，要求回放返回具体比较错误。
+- execute trace、eligibility、health 状态、portActions 的 skip 期望、validation code、HTTP 请求体各有一条金样篡改负控：先用同一个回放函数证明原样通过，再只改期望值，要求回放返回具体比较错误。HTTP 家族的负控随 `http_sequences_match_real_ts_oracle` 一同 ignored，需要外部 `--http` oracle 与回环监听权限。
 - NaN 无法用标准 JSON 数字表达：`record.mts` 在真实 TS 输入中构造 `Number.NaN`，spec 的 `nanUsageFields` 登记需恢复的字段；JSON 序列化后这些数值为 null。Rust Invoker 在 usage 事件交给 Router 前恢复为 `JsValue::Number(f64::NAN)`；预期事件仍按真实 TS JSON 比较，保留 NaN 的 session usage 还单独断言原始数值确实是 NaN，不能用 null 冒充。其余 session usage 维持 JsValue 严格比较。
 - 全部序列以 JS JSON 字节保序比较，不排序事件。HTTP 只替换独占端口 origin，并去除两边统一登记的传输层头。默认健康状态、generation nullish 与数字/字符串同键，均保留 TS 行为。
 - `pilotdeck_router_fallback` 本身没有 `fallbackTier`；该字段属于 decide 的 `pilotdeck_router_decision_fallback`，继续由既有 `router-decision` 金样覆盖，本轮不造字段。

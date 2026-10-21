@@ -356,108 +356,142 @@ async fn http_faults_use_real_provider_path_and_fallback_boundaries() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires freshly generated --http oracle and loopback listening permissions"]
-async fn http_sequences_match_real_ts_oracle() {
+fn http_oracle() -> JsValue {
     let path = std::env::var("PDRS_ROUTER_HTTP_ORACLE")
         .expect("generate.mts /tmp/owned-output --http; set PDRS_ROUTER_HTTP_ORACLE");
     let raw = std::fs::read_to_string(path).unwrap();
-    let oracle = baseline::oracle(&raw);
+    baseline::oracle(&raw)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires freshly generated --http oracle and loopback listening permissions"]
+async fn http_sequences_match_real_ts_oracle() {
+    let oracle = http_oracle();
     let cases = items(get(&oracle, "executeCases"));
     assert_eq!(cases.len(), 7);
     for case in cases {
-        let spec = get(case, "spec");
-        let expected_count = items(get(spec, "replies"))
-            .iter()
-            .filter(|reply| get(reply, "fault").is_undefined())
-            .count();
-        let replies = items(get(spec, "replies"))
-            .iter()
-            .filter(|reply| get(reply, "fault").is_undefined())
-            .map(|reply| {
-                merge(
-                    reply,
-                    &obj(&[(
-                        "chunks",
-                        JsValue::Array(
-                            items(get(reply, "chunks"))
-                                .iter()
-                                .map(|chunk| obj(&[("text", chunk.clone())]))
-                                .collect(),
-                        ),
-                    )]),
-                )
-            })
-            .collect();
-        let exchange = Arc::new(Mutex::new(model_mock::Exchange {
-            replies,
-            ..Default::default()
-        }));
-        let excluded = items(get(&oracle, "transportHeaders"))
-            .iter()
-            .map(text)
-            .collect();
-        let server = model_mock::start_mock(exchange.clone(), excluded, None);
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let closed = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-        drop(listener);
-        let (trace, calls, usage) = execute_http(
-            spec,
-            Arc::new(pilotdeck_gateway::runtime::model::http::HyperModelTransport::new()),
-            http_config(spec, &server.origin, &closed),
-        )
-        .await;
-        if items(get(spec, "replies")).iter().any(|reply| {
-            get(reply, "end")
-                .as_string()
-                .is_some_and(|end| end.equals_str("hold"))
-        }) {
-            tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                loop {
-                    let done =
-                        exchange.lock().unwrap().requests.iter().any(|request| {
-                            request.get("clientClosed") == Some(&JsValue::Bool(true))
-                        });
-                    if done {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .expect("held response must be closed by timeout/cancellation");
-        }
-        let normalize = |value: &JsValue| {
-            json(value)
-                .replace(&server.origin, "$MOCK")
-                .replace(&closed, "$CLOSED")
-        };
-        assert_eq!(
-            normalize(&trace),
-            json(get(case, "trace")),
-            "{} trace",
-            text_name(case)
-        );
-        expected_bytes(
-            &calls,
-            get(case, "calls"),
-            &format!("{} invocations", text_name(case)),
-        );
-        let requests = exchange.lock().unwrap().requests.clone();
-        assert_eq!(requests.len(), expected_count);
-        expected_bytes(
-            &JsValue::Array(requests.into_iter().map(JsValue::Object).collect()),
-            get(case, "requests"),
-            &format!("{} HTTP requests", text_name(case)),
-        );
-        // The oracle is JSON: TS drops undefined usage fields when serialising.
-        assert_eq!(
-            stringify_json(&usage).unwrap(),
-            stringify_json(get(case, "sessionUsage")).unwrap(),
-            "{} session usage",
-            text_name(case)
-        );
+        replay_http_case(case, &oracle).await.unwrap();
     }
+}
+
+async fn replay_http_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
+    let name = text_name(case);
+    let spec = get(case, "spec");
+    let expected_count = items(get(spec, "replies"))
+        .iter()
+        .filter(|reply| get(reply, "fault").is_undefined())
+        .count();
+    let replies = items(get(spec, "replies"))
+        .iter()
+        .filter(|reply| get(reply, "fault").is_undefined())
+        .map(|reply| {
+            merge(
+                reply,
+                &obj(&[(
+                    "chunks",
+                    JsValue::Array(
+                        items(get(reply, "chunks"))
+                            .iter()
+                            .map(|chunk| obj(&[("text", chunk.clone())]))
+                            .collect(),
+                    ),
+                )]),
+            )
+        })
+        .collect();
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies,
+        ..Default::default()
+    }));
+    let excluded = items(get(oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("{name}: closed-port bind: {error}"))?;
+    let closed = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    drop(listener);
+    let (trace, calls, usage) = execute_http(
+        spec,
+        Arc::new(pilotdeck_gateway::runtime::model::http::HyperModelTransport::new()),
+        http_config(spec, &server.origin, &closed),
+    )
+    .await;
+    if items(get(spec, "replies")).iter().any(|reply| {
+        get(reply, "end")
+            .as_string()
+            .is_some_and(|end| end.equals_str("hold"))
+    }) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let done = exchange
+                    .lock()
+                    .unwrap()
+                    .requests
+                    .iter()
+                    .any(|request| request.get("clientClosed") == Some(&JsValue::Bool(true)));
+                if done {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .map_err(|_| format!("{name}: held response must be closed by timeout/cancellation"))?;
+    }
+    let normalize = |value: &JsValue| {
+        json(value)
+            .replace(&server.origin, "$MOCK")
+            .replace(&closed, "$CLOSED")
+    };
+    compare_bytes(
+        &JsValue::String(normalize(&trace).into()),
+        &JsValue::String(json(get(case, "trace")).into()),
+        &format!("{name} trace"),
+    )?;
+    compare_bytes(&calls, get(case, "calls"), &format!("{name} invocations"))?;
+    let requests = exchange.lock().unwrap().requests.clone();
+    if requests.len() != expected_count {
+        return Err(format!(
+            "{name} HTTP requests: expected {expected_count}, got {}",
+            requests.len()
+        ));
+    }
+    compare_bytes(
+        &JsValue::Array(requests.into_iter().map(JsValue::Object).collect()),
+        get(case, "requests"),
+        &format!("{name} HTTP requests"),
+    )?;
+    // The oracle is JSON: TS drops undefined usage fields when serialising.
+    compare_bytes(
+        &usage,
+        get(case, "sessionUsage"),
+        &format!("{name} session usage"),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires freshly generated --http oracle and loopback listening permissions"]
+async fn expected_http_request_mutation_is_detected() {
+    let oracle = http_oracle();
+    let case = items(get(&oracle, "executeCases"))
+        .iter()
+        .find(|case| !items(get(case, "requests")).is_empty())
+        .expect("HTTP oracle must contain a case with a recorded request");
+    replay_http_case(case, &oracle).await.unwrap();
+    let mut requests = items(get(case, "requests")).to_vec();
+    let original = requests[0].clone();
+    requests[0] = merge(
+        &original,
+        &obj(&[(
+            "body",
+            format!("{} ", text(get(&original, "body"))).as_str().into(),
+        )]),
+    );
+    let mutated = merge(case, &obj(&[("requests", JsValue::Array(requests))]));
+    let error = replay_http_case(&mutated, &oracle).await.unwrap_err();
+    assert!(error.contains("HTTP requests"), "{error}");
 }
 fn text_name(case: &JsValue) -> String {
     text(get(get(case, "spec"), "name"))

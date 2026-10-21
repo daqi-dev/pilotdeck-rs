@@ -67,9 +67,6 @@ fn compare_bytes(actual: &JsValue, expected: &JsValue, label: &str) -> Result<()
         Err(format!("{label}: expected {expected:?}, got {actual:?}"))
     }
 }
-fn expected_bytes(actual: &JsValue, expected: &JsValue, label: &str) {
-    compare_bytes(actual, expected, label).unwrap();
-}
 
 #[test]
 fn health_steps_and_generation_port_match_real_ts() {
@@ -193,7 +190,7 @@ fn replay_health_case(case: &JsValue) -> Result<(), String> {
                 tracker.reset_all();
                 JsValue::Undefined
             }
-            other => panic!("{other}"),
+            other => return Err(format!("health action {index}: unexpected {other}")),
         };
         compare_bytes(
             &obj(&[("result", result), ("snapshot", tracker.snapshot())]),
