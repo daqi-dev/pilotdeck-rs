@@ -67,7 +67,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 映射为 `tool_execution_failed`、`web_fetch failed: Maximum call stack size exceeded`、
 `details: { stage: "http_fetch" }`。
 
-当前只有**深度 256 一项向严差异，待批**：TS 在 257 层仍成功。
+当前只有**深度 256 一项向严差异，已人批**（2026-10-21 15:25，登记为 `specs/gateway-parity/accepted-diffs.md` A6.5-WEBFETCH-DEPTH-001）：TS 在 257 层仍成功。
 真实 TS web_fetch（Node 22 默认栈）最低所测冷断点为 1051 个嵌套 PRE，
 含隐式包裹约 1054 层；table 的 264 组断点约 1059 层，不能当作 264 层。
 256 是保守的资源保护选择，绝非 TS 的准确断点。

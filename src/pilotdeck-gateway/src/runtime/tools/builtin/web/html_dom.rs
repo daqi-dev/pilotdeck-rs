@@ -429,8 +429,8 @@ impl TreeSink for Sink {
 /// web_fetch on Node 22's default stack first overflowed at 1051 nested PREs
 /// (~1054 element ancestors); table overflow at 264 groups is ~1059 ancestors,
 /// not 264 DOM levels. See html-markdown/depth-oracle.json and RESULT round 1.
-/// 256 is a conservative pending-approval difference, not a TS cutoff: TS still
-/// succeeds at 257. Width/allocation count has no corresponding TS limit.
+/// 256 is a conservative approved difference (accepted-diffs A6.5-WEBFETCH-DEPTH-001),
+/// not a TS cutoff: TS still succeeds at 257. Width/allocation count has no corresponding TS limit.
 pub const MAX_DOM_DEPTH: usize = 256;
 pub const DOM_LIMIT_ERROR: &str = "Maximum call stack size exceeded";
 
