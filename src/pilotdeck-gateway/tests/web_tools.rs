@@ -2694,3 +2694,45 @@ async fn html_conversion_outer_timeout_does_not_wait_for_blocking_worker() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn html_string_limit_has_exact_ts_error_and_is_not_cached() {
+    use std::sync::atomic::AtomicUsize;
+    struct CountingHtml {
+        html: String,
+        requests: Arc<AtomicUsize>,
+    }
+    impl ModelHttpTransport for CountingHtml {
+        fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            ConversionTransport(self.html.clone()).send(request)
+        }
+    }
+    let oracle = baseline::oracle(include_str!(
+        "fixtures/html-markdown/string-limit-oracle.json"
+    ));
+    let case = &items(get(&oracle, "cases"))[1];
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut fetcher = UrlFetcher::new(Arc::new(CountingHtml {
+        html: text(get(case, "html")),
+        requests: requests.clone(),
+    }));
+    let cache = Arc::new(UrlCache::default());
+    fetcher.cache = cache.clone();
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    });
+    for expected in items(get(case, "results")) {
+        let result = run(&tool, conversion_input(), context(None, empty_env(), None)).await;
+        assert_eq!(json(get(&result, "error")), json(get(expected, "error")));
+        assert!(cache.get("https://example.com/page").is_none());
+    }
+    assert_eq!(
+        requests.load(Ordering::SeqCst) as f64,
+        get(case, "requests").as_number().unwrap()
+    );
+}
