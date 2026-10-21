@@ -1,11 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 00:45 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr9b | gate | ready | PR #406 @9e5d3316：修复轮 7 已推（8 MiB 误嵌套 32.03→0.88 s，负控 31.93 s 触发预算），待重跑 gate concurrency 并重写结果块
-- #401 | impl | doing | PR #429（Draft）@b381291c 延迟换算已推；codex 第二单 dispose 栅栏在跑（_tmp/20261022-issue-401/impl2.md），wt-a65-pr10b
-- #386 | impl | doing | PR #407 @8c49fa4a：gate6b boundary P1（unsafe 守卫闭包只从 gateway 出发）codex 修复轮 9 在跑（_tmp/20261022-issue-386-gate6b/fix9.md）；gate6c concurrency 0/0/0
-- A7.1-pr3 | gate | doing | PR #421 @e8c952d0，闸门链跑四角色（同上脚本）
+updated: 2026-10-22 01:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9b | gate | doing | PR #406 @193e8a1e：gate10 concurrency 0/0/2（P2 并入 #409）；gate-chain-0105 补 sibling/boundary/simplify 后重写结果块
+- #386 | gate | doing | PR #407 @01e90559：修复轮 9 已推（unsafe 守卫闭包种子改全成员），gate-chain-0100 重跑 boundary
+- A7.1-pr3 | impl | doing | PR #421 @e8c952d0：gate3 P1×1+P2×5 合成修复轮 2，codex 在 wt-a64-pr7（_tmp/20261022-a7-1-gate3-boundary/fix2.md）
+- #390 | gate | doing | PR #430（Draft）@e78b845c：DeepSeek 交付，gate-chain-0100 跑首轮四角色
+- #401 | gate | doing | PR #429（Draft）@b381291c：dispose 栅栏一条按 TS 实测不改（依据贴 issue），gate-chain-0100 跑首轮四角色
+- #415 | impl | doing | 与 #410 同模块连做，codex 在 wt-a63-pr1（codex/issue-415-410），任务书 _tmp/20261022-issue-415/impl.md
+- #423 | impl | doing | DeepSeek 在 wt-a6-recorder（codex/issue-423），任务书 _tmp/20261022-issue-423/impl.md
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -15,8 +18,21 @@ updated: 2026-10-22 00:45 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
-- #390 | impl | doing | DeepSeek 在 wt-a66-pr3（codex/issue-390），任务书 _tmp/20261022-issue-390/impl.md
 <!-- READY:END -->
+
+> ## 2026-10-22 01:00 · /loop 协调轮
+> **#406**：CI `check` 两次因 `dense-inline-10mib-grouped` debug 预算 30 s 超限（31.57 / 32.50 s）——46033287 放宽时漏了同类分组用例；改 60 s 提交 193e8a1e，本机 11/0。release 5 s 不动。
+> **#407**：修复轮 9 提交 01e90559（unsafe 守卫闭包种子改为全部 workspace 成员，负控 2+7 项），unsafe_boundary 1/0；gateway 全量 972/24（监听权限）另 router_execute 两次 SIGKILL 未计通过。
+> **#390**：DeepSeek 交付，提交 e78b845c 开 Draft PR #430（两处正则 LazyLock；非字符串 url 实测不可达只加注释；model_cost.rs 已是 OnceLock 不改），全量 1001/0。
+> **#401**：第二条 dispose 栅栏按 TS 实测不改（TS 同样 dispose 后可复活），依据贴 issue；剩 PR #429 一条。
+> **#421**：gate3 合成修复轮 2（P1 sessionKey 真值 + P2×5）派 codex（`_tmp/20261022-a7-1-gate3-boundary/fix2.md`）。
+> **#428**：CI 全绿，已入合并队列（position 1）。
+> **闸门链**：`_tmp/20261022-loop/gate-chain-0100.sh`（#406 concurrency → #407 boundary → #430、#429 各四角色）。
+> **READY**：#390 → PR #430 gate；#401 → PR #429 gate；#421 → impl/doing。
+> **01:02 派单**：#415 + #410（model 侧共享 exchange 收尾，同模块连做）派 codex，复用已合入的 wt-a63-pr1 开 `codex/issue-415-410`，任务书 `_tmp/20261022-issue-415/impl.md`。READY 加入（doing）。
+> **01:05 #406**：gate10 concurrency @193e8a1e P0=0/P1=0/P2=2（共享 4 许可无公平性、4 倍峰值内存——都是 gate8 修法的已知取舍，并入 #409 跟进，不挡合并）。PR 结果块仍是旧 head 434b8c8，另起 `gate-chain-0105.sh` 在 0100 链跑完后补 sibling/boundary/simplify，凑齐同一 head 再重写结果块。
+> **01:07 派单**：#423（A6.4-pr9a 金样补强：portActions 篡改负控、thrown 分类真实 TS 金样、变异负控）派 DeepSeek，复用已合入的 wt-a6-recorder 开 `codex/issue-423`，任务书 `_tmp/20261022-issue-423/impl.md`。READY 加入（doing）。
+> **01:10**：#428 合入（08de0298 起三个提交，作者 noreply、committer 账号主邮箱——已知服务端缺口，memory「merge-email-exposure」）；wt-status.sh / doing 状态 / CLAUDE.md 名额规则进 main。
 
 > ## 2026-10-22 00:45 · /loop 协调轮
 > **关单**：#392 关闭——`bash/runner.rs:509` 已委托共享 `node_timer_duration`，`:703` 有截断单测（eac8d0e6），评论贴依据。
