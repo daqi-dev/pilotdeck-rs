@@ -20,7 +20,7 @@ WS 的 Skill barrel 仅接入实际 SkillManager 模块；未用 imports 由 fai
 窄 gateway 仅记录参数、提供 describe/业务结果或真实错误类实例，并提供可释放的 submit/describe 等待闸门；reconnect/submit binding/disconnect 调用真实 coordinator/native binding provider。preserveTurn=true 来自真实 permission bus 的显式 pending 注册；不是手写 disconnect 判断。
 它不是 session owner/abort adapter 实现。
 
-35 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；24 个真实 provider 操作记录完整返回值/异常消息。
+35 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；27 个真实 provider 操作记录完整返回值/异常消息。
 覆盖 JSON、hello 缺字段/类型、协议先于 token、未知/空 clientName、认证后非法 frame、错误层级（含 validation/details）、SDK run/control、服务端 binding 覆盖、close preserveTurn 两分支和 close 的集合顺序。
 同 session 双 submit 用两个独立闸门保证先后入场、先释放第一个、再 close、最后释放第二个。TS 的 Set.add 去重，任一 finally 都按 session 无条件 delete；所以第一个完成后 close 不 abort。Rust 保留这一行为，不能按 ticket 延长在途状态。interactionSessions 同样按 session 去重，但 submit 完成不删除；场景中 SDK permission_decide 仍注入 run binding，close 仍 disconnect 一次。
 新增 permission_decide 的 null／缺失 params 场景：真实 dispatch 仍收到注入 binding 后的对象并成功，随后读取原 frame.params.sessionKey 抛错，返回 gateway_request_failed；null 与 undefined 的错误文案分别保留。空对象 params 成功且不发 permission_changed。null-params-as-object 负控把原始 null／缺失值改成对象，必须精确命中新场景 step 1。
@@ -54,3 +54,5 @@ text_callbacks_can_synchronously_reenter_connection 在 sink 回调中先 try_lo
 修复轮 4 的真实 TS 补采：submit_turn / elicitation_respond / reconnect_interaction 分别覆盖 null、缺失和空对象 params，三个方法都成功 dispatch（submit 发正常终态；elicitation 返回 accepted；reconnect 首次 no_pending，随后同绑定 reconnected），且两个 session 集合均为空。这与 permission_decide dispatch 后读原 params 抛错不同，不能推广 permission_decide 的错误分支。
 `reconnect-null-and-missing-previous-binding` 同时覆盖无 current / 有 current：connection 必须原样保留显式 previousBinding:null（缺失时不出现该键），真实 coordinator/native provider 把 null 当作缺失处理，分别 no_pending / reconnected。仅回放适配器在解析可选 previous 前按 TS 真值过滤；必填 WsBinding::from_json(null) 的拒绝不变，产品 context 转发也不变。
 bindingSteps 追加 same next/current + 错 previous → stale_binding、有 current 保持不变；disconnect 后无 current + previous → stale_binding、仍无 current；随后显式 null previous 的首次 / 重复 reconnect 分别 no_pending / reconnected。binding.rs 谓词与实测 TS 一致，不改产品行为。
+
+修复轮 5 在 bindingSteps 末尾追加 previous 为 0、false、空字符串的三次同绑定 reconnect；真实 TS 均返回 reconnected，绑定保持 d / 4、requests 为空。它们固定 JS 假值即缺失的语义，防止把回放适配器的 truthy 过滤缩成仅过滤 null。

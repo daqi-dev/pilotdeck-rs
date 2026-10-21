@@ -12063,6 +12063,30 @@
         "generation": 4
       },
       "previous": null
+    },
+    {
+      "op": "reconnect",
+      "next": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "previous": 0
+    },
+    {
+      "op": "reconnect",
+      "next": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "previous": false
+    },
+    {
+      "op": "reconnect",
+      "next": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "previous": ""
     }
   ],
   "bindingResults": [
@@ -12170,6 +12194,30 @@
     null,
     {
       "outcome": "no_pending",
+      "binding": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "requests": []
+    },
+    {
+      "outcome": "reconnected",
+      "binding": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "requests": []
+    },
+    {
+      "outcome": "reconnected",
+      "binding": {
+        "connectionId": "d",
+        "generation": 4
+      },
+      "requests": []
+    },
+    {
+      "outcome": "reconnected",
       "binding": {
         "connectionId": "d",
         "generation": 4

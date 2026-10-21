@@ -330,8 +330,8 @@ async fn socket_close_matches_a5_trace() {
 fn real_ts_binding_provider() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 24);
-    assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 24);
+    assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 27);
+    assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 27);
     let bindings = BindingOwners::default();
     for (i, step) in oracle["bindingSteps"]
         .as_array()
