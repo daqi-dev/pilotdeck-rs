@@ -360,7 +360,7 @@ pub fn collect_required_input_modalities(messages: &[JsValue]) -> Vec<JsString> 
     required
 }
 
-fn missing_input_modalities(
+pub(super) fn missing_input_modalities(
     invoker: &dyn RouterModelInvocation,
     reference: &RouterModelRef,
     required: &[JsString],
@@ -386,7 +386,7 @@ fn missing_input_modalities(
         .collect()
 }
 
-fn supports_media_requirements(
+pub(super) fn supports_media_requirements(
     invoker: &dyn RouterModelInvocation,
     reference: &RouterModelRef,
     required: &[JsString],

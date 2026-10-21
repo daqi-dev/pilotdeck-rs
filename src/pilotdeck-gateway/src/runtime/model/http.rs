@@ -82,7 +82,11 @@ fn is_stream_guard_error(name: &JsString) -> bool {
 #[derive(Clone, Debug)]
 pub enum ModelStreamError {
     /// `ModelRequestError(code, message)`: local validation, never retried.
-    Request { code: JsString, message: JsString },
+    Request {
+        code: JsString,
+        message: JsString,
+        details: Option<Box<JsValue>>,
+    },
     /// `ModelProviderError(canonical)`.
     Provider(JsObject),
     /// Any other `Error` (`TypeError: terminated`, `SyntaxError`, `AbortError`
@@ -147,7 +151,7 @@ impl From<ModelStreamError> for ModuleError {
     /// retry delay; request errors are never retryable.
     fn from(error: ModelStreamError) -> Self {
         match error {
-            ModelStreamError::Request { code, message } => Self {
+            ModelStreamError::Request { code, message, .. } => Self {
                 message,
                 code: Some(code),
                 canonical: None,
@@ -441,7 +445,7 @@ fn throw_if_aborted(options: &StreamOptions) -> Result<(), ModelStreamError> {
     }
 }
 /// `delay(ms, signal)`.
-async fn delay(ms: f64, options: &StreamOptions) -> Result<bool, ModelStreamError> {
+pub(super) async fn delay(ms: f64, options: &StreamOptions) -> Result<bool, ModelStreamError> {
     use crate::runtime::network::{Exchange, delay};
     match delay(
         duration(ms),

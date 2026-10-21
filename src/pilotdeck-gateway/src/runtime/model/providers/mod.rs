@@ -73,6 +73,22 @@ fn request_error(code: &str, message: JsString) -> ModelStreamError {
     ModelStreamError::Request {
         code: code.into(),
         message,
+        details: None,
+    }
+}
+fn request_error_details(
+    code: &str,
+    message: JsString,
+    fields: &[(&str, JsValue)],
+) -> ModelStreamError {
+    let mut raw = JsObject::new();
+    for (key, value) in fields {
+        raw.insert((*key).into(), value.clone());
+    }
+    ModelStreamError::Request {
+        code: code.into(),
+        message,
+        details: Some(Box::new(JsValue::Object(raw))),
     }
 }
 fn type_error(reading: &str) -> ModelStreamError {
@@ -211,29 +227,35 @@ fn assert_content_supported(
     let allowed = array(field(constraints, "input"));
     let allows = |modality: &str| allowed.iter().any(|m| is(m, modality));
     let unsupported = |modality: &str| {
-        request_error(
+        request_error_details(
             "unsupported_modality",
             format!("Model does not support {modality} input.")
                 .as_str()
                 .into(),
+            &[("modality", modality.into())],
         )
     };
     let mime_types = field(constraints, "supportedImageMimeTypes");
     let check_image = |block: &JsValue| -> Result<(), ModelStreamError> {
         let mime = field(block, "mimeType");
         if truthy(mime_types) && !array(mime_types).iter().any(|m| m == mime) {
-            return Err(request_error(
+            return Err(request_error_details(
                 "unsupported_image_mime_type",
                 message(&[
                     ("Model does not support image MIME type ", Some(mime)),
                     (".", None),
                 ]),
+                &[("mimeType", mime.clone())],
             ));
         }
         if exceeds(field(constraints, "maxImageBytes"), field(block, "bytes")) {
-            return Err(request_error(
+            return Err(request_error_details(
                 "image_too_large",
                 "Image content exceeds model limits.".into(),
+                &[
+                    ("bytes", field(block, "bytes").clone()),
+                    ("maxImageBytes", field(constraints, "maxImageBytes").clone()),
+                ],
             ));
         }
         Ok(())
@@ -243,9 +265,13 @@ fn assert_content_supported(
         if truthy(max)
             && matches!((number(field(block, "bytes")), number(max)), (Some(v), Some(l)) if v > l)
         {
-            return Err(request_error(
+            return Err(request_error_details(
                 "pdf_too_large",
                 "PDF content exceeds model limits.".into(),
+                &[
+                    ("bytes", field(block, "bytes").clone()),
+                    ("maxPdfBytes", max.clone()),
+                ],
             ));
         }
         Ok(())
@@ -294,9 +320,16 @@ fn assert_content_supported(
                     field(block, "durationSeconds"),
                 ) =>
             {
-                return Err(request_error(
+                return Err(request_error_details(
                     "audio_too_long",
                     "Audio content exceeds model limits.".into(),
+                    &[
+                        ("durationSeconds", field(block, "durationSeconds").clone()),
+                        (
+                            "maxAudioSeconds",
+                            field(constraints, "maxAudioSeconds").clone(),
+                        ),
+                    ],
                 ));
             }
             _ => {}
@@ -304,9 +337,13 @@ fn assert_content_supported(
     }
     let max_images = field(constraints, "maxImagesPerRequest");
     if truthy(max_images) && number(max_images).is_some_and(|max| images as f64 > max) {
-        return Err(request_error(
+        return Err(request_error_details(
             "too_many_images",
             "Image count exceeds model limits.".into(),
+            &[
+                ("imageCount", JsValue::Number(images as f64)),
+                ("maxImagesPerRequest", max_images.clone()),
+            ],
         ));
     }
     Ok(())

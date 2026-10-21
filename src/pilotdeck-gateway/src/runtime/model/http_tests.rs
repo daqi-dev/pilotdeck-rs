@@ -241,6 +241,7 @@ fn provider_error_projects_onto_module_error() {
     let request = ModuleError::from(ModelStreamError::Request {
         code: "provider_not_found".into(),
         message: "Provider x does not exist.".into(),
+        details: None,
     });
     assert_eq!(request.retryable, Some(false));
 }

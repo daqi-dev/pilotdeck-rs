@@ -2,6 +2,8 @@ mod count_body;
 mod count_http;
 mod count_json;
 pub(crate) mod cpu;
+pub mod fallback;
+pub mod health;
 pub mod http;
 mod json_walk;
 mod jsonrepair;
