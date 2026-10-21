@@ -33,3 +33,22 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 ## A4-ARCHIVE-SEC-003 · native_archive_artifact 根外读取安全拒绝（原版缺陷 · 安全）
 
 同 A4-ARCHIVE-SEC-001，差异两点：拒绝错误码为 `ARCHIVE_ARTIFACT_NOT_FOUND`（与该 method 既有 NOT_FOUND 语义一致，按 method 分别登记口径）；artifact 根为项目目录，读 tool-results。10MiB limit 契约与 TS 一致。批准记录同上。
+
+## A6.5-MCP-OUTSCHEMA-REGEX-001 · MCP outputSchema 正则长串预算（不可避免 · 向严）
+
+- **类别**：不可避免（SDK 用 Ajv 在 V8 上做正则匹配，回溯栈断点随正则结构与字符组成变化，Rust 的 `regex` 不回溯，无法逐点复刻）。
+- **基线依据**（cc7c4e6，`@modelcontextprotocol/sdk` 的 `AjvJsonSchemaValidator`，Node 22.22.0）：含无界重复的 pattern、patternProperties 键名正则或带正则的 format，在超长字符串上让 V8 栈溢出，SDK `Client.callTool` 返回 `-32602 "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"`。真实 Client 实测首溢约 210 万至 2500 万 UTF-16 单位（嵌套捕获约 210 万；`^(a|b)*$` 约 419 万；`.*` / `[^<>]*` 配 BMP 与星外字符混排约 1260 万；byte 约 447 万），原值 `_tmp/20261021-a65-pr10b-r9/RESULT-full.md:1283` 起与修复轮 9 原件。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/mcp/output_schema.rs:2001` `MAX_REGEXP_STACK_UNITS = 1_048_576`；凡含无界重复（`*`、`+`、`{n,}`、大上界计数量词）的正则权重至少 1（权重取 pattern 分组数），`权重 × UTF-16 长度` 超过该值即返回与 SDK 栈溢出逐字相同的错误。无界重复之外的正则（纯字符类无量词、有界重复）不计入。
+- **范围**：仅 MCP 工具 outputSchema 校验中的长字符串。① 向严区间：长度在端口上限与 SDK 首溢之间时 SDK 判 valid、端口报栈溢出；② message 差异：数据本应因普通校验失败（例如 hostname 格式错）而被拒时，超出预算后端口报栈溢出文案、SDK 报普通格式错误；③ 对 time、date-time、iso-*、duration 及不带分组的纯 BMP 重复，实测范围内 SDK 从未栈溢出，因此「超过 SDK 断点后两侧一致」对它们不成立，超预算后两侧结果按 ①② 区分。超过 1 MB 的输出校验不是 A6.5-pr10b 的验收范围（人定）。
+- **机器判据**：`output_schema.rs` 的 `regexp_stack_model_covers_all_unbounded_atoms` 与 `replays_the_ajv_oracle`（845 条，其中正则长串按类在上限两侧、SDK 首溢之上各有样本，长串只存生成规则）。
+- **批准记录**：人定 2026-10-21 13:10「PR #391 (A6.5-pr10b) 选 A；批准对应正则预算差异及 #4、#5……超过 1 MB 的输出校验暂不作为本 PR 的硬性验收要求，限制须明确记录」，见 `state/decisions-20261021.md`「人定 · 2026-10-21 13:10」；PR #391。
+
+## A6.5-MCP-OUTSCHEMA-DEPTH-001 · MCP outputSchema 深度 / 宽度预算 2048（不可避免 · 向严）
+
+- **类别**：不可避免（SDK Ajv 递归校验在 V8 上的栈断点随 schema 形状、调用栈深度与 JIT 状态变化）。
+- **基线依据**（同上）：极深嵌套或很宽的 anyOf / allOf / dependencies 组合 schema、深比较（const / enum / uniqueItems）让 V8 栈溢出，SDK 返回上述 -32602 错误。30 组形状的真实 Client 首溢与端口支持点见 `_tmp/20261021-a65-pr10b-r9/RESULT-full.md:1474` 起（修复轮 10 §1），对正常工具的影响范围见 `_tmp/20261021-a65-pr10b-r9/depth-impact.md`。
+- **Rust 行为**：`output_schema.rs:69` `MAX_VALIDATION_BUDGET = 2_048`（按 schema 静态节点与递归边加权计费，深比较共用余额）；超出即返回与 SDK 栈溢出逐字相同的错误。`MAX_SCHEMA_DEPTH = 256` 不变。
+- **范围**：仅 outputSchema 校验。向严区间为「端口首拒 ≤ 活跃成本 < SDK 首溢」：此区间 SDK 判 valid、端口报栈溢出；代表性残余为同形查询 169 列以上、同形目录树 107 边以上提前拒绝；uniqueItems 在区间内 SDK 是普通重复项错误、端口为栈溢出文案（message 差异）。成本 ≤ 2048 两侧一致。
+- **机器判据**：`output_schema.rs` 的 `recursive_keyword_shapes_share_one_weighted_budget`、`unused_wide_branches_spend_recursion_budget`、`non_schema_dependency_arrays_spend_static_budget`、`deep_comparisons_spend_the_shared_validation_budget` 与 `replays_the_ajv_oracle`（各形状在 2048 两侧有样本）。
+- **批准记录**：人定 2026-10-21 14:25「pr10b depth budget 按照你的推荐选用2048。」，见 `state/decisions-20261021.md`「人定 · 2026-10-21 14:25」；PR #391。
+
