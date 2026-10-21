@@ -783,7 +783,7 @@ async fn real_ts_web_fetch_and_web_search_over_loopback() {
     let h = Harness::new();
     let fetches = items(get(&h.oracle, "fetches"));
     let searches = items(get(&h.oracle, "searches"));
-    assert_eq!((fetches.len(), searches.len()), (45, 39), "scenario counts");
+    assert_eq!((fetches.len(), searches.len()), (47, 39), "scenario counts");
     let mut requests = 0;
     for spec in fetches {
         let name = text(get(spec, "name"));
@@ -809,7 +809,7 @@ async fn real_ts_web_fetch_and_web_search_over_loopback() {
         assert_eq!(result, expect(spec, "result"), "{name}: result");
         requests += items(get(spec, "requests")).len();
     }
-    assert_eq!(requests, 114, "total scripted requests");
+    assert_eq!(requests, 116, "total scripted requests");
 }
 
 #[test]
