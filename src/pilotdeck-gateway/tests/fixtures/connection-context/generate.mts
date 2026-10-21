@@ -216,6 +216,10 @@ const bindingSteps = [
   // The provider itself treats null previous as absent, for both initial/same.
   {op:'reconnect',next:{connectionId:'d',generation:4},previous:null},
   {op:'reconnect',next:{connectionId:'d',generation:4},previous:null},
+  // All other JSON-representable JS falsy values also mean no previous binding.
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:0},
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:false},
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:''},
 ];
 const port = createNativeInteractionReconnectPort();
 const bindingResults = bindingSteps.map((step: any) => {
