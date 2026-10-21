@@ -13,7 +13,7 @@ use crate::{
 use std::ops::Range;
 #[path = "html_markdown_buffer.rs"]
 mod buffer;
-pub use super::html_dom::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, MAX_DOM_NODES};
+pub use super::html_dom::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH};
 use buffer::{Content, Rope};
 
 #[derive(Clone, Copy, Debug, Default)]
