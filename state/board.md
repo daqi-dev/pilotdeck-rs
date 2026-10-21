@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 13:55 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | impl | ready | 修复轮 9：方案 A 代码与 771 条夹具已改（未提交），51 类负控；深度预算影响范围已测——当前 1024 会提前拒绝 84 列×3 层查询、54 边目录树，候选 2048 / 4096（`_tmp/20261021-a65-pr10b-r9/depth-impact.md`），待报人；codex 因磁盘超限暂停，已清理后续跑归档与全量测试
-- #396 | impl | ready | PR #403 head 399a6f3：Grok r2（冲突合并）0/0/1；全量 gate2 sibling P1（google provider 路径未迁到共享 exchange）+ Grok 同源 P2（google 重试未接续传），两家撞上；另 P2×4（provider 帧读取、MCP streamable/SSE 正文无 bodyTimeout、两套逐帧读取）；concurrency 角色超时需重跑；codex 修复轮 2 在跑（`_tmp/20261021-issue-396/fix2.status`）
+updated: 2026-10-21 14:08 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | ready | 修复轮 9 提交（9749e18，方案 A），追加 accepted-diffs #6（已批）；沙箱外 rebase 前 1638/0（单独重跑，首跑 host resume 超时属并发负载）；已 rebase 到 main（wire.rs、accepted-diffs 冲突逐块合并，定时器截断只留 network 一份，0597fda），全量重跑中，过后推送、派 r10 + gate；深度预算待人在 1024/2048/4096 中定
+- #396 | review | ready | PR #403 修复轮 2 已推送 a855bd3（google 路径、MCP streamable/SSE bodyTimeout、逐帧读取下沉一处），沙箱外 1687/0/42；GLM r3 + Grok r3 在跑
 - #386 | impl | human | nix 安全信号 API 可用（macOS 174 例过），但无子进程 cwd，替代都破坏并发或启动错误语义；crates.io 未找到成熟安全替代。待人在 B（gateway 改 deny+一个函数 allow 的局部 unsafe）/ C（全安全 helper 架构）/ A′（登记差异）中选，说明 `_tmp/20261021-issue-386/decision-brief.md`，建议 B
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | impl | ready | PR #405：GLM r1 0/0/1/1、Grok r1 0/0/1/1，两家撞同一 P2（旧 abort 判定与 sink 之间的多线程竞态），对应完成条件，本轮修；codex 修复轮 1 在跑
+- A7.1-pr1 | review | ready | PR #405 修复轮 1 已推送 3130630（abort 竞态 0/2000，负控 2000/2000），沙箱外 1670/0/42；GLM r2 + Grok r2 在跑
 - A6.5-pr9b | impl | ready | PR #406：Grok r1 P0（深嵌套 ul/li 转换耗时约 n³，1 万层 >90 s 且同步占住 tokio 线程；TS 0.1–0.8 s 抛 RangeError）、GLM r1 0/0/2/1（同处判 P2，两家取高）；codex 修复轮 1 在跑（向严深度上限 + 线性化 + spawn_blocking）
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
