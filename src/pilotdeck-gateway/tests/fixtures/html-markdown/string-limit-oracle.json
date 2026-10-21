@@ -654,6 +654,116 @@
  },
  "node": "v22.22.0",
  "v8": "12.4.254.21-node.33",
+ "firstFailure": 26,
+ "search": [
+  {
+   "n": 1,
+   "markdownUtf16Length": 9
+  },
+  {
+   "n": 2,
+   "markdownUtf16Length": 29
+  },
+  {
+   "n": 3,
+   "markdownUtf16Length": 69
+  },
+  {
+   "n": 4,
+   "markdownUtf16Length": 149
+  },
+  {
+   "n": 5,
+   "markdownUtf16Length": 309
+  },
+  {
+   "n": 6,
+   "markdownUtf16Length": 629
+  },
+  {
+   "n": 7,
+   "markdownUtf16Length": 1269
+  },
+  {
+   "n": 8,
+   "markdownUtf16Length": 2549
+  },
+  {
+   "n": 9,
+   "markdownUtf16Length": 5109
+  },
+  {
+   "n": 10,
+   "markdownUtf16Length": 10229
+  },
+  {
+   "n": 11,
+   "markdownUtf16Length": 20469
+  },
+  {
+   "n": 12,
+   "markdownUtf16Length": 40949
+  },
+  {
+   "n": 13,
+   "markdownUtf16Length": 81909
+  },
+  {
+   "n": 14,
+   "markdownUtf16Length": 163829
+  },
+  {
+   "n": 15,
+   "markdownUtf16Length": 327669
+  },
+  {
+   "n": 16,
+   "markdownUtf16Length": 655349
+  },
+  {
+   "n": 17,
+   "markdownUtf16Length": 1310709
+  },
+  {
+   "n": 18,
+   "markdownUtf16Length": 2621429
+  },
+  {
+   "n": 19,
+   "markdownUtf16Length": 5242869
+  },
+  {
+   "n": 20,
+   "markdownUtf16Length": 10485749
+  },
+  {
+   "n": 21,
+   "markdownUtf16Length": 20971509
+  },
+  {
+   "n": 22,
+   "markdownUtf16Length": 41943029
+  },
+  {
+   "n": 23,
+   "markdownUtf16Length": 83886069
+  },
+  {
+   "n": 24,
+   "markdownUtf16Length": 167772149
+  },
+  {
+   "n": 25,
+   "markdownUtf16Length": 335544309
+  },
+  {
+   "n": 26,
+   "error": {
+    "name": "RangeError",
+    "message": "Invalid string length"
+   }
+  }
+ ],
  "cases": [
   {
    "n": 16,
@@ -671,6 +781,58 @@
     {
      "fromCache": true,
      "rawLength": 655349
+    }
+   ]
+  },
+  {
+   "n": 25,
+   "html": "<h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div>x</div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1>",
+   "direct": {
+    "markdownUtf16Length": 335544309,
+    "markdownSha256": "f073b3579ee55bc11e684a4b4b1006c6aa77075a7f63f8a5b247ef5b59f3442e"
+   },
+   "cachedAfterDirect": false,
+   "requests": 2,
+   "results": [
+    {
+     "fromCache": false,
+     "rawLength": 335544309
+    },
+    {
+     "fromCache": false,
+     "rawLength": 335544309
+    }
+   ]
+  },
+  {
+   "n": 26,
+   "html": "<h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div><h1><div>x</div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1></div></h1>",
+   "direct": {
+    "error": {
+     "name": "RangeError",
+     "message": "Invalid string length"
+    }
+   },
+   "cachedAfterDirect": false,
+   "requests": 2,
+   "results": [
+    {
+     "error": {
+      "code": "tool_execution_failed",
+      "message": "web_fetch failed: Invalid string length",
+      "details": {
+       "stage": "http_fetch"
+      }
+     }
+    },
+    {
+     "error": {
+      "code": "tool_execution_failed",
+      "message": "web_fetch failed: Invalid string length",
+      "details": {
+       "stage": "http_fetch"
+      }
+     }
     }
    ]
   },

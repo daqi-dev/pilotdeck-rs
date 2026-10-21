@@ -140,3 +140,16 @@ rope 保存 UTF-8 bytes、UTF-16 units、换行数，标题下划线保留为惰
 避免在发现超限前物化大串。检查包括最终 join 会裁去的 replacement 边界换行，
 与 Turndown 先生成 replacement 的顺序一致。这项为 TS 上限平价，不新增向严差异。
 资源测量、内存受限负控和完整自证见工作区 `_tmp/20261021-a65-pr9b/RESULT.md` 修复轮 4。
+
+
+## 修复轮 5：字符串上限交叉点
+
+`generate-string-limit.mts` 用真实 `getURLMarkdownContent` 从 n=1 逐个搜索
+`'<h1><div>'.repeat(n) + 'x' + '</div></h1>'.repeat(n)` 的首次失败，
+Node 22.22.0 / V8 12.4.254.21-node.33 实测 n=25 成功、n=26 首次抛出
+`RangeError: Invalid string length`。`string-limit-oracle.json` 保存搜索结果、
+n=25 / 26 两侧样本及真实工具的错误 / 缓存行为，原 n=16 / 33 保留。
+n=25 的成功输出只存 UTF-16 长度 335544309 与完整 UTF-8 字节的 SHA256，
+不保存大串正文；Rust 回放同样断言完整长度与 SHA256，n=25 成功、n=26 报同一错误，
+未发现这两个交叉点样本上的向严或向宽偏差。两次独立生成需与金样逐字节一致。
+交叉点两侧回放结果与原始日志见工作区 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 5」。
