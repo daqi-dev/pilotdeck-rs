@@ -104,7 +104,7 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 | 单段平铺 inline | 50,000 × `<em>x</em>` | 完整输入与完整输出 |
 
 `large_shallow_pages_match_real_ts_bytes_and_stay_fast` 覆盖以上四例，每例 release
-转换预算 5 秒、debug 30 秒；输入与期望构造不计入转换计时。错误累计后统一失败，
+转换预算 5 秒、debug 60 秒（46033287、193e8a1e 自 30 秒放宽：CI 慢跑机 debug 实测 34 秒超限；release 预算未动）；输入与期望构造不计入转换计时。错误累计后统一失败，
 恢复旧节点上限时四例都必须报错，不能只靠第一例失败冒充全部负控。
 `ten_mib_of_flat_inline_siblings_stays_fast` 另把最后一例已经过 TS 逐字节验证的周期扩展到
 1,048,576 个 inline 元素（恰好 10 MiB），检查完整输出与相同时间预算；这条是
