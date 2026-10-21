@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 21:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 21:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - #386 | impl | ready | PR #407 @8c49fa4（rebased）：修复轮 8 已提交，fmt fix 已推，check/pr-gate 在跑；GLM r8 0/0/0/2、gate6 在跑，待 CI 绿后贴结果块
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4、Grok r4 均 0/0/0/1，gate4 全 PASS 0/0 → 结果块入正文，Ready，**已入合并队列**；剩余 P2 #422、#424
@@ -358,3 +358,18 @@ updated: 2026-10-21 21:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **19:50**：#420 已合入。#418（pr9a）、#412（A7.1-pr2）两家评审加闸门都已收敛，结果块写进 PR 正文后入合并队列；pr-gate 只读正文，不读评论，先贴评论那次是假失败。#407 gate5、#406 gate7、#421 gate1 各有 P1 或影响对拍的 P2，分别派修复轮 8、5、1。新开 #424。磁盘：清掉五棵活跃树的 incremental 缓存，98.5 降到 83.6 GiB。
 
 > **21:00**：#425 已合入。#406、#407 rebased 到 main；exec.rs 两侧各加了一个测试模块，merge 保留两者，fmt 修一处空行。#421 修复轮 1 推送。#407 的 router_execute 测试在 wt-a65-pr2 和临时 target 里持续 SIGKILL，静态验证正常（clippy、其余 996 项测试 0 失败、oracle 文件与 main 逐字节相同）；须待协调者用设置了 PDRS_BASELINE 的沙箱外环境复核（同 #418 先例）。
+
+> **21:05 交接点（2 小时）**：
+>
+> **现场**（会话 pilotdeck-rs-d8）：
+> - 已合入：#417、#419、#420、#425（board）、#412（A7.1-pr2）、#418（A6.4-pr9a）。
+> - 活跃 worktree（12/12）：wt-a6-x0（#406）、wt-a65-pr2（#407）、wt-a64-pr7（#421）、wt-a63-pr1（#412，已合入可清）、wt-a66-pr3（#418，已合入可清）、wt-a67-pr2/wt-a64-pr11/wt-a65-pr10b/wt-a6-recorder/wt-pr275/wt-p2-sweep-4（board）。磁盘 93.7 GiB。
+>
+> **进行中**：
+> - #406（A6.5-pr9b @6bf9c56）：修复轮 4+5 rebased，check 在跑；GLM r7 0/0/0/4，Grok r7 暂定（断连中途），gate8 在跑。pr-gate 失败因 gate 结果块 HEAD 不符，等 gate8 完成后更新正文。
+> - #407（#386 @8c49fa4）：修复轮 8 rebased + fmt fix，check 在跑；GLM r8 0/0/0/2，gate6 在跑。pr-gate 失败因无结果块，等 gate6 完成后写入正文。router_execute SIGKILL 是机器环境问题，非代码回归（clippy 过、996 项其余测试 0 失败、oracle 与 main 逐字节相同）；需要协调者用 PDRS_BASELINE 设置的沙箱外环境复核（同 #418 先例，证据归 _tmp/）。
+> - #421（A7.1-pr3 @55261931）：修复轮 1（in-flight session 粒度修复 + P2×3）推送；CI 在跑；GLM r2、gate2 在跑。PR 仍是 draft；等 gate2 无 P0/P1 后 ready + 入队。
+> - #427（board）：CI 在跑，应尽快合入。
+>
+> **下一步**：① gate8/gate6/gate2 完成后，核 P0/P1 → 若无则分别更新 #406/#407/#421 的 PR 正文写入结果块 → 入合并队列。② #407 需协调者沙箱外跑 router_execute（设 PDRS_BASELINE，用沙箱外 target 目录）。③ 发 Grok 给 #421 r2（待 fix round 1 commit 稳定后）。④ 已合入的 wt-a63-pr1、wt-a66-pr3 可清 target/ 减磁盘。⑤ #422/#423/#424/#426 是已开的 P2-跟进，不入 READY，不阻塞当前流程。
+
