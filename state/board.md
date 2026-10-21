@@ -1,11 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 17:17 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #396 | merge | ready | PR #403 已入合并队列（17:14，@58e33e3）：GLM r7 + Grok r7 均为 0/0/0/0，gate5 四个角色全 PASS；gate5 的 sibling P2 拆为 #415，concurrency P2 即 #410
-- #386 | review | ready | PR #407 修复轮 3 已推 b367e65（守卫扫全部文件并校验 #[path]/include! 指向，加 cfg(unix)；九项负控均失败）；GLM r4 + Grok r4 + 全量 gate2 在跑
+updated: 2026-10-21 17:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | impl | ready | PR #407 r4：Grok 报 P0×2（macro_rules 把 include/path 当参数传，绕过文本守卫，已实测）→ 换方案：例外挪进独立 crate pilotdeck-child-signals，gateway 恢复 forbid（决策卡，AI 代批，待人复核）；codex 修复轮 4 在跑（`_tmp/20261021-issue-386/fix4.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 修复轮 1 推 e140446（只动测试，四个变异都能抓住）；GLM r2 + Grok r2 + 全量 gate1 在跑；GLM r1 P2 拆 #414
+- A7.1-pr2 | impl | ready | PR #412 r2：GLM 0/0/0/5、Grok 0/0/0/3；gate1 sibling P2×2 + boundary P2（end_turn 缺身份复核、空串 project、admission 夹具缺再生守卫）→ codex 修复轮 2 在跑；boundary 另一条 P2 拆 #416（前置于 A7.5）；concurrency 超时，修完重跑
 - A6.5-pr9b | review | ready | PR #406 @3502a4c：boundary 单角色 PASS；为让结果块绑定同一 head，在 @3502a4c 上补跑 sibling/concurrency/simplify（gate5）
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
@@ -334,3 +333,5 @@ updated: 2026-10-21 17:17 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **17:07**：#406 修掉 gate3 两条措辞 P2（3502a4c），boundary 单独重跑。#412 修复轮 1 推 e140446，派 r2 两家评审与 gate1。#403 GLM r7 全零。#407 fix3 仍在跑。
 
 > **17:17**：#403 入合并队列。#407 修复轮 3 推 b367e65，派 r4 审。#406 补跑三个角色以便结果块绑定同一 head。#412 r2：Grok 0/0/0/3，GLM 与 gate1 在跑。
+
+> **17:30**：#403（#396）已合入 main（a07aaab，提交邮箱为账号主邮箱，同前）。#407 文本守卫第三次被绕过，换成独立 crate + forbid 方案，决策卡 AI 代批。#412 派修复轮 2，拆出 #416。#406 补跑三个角色中。下一步：#406 gate5 绿即入队；A6.4-pr9a 的阻塞已解除（#396 已合入），可以接着做。

@@ -75,3 +75,13 @@
 - **建议 / 执行**：A。pr9b 已按 A 登记（A6.5-WEBFETCH-DEPTH-001）；pr10b 在第十轮评审结束后同批改登；#4 #5 的迁移另开小 PR。
 - **原则**：差异登在被测对象所属阶段的账本；新登记前先确认账本归属与格式。
 - **可机检**：`scripts/gateway-parity/check_frozen.py` 与 `scripts/parity/check_frozen.py` 都 PASS；gateway 账本每节含六项字段。
+
+## 卡 · #386 unsafe 例外改为独立 crate，gateway 恢复 forbid（AI 代批，待人复核）
+- **卡在哪**：B 方案把 gateway 从 `forbid(unsafe_code)` 降到了 `deny`，只靠文本扫描守卫（`tests/unsafe_boundary.rs`）把例外限定在一个函数里。三轮评审接连找到绕过：r2 的 expect / 注释、gate1 的大写扩展名 / include! / 指向 crate 外的 #[path]、Grok r4 用 macro_rules 把 `include`、`path` 当参数传（P0×2，已实测）。文本扫描追不完宏展开。
+- **谁受影响**：PR #407；gateway 的 unsafe 边界。
+- **能否撤回**：能。只是挪代码位置，信号重置行为与人批 B 的范围（一个函数）不变。
+- **动不动尺子 / 意向**：不动。比人批更严：gateway 恢复编译器强制的 forbid，例外只留在一个独立小 crate `pilotdeck-child-signals` 里，这个 crate 只放那一个函数。
+- **选项**：A. 继续给文本守卫打补丁（fail-closed 拒 `$ident!` 与 `#[$k`），可能还有别的绕过；B. 例外挪进独立 crate，gateway 恢复 forbid，绕过由编译器拦截；C. 用 rustc dep-info 比对实际编译用到的源文件（复杂）。
+- **建议 / 执行**：B，派 codex 修复轮 4（`_tmp/20261021-issue-386/fix4.md`）。不加外部依赖，libc 已经在依赖里。
+- **原则**：安全边界交给编译器强制；文本扫描只做辅助，不当唯一防线。
+- **可机检**：在 gateway 里注入 Grok r4 / gate1 / r2 的绕过写法，cargo build 必须报错；守卫断言新 crate 只有两个文件、`allow(unsafe_code)` 恰好一处。
