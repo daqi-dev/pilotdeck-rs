@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 18:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | review | ready | PR #407 修复轮 4 推 3d8cd3c：unsafe 例外移进两文件 crate pilotdeck-child-signals，gateway 恢复 forbid；协调者实测宏 include 绕过被编译器拒（E0453）；GLM r5 + Grok r5 + gate3 在跑
+updated: 2026-10-21 18:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | impl | ready | PR #407 @3d8cd3c gate3：boundary P0（child-signals 是 deny，#[expect(unsafe_code)] 能压低，守卫只数 allow）+ P1（其余成员的 lint 继承没有机检）+ sibling P2（同源）→ codex 修复轮 5 在跑（`_tmp/20261021-issue-386/fix5.md`）；GLM r5、Grok r5 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 修复轮 2 推 8c3b166（end_turn 身份复核、空串 project、admission 再生守卫）；GLM r3 + Grok r3 + gate2 在跑；拆出 #414、#416
+- A7.1-pr2 | review | ready | PR #412 @8c3b166：Grok r3 0/0/0/1；GLM r3 + gate2 在跑，收齐后无 P0/P1 即贴结果块入队
 - A6.5-pr9b | impl | ready | PR #406 gate5 concurrency P1：250 层嵌套 code 加 10 MiB 内容，峰值 RSS 2690 MiB（单层只要 109 MiB；协调者实测，`_tmp/20261021-a65-pr9b/arb-inline-rss.txt`）→ codex 修复轮 3 在跑（`fix3.md`，输出逐字节不变，只改分配策略）
-- A6.4-pr9a | review | ready | PR #418（draft，@66560e2）：全量测试 1764/1，失败的 sequences_replay 前台复跑 8/8；gate1 四角色全 PASS，有两条 P2（thinking.rs:309 缺 details、五个错误码 details 无断言），等两家评审结果后同批修；GLM r1 与 Grok r1 在跑
+- A6.4-pr9a | impl | ready | PR #418 @66560e2：Grok r1 0/0/1（用量估算路径无用例）+ gate1 P2×2 → codex 修复轮 1 在跑（`_tmp/20261021-a64-pr9/fix1.md`）；GLM r1 在跑
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -339,3 +339,5 @@ updated: 2026-10-21 18:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **17:57**：A6.4-pr9a 已续上，开 PR #418（沙箱外补齐溯源与 HTTP 金样，7/7）。#406 gate5 的 P1 已实测确认是嵌套 code 内存放大，派修复轮 3。#407 修复轮 4（独立 crate + forbid）、#412 修复轮 2 已推送，各派下一轮评审。board PR #417 已开。
 
 > **18:00**：#418 全量测试与 gate1 完成，两条 P2 等评审后同批修。#417（board）的 CI check 未完成，下轮入队。其余线评审在跑。
+
+> **18:05**：#407 gate3 又报一条 P0（expect 能压低 deny），派修复轮 5，把所有成员的 lint 继承都加上机检。#418 派修复轮 1。#412 Grok r3 已清零。#417 的 CI check 还在跑。
