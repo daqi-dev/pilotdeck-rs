@@ -312,7 +312,7 @@
       ],
       "results": [
         {
-          "value": null,
+          "value": true,
           "handles": {},
           "settled": {},
           "aborts": [],
@@ -337,6 +337,119 @@
             "active": false,
             "run": null
           },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "active-turn-rejects-maintenance",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "active"
+        },
+        {
+          "op": "maintenance_start",
+          "key": "a"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "b",
+          "run": "parallel"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "active"
+        },
+        {
+          "op": "maintenance_start",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "blocked"
+        },
+        {
+          "op": "maintenance_end"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "after"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "active"
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
           "handles": {},
           "settled": {},
           "aborts": [],

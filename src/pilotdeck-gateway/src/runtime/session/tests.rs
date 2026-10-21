@@ -20,11 +20,8 @@ fn string(value: &JsString) -> String {
 /// fixture; none of the Gateway abort predicate is implemented in this driver.
 #[tokio::test]
 async fn real_ts_admission_completion_and_gateway_abort() {
+    crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(
-        oracle["sourceCommit"],
-        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
-    );
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 7);
     for scenario in oracle["scenarios"].as_array().unwrap() {
         let turns = SessionTurns::default();
@@ -49,8 +46,11 @@ async fn real_ts_admission_completion_and_gateway_abort() {
                 "end" => turns.admission.end_turn(&key, run.as_ref()),
                 "shutdown" => turns.admission.shutdown(),
                 "maintenance_start" => {
-                    assert!(turns.admission.begin_maintenance(&key));
-                    maintenance_key = Some(key.clone());
+                    let admitted = turns.admission.begin_maintenance(&key);
+                    value = json!(admitted);
+                    if admitted {
+                        maintenance_key = Some(key.clone());
+                    }
                 }
                 "maintenance_end" => turns
                     .admission
