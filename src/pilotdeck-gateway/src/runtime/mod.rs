@@ -3,6 +3,7 @@
 //! register a resource group with `project::ResourceBundle`.
 pub mod async_hooks;
 pub mod background;
+pub mod connection;
 pub mod context;
 pub mod hooks;
 pub mod mcp;
