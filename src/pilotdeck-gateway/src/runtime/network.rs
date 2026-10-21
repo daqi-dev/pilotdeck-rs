@@ -326,11 +326,12 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
     parent_event_at: impl Fn() -> Option<Instant>,
     continuation: &mut bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    let deadline = idle.map(|idle| Instant::now() + idle);
     let next = dispatch(
         body.frame(),
         abort,
-        parent_event_at,
-        idle.map(|idle| Instant::now() + idle),
+        &parent_event_at,
+        deadline,
         DispatchOrder {
             scheduled_at: None,
             microtask: false,
@@ -339,9 +340,16 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
         },
     )
     .await;
-    if let Exchange::Response(_, before_abort) = &next {
-        *continuation = *before_abort;
-    }
+    *continuation = match &next {
+        Exchange::Response(_, before_abort) => *before_abort,
+        // A watchdog rejection's microtasks also precede a later parent timer.
+        // Preserve the exact deadline used by dispatch through the caller's
+        // error normalization / Google abort recheck. A tie is not earlier.
+        Exchange::Timeout => {
+            parent_event_at().is_some_and(|at| deadline.is_some_and(|deadline| deadline < at))
+        }
+        Exchange::Aborted => false,
+    };
     next
 }
 

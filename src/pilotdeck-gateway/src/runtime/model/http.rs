@@ -1014,7 +1014,9 @@ fn object_entries(value: &JsValue) -> JsObject {
     value.as_object().cloned().unwrap_or_default()
 }
 
-/// Read one body frame under the idle timeout and the abort signal.
+/// Read one body frame under the idle timeout and the abort signal. Both a
+/// response and a timeout carry their continuation order through Google's
+/// outer abort recheck, including when the body stalls after partial text.
 async fn read_frame(
     body: &mut ModelBody,
     idle_ms: f64,
