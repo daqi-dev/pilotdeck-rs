@@ -483,6 +483,137 @@ fn stream_config() -> (JsValue, JsValue) {
     (request, config)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RejectionOrder {
+    ReadySyncAbort,
+    OverdueSyncAbort,
+    ErrorBeforeParentTimer,
+}
+
+/// #415/#410: actual streamModel.ts at cc7c4e65 (SHA-256
+/// 6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26)
+/// was probed with a rejecting fetch (Google: generateContentStream Promise).
+/// Ready rejection + same-stack abort, and an overdue but undispatched error
+/// timer + same-stack abort, both throw AbortError: This operation was aborted.
+/// If the 5ms error callback and its microtasks finish before the 10ms parent
+/// callback, HTTP throws ModelProviderError: fixture transport failure; Google
+/// emits an error event with that message. A settled rejection's continuation
+/// runs, but the provider catch rechecks signal.aborted (TS :749 / :502).
+/// Unlike countRequestInput, it cannot simply preserve the rejected value.
+async fn assert_provider_rejection_order(order: RejectionOrder) {
+    struct Rejecting {
+        order: RejectionOrder,
+        signal: AbortFlag,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl ModelHttpTransport for Rejecting {
+        fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let error = Err(TransportFailure {
+                cause_code: None,
+                message: "fixture transport failure".into(),
+            });
+            match self.order {
+                RejectionOrder::ReadySyncAbort => {
+                    let rejected = TransportFuture::ready(error);
+                    self.signal.abort();
+                    rejected
+                }
+                _ => TransportFuture::after(Duration::from_millis(5), error),
+            }
+        }
+    }
+    for protocol in ["anthropic", "openai", "openai-responses", "google"] {
+        let (request, mut config) = stream_config();
+        let mut provider = field(field(&config, "providers"), "p").clone();
+        put(&mut provider, "protocol", protocol.into());
+        put(
+            &mut provider,
+            "retry",
+            parse_json(r#"{"streamMaxRetries":0}"#).unwrap(),
+        );
+        let mut providers = JsObject::new();
+        providers.insert("p".into(), provider);
+        put(&mut config, "providers", JsValue::Object(providers));
+        let signal = AbortFlag::new();
+        let transport = Rejecting {
+            order,
+            signal: signal.clone(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let options = StreamOptions {
+            abort: Some(signal.clone()),
+            ..StreamOptions::default()
+        };
+        let mut events = Vec::new();
+        let mut sink = |event| events.push(event);
+        let mut pending = Box::pin(stream_model(
+            &transport, &request, &config, &options, &mut sink,
+        ));
+        match order {
+            RejectionOrder::ReadySyncAbort => {}
+            RejectionOrder::OverdueSyncAbort => {
+                poll_pending(pending.as_mut()).await;
+                tokio::time::advance(Duration::from_millis(20)).await;
+                signal.abort();
+            }
+            RejectionOrder::ErrorBeforeParentTimer => {
+                poll_pending(pending.as_mut()).await;
+                tokio::time::advance(Duration::from_millis(5)).await;
+            }
+        }
+        let outcome = poll_ready(pending.as_mut()).await;
+        drop(pending);
+        assert_eq!(transport.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(matches!(&events[0], StreamOutput::Event(event)
+            if field(event, "type") == &JsValue::from("request_started")));
+        if matches!(order, RejectionOrder::ErrorBeforeParentTimer) {
+            assert!(!signal.is_aborted(), "the error microtasks run first");
+            if protocol == "google" {
+                outcome.unwrap();
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[1], StreamOutput::Event(event)
+                    if field(event, "type") == &JsValue::from("error")
+                        && field(field(event, "error"), "message")
+                            == &JsValue::from("fixture transport failure")));
+            } else {
+                let error = outcome.unwrap_err();
+                assert_eq!(error.name(), JsString::from("ModelProviderError"));
+                assert_eq!(error.message_text(), "fixture transport failure");
+                assert_eq!(events.len(), 1);
+            }
+            // Deliver the parent only after the rejection continuation has
+            // finished, as Node does between separate timer callbacks.
+            tokio::time::advance(Duration::from_millis(5)).await;
+            signal.cancel();
+        } else {
+            let error = outcome.expect_err("same-stack abort must be thrown");
+            assert_eq!(
+                error.name(),
+                JsString::from("AbortError"),
+                "{protocol}: {order:?}"
+            );
+            assert_eq!(error.message_text(), "This operation was aborted");
+            assert_eq!(events.len(), 1, "no retry or error event after abort");
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_rejected_promise_rechecks_synchronous_abort() {
+    assert_provider_rejection_order(RejectionOrder::ReadySyncAbort).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_overdue_rejection_loses_to_synchronous_abort() {
+    assert_provider_rejection_order(RejectionOrder::OverdueSyncAbort).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_rejection_microtasks_finish_before_later_parent_timer() {
+    assert_provider_rejection_order(RejectionOrder::ErrorBeforeParentTimer).await;
+}
+
 /// TS throwIfGoogleAbort checks the message before canonicalization/retries,
 /// even when the parent signal has never been cancelled.
 #[tokio::test(start_paused = true)]

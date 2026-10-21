@@ -778,7 +778,16 @@ async fn provider_exchange(
     {
         Exchange::Response(result, before_abort) => result
             .map(|response| response.map(|body| (body, before_abort)))
-            .map_err(failure),
+            .map_err(|error| {
+                // TS sendProviderRequest's catch (streamModel.ts:749) rechecks
+                // the parent even for an already rejected Promise. Unlike a
+                // successful response, its error does not retain before_abort.
+                if aborted(options) {
+                    ModelStreamError::abort()
+                } else {
+                    failure(error)
+                }
+            }),
         Exchange::Aborted => Err(ModelStreamError::abort()),
         Exchange::Timeout => Err(timeout()),
     }
