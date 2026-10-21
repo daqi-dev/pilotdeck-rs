@@ -85,3 +85,15 @@
 - **建议 / 执行**：B，派 codex 修复轮 4（`_tmp/20261021-issue-386/fix4.md`）。不加外部依赖，libc 已经在依赖里。
 - **原则**：安全边界交给编译器强制；文本扫描只做辅助，不当唯一防线。
 - **可机检**：在 gateway 里注入 Grok r4 / gate1 / r2 的绕过写法，cargo build 必须报错；守卫断言新 crate 只有两个文件、`allow(unsafe_code)` 恰好一处。
+
+## 卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）
+- **卡在哪**：PR #407 的构建配置检查用的是禁用词表，第七次被绕过。gate4 boundary（P0）和 Grok r6（P2）各自独立撞上同一处，按两家取高判 P0：`.cargo/config.toml` 写 `[build] rustc = "<脚本>"` 换掉编译器，再加 `--cap-lints allow`，unsafe 就能编进 gateway，守卫照样是绿的（Grok 实测）。禁用词表追不完 Cargo 的配置键。
+- **谁受影响**：PR #407 守卫；以后若有人要加 `.cargo/config` 或 rust-toolchain。
+- **能否撤回**：能，只是测试断言。
+- **动不动尺子 / 意向**：不动，只收紧。
+- **选项**：
+  - A. 继续往禁用词表里补 `rustc`、`linker`、`paths` 等键；
+  - B. 改成一律不许存在：仓内不得有任何 `.cargo/config*`、`rust-toolchain*`，现状两者都没有；环境变量 `RUSTC*`、`RUSTFLAGS`、`CARGO_ENCODED_RUSTFLAGS`、`CARGO_BUILD_*`、`CARGO_TARGET_*_RUSTFLAGS`、`*_WRAPPER` 非空即失败。在报错里说明本地临时设了这些变量的人怎么绕开，例如只在跑这条测试时 `env -u`。脚本和 CI yml 里自己改编译器的写法，归 `.github` 与脚本的人工评审，不再由这条测试负责。
+- **建议 / 执行**：B，派 codex 修复轮 7（`_tmp/20261021-issue-386/fix7.md`）。
+- **原则**：安全检查用「只许这几样」，不用「不许这几样」；守卫在注释和 PR 里写明负责哪些、不负责哪些，评审按写明的边界判，越界的写法不再算守卫假通过。
+- **可机检**：负控加入 `[build] rustc` 和 `RUSTC_WORKSPACE_WRAPPER`；守卫注释写明负责范围。
