@@ -1,0 +1,309 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/SessionRouter.ts": "90a0dbb46565bae5e2a994cbcd83b8a53a155b9b73cf67d8be1295a35b1afbb6",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9",
+    "src/gateway/client/GatewayTurnCompletionFence.ts": "4b409046c127ef09a9536d00e972a1f32bd04fc6eb53c9e03a5a34729f5cd940",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/agent/scope/AgentFactoryProvider.ts": "1486fe22690af6ca410b3ac784c75ecf3ac282c661ab8bce4f54bad0614478c4",
+    "src/agent/scope/AgentRegistry.ts": "9afac0b01b7b290e6e57a7665c7387f247ad5a4b184b491096aacd3b61fb5d80",
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/agent/scope/ScopedServiceRegistry.ts": "c6a70cc92ad955cac97ffdd08135be1be9335a443d0a3276cd48bfb697e1b9b8"
+  },
+  "cases": [
+    {
+      "name": "dirty_identity_and_publication",
+      "value": {
+        "during": {
+          "oldCurrent": false,
+          "newPublished": true,
+          "oldState": "draining",
+          "returned": false,
+          "cached": 1
+        },
+        "oldCurrent": false,
+        "freshCurrent": true,
+        "oldState": "disposed"
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2",
+        "setup:2",
+        "evict:a:dirty_recreate",
+        "dispose:1"
+      ]
+    },
+    {
+      "name": "slow_factory_is_per_session",
+      "value": {
+        "during": {
+          "aDone": false,
+          "cached": 1
+        },
+        "cached": 2
+      },
+      "events": [
+        "create:a:1",
+        "create:b:2",
+        "setup:2",
+        "setup:1"
+      ]
+    },
+    {
+      "name": "maintenance_blocks_turn_and_idle",
+      "value": {
+        "during": {
+          "same": false,
+          "other": true,
+          "cached": 1
+        },
+        "after": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "maintenance:1",
+        "maintenance_done:1:false"
+      ]
+    },
+    {
+      "name": "shutdown_during_creation",
+      "value": {
+        "during": {
+          "stopped": false,
+          "admitted": false,
+          "cached": 0
+        },
+        "error": "Session router shut down during session creation.",
+        "lateError": "Session router is shut down.",
+        "cached": 0,
+        "registry": 0
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "dispose:1"
+      ]
+    },
+    {
+      "name": "close_drains_before_recreate",
+      "value": {
+        "during": {
+          "done": false,
+          "cached": 0
+        },
+        "cached": 1
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "dispose:1",
+        "evict:a:closed",
+        "create:a:2",
+        "setup:2"
+      ]
+    },
+    {
+      "name": "idle_strict_boundary_and_turn",
+      "value": {
+        "boundary": 1,
+        "busy": 1,
+        "touched": 1,
+        "evicted": 0
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "dispose:1",
+        "evict:a:idle"
+      ]
+    },
+    {
+      "name": "setup_failure_keeps_old_writer",
+      "value": {
+        "error": "setup failed",
+        "oldCurrent": true,
+        "oldState": "active",
+        "cached": 1
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2",
+        "setup:2",
+        "dispose:2"
+      ]
+    },
+    {
+      "name": "factory_failure_keeps_old_writer",
+      "value": {
+        "error": "factory failed",
+        "oldCurrent": true,
+        "oldState": "active"
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2"
+      ]
+    },
+    {
+      "name": "tool_filters_cache_and_dirty",
+      "value": {
+        "retained": true,
+        "replaced": true,
+        "cached": 1
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2",
+        "setup:2",
+        "evict:a:dirty_recreate",
+        "dispose:1"
+      ]
+    },
+    {
+      "name": "close_failure_still_unpublishes",
+      "value": {
+        "error": "Failed to dispose agent handle.",
+        "state": "disposed",
+        "cached": 0,
+        "active": false
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "dispose:1",
+        "evict:a:closed"
+      ]
+    },
+    {
+      "name": "handle_dispose_drains_maintenance",
+      "value": {
+        "during": {
+          "done": false,
+          "state": "draining"
+        },
+        "cancelled": true,
+        "state": "disposed"
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "maintenance:1",
+        "dispose:1"
+      ]
+    },
+    {
+      "name": "live_abort_with_fence",
+      "value": {
+        "staleCancelled": false,
+        "during": {
+          "done": false,
+          "cancelled": true
+        },
+        "done": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2",
+        "setup:2",
+        "evict:a:dirty_recreate",
+        "dispose:1",
+        "abort:2:stop"
+      ]
+    },
+    {
+      "name": "shutdown_drains_all_handles",
+      "value": {
+        "during": {
+          "done": false,
+          "cached": 0,
+          "a": "draining",
+          "b": "draining"
+        },
+        "afterSecond": false,
+        "done": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:b:2",
+        "setup:2",
+        "dispose:1",
+        "dispose:2",
+        "evict:b:shutdown",
+        "evict:a:shutdown"
+      ]
+    },
+    {
+      "name": "project_close_during_creation_is_local",
+      "value": {
+        "blocked": "Project is being deleted.",
+        "during": 1,
+        "error": "Project is being deleted; the created session was discarded.",
+        "keys": [],
+        "cached": 2
+      },
+      "events": [
+        "create:a:1",
+        "create:b:2",
+        "setup:2",
+        "setup:1",
+        "dispose:1",
+        "create:a:3",
+        "setup:3"
+      ]
+    },
+    {
+      "name": "abort_failure_does_not_wait_for_completion",
+      "value": {
+        "error": "abort failed",
+        "cancelled": true,
+        "current": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "abort:1:stop"
+      ]
+    },
+    {
+      "name": "completion_owner_without_router_reservation",
+      "value": {
+        "during": {
+          "done": false,
+          "cancelled": true
+        },
+        "done": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "abort:1:stop"
+      ]
+    },
+    {
+      "name": "project_lease_identity",
+      "value": {
+        "before": {
+          "state": "retired",
+          "leases": 1,
+          "events": []
+        },
+        "after": {
+          "state": "disposed",
+          "leases": 0,
+          "events": [
+            "project_shutdown",
+            "project_dispose"
+          ]
+        }
+      },
+      "events": []
+    }
+  ]
+}

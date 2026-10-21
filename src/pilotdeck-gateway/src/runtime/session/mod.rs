@@ -1,10 +1,17 @@
-//! Volatile admission and completion primitives for the future live session
-//! owner. No transport routing or durable acceptance is enabled here.
+//! Live session ownership, volatile admission and completion coordination.
+//! Transport routing and durable acceptance are assembled by later packages.
 mod admission;
 mod completion;
+mod handle;
+mod owner;
 
 pub use admission::SessionAdmission;
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
+pub use handle::{HandleActivity, HandleState, LiveSession, LiveSessionHandle};
+pub use owner::{
+    EvictionReason, MaintenanceReservation, SessionContext, SessionFactory, SessionOwner,
+    SessionOwnerOptions,
+};
 
 use pilotdeck_protocol::JsString;
 use std::collections::HashMap;

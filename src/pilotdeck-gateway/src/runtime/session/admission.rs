@@ -1,12 +1,13 @@
 //! Volatile SessionRouter reservations, keyed only by sessionKey.
 use pilotdeck_protocol::JsString;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct State {
     shutdown: bool,
     turns: HashMap<JsString, JsString>,
+    identities: HashMap<JsString, Arc<()>>,
     maintenance: HashSet<JsString>,
 }
 
@@ -26,6 +27,7 @@ impl SessionAdmission {
             return false;
         }
         state.turns.insert(session_key.clone(), run_id.clone());
+        state.identities.insert(session_key.clone(), Arc::new(()));
         true
     }
 
@@ -43,6 +45,26 @@ impl SessionAdmission {
         let mut state = self.0.lock().unwrap();
         if run_id.is_none_or(|id| id.is_empty() || state.turns.get(session_key) == Some(id)) {
             state.turns.remove(session_key);
+            state.identities.remove(session_key);
+        }
+    }
+
+    pub(super) fn turn_identity(&self, key: &JsString) -> Option<Arc<()>> {
+        self.0.lock().unwrap().identities.get(key).cloned()
+    }
+
+    /// A close that started draining an old writer cannot release a later
+    /// reservation, even if the caller reused the same runId string.
+    pub(super) fn end_identity(&self, key: &JsString, identity: Option<&Arc<()>>) {
+        let mut state = self.0.lock().unwrap();
+        if identity.is_some_and(|identity| {
+            state
+                .identities
+                .get(key)
+                .is_some_and(|current| Arc::ptr_eq(current, identity))
+        }) {
+            state.turns.remove(key);
+            state.identities.remove(key);
         }
     }
 
@@ -60,12 +82,17 @@ impl SessionAdmission {
         self.0.lock().unwrap().maintenance.remove(session_key);
     }
 
+    pub fn has_maintenance(&self, session_key: &JsString) -> bool {
+        self.0.lock().unwrap().maintenance.contains(session_key)
+    }
+
     /// Stop new reservations and clear volatile state, as Router.shutdown does.
     /// Draining live handles is a separate owner lifecycle operation.
     pub fn shutdown(&self) {
         let mut state = self.0.lock().unwrap();
         state.shutdown = true;
         state.turns.clear();
+        state.identities.clear();
         state.maintenance.clear();
     }
 }
