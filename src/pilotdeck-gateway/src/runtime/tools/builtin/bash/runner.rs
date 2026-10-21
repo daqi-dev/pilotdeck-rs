@@ -507,7 +507,7 @@ const FORCE_RESOLVE_NOTE: &str =
 /// Node `setTimeout` delay coercion: outside `[1, 2^31 - 1]` (including NaN)
 /// the delay is 1 ms; fractional milliseconds are truncated.
 pub(crate) fn timer_delay(ms: f64) -> Duration {
-    Duration::from_millis(crate::runtime::async_hooks::timer_delay_ms(ms))
+    crate::runtime::network::node_timer_duration(ms)
 }
 
 fn elapsed_ms(started: Instant) -> f64 {
