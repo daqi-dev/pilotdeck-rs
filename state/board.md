@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | impl | ready | PR #407：修复轮 5 已交付（未提交，14 项负控全失败）；Grok r5 1/2/3 中 P0 与两条 P1 已被修复轮 5 覆盖，余下缺口（vendor/exclude 路径依赖、child 表头白名单、pre_exec 闭包内容）→ codex 修复轮 6 在跑（`_tmp/20261021-issue-386/fix6.md`）
+updated: 2026-10-21 18:40 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | review | ready | PR #407 @a061310：修复轮 5+6 已推送（守卫改为 cargo metadata 依赖闭包 + 白名单，14 项负控全失败，沙箱外 unsafe_boundary 1/0）；GLM r6、Grok r6、gate4 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr2 | impl | ready | PR #412 @8c3b166：GLM r3 0/0/0/2、Grok r3 0/0/0/1；gate2 两条 TS 平价核过不改码（idle 默认 30 min/60 s 同 TS；重建中丢 dirty 同 TS:144-166），负控装置独立 target 与变异补登 → codex 修复轮 3 在跑（`fix3.md`）
-- A6.5-pr9b | review | ready | PR #406 @7ea02c9：修复轮 3 已推送（250 层嵌套 code RSS 2355→68 MiB，真实 TS 金样沙箱外两次一致）；GLM r5、Grok r5、gate6 在跑
-- A6.4-pr9a | review | ready | PR #418 @3629cb3：修复轮 1 已推送（沙箱外 oracle 6601e84f… 两次一致、--http 两次一致，router_execute 7/0、HTTP 对拍 1/0）；GLM r2、Grok r2、gate2 在跑
+- A6.5-pr9b | impl | ready | PR #406 @7ea02c9：GLM r5 0/0/0/3，Grok r5 0/0/2/1；gate6 concurrency P0 实测成立（嵌套 h1 下划线指数增长：TS 在 V8 串上限抛可捕获 RangeError，Rust 无上限会分配失败 abort，`_tmp/20261021-a65-pr9b/h1-probe-ts.log`），boundary 超时 → codex 修复轮 4 在跑（`fix4.md`，按 V8 上限与 TS 平价）
+- A6.4-pr9a | impl | ready | PR #418 @3629cb3：gate2 全 PASS 0/0，Grok r2 0/0/1；P2（oracle 篡改负控、google unsupported-thinking 金样、NaN）当轮修 → codex 修复轮 2 在跑（`fix2.md`）；GLM r2 在跑
 - A7.1-pr3 | impl | ready | 连接 context / auth / binding：codex 首轮在跑（wt-a64-pr7 复用，分支 codex/a7-1-pr3，`_tmp/20261021-a7-1-pr3/task.md`）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
@@ -344,3 +344,5 @@ updated: 2026-10-21 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **18:05**：#407 gate3 又报一条 P0（expect 能压低 deny），派修复轮 5，把所有成员的 lint 继承都加上机检。#418 派修复轮 1。#412 Grok r3 已清零。#417 的 CI check 还在跑。
 
 > **18:30**：#417 已合入（d921c14，提交者为账号主邮箱，同前）。#406、#418 推新提交，各派确认评审和闸门。#407 修复轮 5 已交付，Grok r5 剩下的缺口派修复轮 6。#412 gate2 的两条按 TS 源码核过，属于平价不改码，其余 P2 当轮修。A7.1-pr3 开工，复用已合并的 wt-a64-pr7 树。已合并的 #391、#403 两棵树清了 target，`_build`+`_tmp` 从 99.6 降到 86.1 GiB。另发现：Grok 首条回复只是确认收到，结论要用 `--read` 取。
+
+> **18:40**：#406 gate6 报 P0：嵌套 h1 的下划线会让输出指数增长。实测 TS 在 V8 字符串上限抛出可捕获的 RangeError，Rust 没有这个上限会一直分配直到 abort，所以 P0 成立，派修复轮 4 按同一上限与 TS 平价。#407 修复轮 5+6 合并为一个提交推送，派第六轮评审。#418 gate2 全过，三条 P2 当轮修。#419（board）CI 在跑。
