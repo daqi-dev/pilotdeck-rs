@@ -99,6 +99,11 @@ scenarios.push({name:'disconnect-failure-stops-close',failDisconnect:true,steps:
   {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey:'s2'}}},
   {op:'close_error'}, {op:'close_error'}, {op:'finish'}]});
 scenarios.push({name:'request-after-close',steps:[message(hello()),{op:'close'},request('permission_decide',{sessionKey:'s',requestId:'after-close'}),request('submit_turn',{sessionKey:'new-after-close'}),{op:'close'}]});
+// TS GatewayWsConnection.ts:49-58 preserves Set insertion order, not lexical order.
+scenarios.push({name:'close-union-reverse-lexical-order',steps:[message(hello()),
+  request('reconnect_interaction',{sessionKey:'a'}),
+  {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey:'b'}}},
+  {op:'close'}, {op:'finish'}]});
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
   const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];

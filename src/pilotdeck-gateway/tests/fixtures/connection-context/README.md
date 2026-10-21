@@ -20,7 +20,7 @@ WS 的 Skill barrel 仅接入实际 SkillManager 模块；未用 imports 由 fai
 窄 gateway 仅记录参数、提供 describe/业务结果或真实错误类实例，并提供可释放的 submit/describe 等待闸门；reconnect/submit binding/disconnect 调用真实 coordinator/native binding provider。preserveTurn=true 来自真实 permission bus 的显式 pending 注册；不是手写 disconnect 判断。
 它不是 session owner/abort adapter 实现。
 
-30 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；17 个真实 provider 操作记录完整返回值/异常消息。
+31 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；17 个真实 provider 操作记录完整返回值/异常消息。
 覆盖 JSON、hello 缺字段/类型、协议先于 token、未知/空 clientName、认证后非法 frame、错误层级（含 validation/details）、SDK run/control、服务端 binding 覆盖、close preserveTurn 两分支和 close 的集合顺序。
 同 session 双 submit 用两个独立闸门保证先后入场、先释放第一个、再 close、最后释放第二个。TS 的 Set.add 去重，任一 finally 都按 session 无条件 delete；所以第一个完成后 close 不 abort。Rust 保留这一行为，不能按 ticket 延长在途状态。interactionSessions 同样按 session 去重，但 submit 完成不删除；场景中 SDK permission_decide 仍注入 run binding，close 仍 disconnect 一次。
 新增 permission_decide 的 null／缺失 params 场景：真实 dispatch 仍收到注入 binding 后的对象并成功，随后读取原 frame.params.sessionKey 抛错，返回 gateway_request_failed；null 与 undefined 的错误文案分别保留。空对象 params 成功且不发 permission_changed。null-params-as-object 负控把原始 null／缺失值改成对象，必须精确命中新场景 step 1。
@@ -48,3 +48,5 @@ submit 的直接抛错、先 completed 后抛错、无终态、permission_reques
 真实 TS disconnect 抛错会中止循环并保留集合；金样记录两次 close rejection 和后续 session 未处理，不擅自改为聚合错误。close 后消息和随后再次 close 也从真实文本适配器回调采集；本层无永久 closed 标记，实际 WS 适配器的投递可达性留 pr2 接线验证。
 receive 返回 future 必须由传输适配器保留并驱动至完成，不能放入会因 socket close 落败而丢弃的 select! 分支。调用 closed() 的同时继续驱动已有请求任务，按 TS Promise 生命周期等待完成。本层没有任务宿主，drop 会取消请求，只清理 in-flight；没有伪造 final/error。cancelled_receive_sends_no_invented_terminal 固定该取消边界，pr2 必须补真实 owner/任务 drain 验证。
 text_callbacks_can_synchronously_reenter_connection 在 sink 回调中先 try_lock 以失败代替挂死，再真实同步进入 receive/closed；覆盖通知、hello、事件和全部 close 错误分支。
+
+`close-union-reverse-lexical-order` 先 reconnect a、再挂起 submit b。真实 TS 在 close 前为 inFlight=[b]、interactions=[a,b]（submit 同时登记两个 Set，GatewayWsConnection.ts:124-127）；close 的 Set 并集按插入序得到 [b,a]（:49-58），记录 disconnect b → abort b → disconnect a。该逆字典序场景与 `sessions_preserve_in_flight_then_interaction_insertion_order` 单测共同防止把 sessions() 改成排序；单测另覆盖 inFlight=[b]、interactions=[a] 的直接输入。

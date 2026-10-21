@@ -211,7 +211,7 @@ async fn replay() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 10);
-    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 30);
+    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 31);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     for (index, scenario) in oracle["scenarios"].as_array().unwrap().iter().enumerate() {
@@ -548,4 +548,17 @@ fn session_sets_use_js_scalar_equality_and_object_identity() {
     assert_eq!(session_values(&state.in_flight), [json!(5), json!(true)]);
     assert_eq!(state.interactions.len(), 2);
     assert_eq!(state.sessions().len(), 4);
+}
+
+#[test]
+fn sessions_preserve_in_flight_then_interaction_insertion_order() {
+    // TS GatewayWsConnection.ts:49-58 unions the Sets in this order before close.
+    let mut state = State::default();
+    let b = SessionKey::new(json!("b"));
+    state.track_in_flight(&b);
+    state.track_interaction(&SessionKey::new(json!("a")));
+    assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
+    // Real submit also puts b in interactions (TS:126-127); union deduplicates it.
+    state.track_interaction(&b);
+    assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
 }
