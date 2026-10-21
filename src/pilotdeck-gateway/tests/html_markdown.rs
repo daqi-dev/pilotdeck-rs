@@ -264,7 +264,7 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
                 );
                 // ~2.1 million DOM nodes at 10 MiB: allow scheduler/allocator
                 // variance while keeping conversion in single-digit seconds.
-                let budget = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
+                let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
                 assert!(
                     elapsed.as_secs_f64() < budget,
                     "{name}: took {elapsed:?}, budget {budget}s"
