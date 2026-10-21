@@ -1,15 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 02:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #438 | impl | ready | output_schema.rs:1455 debug_assert_eq! 内 bump()，release 量词解析失败（4 条 MCP 测试 release 红）；P1，待派实现方
-- A6.5-pr9b | gate | doing | PR #406 @8f1a4fc1 修复轮 8 已推（第三条已知未对齐披露 + FROZEN 重登记 + 不写缓存断言）；沙箱外全量在跑 `_tmp/20261022-a65-pr9b-verify8`，之后 --serial 重跑闸门
-- #401 | review | doing | PR #429 @4e13bbb1：dsh r1 P2a 当轮修；GLM r1 在跑；head 变，闸门需重跑
-- #390 | review | doing | PR #430 已入 merge queue（两家非作者 0 P0/P1）；同类遗漏开 #437
-- #423 | gate | doing | PR #433 gate1 PASS 但 P2×2（retryable_message 无金样、tamper 负控缺）待处理后贴块
-- #410 | gate | doing | PR #434 闸门 --serial 在跑（gate-chain-0216）
-- A7.1-pr3 | gate | doing | PR #421 闸门 --serial 在跑（gate-chain-0216）
-- #386 | gate | doing | PR #407 闸门 --serial 在跑（gate-chain-0216）；router_execute SIGKILL 见 memory「macos-exec-sigkill」
+updated: 2026-10-22 03:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #443 | impl | ready | output_schema.rs:1428 lookbehind 后不完整量词报 Invalid quantifier、TS 为 Incomplete quantifier；P1，待派（可复用 wt-a66-pr3，#441 合入后）
+- #438 | gate | doing | PR #441 两家非作者范围内 0 P0/P1；等 --serial 闸门块（gate-chain-0216）后 ready 入队
+- A6.5-pr9b | gate | doing | PR #406 @8f1a4fc1 沙箱外全量 1062/0；--serial 闸门排队
+- #401 | gate | doing | PR #429 @4e13bbb1 两家非作者 0 P0/P1；新 head 闸门排队；P2c 开 #440
+- #423 | gate | doing | PR #433 @4b23fdb3 修复轮 1（HTTP 篡改负控）已推；闸门排队；P2-1 开 #442
+- #410 | impl | doing | PR #434 闸门 0/0 已贴；codex 修复轮 1（dsh P2a provider_exchange before_abort）在跑
+- A7.1-pr3 | gate | doing | PR #421 --serial 闸门在跑
+- #386 | gate | doing | PR #407 --serial 闸门排队；router_execute SIGKILL 见 memory「macos-exec-sigkill」
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -473,3 +473,26 @@ updated: 2026-10-22 02:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **#406** 修复轮 8 提交推送（8f1a4fc1，署名 Codex）；codex 顺带发现 release 下 MCP output_schema 4 条红，根因 `debug_assert_eq!(self.bump(), …)`，开 #438 进 READY。
 > **memory**：macOS exec SIGKILL（#407 router_execute 第三次）落规则。
 > **下一步**：GLM r4 收敛合 #432；0216 链出块贴 #434/#421/#407 派评审；#406 全量 + 闸门；派 #438；#433 P2 处理；wt-a67-pr2 回收仍待人批。
+
+> ## 2026-10-22 02:40 · /loop 协调轮
+> **#430 合入**（3b0019a3）；提交者邮箱为账号主邮箱 zhengdaqi@gmail.com（非 noreply，memory「merge-email-exposure」，需人在 GitHub 设置勾 Keep email private）。
+> **#432**：GLM r4 与 codex r4 独立撞上同一 P2（serial 失败路径无用例），216ff93e 已补；两家 0 P0/P1。补 no-issue 标记；--serial 闸门块在 gate-chain-0216 排队，出块即入队。
+> **#429**：GLM r1 0/0/P2×2（hooks/router 超时同类，P2c）→ 开 #440；新 head 闸门在 0216 链排队。
+> **#438 → PR #441**（Claude 实现）：bump() 移出 debug_assert_eq!；release 21/0，反向补丁 17/4，debug 21/0。GLM+codex r1 在跑，闸门在 0216 链排队。复用 wt-a66-pr3（_build+_tmp 99.55 GiB，未开新树）。
+> **#433**：gate1 sibling P2-2（HTTP 金样家族无篡改负控，按 P2b 当 P1）派 DeepSeek 修复轮 1（`_tmp/20261022-issue-423/fix1.md`）；P2-1 开 #442。
+> **#439**（board）入 merge queue。#406 沙箱外全量在跑。
+> **下一步**：0216 链出块依次贴 #434/#421/#407/#432/#429/#441 并派评审或入队；#433 修复轮 1 回来后审；#406 全量完 → --serial 闸门。磁盘逼近 100 GiB，下轮先查可清的 target。
+>
+> ## 2026-10-22 02:50 · /loop 协调轮
+> **#434**：--serial 闸门四角色 PASS 0/0（head f46a1c79，新机制第一份真实产物）贴正文、转 ready，派 GLM + DeepSeek r1（`_tmp/20261022-issue-410/review-r1.md`）。
+> **#406**：修复轮 8 沙箱外全量 1062/0 贴 PR；--serial 闸门排进 0216 链。
+> **#441**：codex r1 对本修复 0 新增缺陷；另报既有 P1（lookbehind 后不完整量词错误文本与 TS 不一致，main 已存在）→ 开 #443 进 READY，不挡 #441。codex 未独立复跑 release，GLM r1 在跑。
+> **memory**：zsh 未加引号 `===` 截断命令（本会话第 4 次）落规则 `state/memory/20261022-zsh-equals-echo.md`（未提交，随下一 board PR）。
+> **下一步**：0216 链继续出块（#421→#407→#432→#429→#441→#406）；#434 评审收敛入队；#433 修复轮 1；#439 在队列。
+>
+> ## 2026-10-22 03:00 · /loop 协调轮
+> **#439 合入**（66d5c5f5，提交者邮箱同为账号主邮箱，见 02:40 段）。
+> **#433**：DeepSeek 修复轮 1 提交推送（4b23fdb3）：HTTP 金样家族 Result 化 + 篡改负控；外部负控（自己比自己）下新负控失败；协调者复跑 router_execute 12/0/2 ignored。worker 无法写主仓 `_tmp`，结果从树内移回 `_tmp/20261022-issue-423/RESULT.md`。闸门排进 --serial 链。
+> **#434**：GLM r1 0/0/P2（abort 探针证据未入库）、DeepSeek r1 0/0/P2（provider_exchange Err 支路丢 before_abort，~15 分钟 P2a）→ 派 codex 修复轮 1（`_tmp/20261022-issue-410/fix1.md`）。
+> **#441**：GLM r1 0/0/0/1、codex r1 范围内 0 新增缺陷（既有 P1 拆 #443）→ 等闸门块后入队。
+> **下一步**：0216 链出块（在跑 #421 → #407 → #432 → #429 → #441 → #406 → #433）；#434 修复轮 1；#443 待派。
