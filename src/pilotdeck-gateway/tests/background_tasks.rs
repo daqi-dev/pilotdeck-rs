@@ -8,6 +8,8 @@
 #![allow(clippy::result_large_err)]
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/child_signals.rs"]
+mod child_signals;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -633,6 +635,30 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
 /// Sequences that depend on the macOS `/bin/bash` 3.2 diagnostic text; every
 /// other sequence replays on every Unix.
 const DARWIN_ONLY: [&str; 1] = ["non-string-command"];
+
+#[test]
+fn exit_statuses_with_inherited_ignored_and_blocked_signals() {
+    child_signals::ChildSignalProbe::new().launch("inherited_exit_statuses_worker", false);
+}
+
+#[test]
+#[ignore = "isolated worker launched with inherited SIGINT ignored and SIGTERM blocked"]
+fn inherited_exit_statuses_worker() {
+    assert!(
+        std::process::Command::new(child_signals::probe_path())
+            .arg("inherited")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let sequence = section("sequences", 11)
+        .iter()
+        .find(|sequence| text(field(sequence, "name")) == "exit-statuses")
+        .expect("the complete TS exit-statuses sequence");
+    let scratch = scratch::Scratch::new("background-inherited-signals");
+    let root = fs::canonicalize(scratch.path()).unwrap();
+    runtime().block_on(run_sequence(sequence, &root));
+}
 
 #[test]
 fn sequences_replay() {

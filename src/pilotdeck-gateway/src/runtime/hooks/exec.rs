@@ -604,6 +604,7 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     }
     #[cfg(unix)]
     command.process_group(0);
+    crate::process_spawn::install_child_signal_reset(command.as_std_mut());
     let mut child = command
         .spawn()
         .map_err(|error| spawn_error(&shell, &error))?;

@@ -5,8 +5,7 @@
 //! name, owner token, drop refuses a replaced path). No fixed temporary path
 //! is read or removed.
 
-#[path = "../../../tests/common/scratch.rs"]
-mod scratch;
+use crate::test_scratch as scratch;
 
 use super::*;
 use crate::{
