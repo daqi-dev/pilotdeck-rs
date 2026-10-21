@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 19:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | review | ready | PR #407 @5bae7b9：修复轮 7+7b 已推送（构建配置改为白名单，冻结 toolchain 与 transport/build.rs 按哈希比对，41 项负控全失败，沙箱外守卫 1/0）；GLM r7、gate5 在跑，Grok r7 待发
+updated: 2026-10-21 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | impl | ready | PR #407 @5bae7b9：gate5 boundary P1（cargo 从 cwd 向上找配置，`_build/.cargo` 被名字跳过 + 扫描根止于 worktree）+ sibling P1（source_identity 合同漏新 path 依赖）+ P2×2 → codex 修复轮 8 在跑（`fix8.md`）；GLM r7 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4 0/0/0/1、Grok r4 0/0/0/1；gate3 sibling P2 当轮修（Claude 一行），concurrency P2 拆 #422（前置 A7.2 接 adapter），boundary 超时 → gate4（timeout 1500）在跑
-- A6.5-pr9b | review | ready | PR #406 @78c6b11：修复轮 4 已推送（V8 串上限预算，与 TS 同错误，n=33 峰值 6.5 MiB；沙箱外 html_markdown 11/1，唯一失败是既有 #[ignore] pr9c 差异）；GLM r6、gate7 在跑，Grok r6 待发
-- A6.4-pr9a | review | ready | PR #418 @eaeb63a：gate3 全 PASS 0/0，GLM r3 0/0/1；P2 拆 #423（前置 A6.4 收尾）；Grok r3 断连后重发，收到 0/0 即贴结果块入队
-- A7.1-pr3 | review | ready | PR #421（draft）@57800f1：首轮交付，沙箱外两次生成 b1ffcb7b… 一致，connection 6/0，12 项负控全抓；GLM r1、gate1 在跑，Grok r1 待发
+- A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4、Grok r4 均 0/0/0/1，gate4 全 PASS 0/0 → 结果块入正文，Ready，**已入合并队列**；剩余 P2 #422、#424
+- A6.5-pr9b | impl | ready | PR #406 @78c6b11：gate7 sibling P1（DEPTH-001「≤256 逐字节一致」与两条 pr9c 解析器差异矛盾）+ boundary P2（V8 上限交叉点未钉金样，按 P1）→ codex 修复轮 5 在跑（`fix5.md`，账本收窄表述 + 追加「已知未对齐，未批准」披露段，重登记 FROZEN）；concurrency P2 归 #409；GLM r6 在跑
+- A6.4-pr9a | review | ready | PR #418 @eaeb63a：GLM r3 0/0/1、Grok r3 0/0、gate3 全 PASS → 结果块入 PR 正文，Ready，**已入合并队列**；剩余 P2 #423
+- A7.1-pr3 | impl | ready | PR #421（draft）@57800f1：gate1 全 PASS 0/0；concurrency P2（同 session 并发 submit 时在途集合粒度与 TS 不同，影响对拍，按 P1）+ sibling P2×3 → codex 修复轮 1 在跑（`fix1.md`）；GLM r1 输出为空（通道问题），待修复轮后重跑
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -354,3 +354,5 @@ updated: 2026-10-21 19:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **19:12**：#407 修复轮 7 发现决策卡写错：仓库里其实有冻结的 rust-toolchain.toml 和 transport/build.rs。卡已更正，两份改为只许原文件、按哈希比对，派修复轮 7b。Grok 通道有两次断连，#412 r4 已重发，#418 r3 结论暂定，下轮重发。
 
 > **19:30**：#406 修复轮 4、#407 修复轮 7+7b、A7.1-pr3 首轮都已交付，在沙箱外复核后提交推送；A7.1-pr3 开了 draft PR #421。各线派新一轮 GLM 评审和闸门。Grok 会话不稳，改为一次只发一单。#412、#418 剩下的 P2 拆成 #422、#423。#420（board）在合并队列，本段等它合入后再提交。
+
+> **19:50**：#420 已合入。#418（pr9a）、#412（A7.1-pr2）两家评审加闸门都已收敛，结果块写进 PR 正文后入合并队列；pr-gate 只读正文，不读评论，先贴评论那次是假失败。#407 gate5、#406 gate7、#421 gate1 各有 P1 或影响对拍的 P2，分别派修复轮 8、5、1。新开 #424。磁盘：清掉五棵活跃树的 incremental 缓存，98.5 降到 83.6 GiB。
