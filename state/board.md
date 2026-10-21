@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 12:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8 接替 7e)
-- A6.5-pr9 | review | ready | PR #398 head 7fcc773；r9 三家独立撞同一 P1（两条「恰好边界」用例到不了边界代码），已修：改 raw 100000/100001、418 500/501，五处差一变异全抓住；GLM r10 + Grok r10 + gate9（增量）在跑；两家 0/0、gate 块绑新 head、CI 绿即入队
-- A6.5-pr10b | review | ready | 修复轮 8 已提交 adf1c8a（codex，未推送）：正则风险类 weight×UTF-16 长度 > 65536 走同一 -32602 错误（向严），oracle 598→670，22/22 负控；沙箱外全量测试在跑，过后推送、派 GLM/Grok r9 与全量 gate（PR 尚无 gate 块）
-- #396 | impl | ready | 并 #400 第 1–3 条；codex 在 wt-a64-pr7（codex/a64-exchange，叠在 pr9 上），`_tmp/20261021-issue-396/task.status`
+updated: 2026-10-21 12:35 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr9 | review | ready | PR #398 head 903e837；r10 Grok 0/0、GLM 0/0/1、gate9 0/0/2；收敛后 P2 一批（5 条边界用例，五处变异全抓住）已推送；确认轮 r11（GLM+Grok）+ gate10 在跑，确认轮新 P2 走 #400，无 P0/P1 且 CI 绿即入队
+- A6.5-pr10b | impl | human | PR #391 head adf1c8a（沙箱外 1638/0，gate8 0/0/1）；Grok r9 又一条 P1（`.*`/取反类在混排文本上溢出、端口漏判），栈溢出模型第五次出问题，按「同一处 3 次不过」挂起；决策卡建议 A（无界重复一律权重≥1、阈值 1,048,576），人定后派 codex
+- #396 | review | ready | PR #403（draft，叠在 #398 上）head 64dd92c；沙箱外 1654/0/40（绝对路径重跑，含自身新测试）；GLM r1 + Grok r1 在跑
 - #386 | impl | human | codex 实测后停在选型：零 unsafe、零新依赖做不到；决策卡「#386 子进程信号处置重置的实现边界」待人批（建议 C：极小 unsafe 边界）
-- #401 | impl | ready | pr10b gate7 剩余 P2（concurrency×1、sibling×1）；等 pr10b 修复轮 8 回来再排
+- #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等 pr9 合入后 rebase 再评审
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
@@ -19,6 +19,12 @@ updated: 2026-10-21 12:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 12:35 · /loop
+> **pr9**：r10 Grok 0/0、GLM 0/0/1、gate9 0/0/2，P1 已清。收敛后的 P2 只修一批：协调者补 5 条边界用例（search 详情 500/501、serpapi 脱敏后 500/501、bodyPreview 497 切点代理对），真实 TS 生成两次逐字节一致，五处差一变异全抓住（`_tmp/20261021-pr9-ci/mutate2.out`），推送 903e837；确认轮 r11 + gate10 在跑。
+> **#396**：codex 交付；第一次「沙箱外全量」日志其实跑的是 pr10b 的树（两份日志通过测试名单完全相同，含 pr10b 新测试、缺 #396 新测试），改用绝对路径重跑：1654/0/40，自身测试在、对方测试不在。开 draft PR #403（叠在 #398 上），派 GLM + Grok r1。
+> **pr10b**：沙箱外 1638/0 后推送 adf1c8a；gate8 全量 0/0/1。Grok r9 又一条 P1（混排文本 + `.*` 漏判），栈溢出模型第五次出问题，按 CLAUDE.md 挂起转人定，决策卡见 decisions-20261021。
+> **待人批**：#386（unsafe 边界）、pr10b 阈值方案。
 
 > ## 2026-10-21 12:15 · /loop
 > **pr9**：r9 的 GLM、Grok 和 gate8 boundary 三家独立撞上同一条 P1：9689d2b 加的两条「恰好 500 / 100000」用例走的是 default 无模型分支，到不了边界代码（Grok 实测五处差一变异全部漏网）。协调者改成 raw 100000/100001 单元和 418 正文 500/501 单元，用真实 TS 生成两次逐字节一致，五处变异各自 40/1（`_tmp/20261021-pr9-ci/mutate.out`），推送 7fcc773，派 r10 与 gate9。
