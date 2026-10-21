@@ -36,11 +36,14 @@ pub(crate) struct Node {
     pub last: Option<Id>,
     pub prev: Option<Id>,
     pub next: Option<Id>,
+    template_host: Option<Id>,
+    depth: usize,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Dom {
     pub nodes: Vec<Node>,
+    exceeded: bool,
 }
 
 pub(crate) const DOCUMENT: Id = 0;
@@ -54,8 +57,37 @@ impl Dom {
             last: None,
             prev: None,
             next: None,
+            template_host: None,
+            depth: 0,
         });
+        self.exceeded |= self.nodes.len() > MAX_DOM_NODES;
         self.nodes.len() - 1
+    }
+
+    fn check_depth(&mut self, id: Id) {
+        let parent_depth = self.nodes[id]
+            .parent
+            .or(self.nodes[id].template_host)
+            .map_or(0, |parent| self.nodes[parent].depth);
+        let mut work = vec![(id, parent_depth)];
+        while let Some((id, parent_depth)) = work.pop() {
+            let depth = parent_depth + usize::from(self.is_element(id));
+            self.nodes[id].depth = depth;
+            if depth > MAX_DOM_DEPTH {
+                self.exceeded = true;
+                return;
+            }
+            // Fresh nodes take O(1). If tree building moves an existing subtree,
+            // update its descendants, including detached template contents.
+            work.extend(self.children(id).into_iter().map(|child| (child, depth)));
+            if let Kind::Element {
+                template: Some(fragment),
+                ..
+            } = self.nodes[id].kind
+            {
+                work.push((fragment, depth));
+            }
+        }
     }
 
     pub(crate) fn detach(&mut self, id: Id) {
@@ -90,6 +122,7 @@ impl Dom {
             None => self.nodes[parent].first = Some(child),
         }
         self.nodes[parent].last = Some(child);
+        self.check_depth(child);
     }
 
     fn insert_before(&mut self, sibling: Id, child: Id) {
@@ -104,6 +137,7 @@ impl Dom {
             Some(prev) => self.nodes[prev].next = Some(child),
             None => self.nodes[parent].first = Some(child),
         }
+        self.check_depth(child);
     }
 
     fn text_mut(&mut self, id: Option<Id>) -> Option<&mut String> {
@@ -284,12 +318,16 @@ impl TreeSink for Sink {
                 (key, a.value.to_string())
             })
             .collect();
-        self.create(Kind::Element {
+        let id = self.create(Kind::Element {
             name,
             attrs,
             template,
             mathml_html: flags.mathml_annotation_xml_integration_point,
-        })
+        });
+        if let Some(fragment) = template {
+            self.dom.borrow_mut().nodes[fragment].template_host = Some(id);
+        }
+        id
     }
     fn is_mathml_annotation_xml_integration_point(&self, target: &Id) -> bool {
         matches!(
@@ -388,9 +426,38 @@ impl TreeSink for Sink {
     }
 }
 
-/// `domino.createDocument(html)`.
-pub(crate) fn parse_document(html: &str) -> Dom {
+/// Includes parser-created HTML/BODY and the Turndown wrapper. The measured
+/// minimum TS overflow is around 1050 element ancestors (Node 22 default
+/// stack); 256 leaves a wide margin across tags and cold/warm call paths.
+pub const MAX_DOM_DEPTH: usize = 256;
+/// Counts all allocated nodes, including detached/template/parser nodes.
+pub const MAX_DOM_NODES: usize = 100_000;
+pub const DOM_LIMIT_ERROR: &str = "Maximum call stack size exceeded";
+
+/// `domino.createDocument(html)`, with a conservative resource budget.
+/// Stop feeding before an attacker can build a huge open-elements stack.
+/// Checking only the completed DOM would leave html5ever's own superlinear
+/// deep-tree work unbounded. A chunk adds at most 1024 source bytes of work.
+pub(crate) fn parse_document(html: &str) -> Result<Dom, String> {
     let mut options = ParseOpts::default();
     options.tree_builder.scripting_enabled = false;
-    html5ever::parse_document(Sink::new(), options).one(html)
+    let mut parser = html5ever::parse_document(Sink::new(), options);
+    let mut start = 0;
+    while start < html.len() {
+        let mut end = (start + 1024).min(html.len());
+        while !html.is_char_boundary(end) {
+            end -= 1;
+        }
+        parser.process(StrTendril::from_slice(&html[start..end]));
+        if parser.tokenizer.sink.sink.dom.borrow().exceeded {
+            return Err(DOM_LIMIT_ERROR.into());
+        }
+        start = end;
+    }
+    let dom = parser.finish();
+    if dom.exceeded {
+        Err(DOM_LIMIT_ERROR.into())
+    } else {
+        Ok(dom)
+    }
 }

@@ -35,16 +35,15 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 ```
 
 回放先调用 `baseline::oracle(ORACLE)`，精确断言 108 条，按顺序逐字节比较。另测
-10,000 层 span 在 256 KiB 栈上的转换与析构。web_fetch 测试注入 HTTP transport，
+预算边界（含隐式 HTML/BODY/包装元素的 256 层）span 在 256 KiB 栈上的转换与析构。web_fetch 测试注入 HTTP transport，
 逐字节比较请求字段、完整工具输出、UTF-8 bytes、UTF-16 length 与缓存命中结果。
 
-## 本轮证据边界
+## 生成证据的接续
 
-2026-10-21 接续任务禁止任何 Git 命令。因此正式生成器的 clean-tree 守卫本轮**未执行**。
-现有 oracle 来自两次独立进程的真实 TS 录制；每次先核对 web-tools 已有 oracle 中
-650 个源码 SHA256，输出逐字节一致。此措施复用了既有锚点，不能替代一次新的整个源码树
-干净断言。协调者提交前须跑上面的正式生成测试。原始证据和源码变异负控见
-`_tmp/20261020-a65-pr9b/RESULT.md`。
+原实现轮禁止 Git 命令，当时复用 web-tools 的 650 个源码 SHA256 录制，未执行
+整个源码树的 clean-tree 守卫。修复轮 1 已允许只读 Git：两套正式生成器都完成
+固定提交溯源并各跑两次，与现有金样逐字节一致；原始输出见
+`_tmp/20261020-a65-pr9b/RESULT.md` 的「修复轮 1（codex）」。
 
 ## pr9c 待办：解析器版本差异
 
@@ -57,3 +56,30 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 
 不能仅靠输出后处理普遍修复树构建差异。后续需在 token/tree-building 边界有针对性对齐，
 补正负样本，再启用此测试；在此之前不宣称 HTML 解析已与 domino 完全等价。
+
+
+## 修复轮 1：资源预算与性能回归
+
+`html_dom.rs` 在每 1024 source bytes 后检查预算：最多 256 层元素祖先
+（包括 HTML/BODY/Turndown 包装元素）、100,000 个累计分配节点（包括文档、
+隐式元素、文本、注释、脱离节点与 template fragment）。重挂子树和 template
+内容同步更新深度。超出任一预算返回真实 TS 栈溢出的 message，经 web_fetch
+映射为 `tool_execution_failed`、`web_fetch failed: Maximum call stack size exceeded`、
+`details: { stage: "http_fetch" }`。
+
+此为**向严差异，待批**，不是已批准差异：TS 在部分超出预算的输入仍成功。
+完整断点、区间与取消探针原值追加在 `_tmp/20261020-a65-pr9b/RESULT.md`。
+`depth-oracle.json` 记录七种结构的 255/256/257 层真实 TS 成功输出、
+七种实际溢出时的完整工具错误，以及按评审列举的覆盖面另建的 40 条形状。
+未取得 Grok 原 40 条输入，不把这 40 条冒充为它们的原样回放。
+
+`generate-depth.mts` 同样先跑固定提交的只读 Git 溯源守卫，再走真实 TS 入口。
+`regenerates_twice_identically` 现在分别运行两套生成器两次，逐字节匹配已提交金样。
+
+性能回归在深度预算内构造 126 层 ul/li、126 层长序号 ol/li（各 9 万 BR），
+再转换 10 MiB 平坦 HTML；release 的总预算 1 秒，debug 放宽为 20 秒。
+列表缩进以 arena rope 延迟到最终输出，避免祖先反复扫描扩张后的字符串。
+转换经 `spawn_blocking`；current-thread Tokio 回归验证转换期间仍能调度定时器，
+父取消保持 TS raw 成功顺序，外层 timeout 能放弃等待。正在执行的 blocking
+闭包不能被强杀，结束时间由默认转换器预算控制；TS 的 60 秒 fetch 定时器
+在响应头到达后已清除，不额外发明转换阶段的 fetch timeout。
