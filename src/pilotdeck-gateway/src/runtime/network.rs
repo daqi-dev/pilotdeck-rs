@@ -1,6 +1,97 @@
 //! Node timer normalization and fetch event ordering shared by web, MCP and providers.
 use std::{future::Future, pin::Pin, task::Poll, time::Duration};
-use tokio::time::Instant;
+use tokio::{sync::watch, time::Instant};
+
+/// Long transport timeout installed by TS `cli/proxy.ts` globally.
+pub const UNDICI_BODY_TIMEOUT: Duration = Duration::from_millis(600_000);
+pub const UNDICI_BODY_TIMEOUT_MS: f64 = UNDICI_BODY_TIMEOUT.as_millis() as f64;
+
+/// Store this host-owned signal in ToolRuntimeContext.abort_signal. No timers
+/// or polling tasks are needed; watch retains cancellation before subscription.
+#[derive(Clone, Debug)]
+pub struct Cancellation(watch::Sender<Option<AbortEvent>>);
+
+#[derive(Clone, Copy, Debug)]
+struct AbortEvent {
+    at: Instant,
+    synchronous: bool,
+}
+
+impl Default for Cancellation {
+    fn default() -> Self {
+        Self(watch::channel(None).0)
+    }
+}
+impl Cancellation {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// JS `AbortController.abort()` in the current call stack.
+    pub fn abort(&self) {
+        self.cancel_synchronously();
+    }
+    pub fn is_aborted(&self) -> bool {
+        self.is_cancelled()
+    }
+
+    /// Record the first cancellation at the runtime clock's current instant.
+    /// Consumers can retain earlier events even if they are polled late.
+    pub fn cancel(&self) {
+        self.cancel_at(Instant::now());
+    }
+    /// Deliver a timer/event cancellation with its original occurrence time.
+    /// The event must already have occurred; this does not schedule a task.
+    /// At equal deadlines, web exchanges dispatch their already registered
+    /// response/timeout timers before this subsequently delivered event.
+    pub fn cancel_at(&self, at: Instant) {
+        assert!(
+            at <= Instant::now(),
+            "cancellation event is still in the future"
+        );
+        self.deliver(AbortEvent {
+            at,
+            synchronous: false,
+        });
+    }
+    /// JS `controller.abort()` in the current call stack, before control is
+    /// returned to the event loop. Unlike a later timer callback, this has
+    /// already fired even when earlier timers are overdue but undispatched.
+    pub fn cancel_synchronously(&self) {
+        self.deliver(AbortEvent {
+            at: Instant::now(),
+            synchronous: true,
+        });
+    }
+    fn deliver(&self, event: AbortEvent) {
+        self.0.send_if_modified(|current| {
+            if current.is_some() {
+                return false;
+            }
+            *current = Some(event);
+            true
+        });
+    }
+    pub fn cancelled_at(&self) -> Option<Instant> {
+        self.0.borrow().map(|event| event.at)
+    }
+    pub(crate) fn abort_event_at(&self) -> Option<Instant> {
+        self.0
+            .borrow()
+            .filter(|event| !event.synchronous)
+            .map(|event| event.at)
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+    pub async fn cancelled(&self) {
+        let mut receiver = self.0.subscribe();
+        while receiver.borrow_and_update().is_none() {
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
 
 /// The delay Node's `setTimeout` actually arms for a requested millisecond
 /// value: values inside `[1, 2^31-1]` are truncated to integer milliseconds;
@@ -36,6 +127,7 @@ pub struct ExchangeFuture<T> {
     future: Pin<Box<dyn Future<Output = T> + Send>>,
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
     microtask: bool,
+    continuation_before_abort: bool,
 }
 
 impl<T: Send + 'static> ExchangeFuture<T> {
@@ -45,6 +137,7 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(future),
             timer: None,
             microtask: false,
+            continuation_before_abort: false,
         }
     }
 
@@ -60,6 +153,7 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(future),
             timer: None,
             microtask: true,
+            continuation_before_abort: false,
         }
     }
 
@@ -70,7 +164,16 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(std::future::ready(result)),
             timer: Some(Box::pin(tokio::time::sleep(delay))),
             microtask: false,
+            continuation_before_abort: false,
         }
+    }
+
+    /// Continue an earlier winning event's queued work before a later abort.
+    /// Unlike a fulfilled promise, this gets just one poll: if that work needs
+    /// more I/O or a timer, it must observe cancellation normally.
+    pub(crate) fn continuing(mut self, before_abort: bool) -> Self {
+        self.continuation_before_abort = before_abort;
+        self
     }
 
     pub fn scheduled_at(&self) -> Option<tokio::time::Instant> {
@@ -165,6 +268,14 @@ pub(crate) async fn exchange<T: Send + 'static>(
         // undispatched socket/timer: those still lose to synchronous abort.
         if send.is_microtask() {
             let result = std::task::ready!(Pin::new(&mut send).poll(cx));
+            return Poll::Ready(Exchange::Response(
+                result,
+                abort.as_mut().poll(cx).is_ready(),
+            ));
+        }
+        if std::mem::take(&mut send.continuation_before_abort)
+            && let Poll::Ready(result) = Pin::new(&mut send).poll(cx)
+        {
             return Poll::Ready(Exchange::Response(
                 result,
                 abort.as_mut().poll(cx).is_ready(),

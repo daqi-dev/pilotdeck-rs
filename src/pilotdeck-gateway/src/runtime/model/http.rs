@@ -378,7 +378,7 @@ impl Default for StreamOptions {
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = 600_000.0;
 /// `UNDICI_TRANSPORT_TIMEOUT_MS` (`cli/proxy.ts`, = LITELLM_COMPLETION_HTTP_FALLBACK_MS).
-pub const UNDICI_BODY_TIMEOUT_MS: f64 = 600_000.0;
+pub use crate::runtime::network::UNDICI_BODY_TIMEOUT_MS;
 const REPEATED_CHUNK_LIMIT: f64 = 100.0;
 
 fn retry_number(provider: &JsValue, key: &str) -> Option<f64> {
@@ -441,11 +441,20 @@ fn throw_if_aborted(options: &StreamOptions) -> Result<(), ModelStreamError> {
     }
 }
 /// `delay(ms, signal)`.
-async fn delay(ms: f64, options: &StreamOptions) -> Result<(), ModelStreamError> {
-    throw_if_aborted(options)?;
-    tokio::select! {
-        _ = tokio::time::sleep(duration(ms)) => Ok(()),
-        _ = wait_abort(&options.abort) => Err(ModelStreamError::abort()),
+async fn delay(ms: f64, options: &StreamOptions) -> Result<bool, ModelStreamError> {
+    use crate::runtime::network::{Exchange, delay};
+    match delay(
+        duration(ms),
+        wait_abort(&options.abort),
+        || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
+        None,
+        false,
+    )
+    .await
+    {
+        Exchange::Response((), before_abort) => Ok(before_abort),
+        Exchange::Aborted => Err(ModelStreamError::abort()),
+        Exchange::Timeout => unreachable!("provider retry waits have no surrounding deadline"),
     }
 }
 
@@ -771,45 +780,56 @@ async fn send_provider_request(
             None,
         ))
     };
-    let exchange = async {
-        let mut last = None;
-        for endpoint in &endpoints {
-            let (url, header_map) = build_http_request(endpoint, &headers)?;
-            // undici `redirect: "follow"` (shared with hooks and count).
-            let response = crate::fetch_redirect::follow(
-                url,
-                hyper::Method::POST,
-                header_map,
-                encoded.clone(),
-                || NetworkFetchError::classify("fetch failed", None),
-                |request| async move {
-                    transport.send(request).await.map_err(|failure| {
-                        NetworkFetchError::classify(&failure.message, failure.cause_code)
-                    })
-                },
-            )
-            .await?;
-            let status = response.status().as_u16();
-            let ok = (200..300).contains(&status);
-            if !ok && count != 1 && matches!(status, 400 | 404 | 405) {
-                last = Some(response);
-                continue;
-            }
-            return Ok(response);
+    use crate::runtime::network::{Exchange, exchange};
+    // This timer surrounds every endpoint and redirect. Race each observable
+    // transport exchange before follow() can erase its scheduled_at() source.
+    let deadline = tokio::time::Instant::now() + duration(timeout_ms);
+    let mut last = None;
+    for endpoint in &endpoints {
+        let (url, header_map) = build_http_request(endpoint, &headers).map_err(to_provider)?;
+        let response = crate::fetch_redirect::follow(
+            url,
+            hyper::Method::POST,
+            header_map,
+            encoded.clone(),
+            || to_provider(NetworkFetchError::classify("fetch failed", None)),
+            |request| async {
+                match exchange(
+                    transport.send(request),
+                    wait_abort(&options.abort),
+                    || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
+                    Some(deadline),
+                )
+                .await
+                {
+                    Exchange::Response(result, _) => result.map_err(|failure| {
+                        to_provider(NetworkFetchError::classify(
+                            &failure.message,
+                            failure.cause_code,
+                        ))
+                    }),
+                    Exchange::Aborted => Err(ModelStreamError::abort()),
+                    Exchange::Timeout => Err(to_provider(NetworkFetchError::new(
+                        "network_timeout",
+                        format!(
+                            "Stream idle timeout: no data received for {}ms",
+                            crate::js_value::number_string(timeout_ms)
+                        ),
+                        JsValue::Undefined,
+                    ))),
+                }
+            },
+        )
+        .await?;
+        let status = response.status().as_u16();
+        let ok = (200..300).contains(&status);
+        if !ok && count != 1 && matches!(status, 400 | 404 | 405) {
+            last = Some(response);
+            continue;
         }
-        last.ok_or_else(|| NetworkFetchError::classify("fetch failed", None))
-    };
-    tokio::select! {
-        result = tokio::time::timeout(duration(timeout_ms), exchange) => match result {
-            Ok(result) => result.map_err(to_provider),
-            Err(_) => Err(to_provider(NetworkFetchError::new(
-                "network_timeout",
-                format!("Stream idle timeout: no data received for {}ms", crate::js_value::number_string(timeout_ms)),
-                JsValue::Undefined,
-            ))),
-        },
-        _ = wait_abort(&options.abort) => Err(ModelStreamError::abort()),
+        return Ok(response);
     }
+    last.ok_or_else(|| to_provider(NetworkFetchError::classify("fetch failed", None)))
 }
 
 /// `await response.text()`: UTF-8 with BOM stripped.
@@ -1362,8 +1382,11 @@ pub async fn stream_model(
     let (max_retries, _) = retry_decide(&provider, 0.0, None, 0.0);
     let mut checkpoint = Checkpoint::default();
     let mut attempt = 0.0;
+    let mut continuation_before_abort = false;
     while attempt <= max_retries {
-        throw_if_aborted(options)?;
+        if !std::mem::take(&mut continuation_before_abort) {
+            throw_if_aborted(options)?;
+        }
         sink(StreamOutput::Event(request_started_event(
             &provider, &current,
         )?));
@@ -1390,7 +1413,7 @@ pub async fn stream_model(
                 if attempt < max_retries && is_retryable_stream_error(&error) {
                     let (_, delay_ms) = retry_decide(&provider, attempt, None, (options.random)());
                     progress(sink, "network_error", delay_ms, field(&current, "model"));
-                    delay(delay_ms, options).await?;
+                    continuation_before_abort = delay(delay_ms, options).await?;
                     attempt += 1.0;
                     continue;
                 }
@@ -1456,7 +1479,7 @@ pub async fn stream_model(
                 let reason = retry_reason(&ModelStreamError::Provider(error.clone()));
                 progress(sink, reason, delay_ms, field(&current, "model"));
                 drop(body);
-                delay(delay_ms, options).await?;
+                continuation_before_abort = delay(delay_ms, options).await?;
                 attempt += 1.0;
                 continue;
             }
@@ -1538,7 +1561,7 @@ pub async fn stream_model(
             let (_, delay_ms) =
                 retry_decide(&provider, attempt, retry_after(&error), (options.random)());
             progress(sink, "continuation", delay_ms, field(&current, "model"));
-            delay(delay_ms, options).await?;
+            continuation_before_abort = delay(delay_ms, options).await?;
             attempt += 1.0;
             continue;
         }
@@ -1551,7 +1574,7 @@ pub async fn stream_model(
                 delay_ms,
                 field(&current, "model"),
             );
-            delay(delay_ms, options).await?;
+            continuation_before_abort = delay(delay_ms, options).await?;
             attempt += 1.0;
             continue;
         }

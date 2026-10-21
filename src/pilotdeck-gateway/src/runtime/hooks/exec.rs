@@ -63,34 +63,8 @@ const FORCE_RESOLVE_NOTE: &str =
 
 // ------------------------------------------------------------------ cancellation
 
-/// Host-side `AbortSignal`. Cloning shares one abort state.
-#[derive(Clone)]
-pub struct Cancellation {
-    tx: watch::Sender<bool>,
-    rx: watch::Receiver<bool>,
-}
-impl Cancellation {
-    pub fn new() -> Self {
-        let (tx, rx) = watch::channel(false);
-        Self { tx, rx }
-    }
-    pub fn abort(&self) {
-        self.tx.send_replace(true);
-    }
-    pub fn is_aborted(&self) -> bool {
-        *self.rx.borrow()
-    }
-    /// Resolves immediately when already aborted.
-    pub async fn cancelled(&self) {
-        let mut rx = self.rx.clone();
-        let _ = rx.wait_for(|aborted| *aborted).await;
-    }
-}
-impl Default for Cancellation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Host-side `AbortSignal`, using the shared timestamped cancellation event.
+pub use crate::runtime::network::Cancellation;
 
 // ------------------------------------------------------------------ results
 
@@ -991,7 +965,7 @@ pub struct HttpHookExecutor {
 /// `new undici.Agent({ headersTimeout, bodyTimeout:
 /// UNDICI_TRANSPORT_TIMEOUT_MS })`, i.e. 600 000 ms
 /// (`model/streaming/streamModel.ts:56`), not undici's 300 s default.
-pub const HTTP_TIMEOUT: Duration = Duration::from_secs(600);
+pub const HTTP_TIMEOUT: Duration = crate::runtime::network::UNDICI_BODY_TIMEOUT;
 impl Default for HttpHookExecutor {
     fn default() -> Self {
         Self::new()
@@ -1028,6 +1002,39 @@ impl HttpHookExecutor {
         }
     }
     async fn execute_inner(&self, options: HttpHookOptions) -> Result<ExecutionResult, JsString> {
+        let client = self.client.clone();
+        self.execute_with(options, move |request| {
+            let client = client.clone();
+            crate::runtime::network::ExchangeFuture::io(async move {
+                let scheme = request.uri().scheme_str().unwrap_or_default();
+                if scheme != "http" {
+                    return Err(JsString::from(format!(
+                        "Unsupported HTTP hook URL scheme: {scheme}"
+                    )));
+                }
+                client
+                    .request(request)
+                    .await
+                    .map_err(|_| JsString::from("fetch failed"))
+            })
+        })
+        .await
+    }
+    // The real executor and paused-clock tests use the same redirects, event
+    // dispatcher and body reader; only the individual wire exchange is injected.
+    async fn execute_with<B>(
+        &self,
+        options: HttpHookOptions,
+        mut send: impl FnMut(
+            hyper::Request<http_body_util::Full<bytes::Bytes>>,
+        ) -> crate::runtime::network::ExchangeFuture<
+            Result<hyper::Response<B>, JsString>,
+        >,
+    ) -> Result<ExecutionResult, JsString>
+    where
+        B: hyper::body::Body<Data = bytes::Bytes> + Send + 'static,
+        B::Error: Send,
+    {
         let body = object_stringify_with_bounded_stack(&options.hook_input)
             .map_err(|error| JsString::from(error_message(error)))?;
         let headers = resolve_headers(
@@ -1106,60 +1113,50 @@ impl HttpHookExecutor {
         // probe-r3/timeouts-3s.mjs); the abort signal spans the whole fetch.
         // Only plain http is wired (no TLS connector), so a hop to https
         // reports the same scheme error as an https hook URL.
-        let client = &self.client;
-        let headers_timeout = self.timeout;
-        let send = crate::fetch_redirect::follow(
+        let response = crate::fetch_redirect::follow(
             url,
             hyper::Method::POST,
             wire_headers,
             bytes::Bytes::from(body),
             || JsString::from("fetch failed"),
-            |request: hyper::Request<http_body_util::Full<bytes::Bytes>>| {
-                let scheme = request.uri().scheme_str().unwrap_or_default().to_owned();
-                let sent = (scheme == "http").then(|| client.request(request));
+            |request| {
+                let deadline = tokio::time::Instant::now() + self.timeout;
+                let sent = send(request);
+                let signal = options.signal.as_ref();
                 async move {
-                    match sent {
-                        Some(sent) => tokio::time::timeout(headers_timeout, sent)
-                            .await
-                            .map_err(|_| JsString::from("fetch failed"))?
-                            .map_err(|_| JsString::from("fetch failed")),
-                        None => Err(JsString::from(format!(
-                            "Unsupported HTTP hook URL scheme: {scheme}"
-                        ))),
-                    }
+                    let (response, before_abort) =
+                        http_exchange(sent, signal, Some(deadline)).await?;
+                    let response = response?;
+                    Ok(response.map(|body| (body, before_abort)))
                 }
             },
-        );
-        let response = match &options.signal {
-            Some(signal) => tokio::select! {
-                response = send => response?,
-                _ = signal.cancelled() => return Err("This operation was aborted".into()),
-            },
-            None => send.await?,
-        };
+        )
+        .await?;
         let status = response.status();
         let ok = status.is_success();
         // `response.text()`: undici `bodyTimeout` is an idle timer between
         // frames, and a body failure after the headers is `terminated`
         // (probe-r3/timeouts-3s.mjs, body-reset.mjs). Node cannot build a
         // string past MAX_STRING_LENGTH bytes (probe-r3/body-cap.mjs).
-        let read = crate::fetch_redirect::read_body(
-            response.into_body(),
-            self.body_limit,
-            Some(self.timeout),
-        );
-        let body = match &options.signal {
-            Some(signal) => tokio::select! {
-                body = read => body,
-                _ = signal.cancelled() => return Err("This operation was aborted".into()),
-            },
-            None => read.await,
-        }
+        let body_limit = self.body_limit;
+        let timeout = self.timeout;
+        let (body, before_abort) = response.into_body();
+        let body = crate::fetch_redirect::read_body_with_signal(
+            body,
+            body_limit,
+            Some(timeout),
+            options.signal.as_ref(),
+            before_abort,
+        )
+        .await
         .map_err(|error| match error {
             crate::fetch_redirect::BodyError::TooLong => {
                 JsString::from(crate::fetch_redirect::STRING_TOO_LONG)
             }
             crate::fetch_redirect::BodyError::Terminated => JsString::from("terminated"),
+            crate::fetch_redirect::BodyError::Aborted => {
+                JsString::from("This operation was aborted")
+            }
         })?;
         let stdout = String::from_utf8_lossy(&body).into_owned();
         Ok(ExecutionResult {
@@ -1177,6 +1174,33 @@ impl HttpHookExecutor {
                 HookOutcome::NonBlockingError
             },
         })
+    }
+}
+
+/// Fetch headers and response.text() share the Node event dispatcher. Only
+/// headers have a total deadline; read_body owns the idle body timer.
+async fn http_exchange<T: Send + 'static>(
+    send: crate::runtime::network::ExchangeFuture<T>,
+    signal: Option<&Cancellation>,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<(T, bool), JsString> {
+    use crate::runtime::network::{Exchange, exchange};
+    match exchange(
+        send,
+        async {
+            match signal {
+                Some(signal) => signal.cancelled().await,
+                None => std::future::pending().await,
+            }
+        },
+        || signal.and_then(Cancellation::abort_event_at),
+        deadline,
+    )
+    .await
+    {
+        Exchange::Response(result, before_abort) => Ok((result, before_abort)),
+        Exchange::Aborted => Err("This operation was aborted".into()),
+        Exchange::Timeout => Err("fetch failed".into()),
     }
 }
 
@@ -1723,3 +1747,7 @@ mod replace_tests {
         assert_eq!(names, ["123", "content-type", "x-z", "01"]);
     }
 }
+
+#[cfg(test)]
+#[path = "exec_http_tests.rs"]
+mod http_tests;

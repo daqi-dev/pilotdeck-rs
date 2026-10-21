@@ -20,7 +20,6 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::watch;
 use tokio::time::Instant;
 
 pub type ToolFuture<T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Send>>;
@@ -84,81 +83,8 @@ pub struct ToolOutput {
     pub metadata: Option<JsObject>,
 }
 
-/// Store this host-owned signal in ToolRuntimeContext.abort_signal. No timers
-/// or polling tasks are needed; watch retains cancellation before subscription.
-#[derive(Clone)]
-pub struct ToolCancellation(watch::Sender<Option<ToolAbort>>);
-
-#[derive(Clone, Copy)]
-struct ToolAbort {
-    at: Instant,
-    synchronous: bool,
-}
-
-impl Default for ToolCancellation {
-    fn default() -> Self {
-        Self(watch::channel(None).0)
-    }
-}
-impl ToolCancellation {
-    /// Record the first cancellation at the runtime clock's current instant.
-    /// Consumers can retain earlier events even if they are polled late.
-    pub fn cancel(&self) {
-        self.cancel_at(Instant::now());
-    }
-    /// Deliver a timer/event cancellation with its original occurrence time.
-    /// The event must already have occurred; this does not schedule a task.
-    /// At equal deadlines, web exchanges dispatch their already registered
-    /// response/timeout timers before this subsequently delivered event.
-    pub fn cancel_at(&self, at: Instant) {
-        assert!(
-            at <= Instant::now(),
-            "cancellation event is still in the future"
-        );
-        self.deliver(ToolAbort {
-            at,
-            synchronous: false,
-        });
-    }
-    /// JS `controller.abort()` in the current call stack, before control is
-    /// returned to the event loop. Unlike a later timer callback, this has
-    /// already fired even when earlier timers are overdue but undispatched.
-    pub fn cancel_synchronously(&self) {
-        self.deliver(ToolAbort {
-            at: Instant::now(),
-            synchronous: true,
-        });
-    }
-    fn deliver(&self, event: ToolAbort) {
-        self.0.send_if_modified(|current| {
-            if current.is_some() {
-                return false;
-            }
-            *current = Some(event);
-            true
-        });
-    }
-    pub fn cancelled_at(&self) -> Option<Instant> {
-        self.0.borrow().map(|event| event.at)
-    }
-    pub(crate) fn abort_event_at(&self) -> Option<Instant> {
-        self.0
-            .borrow()
-            .filter(|event| !event.synchronous)
-            .map(|event| event.at)
-    }
-    pub fn is_cancelled(&self) -> bool {
-        self.0.borrow().is_some()
-    }
-    pub async fn cancelled(&self) {
-        let mut receiver = self.0.subscribe();
-        while receiver.borrow_and_update().is_none() {
-            if receiver.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-}
+/// Host-owned abort signal, shared with provider and hook cancellation.
+pub use crate::runtime::network::Cancellation as ToolCancellation;
 
 #[derive(Clone)]
 pub struct ToolRunContext {

@@ -227,10 +227,14 @@ where
 }
 
 /// Legacy fetch keeps its abort signal attached while response.text() reads.
-async fn legacy_post_response<B: hyper::body::Body<Data = Bytes>>(
+async fn legacy_post_response<B>(
     response: hyper::Response<B>,
     aborted: &ToolCancellation,
-) -> Result<(), McpClientError> {
+) -> Result<(), McpClientError>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
     let status = response.status();
     if status.is_success() {
         return Ok(());
@@ -238,7 +242,7 @@ async fn legacy_post_response<B: hyper::body::Body<Data = Bytes>>(
     let bytes = tokio::select! {
         biased;
         _ = aborted.cancelled() => Err(fetch_redirect::BodyError::Terminated),
-        bytes = fetch_redirect::read_body(response.into_body(), fetch_redirect::MAX_STRING_LENGTH, None) => bytes,
+        bytes = fetch_redirect::read_body(response.into_body(), fetch_redirect::MAX_STRING_LENGTH, Some(crate::runtime::network::UNDICI_BODY_TIMEOUT)) => bytes,
     };
     let text = bytes
         .map(|bytes| decode_text(&bytes))
@@ -246,7 +250,7 @@ async fn legacy_post_response<B: hyper::body::Body<Data = Bytes>>(
             fetch_redirect::BodyError::TooLong => {
                 McpClientError::plain("RangeError", fetch_redirect::STRING_TOO_LONG)
             }
-            fetch_redirect::BodyError::Terminated => {
+            fetch_redirect::BodyError::Terminated | fetch_redirect::BodyError::Aborted => {
                 McpClientError::plain("TypeError", "terminated")
             }
         })
@@ -1104,6 +1108,37 @@ mod tests {
             std::task::Poll::Pending => panic!("must complete without advancing the paused clock"),
         })
         .await
+    }
+
+    struct StalledBody;
+    impl hyper::body::Body for StalledBody {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn legacy_error_body_stall_uses_global_body_timeout() {
+        let signal = ToolCancellation::default();
+        let response = hyper::Response::builder()
+            .status(400)
+            .body(StalledBody)
+            .unwrap();
+        let mut pending = Box::pin(legacy_post_response(response, &signal));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(599_999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        // SDK legacy catches response.text() failure and substitutes null.
+        assert_eq!(
+            poll_ready(pending.as_mut()).await.unwrap_err().to_string(),
+            "Error POSTing to endpoint (HTTP 400): null"
+        );
     }
 
     fn retry_outcome(status_retry: bool) -> Result<hyper::Response<()>, McpClientError> {

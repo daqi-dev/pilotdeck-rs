@@ -2398,3 +2398,51 @@ async fn negative_control_secondary_event_without_cancel_succeeds() {
         r#"[{"type":"text","text":"late"}]"#
     );
 }
+
+struct HopRetryTransport {
+    status: u16,
+    calls: Arc<Mutex<usize>>,
+}
+impl ModelHttpTransport for HopRetryTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        *self.calls.lock().unwrap() += 1;
+        let mut response = search_response(self.status);
+        response
+            .headers_mut()
+            .insert("retry-after", "5".parse().unwrap());
+        TransportFuture::after(Duration::from_secs(58), Ok(response))
+    }
+}
+
+/// A late 429/503 crosses urlFetcher's 60s hop timer during retry delay.
+/// TS fetch.ts rejects that delay with exactly "Network retry aborted.".
+#[tokio::test(start_paused = true)]
+async fn web_fetch_hop_timeout_during_retry_uses_retry_abort_message() {
+    for status in [429, 503] {
+        let calls = Arc::new(Mutex::new(0));
+        let mut fetcher = UrlFetcher::new(Arc::new(HopRetryTransport {
+            status,
+            calls: calls.clone(),
+        }));
+        fetcher.cache = Arc::new(UrlCache::default());
+        let mut pending =
+            Box::pin(fetcher.get_url_markdown_content("https://example.com/hop-retry", None));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(58)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_secs(2)).await;
+        // Poll once: auto-advance would hide waiting past the hop deadline.
+        let result = std::future::poll_fn(|cx| match pending.as_mut().poll(cx) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+            std::task::Poll::Pending => panic!("hop deadline must interrupt retry at 60s"),
+        })
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other(
+                "Network retry aborted.".into()
+            )
+        );
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+}

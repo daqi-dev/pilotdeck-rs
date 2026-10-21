@@ -24,6 +24,8 @@ pub(crate) enum BodyError {
     TooLong,
     /// A frame failed, or no data arrived within the idle timeout.
     Terminated,
+    /// The caller's signal fired before the next frame/idle timeout.
+    Aborted,
 }
 
 /// Reads a response body like `response.text()` before decoding: bytes are
@@ -31,19 +33,62 @@ pub(crate) enum BodyError {
 /// exceeded, so a never-ending body cannot grow memory without bound.
 /// `idle` is undici's `bodyTimeout`: the longest gap between two body frames
 /// (including the wait for the first), not a deadline for the whole body.
-pub(crate) async fn read_body<B: Body<Data = Bytes>>(
+pub(crate) async fn read_body<B>(
     body: B,
     limit: usize,
     idle: Option<Duration>,
-) -> Result<Vec<u8>, BodyError> {
-    let mut body = std::pin::pin!(body);
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    read_body_with_signal(body, limit, idle, None, false).await
+}
+
+/// Keep each frame's idle deadline visible to the same event dispatcher used
+/// for headers. Wrapping the entire read in another race would lose the timer
+/// and incorrectly report a later parent abort instead of `terminated`.
+pub(crate) async fn read_body_with_signal<B>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+    signal: Option<&crate::runtime::network::Cancellation>,
+    mut continuation_before_abort: bool,
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    use crate::runtime::network::{Cancellation, Exchange, ExchangeFuture, exchange};
+    let mut body = Box::pin(body);
     let mut buffer = Vec::new();
     loop {
-        let frame = match idle {
-            Some(idle) => tokio::time::timeout(idle, body.frame())
-                .await
-                .map_err(|_| BodyError::Terminated)?,
-            None => body.frame().await,
+        let deadline = idle.map(|idle| tokio::time::Instant::now() + idle);
+        let next = ExchangeFuture::io(async move {
+            let frame = body.as_mut().frame().await;
+            (body, frame)
+        })
+        .continuing(continuation_before_abort);
+        let frame = match exchange(
+            next,
+            async {
+                match signal {
+                    Some(signal) => signal.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            },
+            || signal.and_then(Cancellation::abort_event_at),
+            deadline,
+        )
+        .await
+        {
+            Exchange::Response((returned_body, frame), before_abort) => {
+                body = returned_body;
+                continuation_before_abort = before_abort;
+                frame
+            }
+            Exchange::Timeout => return Err(BodyError::Terminated),
+            Exchange::Aborted => return Err(BodyError::Aborted),
         };
         let Some(frame) = frame else {
             return Ok(buffer);
