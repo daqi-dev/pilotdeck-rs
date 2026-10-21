@@ -339,14 +339,27 @@ fn nested_code_and_flanks_match_real_ts_bytes() {
 
 #[test]
 fn nested_headings_match_real_ts_string_limit() {
+    use sha2::{Digest, Sha256};
     let raw = include_str!("fixtures/html-markdown/string-limit-oracle.json");
     baseline::oracle(raw);
     let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
-    for case in oracle["cases"].as_array().unwrap() {
+    let first_failure = oracle["firstFailure"].as_u64().unwrap();
+    let cases = oracle["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 4);
+    assert_eq!(cases[1]["n"].as_u64().unwrap(), first_failure - 1);
+    assert_eq!(cases[2]["n"].as_u64().unwrap(), first_failure);
+    for case in cases {
         let actual = Turndown.convert(case["html"].as_str().unwrap());
         if let Some(expected) = case["direct"]["markdown"].as_str() {
             assert!(expected.len() < 1024 * 1024);
             assert_eq!(actual.unwrap(), expected);
+        } else if let Some(length) = case["direct"]["markdownUtf16Length"].as_u64() {
+            let actual = actual.unwrap();
+            assert_eq!(actual.encode_utf16().count() as u64, length);
+            assert_eq!(
+                format!("{:x}", Sha256::digest(actual.as_bytes())),
+                case["direct"]["markdownSha256"].as_str().unwrap()
+            );
         } else {
             assert_eq!(
                 actual.unwrap_err(),

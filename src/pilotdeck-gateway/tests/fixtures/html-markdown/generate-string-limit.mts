@@ -1,5 +1,6 @@
 // Real web_fetch observations: the fetch hook supplies bytes without a socket.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { writeFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -24,17 +25,40 @@ const hook = async () => {
   return { status: 200, statusText: 'OK', headers: { 'content-type': 'text/html' }, arrayBuffer: async () => Buffer.from(html) };
 };
 const cases = [];
+const search = [];
+const htmlFor = (n: number) => '<h1><div>'.repeat(n) + 'x' + '</div></h1>'.repeat(n);
+// Probe every smaller n through the real URL fetcher, without assuming the
+// renderer's growth formula or Rust's budget predicts the V8 crossing.
+let firstFailure: number | undefined;
+for (let n = 1; n <= 33; n++) {
+  html = htmlFor(n);
+  try {
+    const out = await getURLMarkdownContent(input.url, context.abortSignal, { fetchHook: hook, cache: new WebFetchUrlCache() });
+    assert.ok('content' in out);
+    search.push({ n, markdownUtf16Length: out.content.length });
+  } catch (error) {
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, 'Invalid string length');
+    search.push({ n, error: { name: error.name, message: error.message } });
+    firstFailure = n;
+    break;
+  }
+}
+assert.ok(firstFailure !== undefined && firstFailure > 16 && firstFailure < 33);
 try {
   __setWebFetchHookForTesting(hook);
   // n=16 records 655349 literal Markdown bytes (<1 MiB).
-  for (const n of [16, 33]) {
-    html = '<h1><div>'.repeat(n) + 'x' + '</div></h1>'.repeat(n);
+  for (const n of [16, firstFailure - 1, firstFailure, 33]) {
+    html = htmlFor(n);
     const cache = new WebFetchUrlCache();
-    let direct: { markdown: string } | { error: { name: string; message: string } };
+    let direct: { markdown: string } | { markdownUtf16Length: number; markdownSha256: string } | { error: { name: string; message: string } };
     try {
       const out = await getURLMarkdownContent(input.url, context.abortSignal, { fetchHook: hook, cache });
       assert.ok('content' in out);
-      direct = { markdown: out.content };
+      direct = n === 16 ? { markdown: out.content } : {
+        markdownUtf16Length: out.content.length,
+        markdownSha256: createHash('sha256').update(out.content, 'utf8').digest('hex'),
+      };
     } catch (error) {
       assert.ok(error instanceof Error);
       direct = { error: { name: error.name, message: error.message } };
@@ -60,6 +84,6 @@ try {
   clearWebFetchCache();
 }
 writeFileSync(join(resolve(process.argv[2]), 'string-limit-oracle.json'), JSON.stringify({
-  sourceCommit: ref, sourceSha256, node: process.version, v8: process.versions.v8, cases,
+  sourceCommit: ref, sourceSha256, node: process.version, v8: process.versions.v8, firstFailure, search, cases,
 }, null, 1) + '\n', { flag: 'wx' });
 console.log(JSON.stringify(cases.map(({ n, direct, ...rest }) => ({ n, ...rest, direct: 'markdown' in direct ? { markdownLength: direct.markdown.length } : direct })), null, 2));

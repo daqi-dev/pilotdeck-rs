@@ -4,6 +4,8 @@
 
 > **2026-10-21 重登记（PR #406，人批）**：accepted-diffs.md 追加 A6.5-WEBFETCH-DEPTH-001（web_fetch HTML→Markdown 深度上限 256，向严，人批 2026-10-21 15:25，state/decisions-20261021.md）；其余文件哈希不变。两家评审见 PR。
 
+> **2026-10-21 修复轮 5 重登记（PR #406，表述准确性修正）**：依据本 PR 引入 A6.5-WEBFETCH-DEPTH-001 的人批（2026-10-21 15:25），将「深度 ≤ 256 两侧逐字节一致」收窄为除 pr9c 两条解析器版本差异外，并在 accepted-diffs.md 末尾透明披露真实 TS / Rust 输出与测试名。两条均「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+
 > **2026-10-17 四登（#187，只改路径解析、不改判分语义）**：run_round.py / session_domain.py 的默认 baseline 由主仓绝对路径改为「显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck」，缺失时两者都 BLOCKED（exit 1 / 2）并提示、不建输出目录（session_domain 按 six_cells.mts 实际导入的 10 个 E1 源码入口核对，不要求 dist）；driver.mts 去掉主仓回落，缺 PDRS_BASELINE 即报错（run_round 总会设置）。不再在 worktree 里静默用主仓 baseline。真实数据复算：同树两轮 TS 自比 PASS（`_tmp/20261017-issue-187/r2/compare-ts-a-b.json`，含 driver.mts 改动）；无 baseline 负控两入口均 BLOCKED（`r2/negative.log`：run_round exit 1、session_domain exit 2 且不建输出目录）；E1 calibrate 正向：status PASS、72 例 360 次测量、frozen exit 0、e1Controls PASS（`r3/calibrate/report.json`）；E1 前检正/负控（`r3/precheck-probe.log`、`r3/negative.log`）。两家评审见 PR。**AI 代批，待人复核**。
 
 > **2026-10-17 重登记（两类，均见 PR）**：① accepted-diffs.md 追加 A4-ARCHIVE-SEC-001/002/003（#142，人批 2026-10-17「批准 #134 的登记范围」，state/decisions-20261017.md）；② A5.3 新增 E1 适配脚本三件（session_domain.py / session_observations.mjs / controls/session_domain.py）入白名单并登记哈希（plan 005：A5 PR 带理由+双评审登记新 hash）。
@@ -19,7 +21,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-9c2944fefd23d34ef65fd0c012ebc4547db8dfe23fd9d3e3d8ddf5c519d8e79a  accepted-diffs.md
+309650b0b6ebfa45f376fce2fea610a0c6899d3c5e1f7bef22fe28f573d57728  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

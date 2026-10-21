@@ -57,6 +57,17 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 - **类别**：不可避免（TS 的断点取决于 V8 栈深，Rust 迭代实现无法逐点复刻）。
 - **基线依据**（cc7c4e6）：web_fetch 默认 HTML 走 `src/tool/builtin/web/urlFetcher.ts` 的 `getURLMarkdownContent` → domino + Turndown 递归转换；嵌套过深时 V8 抛 `RangeError: Maximum call stack size exceeded`，web_fetch 以 `tool_execution_failed`「web_fetch failed: Maximum call stack size exceeded」失败。Node 22.22.0、真实 `createWebFetchTool({}).execute`、默认栈实测最低 DOM 深度断点约 1051–1059 层（div / span / blockquote / em / pre / 纯 ul、ol 约 1052 层；ul>li、ol>li 约 526 组；table 约 263 组），预调用后略高（约 1104 层）。原值与方法：`_tmp/20261021-a65-pr9b/RESULT.md:198` 起。
 - **Rust 行为**：`src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_dom.rs:434` `MAX_DOM_DEPTH = 256`（元素祖先深度，含隐式 html / body / Turndown 包装）；超过即返回与 TS 栈溢出时逐字相同的 web_fetch 错误（`:435` `DOM_LIMIT_ERROR`）。无节点数上限。
-- **范围**：仅 HTML 内容的 web_fetch 转换。向严区间为 DOM 深度 257 至 TS 断点（约 1050 层）：此区间内 TS 成功、Rust 报上述错误；深度 ≤ 256 两侧逐字节一致；超过 TS 断点两侧都报同一错误。正常页面不受影响（评审抽样维基百科大页、MDN、Rust 文档、WHATWG、RFC 9110、ECMA-262 均成功）。
+- **范围**：仅 HTML 内容的 web_fetch 转换。向严区间为 DOM 深度 257 至 TS 断点（约 1050 层）：此区间内 TS 成功、Rust 报上述错误；除 pr9c 待对齐的两条解析器版本差异外（`src/pilotdeck-gateway/tests/html_markdown.rs` 的 `parser_version_gaps_match_real_ts`），深度 ≤ 256 两侧逐字节一致；超过 TS 断点两侧都报同一错误。正常页面不受影响（评审抽样维基百科大页、MDN、Rust 文档、WHATWG、RFC 9110、ECMA-262 均成功）。
 - **机器判据**：`src/pilotdeck-gateway/tests/html_markdown.rs` 的 `depth_budget_boundaries_and_review_shapes_match_real_ts`（256 层与真实 TS 逐字节一致、257 层按上述错误拒绝）与 `depth_budget_rejects_deep_non_list_shapes`；超过 TS 断点的样本两侧错误一致。
 - **批准记录**：人定 2026-10-21 15:25「pr9b 选 A，批准 256 层限制及对应向严差异」，见 `state/decisions-20261021.md`「人定 · 2026-10-21 15:25」；PR #406。
+
+## 已知未对齐（未接受，待 pr9c）
+
+以下两条为解析器版本差异的透明披露，不是豁免，不属于已接受差异；均为浅层输入，不能由 A6.5-WEBFETCH-DEPTH-001 的深度批准覆盖。
+
+| HTML 输入 | 真实 TS 输出（domino 2.2.0） | Rust 输出（html5ever 0.40.1） | 测试名 | 状态 |
+|---|---|---|---|---|
+| `<select><hr></select>` | 空串 `""` | `"* * *"` | `src/pilotdeck-gateway/tests/html_markdown.rs::parser_version_gaps_match_real_ts`（当前 ignore） | **未批准，非已接受差异**；待 pr9c 对齐 |
+| `<p>a<search>b</search>c</p>` | `"abc"` | `"a\n\nbc"`（两个换行） | `src/pilotdeck-gateway/tests/html_markdown.rs::parser_version_gaps_match_real_ts`（当前 ignore） | **未批准，非已接受差异**；待 pr9c 对齐 |
+
+TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.json` 的 `parserGaps`；修复轮 5 显式运行上述 ignored 测试确认 Rust 原值，失败按未对齐保留，不计为通过。这两条若要改为接受差异，须另走人批程序。
