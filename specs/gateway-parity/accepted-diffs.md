@@ -52,3 +52,11 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 - **机器判据**：`output_schema.rs` 的 `recursive_keyword_shapes_share_one_weighted_budget`、`unused_wide_branches_spend_recursion_budget`、`non_schema_dependency_arrays_spend_static_budget`、`deep_comparisons_spend_the_shared_validation_budget` 与 `replays_the_ajv_oracle`（各形状在 2048 两侧有样本）。
 - **批准记录**：人定 2026-10-21 14:25「pr10b depth budget 按照你的推荐选用2048。」，见 `state/decisions-20261021.md`「人定 · 2026-10-21 14:25」；PR #391。
 
+## A6.5-WEBFETCH-DEPTH-001 · web_fetch HTML→Markdown 深度上限 256（不可避免 · 向严）
+
+- **类别**：不可避免（TS 的断点取决于 V8 栈深，Rust 迭代实现无法逐点复刻）。
+- **基线依据**（cc7c4e6）：web_fetch 默认 HTML 走 `src/tool/builtin/web/urlFetcher.ts` 的 `getURLMarkdownContent` → domino + Turndown 递归转换；嵌套过深时 V8 抛 `RangeError: Maximum call stack size exceeded`，web_fetch 以 `tool_execution_failed`「web_fetch failed: Maximum call stack size exceeded」失败。Node 22.22.0、真实 `createWebFetchTool({}).execute`、默认栈实测最低 DOM 深度断点约 1051–1059 层（div / span / blockquote / em / pre / 纯 ul、ol 约 1052 层；ul>li、ol>li 约 526 组；table 约 263 组），预调用后略高（约 1104 层）。原值与方法：`_tmp/20261021-a65-pr9b/RESULT.md:198` 起。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_dom.rs:434` `MAX_DOM_DEPTH = 256`（元素祖先深度，含隐式 html / body / Turndown 包装）；超过即返回与 TS 栈溢出时逐字相同的 web_fetch 错误（`:435` `DOM_LIMIT_ERROR`）。无节点数上限。
+- **范围**：仅 HTML 内容的 web_fetch 转换。向严区间为 DOM 深度 257 至 TS 断点（约 1050 层）：此区间内 TS 成功、Rust 报上述错误；深度 ≤ 256 两侧逐字节一致；超过 TS 断点两侧都报同一错误。正常页面不受影响（评审抽样维基百科大页、MDN、Rust 文档、WHATWG、RFC 9110、ECMA-262 均成功）。
+- **机器判据**：`src/pilotdeck-gateway/tests/html_markdown.rs` 的 `depth_budget_boundaries_and_review_shapes_match_real_ts`（256 层与真实 TS 逐字节一致、257 层按上述错误拒绝）与 `depth_budget_rejects_deep_non_list_shapes`；超过 TS 断点的样本两侧错误一致。
+- **批准记录**：人定 2026-10-21 15:25「pr9b 选 A，批准 256 层限制及对应向严差异」，见 `state/decisions-20261021.md`「人定 · 2026-10-21 15:25」；PR #406。
