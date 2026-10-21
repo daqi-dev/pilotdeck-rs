@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 19:12 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | impl | ready | PR #407 @a061310：修复轮 7 交付，但「一律不许存在」与既有冻结 `rust-toolchain.toml`、`transport/build.rs` 冲突（决策卡已更正：两份按路径与哈希固定白名单）→ codex 修复轮 7b 在跑（`fix7b.md`）；GLM r6 0/1/3/2，P1（ci.yml 改编译器）按卡归人工评审边界
+updated: 2026-10-21 19:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | review | ready | PR #407 @5bae7b9：修复轮 7+7b 已推送（构建配置改为白名单，冻结 toolchain 与 transport/build.rs 按哈希比对，41 项负控全失败，沙箱外守卫 1/0）；GLM r7、gate5 在跑，Grok r7 待发
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 @29c3be2：修复轮 3 已推送（负控独立 target，owner 13 项、admission 19 项变异全被抓；沙箱外两次生成 8dc8ac00… 一致，session 34/0）；Grok r4 因网络断开重发中；GLM r4、gate3 在跑
-- A6.5-pr9b | impl | ready | PR #406 @7ea02c9：GLM r5 0/0/0/3，Grok r5 0/0/2/1；gate6 concurrency P0 实测成立（嵌套 h1 下划线指数增长：TS 在 V8 串上限抛可捕获 RangeError，Rust 无上限会分配失败 abort，`_tmp/20261021-a65-pr9b/h1-probe-ts.log`），boundary 超时 → codex 修复轮 4 在跑（`fix4.md`，按 V8 上限与 TS 平价）
-- A6.4-pr9a | review | ready | PR #418 @eaeb63a：修复轮 2 已推送（金样篡改负控 ×4、google unsupported-thinking 与 NaN 真实 TS 金样；沙箱外两次正式生成 fe5953d1… 一致，router_execute 11/0、HTTP 对拍 1/0）；Grok r3 暂定无阻塞（中途断连，变异实验未跑，待重发）；GLM r3、gate3 在跑
-- A7.1-pr3 | impl | ready | 连接 context / auth / binding：codex 首轮在跑（wt-a64-pr7 复用，分支 codex/a7-1-pr3，`_tmp/20261021-a7-1-pr3/task.md`）
+- A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4 0/0/0/1、Grok r4 0/0/0/1；gate3 sibling P2 当轮修（Claude 一行），concurrency P2 拆 #422（前置 A7.2 接 adapter），boundary 超时 → gate4（timeout 1500）在跑
+- A6.5-pr9b | review | ready | PR #406 @78c6b11：修复轮 4 已推送（V8 串上限预算，与 TS 同错误，n=33 峰值 6.5 MiB；沙箱外 html_markdown 11/1，唯一失败是既有 #[ignore] pr9c 差异）；GLM r6、gate7 在跑，Grok r6 待发
+- A6.4-pr9a | review | ready | PR #418 @eaeb63a：gate3 全 PASS 0/0，GLM r3 0/0/1；P2 拆 #423（前置 A6.4 收尾）；Grok r3 断连后重发，收到 0/0 即贴结果块入队
+- A7.1-pr3 | review | ready | PR #421（draft）@57800f1：首轮交付，沙箱外两次生成 b1ffcb7b… 一致，connection 6/0，12 项负控全抓；GLM r1、gate1 在跑，Grok r1 待发
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -352,3 +352,5 @@ updated: 2026-10-21 19:12 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **19:00**：#419 已合入（1820fc9，提交者为账号主邮箱，同前）。#418 修复轮 2、#412 修复轮 3 在沙箱外完成正式重生成，各自与入库 oracle 一致后提交推送，各派确认评审和闸门。#406 修复轮 4、#407 修复轮 7、A7.1-pr3 首轮仍在跑。
 
 > **19:12**：#407 修复轮 7 发现决策卡写错：仓库里其实有冻结的 rust-toolchain.toml 和 transport/build.rs。卡已更正，两份改为只许原文件、按哈希比对，派修复轮 7b。Grok 通道有两次断连，#412 r4 已重发，#418 r3 结论暂定，下轮重发。
+
+> **19:30**：#406 修复轮 4、#407 修复轮 7+7b、A7.1-pr3 首轮都已交付，在沙箱外复核后提交推送；A7.1-pr3 开了 draft PR #421。各线派新一轮 GLM 评审和闸门。Grok 会话不稳，改为一次只发一单。#412、#418 剩下的 P2 拆成 #422、#423。#420（board）在合并队列，本段等它合入后再提交。
