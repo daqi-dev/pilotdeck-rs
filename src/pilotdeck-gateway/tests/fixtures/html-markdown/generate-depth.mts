@@ -57,6 +57,13 @@ for(let i=0;i<40;i++){
  const value=await getURLMarkdownContent('https://example.com/page',new AbortController().signal,{fetchHook:hook,cache:new WebFetchUrlCache()});
  extra.push({name:'review-shape-'+i,html,markdown:value.content});
 }
+// Keep deep inline cases small enough to record literal real-TS bytes. Guards
+// retain both ASCII flanks through collapseWhitespace at every span ancestor.
+for (const tag of ['code', 'span']) {
+ html='<p>left'+`<${tag}> `.repeat(250)+'a`b``c &amp; 😀\n'.repeat(32)+` </${tag}>`.repeat(250)+'right</p>';
+ const value=await getURLMarkdownContent('https://example.com/page',new AbortController().signal,{fetchHook:hook,cache:new WebFetchUrlCache()});
+ extra.push({name:`nested-${tag}-flanks-250`,html,markdown:value.content});
+}
 const errors = [];
 for(const tag of ['ul','ol','div','blockquote','span','table','pre']){
  const pair=tag==='ul'||tag==='ol'?[`<${tag}><li>`,`</li></${tag}>`]:tag==='table'?['<table><tr><td>','</td></tr></table>']:[`<${tag}>`,`</${tag}>`];

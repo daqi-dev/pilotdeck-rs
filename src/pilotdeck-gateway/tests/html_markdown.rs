@@ -299,3 +299,35 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
         "flat inline: took {elapsed:?}, budget {budget}s"
     );
 }
+
+#[test]
+fn nested_code_and_flanks_match_real_ts_bytes() {
+    let raw = include_str!("fixtures/html-markdown/depth-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    for tag in ["code", "span"] {
+        let name = format!("nested-{tag}-flanks-250");
+        let case = oracle["extra"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == name)
+            .expect("250-level TS fixture");
+        assert_eq!(
+            case["html"]
+                .as_str()
+                .unwrap()
+                .matches(&format!("<{tag}> "))
+                .count(),
+            250
+        );
+        assert_eq!(
+            Turndown
+                .convert(case["html"].as_str().unwrap())
+                .unwrap()
+                .as_bytes(),
+            case["markdown"].as_str().unwrap().as_bytes(),
+            "{name}"
+        );
+    }
+}
