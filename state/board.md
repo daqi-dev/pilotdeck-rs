@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | impl | ready | PR #407 @5bae7b9：gate5 boundary P1（cargo 从 cwd 向上找配置，`_build/.cargo` 被名字跳过 + 扫描根止于 worktree）+ sibling P1（source_identity 合同漏新 path 依赖）+ P2×2 → codex 修复轮 8 在跑（`fix8.md`）；GLM r7 在跑
+updated: 2026-10-21 21:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | impl | ready | PR #407 @8c49fa4（rebased）：修复轮 8 已提交，fmt fix 已推，check/pr-gate 在跑；GLM r8 0/0/0/2、gate6 在跑，待 CI 绿后贴结果块
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4、Grok r4 均 0/0/0/1，gate4 全 PASS 0/0 → 结果块入正文，Ready，**已入合并队列**；剩余 P2 #422、#424
-- A6.5-pr9b | impl | ready | PR #406 @78c6b11：gate7 sibling P1（DEPTH-001「≤256 逐字节一致」与两条 pr9c 解析器差异矛盾）+ boundary P2（V8 上限交叉点未钉金样，按 P1）→ codex 修复轮 5 在跑（`fix5.md`，账本收窄表述 + 追加「已知未对齐，未批准」披露段，重登记 FROZEN）；concurrency P2 归 #409；GLM r6 在跑
+- A6.5-pr9b | impl | ready | PR #406 @6bf9c56（rebased）：修复轮 4+5 已提交，check 在跑；GLM r7 0/0/0/4、Grok r7 暂定 0/0/1（断连，未完成实测）、gate8 在跑，待 CI 绿后贴结果块
 - A6.4-pr9a | review | ready | PR #418 @eaeb63a：GLM r3 0/0/1、Grok r3 0/0、gate3 全 PASS → 结果块入 PR 正文，Ready，**已入合并队列**；剩余 P2 #423
-- A7.1-pr3 | impl | ready | PR #421（draft）@57800f1：gate1 全 PASS 0/0；concurrency P2（同 session 并发 submit 时在途集合粒度与 TS 不同，影响对拍，按 P1）+ sibling P2×3 → codex 修复轮 1 在跑（`fix1.md`）；GLM r1 输出为空（通道问题），待修复轮后重跑
+- A7.1-pr3 | impl | ready | PR #421 @55261931：修复轮 1 已推送（in-flight session 粒度修复；沙箱外两次生成 d82c1ce5… 一致，connection 6/0/1）；GLM r2、gate2 在跑；CI 在跑
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -356,3 +356,5 @@ updated: 2026-10-21 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **19:30**：#406 修复轮 4、#407 修复轮 7+7b、A7.1-pr3 首轮都已交付，在沙箱外复核后提交推送；A7.1-pr3 开了 draft PR #421。各线派新一轮 GLM 评审和闸门。Grok 会话不稳，改为一次只发一单。#412、#418 剩下的 P2 拆成 #422、#423。#420（board）在合并队列，本段等它合入后再提交。
 
 > **19:50**：#420 已合入。#418（pr9a）、#412（A7.1-pr2）两家评审加闸门都已收敛，结果块写进 PR 正文后入合并队列；pr-gate 只读正文，不读评论，先贴评论那次是假失败。#407 gate5、#406 gate7、#421 gate1 各有 P1 或影响对拍的 P2，分别派修复轮 8、5、1。新开 #424。磁盘：清掉五棵活跃树的 incremental 缓存，98.5 降到 83.6 GiB。
+
+> **21:00**：#425 已合入。#406、#407 rebased 到 main；exec.rs 两侧各加了一个测试模块，merge 保留两者，fmt 修一处空行。#421 修复轮 1 推送。#407 的 router_execute 测试在 wt-a65-pr2 和临时 target 里持续 SIGKILL，静态验证正常（clippy、其余 996 项测试 0 失败、oracle 文件与 main 逐字节相同）；须待协调者用设置了 PDRS_BASELINE 的沙箱外环境复核（同 #418 先例）。
