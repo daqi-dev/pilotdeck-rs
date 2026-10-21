@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 15:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | review | ready | r10：Grok 0/0/1/2（方案 A 外形状与 2048 以下均无假 PASS；P2：#6 区间描述漏了 hostname 的 message 差异与从不溢出的 format）；全量 gate9 0/0/1（bridge 同步读文件、可逃逸 cwd——TS 同样如此，并入 #394）；GLM r10 在跑；收齐后一批：#6 #7 改登 gateway 账本（决策卡）+ 补全区间描述
-- #396 | review | ready | PR #403 平局仲裁定案：真实 TS（内存 HTTP 默认 600000 三协议 + 沙箱外真实 TCP 5000/5000 平局 5/5）均 idle watchdog 赢，Grok 对；协调者改回 < 并翻转测试（a5df2f7，负控 <= 失败）；r5 两家确认 + gate3 在跑
-- #386 | review | ready | PR #407 修复轮 1 提交 9f695d6（unsafe 边界源码测试 + hooks/MCP/host 三处回归，四负控，未新增 unsafe）；沙箱外全量在跑，过后推送派确认评审
+updated: 2026-10-21 16:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | review | ready | PR #391 head 62d03c7（已 rebase 到含 #402 的 main，决策记录随之入树）；r10 两家无 P0/P1，r11（账本改登 gateway）Grok 0/0/0/0；gate10 的 P1×2 均为「决策记录不在树内」，rebase 后已解；全量 gate11 在跑、GLM r11 在跑，过后改 Ready 入队
+- #396 | impl | ready | PR #403：r5 两家无 P0/P1（平局 < 经内存 HTTP + 真实 TCP 默认 600000 三协议定案；近平局窗口拆 #411）；gate3 P1（headers 与首块同到时 provider / MCP 丢 before_abort）+ 同文件 P2×2，codex 修复轮 5 在跑；token_accounting 拆 #410
+- #386 | review | ready | PR #407：r2 Grok 0/0/2/2——护栏可被 #[expect(unsafe_code)] 与 unsafe /* */ { 绕过、扫描漏 tests/；codex 修复轮 2 在跑；GLM r2 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | impl | ready | PR #405 已合入（15:2x，邮箱同前为账号主邮箱）；下一包 A7.1-pr2（live session handle 与 runtime 生命周期，`_tmp/20261021-a7-1/split.md:60`）待派
-- A6.5-pr9b | review | ready | 深度 256 人批；已 rebase 到 main，gateway 账本登 A6.5-WEBFETCH-DEPTH-001 并 FROZEN 重登记（cac601e，修 gate1 sibling P1）；gate1 concurrency P2 并入 #409；全量重跑中，过后推送、补增量评审与 gate
+- A7.1-pr2 | impl | ready | #405 A7.1-pr1 已合入；codex 在 wt-a63-pr1（codex/a7-1-pr2）做 live session handle 与 runtime 生命周期（`_tmp/20261021-a7-1-pr2/task.status`）
+- A6.5-pr9b | review | ready | PR #406 head 434b8c8（rebase 到含 #402 的 main）；r4 Grok P1「人批记录不在仓」已随 #402 合入解决；全量 gate2 在跑、GLM r4 在跑
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
@@ -18,6 +18,12 @@ updated: 2026-10-21 15:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 16:00 · /loop
+> **合并**：#405 A7.1-pr1、#402（board 与 decisions-20261021 的全部人定 / 决策卡入 main）。
+> **差异账本放错**：A6.5 的 gateway 差异此前误登在阶段 C 账本（specs/parity）。按决策卡（AI 代批，待人复核）改登 `specs/gateway-parity/accepted-diffs.md`：pr9b 登 A6.5-WEBFETCH-DEPTH-001，pr10b 的 #6 #7 撤回改登 A6.5-MCP-OUTSCHEMA-REGEX-001 / DEPTH-001，均在 FROZEN.md 重登记；已合入的 #4 #5 迁移另开小 PR。
+> **#403 平局仲裁定案**：真实 TCP 默认 600000 三协议均 Stream idle timeout（约 600010 ms），`<` 正确。
+> **新跟进**：#408（夹具回放未走统一溯源守卫）、#409（HTML 深嵌套内存放大 + 并发转换无闸）、#410（token_accounting 未用共享 exchange）、#411（近平局窗口）；#394 追加 bridge 读文件可逃逸 cwd（TS 同样如此，是否按安全 bug 修待人定）。
 
 > ## 2026-10-21 14:28 · /loop
 > **人定**：#386 选 B（gateway 局部 unsafe 例外，仅一个函数），codex 已开工；pr10b 深度预算取 2048，codex 修复轮 10 在跑。
