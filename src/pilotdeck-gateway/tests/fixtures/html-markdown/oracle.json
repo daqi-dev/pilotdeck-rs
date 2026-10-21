@@ -1281,6 +1281,51 @@
    "name": "search-element",
    "html": "<p>a<search>b</search>c</p>",
    "markdown": "abc"
+  },
+  {
+   "name": "select-div-in-p",
+   "html": "<p>a<select><div>b</div></select>c</p>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-p",
+   "html": "<select><p>x</p></select>tail",
+   "markdown": "xtail"
+  },
+  {
+   "name": "select-li",
+   "html": "<div>a<select><li>b</li></select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-table",
+   "html": "<div>a<select><table><tr><td>b</td></tr></table></select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-h1",
+   "html": "<div>a<select><h1>b</h1></select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-ul",
+   "html": "<div>a<select><ul><li>b</li></ul></select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-img",
+   "html": "<div>a<select><img src=\"x\" alt=\"b\"></select>c</div>",
+   "markdown": "ac"
+  },
+  {
+   "name": "select-br",
+   "html": "<div>a<select>b<br>d</select>c</div>",
+   "markdown": "abdc"
+  },
+  {
+   "name": "select-option-div",
+   "html": "<div>a<select><option><div>b</div></option></select>c</div>",
+   "markdown": "abc"
   }
  ],
  "fetch": {

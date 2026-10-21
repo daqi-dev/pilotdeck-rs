@@ -65,7 +65,7 @@ fn parser_version_gaps_match_real_ts() {
     baseline::oracle(ORACLE);
     let oracle: serde_json::Value = serde_json::from_str(ORACLE).unwrap();
     let cases = oracle["parserGaps"].as_array().unwrap();
-    assert_eq!(cases.len(), 2);
+    assert_eq!(cases.len(), 11);
     let mut failures = Vec::new();
     for case in cases {
         let actual = Turndown.convert(case["html"].as_str().unwrap()).unwrap();
@@ -233,7 +233,7 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
     baseline::oracle(raw);
     let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
     let cases = oracle["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 4);
+    assert_eq!(cases.len(), 5);
     let mut failures = Vec::new();
     for case in cases {
         let name = case["name"].as_str().unwrap();
@@ -369,8 +369,7 @@ fn nested_headings_match_real_ts_string_limit() {
     }
 }
 
-#[test]
-fn reparented_wide_subtrees_stay_fast() {
+fn reparented_wide_html(bytes: usize) -> (String, usize) {
     // Distinct attributes defeat the active-formatting list's three-identical-
     // entries rule. Closing each B moves the same wide P subtree via adoption
     // agency, while its element depth remains below MAX_DOM_DEPTH.
@@ -380,21 +379,38 @@ fn reparented_wide_subtrees_stay_fast() {
         .collect::<String>()
         + "<p>";
     let suffix = "</b>".repeat(formatting);
-    let bytes = 8 * 1024 * 1024;
     let count = (bytes - prefix.len() - suffix.len()) / "<span>x</span>".len();
     let padding = bytes - prefix.len() - suffix.len() - count * "<span>x</span>".len();
     let html = prefix + &"<span>x</span>".repeat(count) + &"x".repeat(padding) + &suffix;
     assert_eq!(html.len(), bytes);
+    (html, count + padding)
+}
+
+#[test]
+fn reparented_wide_four_mib_succeeds() {
+    // The corresponding real TS array-limit error remains an unaccepted gap.
+    assert!(
+        Turndown
+            .convert(&reparented_wide_html(4 * 1024 * 1024).0)
+            .is_ok()
+    );
+}
+
+#[test]
+fn reparented_wide_subtrees_stay_fast() {
+    let bytes = 8 * 1024 * 1024;
+    let (html, output_x_count) = reparented_wide_html(bytes);
     let started = std::time::Instant::now();
     let actual = Turndown.convert(&html).unwrap();
     let elapsed = started.elapsed();
+    let formatting = 240;
     // Real domino/turndown byte-compared at 1/2 MiB; the 4/8 MiB baseline
     // throws Invalid array length. Rust's unchanged successful output follows
     // the same lossless period, verified against the pre-fix implementation.
     let bold = "**".repeat(formatting);
     assert_eq!(
         actual,
-        format!("{bold}{}{bold}", "x".repeat(count + padding))
+        format!("{bold}{}{bold}", "x".repeat(output_x_count))
     );
     let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
     eprintln!("reparent-wide-8mib: {bytes} HTML bytes, {elapsed:?}");
