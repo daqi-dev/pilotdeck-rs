@@ -104,6 +104,17 @@ scenarios.push({name:'close-union-reverse-lexical-order',steps:[message(hello())
   request('reconnect_interaction',{sessionKey:'a'}),
   {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey:'b'}}},
   {op:'close'}, {op:'finish'}]});
+// Boundary audit round 4: capture raw null/undefined params in the real handler.
+for (const method of ['submit_turn', 'elicitation_respond', 'reconnect_interaction']) scenarios.push({
+  name:`${method.replaceAll('_', '-')}-null-and-missing-params`, steps:[message(hello()),
+    request(method,null,'null-params'),
+    message({type:'request',id:'missing-params',method}),
+    request(method,{},'object-params')]});
+scenarios.push({name:'reconnect-null-and-missing-previous-binding',steps:[message(hello()),
+  request('reconnect_interaction',{sessionKey:'s',previousBinding:null},'null-initial'),
+  request('reconnect_interaction',{sessionKey:'s',previousBinding:null},'null-current'),
+  request('reconnect_interaction',{sessionKey:'s'},'missing-current'),
+  request('reconnect_interaction',{sessionKey:'fresh'},'missing-initial')]});
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
   const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];
@@ -195,6 +206,16 @@ const bindingSteps = [
   ...['3',-1,0.5,9007199254740992,null].map(generation=>({op:'reconnect',next:{connectionId:'x',generation}})),
   {op:'reconnect',next:{connectionId:'',generation:4}},
   {op:'reconnect',next:{connectionId:'zero',generation:0}},
+  // A current binding exists: identical next does not waive a wrong previous.
+  {op:'reconnect',next:{connectionId:'c',generation:3},previous:{connectionId:'wrong',generation:9}},
+  {op:'current'},
+  {op:'disconnect',binding:{connectionId:'c',generation:3}},
+  // No current or pending binding: presenting a previous is still stale.
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:{connectionId:'c',generation:3}},
+  {op:'current'},
+  // The provider itself treats null previous as absent, for both initial/same.
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:null},
+  {op:'reconnect',next:{connectionId:'d',generation:4},previous:null},
 ];
 const port = createNativeInteractionReconnectPort();
 const bindingResults = bindingSteps.map((step: any) => {
