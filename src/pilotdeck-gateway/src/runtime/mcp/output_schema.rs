@@ -62,8 +62,11 @@ use std::sync::OnceLock;
 /// Cold Node 22.22.0 / V8 12.4 keyword and real Client.callTool probes informed
 /// this conservative support budget, not an exact V8 stack model. Deep value
 /// comparisons spend the same budget. Earlier rejections are explicit known
-/// differences; overflow uses the SDK RangeError result. See the fixture README.
-const MAX_VALIDATION_BUDGET: usize = 1_024;
+/// differences; overflow uses the SDK RangeError result. Human-approved 2048
+/// units (2026-10-21): 深度预算差异已人批. The measured directory-tree recipe
+/// still refuses >=107 edges and the query recipe >=169 columns, even at only
+/// three data levels. See the fixture README for residual support boundaries.
+const MAX_VALIDATION_BUDGET: usize = 2_048;
 
 /// Schema-structure recursion bound for [`check_schema`], which runs on the
 /// caller's (2 MiB) worker stack. Ajv itself throws `RangeError` on a
@@ -3202,24 +3205,36 @@ mod tests {
 
     fn recursive_data(shape: &str, depth: usize) -> JsValue {
         let arrays = shape == "items";
+        let dependency_width = shape
+            .strip_prefix("dependencies")
+            .map(|width| width.parse::<usize>().unwrap());
+        let node = |child: Option<JsValue>| {
+            let mut object = JsObject::new();
+            if let Some(child) = child {
+                object.insert("a".into(), child);
+            }
+            if let Some(width) = dependency_width {
+                object.insert("y".into(), JsValue::Bool(true));
+                for n in 0..width {
+                    object.insert(format!("x{n}").into(), JsValue::Bool(true));
+                }
+            }
+            JsValue::Object(object)
+        };
         let mut data = if arrays {
             JsValue::Array(vec![])
         } else {
-            JsValue::Object(JsObject::new())
+            node(None)
         };
         for _ in 0..depth {
-            if arrays {
-                data = JsValue::Array(vec![data]);
+            data = if arrays {
+                JsValue::Array(vec![data])
             } else {
-                let mut object = JsObject::new();
-                object.insert("a".into(), data);
-                data = JsValue::Object(object);
-            }
+                node(Some(data))
+            };
         }
         if arrays {
-            let mut object = JsObject::new();
-            object.insert("a".into(), data);
-            data = JsValue::Object(object);
+            data = node(Some(data));
         }
         data
     }
@@ -3230,62 +3245,62 @@ mod tests {
             (
                 "properties",
                 r##"{"type":"object","properties":{"a":{"$ref":"#"}}}"##,
-                145,
+                291,
             ),
             (
                 "patternProperties",
                 r##"{"type":"object","patternProperties":{"^a$":{"$ref":"#"}}}"##,
-                145,
+                291,
             ),
             (
                 "additionalProperties",
                 r##"{"type":"object","additionalProperties":{"$ref":"#"}}"##,
-                170,
+                340,
             ),
             (
                 "items",
                 r##"{"type":"object","properties":{"a":{"$ref":"#/definitions/node"}},"definitions":{"node":{"type":"array","items":{"$ref":"#/definitions/node"}}}}"##,
-                168,
+                338,
             ),
             (
                 "anyOf",
                 r##"{"type":"object","anyOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
-                67,
+                135,
             ),
             (
                 "oneOf",
                 r##"{"type":"object","oneOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
-                67,
+                135,
             ),
             (
                 "allOf",
                 r##"{"type":"object","allOf":[{"type":"object","properties":{"a":{"$ref":"#"}}}]}"##,
-                67,
+                135,
             ),
             (
                 "not",
                 r##"{"type":"object","not":{"not":{"type":"object","properties":{"a":{"$ref":"#"}}}}}"##,
-                47,
+                96,
             ),
             (
                 "if",
                 r##"{"type":"object","if":{"type":"object","properties":{"a":{"$ref":"#"}}},"then":{"type":"object"},"else":{"type":"object"}}"##,
-                56,
+                112,
             ),
             (
                 "then",
                 r##"{"type":"object","if":{"required":["a"]},"then":{"type":"object","properties":{"a":{"$ref":"#"}}}}"##,
-                59,
+                119,
             ),
             (
                 "else",
                 r##"{"type":"object","if":{"not":{"required":["a"]}},"then":{"type":"object"},"else":{"type":"object","properties":{"a":{"$ref":"#"}}}}"##,
-                50,
+                101,
             ),
             (
                 "ref",
                 r##"{"type":"object","definitions":{"node":{"type":"object","properties":{"a":{"$ref":"#/definitions/alias"}}},"alias":{"$ref":"#/definitions/node"}},"$ref":"#/definitions/node"}"##,
-                112,
+                225,
             ),
         ] {
             let schema = parse_json(source).unwrap();
@@ -3318,7 +3333,7 @@ mod tests {
             Err(ValidationError::Threw)
         );
         // Real cold SDK throws at 340 for this shape. Counting only active
-        // checks (3*340+2 <= 1024) would silently pass this exact counterexample.
+        // checks (3*340+2 <= 2048) would silently pass this exact counterexample.
         assert_eq!(
             validate(&schema, &recursive_data("properties", 340)),
             Err(ValidationError::Threw)
@@ -3388,7 +3403,7 @@ mod tests {
 
     #[test]
     fn deep_comparisons_spend_the_shared_validation_budget() {
-        for (kind, last) in [("const", 510), ("enum", 509), ("uniqueItems", 1016)] {
+        for (kind, last) in [("const", 1022), ("enum", 1021), ("uniqueItems", 2040)] {
             let (schema, data) = comparison_case(kind, last);
             let observed = validate(&schema, &data).unwrap();
             if kind == "uniqueItems" {
@@ -4008,7 +4023,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 771);
+        assert_eq!(cases.len(), 845);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

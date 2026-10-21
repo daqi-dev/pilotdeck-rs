@@ -704,7 +704,7 @@ for (const [name, pattern] of [
 
 // Store iterative recipes, avoiding JSON stringify/parser recursion limits.
 // Each sample is a cold, default-stack *real Client.callTool* observation.
-// The port's budget is 1024 weighted active schema units, not data depth.
+// The port's budget is 2048 weighted active schema units, not data depth.
 let recursiveDataTemplate = fs.readFileSync(
   fileURLToPath(new URL('./recursive-data.mjs', import.meta.url)), 'utf8',
 );
@@ -737,16 +737,19 @@ const observe = (shape, depth) => JSON.parse(execFileSync(process.execPath, [
   recursiveDataProbe, shape, String(depth),
 ], {env: recursiveDataEnv, encoding: 'utf8'}));
 try {
-  for (const [shape, lastSupported] of [
-    ['properties', 145], ['patternProperties', 145], ['additionalProperties', 170],
-    ['items', 168], ['anyOf', 67],
+  for (const [shape, lastSupported, oldLast] of [
+    ['properties', 291, 145], ['patternProperties', 291, 145],
+    ['additionalProperties', 340, 170], ['items', 338, 168], ['anyOf', 135, 67],
+    ['oneOf', 135], ['allOf', 135], ['not', 96], ['if', 112],
+    ['then', 119], ['else', 101], ['ref', 225],
   ]) {
-    for (const depth of [0, lastSupported, lastSupported + 1]) {
+    // Keep the original 1024-boundary samples and their real SDK results.
+    const depths = [...new Set([0, ...(oldLast === undefined ? [] : [oldLast, oldLast + 1]), lastSupported, lastSupported + 1])];
+    for (const depth of depths) {
       const observed = observe(shape, depth);
-      if (depth <= lastSupported) assert.ok(!observed.sdkError, `SDK must pass below port budget: ${shape}/${depth}`);
-      else if (observed.sdkError) assert.deepEqual(observed.sdkError, overflow);
+      assert.ok(!observed.sdkError, `SDK must pass near port budget: ${shape}/${depth}`);
       cases.push({id: `recursive-data/${shape}-${depth}`, ...observed,
-        ...(depth > lastSupported ? {portDepthLimit: true, ...(observed.sdkError ? {} : {knownDifference: 'conservative-stack-budget'})} : {}),
+        ...(depth > lastSupported ? {portDepthLimit: true, knownDifference: 'conservative-stack-budget'} : {}),
       });
     }
     // Find an over-SDK-boundary sample dynamically. No V8-specific breakpoint
@@ -761,9 +764,9 @@ try {
     assert.deepEqual(observed.sdkError, overflow);
     cases.push({id: `recursive-data/${shape}-sdk-overflow`, ...observed, portDepthLimit: true});
   }
-  for (const [kind, lastSupported] of [['const', 510], ['enum', 509], ['uniqueItems', 1016]]) {
+  for (const [kind, lastSupported, oldLast] of [['const', 1022, 510], ['enum', 1021, 509], ['uniqueItems', 2040, 1016]]) {
     const regularError = {code: -32602, message: "MCP error -32602: Structured content does not match the tool's output schema: data/a must NOT have duplicate items (items ## 0 and 1 are identical)"};
-    for (const depth of [lastSupported, lastSupported + 1]) {
+    for (const depth of [oldLast, oldLast + 1, lastSupported, lastSupported + 1]) {
       const observed = observe(kind, depth);
       assert.deepEqual(observed.sdkError, kind === 'uniqueItems' ? regularError : undefined, `SDK below comparison safety margin: ${kind}/${depth}`);
       cases.push({id: `recursive-comparison/${kind}-${depth}`, ...observed,
@@ -779,6 +782,23 @@ try {
     assert.ok(depth <= 32768, `no SDK comparison overflow sample found: ${kind}`);
     assert.deepEqual(observed.sdkError, overflow);
     cases.push({id: `recursive-comparison/${kind}-sdk-overflow`, ...observed, portDepthLimit: true});
+  }
+  // Round-7 wide recipes, with both sides of the new budget. A negative
+  // last means even depth zero exceeds the budget; retain zero/one controls.
+  for (const [shape, last] of [
+    ['anyOf128', 2], ['anyOf256', 0], ['anyOf512', -1],
+    ['oneOf128', 6], ['oneOf256', 2], ['oneOf512', 0],
+    ['allOf128', 4], ['allOf256', 1], ['allOf512', 0],
+    ['if128', 5], ['if256', 1], ['if512', -1],
+    ['dependencies128', 6], ['dependencies256', 2], ['dependencies512', 0],
+  ]) {
+    for (const depth of last < 0 ? [0, 1] : [last, last + 1]) {
+      const observed = observe(shape, depth);
+      assert.ok(!observed.sdkError, `SDK must pass near wide port budget: ${shape}/${depth}`);
+      cases.push({id: `recursive-data/${shape}-${depth}`, ...observed,
+        ...(depth > last ? {portDepthLimit: true, knownDifference: 'conservative-stack-budget'} : {}),
+      });
+    }
   }
   for (const depth of [0, 340]) {
     const observed = observe('wideAnyOf', depth);
@@ -896,7 +916,7 @@ const oracle = {
   recursiveDataRuntime: {
     node: process.version, v8: process.versions.v8,
     platform: process.platform, arch: process.arch,
-    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024, regexpStackUnits: 1048576, regexpInputUnit: 'UTF-16 code unit',
+    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 2048, regexpStackUnits: 1048576, regexpInputUnit: 'UTF-16 code unit',
   },
   cases: cases.map((entry) => {
     if (entry.recursiveData || entry.comparisonData || entry.stringData) return entry;
