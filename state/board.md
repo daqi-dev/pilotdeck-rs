@@ -1,14 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 12:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr9 | review | ready | PR #398 head 903e837 已入合并队列（12:44，position 1）；r11 GLM 0/0/0/0、Grok 0/0/0/1，gate10 0/0/1；合入后核 MERGED 与邮箱
-- A6.5-pr10b | impl | human | PR #391 head adf1c8a（沙箱外 1638/0，gate8 0/0/1）；Grok r9 又一条 P1（`.*`/取反类在混排文本上溢出、端口漏判），栈溢出模型第五次出问题，按「同一处 3 次不过」挂起；决策卡建议 A（无界重复一律权重≥1、阈值 1,048,576），人定后派 codex
-- #396 | review | ready | PR #403 两家 r1 均无 P0/P1/P2（GLM 0/0/0/3、Grok 0/0/0/1）；已 rebase 到 903e837（3c3a7a0，未推送），沙箱外全量重跑中；#398 合入后改 base 为 main、跑 gate、入队
+updated: 2026-10-21 13:08 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | human | PR #391 挂起待人定：三件事——① 正则长串方案（建议 A：无界重复一律权重≥1、阈值 1,048,576）② 深度与正则两条向严差异进 accepted-diffs ③ 验收是否要求 >1 MB 输出；人话说明 `_tmp/20261021-a65-pr10b-decision/brief.md`
+- #396 | review | ready | PR #403 已改 base 为 main，head 399a6f3（rebase 时 model/http.rs 与 A6.4-pr8 冲突，协调者逐块合并，署 Codex+Claude）；沙箱外 1676/0/42；Grok r2（只审冲突合并）+ 全量 gate2 在跑；收敛后改 Ready、入队
 - #386 | impl | human | codex 实测后停在选型：零 unsafe、零新依赖做不到；决策卡「#386 子进程信号处置重置的实现边界」待人批（建议 C：极小 unsafe 边界）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | impl | ready | 拆分完成（`_tmp/20261021-a7-1/split.md`，pr1–pr5，#216 归 pr5）；首派 codex 因任务书禁 git 与溯源守卫冲突停在拆分，放开守卫内只读 git 后二次派发 pr1（内存接纳与 completion fence）
-- A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等 pr9 合入后 rebase 再评审
+- A7.1-pr1 | impl | ready | codex 交付并已提交 76c76ec（wt-a63-pr1，codex/a7-1，已 rebase 到 main，未推送）：6 测试、真实 TS 14 场景连跑 8 次一致、15 负控；沙箱外全量在跑，过后开 PR、派两家评审；pr2–pr5 见 `_tmp/20261021-a7-1/split.md`
+- A6.5-pr9b | impl | ready | 无 PR（看板旧写 #390 不存在）；已 rebase 到 main（wt-a6-x0，claude/a65-pr9b @fda9848，备份分支 backup/a65-pr9b-c9f29d7），fetcher.rs import 冲突已合并，clippy 通过（需 CARGO_HOME=_build/cargo-home，html5ever 缓存在那里）；全量测试在跑，过后合并 WIP 提交、开 PR、评审
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
@@ -20,6 +19,12 @@ updated: 2026-10-21 12:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 13:08 · /loop
+> **合并**：#398 A6.5-pr9（12:52 MERGED）。核邮箱：main 上最近 200 个提交的 committer 都是账号主邮箱 zhengdaqi@gmail.com（服务端合并所致，见 memory merge-email-exposure），需人在 GitHub Settings → Emails 勾选隐私，已告知用户。
+> **#403**：pr9 合入后 rebase 到 main，与已合入的 A6.4-pr8 在 model/http.rs 冲突，逐块真合并（保留续传守卫 + 用 main 的共享 request_started_event；测试两侧都留），树与测过的一致后推送 399a6f3、改 base 为 main。之前起的 gate1 在 rebase 期间读的是旧树，已停掉作废。
+> **A7.1-pr1**：codex 二次派发完成，已提交、rebase；**pr9b**：rebase 完成，二者沙箱外全量在跑。
+> **用户问 pr10b 要批什么**：写了 `_tmp/20261021-a65-pr10b-decision/brief.md`，三件事见 READY。
 
 > ## 2026-10-21 12:35 · /loop
 > **pr9**：r10 Grok 0/0、GLM 0/0/1、gate9 0/0/2，P1 已清。收敛后的 P2 只修一批：协调者补 5 条边界用例（search 详情 500/501、serpapi 脱敏后 500/501、bodyPreview 497 切点代理对），真实 TS 生成两次逐字节一致，五处差一变异全抓住（`_tmp/20261021-pr9-ci/mutate2.out`），推送 903e837；确认轮 r11 + gate10 在跑。
