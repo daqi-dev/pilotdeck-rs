@@ -32,6 +32,8 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+# #438: a side effect inside debug_assert! vanishes in release builds.
+debug_assert_with_mut_call = "warn"
 
 # D6: replace the existing data crate only; algorithms and package versions stay locked.
 [patch.crates-io]
