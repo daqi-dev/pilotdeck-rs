@@ -77,7 +77,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 未取得 Grok 原 40 条输入，不把这 40 条冒充为它们的原样回放。
 
 `generate-depth.mts` 同样先跑固定提交的只读 Git 溯源守卫，再走真实 TS 入口。
-`regenerates_twice_identically` 分别运行三套生成器两次，逐字节匹配已提交金样。
+`regenerates_twice_identically` 分别运行四套生成器两次，逐字节匹配已提交金样。
 
 性能回归在深度预算内构造 126 层 ul/li、126 层长序号 ol/li（各 9 万 BR），
 再转换 10 MiB 平坦 HTML；release 的总预算 1 秒，debug 放宽为 20 秒。
@@ -126,3 +126,17 @@ code 必须逐层重新选择不与内容冲突的反引号，flank 必须先 tr
 峰值 capacity（含已不可达的旧节点），断言 250 层不超过单层三倍。
 这不是整次转换的 CPU 或输出大小上限；blockquote 的输出放大仍属 #409，
 已启动的 `spawn_blocking` worker 也不会因宿主 future 丢弃而停止。
+
+## 修复轮 4：V8 字符串上限
+
+`generate-string-limit.mts` 走真实 `getURLMarkdownContent` 和 `createWebFetchTool`
+（只注入 HTTP 字节，不替换 turndown），录制 n=16 的完整 655349 字节 Markdown
+及 n=33 的 RangeError、完整工具错误和两次请求的缓存行为。
+`string-limit-oracle.json` 可用同一生成器重放，加入了既有双次逐字节再生成测试。
+
+Rust 按 Node 22 的 536870888 个 UTF-16 单元上限，在构建每个 replacement、
+join、indent、repeat、flatten 以及转义/链接/code 字符串前验证预算。
+rope 保存 UTF-8 bytes、UTF-16 units、换行数，标题下划线保留为惰性 repeat，
+避免在发现超限前物化大串。检查包括最终 join 会裁去的 replacement 边界换行，
+与 Turndown 先生成 replacement 的顺序一致。这项为 TS 上限平价，不新增向严差异。
+资源测量、内存受限负控和完整自证见工作区 `_tmp/20261021-a65-pr9b/RESULT.md` 修复轮 4。

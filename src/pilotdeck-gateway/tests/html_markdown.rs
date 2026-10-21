@@ -92,6 +92,11 @@ fn regenerates_twice_identically() {
             "depth-oracle.json",
         ),
         (
+            "generate-string-limit.mts",
+            include_str!("fixtures/html-markdown/string-limit-oracle.json"),
+            "string-limit-oracle.json",
+        ),
+        (
             "generate-large.mts",
             include_str!("fixtures/html-markdown/large-oracle.json"),
             "large-oracle.json",
@@ -329,5 +334,24 @@ fn nested_code_and_flanks_match_real_ts_bytes() {
             case["markdown"].as_str().unwrap().as_bytes(),
             "{name}"
         );
+    }
+}
+
+#[test]
+fn nested_headings_match_real_ts_string_limit() {
+    let raw = include_str!("fixtures/html-markdown/string-limit-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    for case in oracle["cases"].as_array().unwrap() {
+        let actual = Turndown.convert(case["html"].as_str().unwrap());
+        if let Some(expected) = case["direct"]["markdown"].as_str() {
+            assert!(expected.len() < 1024 * 1024);
+            assert_eq!(actual.unwrap(), expected);
+        } else {
+            assert_eq!(
+                actual.unwrap_err(),
+                case["direct"]["error"]["message"].as_str().unwrap()
+            );
+        }
     }
 }
