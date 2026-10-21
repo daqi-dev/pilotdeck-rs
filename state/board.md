@@ -1,11 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 16:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 16:52 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - #396 | impl | ready | PR #403 r6：GLM 0/0/0/0；Grok r6 0/0/1（Google abort 判断只移植一半）→ codex 修复轮 6 在跑（`_tmp/20261021-issue-396/fix6.md`）；gate4 concurrency 超时须重跑，sibling P2×3（token_accounting/judge/compaction 竞速未跟）其一即 #410，其余并入
 - #386 | impl | ready | PR #407 r3：GLM 0/0/0/2；gate1 boundary P0（守卫扩展名大小写 / #[path] / include! 假通过，与 #413 同源，两家撞上升级本轮修）+ P2（非 Unix 编译）→ codex 修复轮 3 在跑（`_tmp/20261021-issue-386/fix3.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412：Grok r1 P1（shutdown 排空无测试支撑：去掉等待 28 测仍全过；5 个变异只抓住 1 个）+ P2×3（stop_new cutoff、idle 跳过进行中、close 排队顺序均无覆盖）；GLM r1 在跑，收齐后一批修
+- A7.1-pr2 | impl | ready | PR #412：Grok r1 P1（shutdown 排空无测试）+ P2×3 → codex 修复轮 1 在跑（`_tmp/20261021-a7-1-pr2/fix1.md`，四个变异都要能抓住）；GLM r1 0/0/3，P2 均无消费方，拆 #414（前置于 A7.2/A7.8）
 - A6.5-pr9b | review | ready | PR #406 rebase 到含 #391 的 main（9c333cb）：账本两边条目都保留，FROZEN 重算，check_frozen PASS，gitleaks 无泄漏；增量 gate3 + 全量测试在跑，绿了换结果块入队
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
@@ -326,3 +326,5 @@ updated: 2026-10-21 16:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **资源**:磁盘22GiB余;worktree 12/12;token 123k/200k。
 
 > **16:48**：#391（pr10b）已合入 main（5a15fbb，提交邮箱同前为账号主邮箱）。#406 rebase 合账本、重登记，推 9c333cb，gate3 与全量测试在跑。#407 gate1 守卫假通过 P0 与 #403 Grok P2 派 codex 修。下一步：收 #412 GLM r1 后一批派修；gate3 绿即 #406 入队。
+
+> **16:52**：#412 GLM r1 收齐，三条 P2 拆 #414；Grok 的 P1+P2 派 codex 修复轮 1。现有 4 个 codex（#407 fix3、#403 fix6、#412 fix1）+ #406 gate3/全量测试在跑。
