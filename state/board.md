@@ -1,11 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 11:55 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8 接替 7e)
-- A6.5-pr9 | review | ready | PR #398 head 8e86640（CI 修复：oracle 真实 TS 重生成、计数 21/45/114）；GLM r9 + Grok r9 增量评审在跑（`_tmp/20261020-a65-pr9/rv-*-r9.status`）；两家 0/0 且 CI 绿即入队
-- A6.5-pr10b | impl | ready | PR #391 head 2e6a091（rustfmt 修 CI）；Grok r8 正式结论 P1×1（pattern 正则长串 V8 栈溢出→端口假 PASS，`_tmp/20261021-loop/grok-read-141.txt:27-41`）；codex 修复轮 8 在跑（`_tmp/20261020-a65-pr10b/fix8.status`）
+updated: 2026-10-21 12:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8 接替 7e)
+- A6.5-pr9 | review | ready | PR #398 head 7fcc773；r9 三家独立撞同一 P1（两条「恰好边界」用例到不了边界代码），已修：改 raw 100000/100001、418 500/501，五处差一变异全抓住；GLM r10 + Grok r10 + gate9（增量）在跑；两家 0/0、gate 块绑新 head、CI 绿即入队
+- A6.5-pr10b | review | ready | 修复轮 8 已提交 adf1c8a（codex，未推送）：正则风险类 weight×UTF-16 长度 > 65536 走同一 -32602 错误（向严），oracle 598→670，22/22 负控；沙箱外全量测试在跑，过后推送、派 GLM/Grok r9 与全量 gate（PR 尚无 gate 块）
 - #396 | impl | ready | 并 #400 第 1–3 条；codex 在 wt-a64-pr7（codex/a64-exchange，叠在 pr9 上），`_tmp/20261021-issue-396/task.status`
-- #386 | impl | ready | codex 在 wt-a63-pr1（codex/sig-reset），无 unsafe/新依赖做不到则停在选型交卡，`_tmp/20261021-issue-386/task.status`
+- #386 | impl | human | codex 实测后停在选型：零 unsafe、零新依赖做不到；决策卡「#386 子进程信号处置重置的实现边界」待人批（建议 C：极小 unsafe 边界）
 - #401 | impl | ready | pr10b gate7 剩余 P2（concurrency×1、sibling×1）；等 pr10b 修复轮 8 回来再排
 - A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等 pr9 合入后 rebase 再评审
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
@@ -19,6 +19,11 @@ updated: 2026-10-21 11:55 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 12:15 · /loop
+> **pr9**：r9 的 GLM、Grok 和 gate8 boundary 三家独立撞上同一条 P1：9689d2b 加的两条「恰好 500 / 100000」用例走的是 default 无模型分支，到不了边界代码（Grok 实测五处差一变异全部漏网）。协调者改成 raw 100000/100001 单元和 418 正文 500/501 单元，用真实 TS 生成两次逐字节一致，五处变异各自 40/1（`_tmp/20261021-pr9-ci/mutate.out`），推送 7fcc773，派 r10 与 gate9。
+> **pr10b**：codex 修复轮 8 回来，按「向严 + 登记」处理正则长串，已提交（署 Codex），沙箱外全量测试在跑。向严区间很宽（权重 1 的 pattern 在 65537 到约 400 万单位之间端口拒绝、SDK 通过），交评审判断是否可接受。
+> **#386**：codex 实测后确认零 unsafe、零新依赖做不到，未改代码；写决策卡转 human。**#396** codex 仍在跑。#402 补上 waiver / no-issue 标记后 pr-gate 转绿。
 
 > ## 2026-10-21 11:55 · /loop（会话 pilotdeck-rs-d8 接替 7e）
 > **CI 修复**：#391 只差 rustfmt（2e6a091）；#398 是 ac87059 加了 URL 用例但测试仍断言 20、9689d2b 改了 cases 却没重生成 oracle（生成器断言 46，实际 45）。已用真实 TS 重生成两次逐字节一致（3315a10f…），web_tools 41/0（8e86640）。worktree 里那份旧草稿存 `_tmp/20261021-pr9-ci/stale-wip.diff`。
