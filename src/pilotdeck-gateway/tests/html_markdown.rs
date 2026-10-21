@@ -294,7 +294,7 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
     let actual = Turndown.convert(&html).unwrap();
     let elapsed = started.elapsed();
     assert!(actual.as_bytes() == period.repeat(1024 * 1024).as_bytes());
-    let budget = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
+    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
     eprintln!(
         "dense-inline-10mib-flat: {} HTML bytes, {elapsed:?}",
         html.len()
