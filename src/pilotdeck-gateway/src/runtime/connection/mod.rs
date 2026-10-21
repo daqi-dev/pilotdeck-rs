@@ -5,6 +5,7 @@ mod context;
 
 use binding::WsBinding;
 use context::State;
+use pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -13,7 +14,6 @@ use std::{
 };
 
 pub type Call<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-pub const PROTOCOL_VERSION: &str = "1.2";
 
 pub trait GatewayTextConnection: Send + Sync {
     fn send_text(&self, message: String);
@@ -128,7 +128,7 @@ impl GatewayConnection {
                 self.text.close(4001, "hello_required");
                 return Box::pin(async { Ok(()) });
             }
-            if frame["protocolVersion"] != PROTOCOL_VERSION {
+            if frame["protocolVersion"] != GATEWAY_PROTOCOL_VERSION {
                 self.text.close(4001, "protocol_mismatch");
                 return Box::pin(async { Ok(()) });
             }
@@ -142,7 +142,7 @@ impl GatewayConnection {
                 // As in TS, authentication is published before describe awaits.
                 let info = self.gateway.describe_server().await?;
                 self.send(
-                    json!({"type":"hello_ok", "protocolVersion":PROTOCOL_VERSION,
+                    json!({"type":"hello_ok", "protocolVersion":GATEWAY_PROTOCOL_VERSION,
                         "serverVersion":self.server_version, "serverInfo":info,
                         "interactionBinding":self.binding.to_json()}),
                 );
@@ -160,25 +160,19 @@ impl GatewayConnection {
             .as_str()
             .filter(|s| !s.is_empty())
             .map(str::to_owned);
-        let ticket = if method == "submit_turn" {
-            state.ticket += 1;
-            let ticket = state.ticket;
-            if let Some(session) = session.as_ref() {
-                state.track_interaction(session);
-                state.in_flight.push((session.clone(), ticket));
-            }
-            Some(ticket)
-        } else {
-            None
-        };
+        let is_submit = method == "submit_turn";
+        if is_submit && let Some(session) = session.as_ref() {
+            state.track_interaction(session);
+            state.track_in_flight(session);
+        }
         let params = state.inject(&method, input.clone(), &self.binding);
         drop(state);
-        let cleanup = ticket.map(|ticket| SubmitCleanup {
+        let cleanup = is_submit.then(|| SubmitCleanup {
             connection: self,
-            ticket,
+            session,
         });
         Box::pin(async move {
-            let result = if ticket.is_some() {
+            let result = if is_submit {
                 self.submit(&id, params, cleanup).await.map(|()| None)
             } else {
                 self.gateway.request(method.clone(), params).await.map(Some)
@@ -273,13 +267,7 @@ impl GatewayConnection {
                     .gateway
                     .disconnect(session.clone(), self.binding.clone())
                     .await?;
-                let in_flight = self
-                    .state
-                    .lock()
-                    .unwrap()
-                    .in_flight
-                    .iter()
-                    .any(|(s, _)| s == &session);
+                let in_flight = self.state.lock().unwrap().in_flight.contains(&session);
                 if in_flight && !preserve_turn {
                     // A5 explicitly requires a session-wide abort, without runId.
                     let _ = self
@@ -297,16 +285,19 @@ impl GatewayConnection {
 }
 struct SubmitCleanup<'a> {
     connection: &'a GatewayConnection,
-    ticket: u64,
+    session: Option<String>,
 }
 impl Drop for SubmitCleanup<'_> {
     fn drop(&mut self) {
+        let Some(session) = &self.session else {
+            return;
+        };
         self.connection
             .state
             .lock()
             .unwrap()
             .in_flight
-            .retain(|(_, ticket)| *ticket != self.ticket);
+            .retain(|s| s != session);
     }
 }
 #[cfg(test)]

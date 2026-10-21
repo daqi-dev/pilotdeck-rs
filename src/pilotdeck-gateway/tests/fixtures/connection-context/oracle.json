@@ -31,7 +31,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -53,7 +55,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -75,7 +79,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -97,7 +103,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -119,7 +127,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -141,7 +151,9 @@
             }
           ],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -172,7 +184,9 @@
           "frames": [],
           "closes": [],
           "calls": [],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -198,7 +212,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -231,7 +247,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -269,7 +287,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -311,7 +331,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -352,7 +374,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -383,7 +407,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -440,7 +466,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -475,7 +503,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -524,7 +554,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -591,7 +623,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -667,7 +701,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -752,7 +788,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -787,7 +825,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -812,7 +852,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -852,7 +894,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -920,7 +964,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -974,7 +1020,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -1045,7 +1093,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -1134,7 +1184,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -1246,7 +1298,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -1388,7 +1444,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -1563,6 +1623,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -1766,6 +1830,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -1979,7 +2047,9 @@
           ],
           "finalInFlight": [
             []
-          ]
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -2047,7 +2117,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -2101,7 +2173,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -2172,7 +2246,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -2261,7 +2337,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -2373,7 +2451,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -2515,7 +2597,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -2690,6 +2776,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -2893,6 +2983,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -3106,7 +3200,9 @@
           ],
           "finalInFlight": [
             []
-          ]
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -3174,7 +3270,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -3228,7 +3326,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -3299,7 +3399,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -3388,7 +3490,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -3500,7 +3604,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -3642,7 +3750,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
         },
         {
           "frames": [
@@ -3817,6 +3929,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -4020,6 +4136,10 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
           ]
         },
         {
@@ -4233,7 +4353,9 @@
           ],
           "finalInFlight": [
             []
-          ]
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -4293,7 +4415,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -4330,7 +4454,13 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [
+            "old-socket"
+          ],
+          "interactions": [
+            "old-socket"
+          ]
         },
         {
           "frames": [
@@ -4383,7 +4513,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -4458,7 +4590,9 @@
           ],
           "finalInFlight": [
             []
-          ]
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -4518,7 +4652,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -4555,7 +4691,13 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [
+            "old-socket"
+          ],
+          "interactions": [
+            "old-socket"
+          ]
         },
         {
           "frames": [
@@ -4602,7 +4744,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -4671,7 +4815,9 @@
           ],
           "finalInFlight": [
             []
-          ]
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     },
@@ -4729,7 +4875,9 @@
               "method": "describe_server"
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -4778,7 +4926,11 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "interaction-first"
+          ]
         },
         {
           "frames": [
@@ -4837,7 +4989,14 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [
+            "in-flight-first"
+          ],
+          "interactions": [
+            "interaction-first",
+            "in-flight-first"
+          ]
         },
         {
           "frames": [
@@ -4922,7 +5081,9 @@
               }
             }
           ],
-          "finalInFlight": []
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
         },
         {
           "frames": [
@@ -5029,7 +5190,590 @@
           ],
           "finalInFlight": [
             []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "same-session-concurrent-submit-first-finishes-before-close",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "slot": "first",
+          "frame": {
+            "type": "request",
+            "id": "first",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "shared"
+            }
+          }
+        },
+        {
+          "op": "start",
+          "slot": "second",
+          "frame": {
+            "type": "request",
+            "id": "second",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "shared"
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "slot": "first"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":\"shared\",\"requestId\":\"still-run\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish",
+          "slot": "second"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            "shared"
+          ],
+          "interactions": [
+            "shared"
           ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            "shared"
+          ],
+          "interactions": [
+            "shared"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "shared"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "shared",
+                "requestId": "still-run"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "shared",
+                "requestId": "still-run",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "shared"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "shared",
+                "requestId": "still-run"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "shared",
+                "requestId": "still-run",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "shared",
+                "binding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-17",
+                "generation": 17
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "first",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "shared",
+                "requestId": "still-run"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "second",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "second",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "shared",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "shared",
+                "requestId": "still-run",
+                "interactionBinding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "shared",
+                "binding": {
+                  "connectionId": "@connection-17",
+                  "generation": 17
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            [],
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
         }
       ]
     }
