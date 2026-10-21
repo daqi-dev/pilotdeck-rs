@@ -2519,3 +2519,178 @@ async fn web_fetch_hop_timeout_during_retry_uses_retry_abort_message() {
         assert_eq!(*calls.lock().unwrap(), 1);
     }
 }
+
+// HTML conversion must yield the async worker even on a current-thread runtime.
+struct ConversionTransport(String);
+impl ModelHttpTransport for ConversionTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::ready(Ok(hyper::Response::builder()
+            .status(200)
+            .header("content-type", "text/html")
+            .body(
+                Full::new(Bytes::from(self.0.clone()))
+                    .map_err(|never| match never {})
+                    .boxed(),
+            )
+            .unwrap()))
+    }
+}
+fn conversion_tool(html: String, converter: Option<Arc<dyn HtmlToMarkdown>>) -> WebFetchTool {
+    let mut fetcher = UrlFetcher::new(Arc::new(ConversionTransport(html)));
+    fetcher.cache = Arc::new(UrlCache::new(None));
+    if let Some(converter) = converter {
+        fetcher.html = converter;
+    }
+    WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    })
+}
+fn conversion_input() -> JsValue {
+    object(vec![
+        ("url", "https://example.com/page".into()),
+        ("mode", "raw".into()),
+    ])
+}
+
+#[tokio::test]
+async fn html_depth_limit_has_the_exact_ts_web_fetch_overflow_error() {
+    use pilotdeck_gateway::runtime::tools::builtin::web::html_markdown::MAX_DOM_DEPTH;
+    let oracle = baseline::oracle(include_str!("fixtures/html-markdown/depth-oracle.json"));
+    for (open, close) in [
+        ("<ul><li>", "</li></ul>"),
+        ("<ol><li>", "</li></ol>"),
+        ("<div>", "</div>"),
+        ("<blockquote>", "</blockquote>"),
+    ] {
+        let tool = conversion_tool(
+            format!(
+                "{}x{}",
+                open.repeat(MAX_DOM_DEPTH),
+                close.repeat(MAX_DOM_DEPTH)
+            ),
+            None,
+        );
+        let result = run(&tool, conversion_input(), context(None, empty_env(), None)).await;
+        assert_eq!(
+            json(get(&result, "error")),
+            json(get(&items(get(&oracle, "errors"))[0], "error"))
+        );
+    }
+}
+
+struct PausedConverter {
+    started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+    finished: AtomicBool,
+}
+impl HtmlToMarkdown for PausedConverter {
+    fn convert(&self, _: &str) -> Result<String, String> {
+        self.started
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(())
+            .unwrap();
+        // Bounded even when the scheduling regression under test prevents the
+        // async half from releasing us; the test then fails instead of hangs.
+        let released = self
+            .release
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(2));
+        self.finished.store(true, Ordering::SeqCst);
+        released.map_err(|e| e.to_string())?;
+        Ok("converted".into())
+    }
+}
+fn paused_converter() -> (
+    Arc<PausedConverter>,
+    tokio::sync::oneshot::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    (
+        Arc::new(PausedConverter {
+            started: Mutex::new(Some(started)),
+            release: Mutex::new(blocked),
+            finished: AtomicBool::new(false),
+        }),
+        entered,
+        release,
+    )
+}
+
+/// Real TS raw-mode probe succeeds when abort fires after the body, including
+/// from inside turndown. Returning a new abort error here would change parity.
+#[tokio::test]
+async fn html_conversion_parent_abort_keeps_ts_raw_success_and_async_progress() {
+    let (converter, entered, release) = paused_converter();
+    let tool = conversion_tool("<p>x</p>".into(), Some(converter.clone()));
+    let signal = ToolCancellation::default();
+    let pending = tokio::spawn(run_owned_conversion(tool, signal.clone()));
+    entered.await.unwrap();
+    assert!(
+        !converter.finished.load(Ordering::SeqCst),
+        "converter blocked Tokio"
+    );
+    signal.cancel();
+    // This timer cannot advance while synchronous conversion owns the worker.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    assert!(!pending.is_finished());
+    release.send(()).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        get(&result, "ok").as_object().is_some(),
+        "{}",
+        json(&result)
+    );
+}
+async fn run_owned_conversion(tool: WebFetchTool, signal: ToolCancellation) -> JsValue {
+    run(
+        &tool,
+        conversion_input(),
+        context(None, empty_env(), Some(signal)),
+    )
+    .await
+}
+
+/// Host deadlines/drop can stop waiting immediately. spawn_blocking cannot
+/// kill an executing closure; the production converter's DOM budget bounds it.
+#[tokio::test]
+async fn html_conversion_outer_timeout_does_not_wait_for_blocking_worker() {
+    let (converter, entered, release) = paused_converter();
+    let tool = conversion_tool("<p>x</p>".into(), Some(converter.clone()));
+    let started = Instant::now();
+    let pending = tokio::spawn(async move {
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            run_owned_conversion(tool, ToolCancellation::default()),
+        )
+        .await
+    });
+    entered.await.unwrap();
+    assert!(
+        !converter.finished.load(Ordering::SeqCst),
+        "converter blocked Tokio"
+    );
+    assert!(pending.await.unwrap().is_err());
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(!converter.finished.load(Ordering::SeqCst));
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !converter.finished.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}

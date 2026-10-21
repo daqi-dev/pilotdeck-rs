@@ -395,11 +395,17 @@ impl UrlFetcher {
             }));
         }
         let (content, content_bytes) = if content_type.contains("text/html") {
-            let html = String::from_utf8_lossy(&raw.body);
-            let content = self
-                .html
-                .convert(&html)
-                .map_err(|message| FetchError::Other(JsString::from(message.as_str())))?;
+            let html = String::from_utf8_lossy(&raw.body).into_owned();
+            let converter = self.html.clone();
+            // TS runs turndown synchronously after the body and ignores an
+            // abort delivered during conversion (including raw-mode success).
+            // Preserve that result ordering, but keep CPU work off Tokio.
+            // The default converter bounds parsing/rendering; dropping this
+            // future (e.g. the host deadline) does not wait for the worker.
+            let content = tokio::task::spawn_blocking(move || converter.convert(&html))
+                .await
+                .map_err(|error| other(&error.to_string()))?
+                .map_err(|message| other(&message))?;
             let length = content.len();
             (content, length)
         } else if is_binary_content_type(&content_type) {

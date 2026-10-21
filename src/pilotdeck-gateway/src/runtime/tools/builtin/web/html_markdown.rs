@@ -11,6 +11,10 @@ use crate::{
     metadata::{js_space, js_trim},
 };
 use std::ops::Range;
+#[path = "html_markdown_buffer.rs"]
+mod buffer;
+pub use super::html_dom::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, MAX_DOM_NODES};
+use buffer::{Content, Rope};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Turndown;
@@ -256,7 +260,7 @@ impl<'a> Render<'a> {
         (leading, trailing)
     }
 
-    fn replace(&self, id: Id, content: String) -> String {
+    fn replace(&self, rope: &mut Rope, id: Id, content: Content) -> Content {
         let name = self.names[id].as_str();
         let lower = name.to_ascii_lowercase();
         let node = &self.dom.nodes[id];
@@ -264,9 +268,9 @@ impl<'a> Render<'a> {
         let (leading, trailing) = self.flanks(id);
         let mut content = content;
         if !leading.is_empty() || !trailing.is_empty() {
-            content = js_trim(&content).to_owned();
+            content = rope.text(js_trim(&rope.flatten(content)));
         }
-        let wrap_block = |content: &str| format!("\n\n{content}\n\n");
+        let wrap_block = |content: Content| content.wrap_block();
         // Domino's getElementsByTagName("IMG"/"A"/...) folds case only on
         // HTML elements. Foreign ancestors can therefore still be blank even
         // when their HTML integration-point descendants contain an image/link.
@@ -275,37 +279,40 @@ impl<'a> Render<'a> {
             || self.dom.is_html(id) && self.summary[id].meaningful;
         let replacement = if !self.summary[id].nonblank && !meaningful {
             if block {
-                "\n\n".to_string()
+                rope.text("\n\n")
             } else {
-                String::new()
+                Content::default()
             }
         } else {
             match lower.as_str() {
-                "p" => wrap_block(&content),
-                "br" => "  \n".into(),
+                "p" => wrap_block(content),
+                "br" => rope.text("  \n"),
                 "h1" | "h2" => {
                     let marker = if lower == "h1" { "=" } else { "-" };
-                    wrap_block(&format!(
-                        "{content}\n{}",
-                        marker.repeat(content.encode_utf16().count())
-                    ))
+                    let count = rope.flatten(content).encode_utf16().count();
+                    let underline = rope.text(&format!("\n{}", marker.repeat(count)));
+                    wrap_block(rope.concat(content, underline))
                 }
-                "h3" | "h4" | "h5" | "h6" => wrap_block(&format!(
-                    "{} {content}",
-                    "#".repeat((name.as_bytes()[1] - b'0') as usize)
-                )),
+                "h3" | "h4" | "h5" | "h6" => {
+                    let prefix = rope.text(&format!(
+                        "{} ",
+                        "#".repeat((name.as_bytes()[1] - b'0') as usize)
+                    ));
+                    wrap_block(rope.concat(prefix, content))
+                }
                 "blockquote" => {
-                    let content = content.trim_matches('\n').replace('\n', "\n> ");
-                    wrap_block(&format!("> {content}"))
+                    let content = rope.indent(content.trim_newlines(), "> ");
+                    let prefix = rope.text("> ");
+                    wrap_block(rope.concat(prefix, content))
                 }
                 "ul" | "ol" => {
                     let nested_last = node.parent.is_some_and(|p| {
                         self.names[p] == "LI" && self.summary[p].last_element == Some(id)
                     });
                     if nested_last {
-                        format!("\n{content}")
+                        content.prepend_newlines(1)
                     } else {
-                        wrap_block(&content)
+                        wrap_block(content)
                     }
                 }
                 "li" => {
@@ -318,38 +325,51 @@ impl<'a> Render<'a> {
                         } else {
                             "*   ".to_string()
                         };
-                    let paragraph = if content.ends_with('\n') { "\n" } else { "" };
-                    let content = format!("{}{paragraph}", content.trim_matches('\n'))
-                        .replace('\n', &format!("\n{}", " ".repeat(prefix.len())));
-                    format!(
-                        "{prefix}{content}{}",
-                        if node.next.is_some() { "\n" } else { "" }
-                    )
+                    let paragraph =
+                        content.trailing > 0 || content.body.is_none() && content.leading > 0;
+                    let mut body = rope.indent(content.trim_newlines(), &" ".repeat(prefix.len()));
+                    if paragraph {
+                        let ending = rope.text(&format!("\n{}", " ".repeat(prefix.len())));
+                        body = rope.concat(body, ending);
+                    }
+                    let prefix = rope.text(&prefix);
+                    let mut result = rope.concat(prefix, body);
+                    if node.next.is_some() {
+                        result = result.append_newlines(1);
+                    }
+                    result
                 }
                 "pre" if name == "PRE" && node.first.is_some_and(|c| self.names[c] == "CODE") => {
-                    wrap_block(&format!(
-                        "    {}",
-                        self.text(node.first.unwrap()).replace('\n', "\n    ")
-                    ))
+                    let text = rope.text(self.text(node.first.unwrap()));
+                    let text = rope.indent(text, "    ");
+                    let prefix = rope.text("    ");
+                    wrap_block(rope.concat(prefix, text))
                 }
-                "hr" => wrap_block("* * *"),
+                "hr" => wrap_block(rope.text("* * *")),
                 "a" if name == "A" && self.dom.attr(id, "href").is_some_and(|s| !s.is_empty()) => {
-                    format!(
-                        "[{content}]({}{})",
+                    let prefix = rope.text("[");
+                    let suffix = rope.text(&format!(
+                        "]({}{})",
                         destination(self.dom.attr(id, "href").unwrap()),
                         title(self.dom.attr(id, "title"))
-                    )
+                    ));
+                    let body = rope.concat(prefix, content);
+                    rope.concat(body, suffix)
                 }
                 "em" | "i" | "strong" | "b" => {
-                    if js_trim(&content).is_empty() {
-                        String::new()
+                    if rope.blank(content) {
+                        Content::default()
                     } else {
                         let marker = if matches!(lower.as_str(), "em" | "i") {
                             "_"
                         } else {
                             "**"
                         };
-                        format!("{marker}{content}{marker}")
+                        {
+                            let marker = rope.text(marker);
+                            let body = rope.concat(marker, content);
+                            rope.concat(body, marker)
+                        }
                     }
                 }
                 "code"
@@ -358,48 +378,36 @@ impl<'a> Render<'a> {
                             && node.prev.is_none()
                             && node.next.is_none()) =>
                 {
-                    inline_code(&content)
+                    rope.text(&inline_code(&rope.flatten(content)))
                 }
                 "img" => {
                     let src = self.dom.attr(id, "src").unwrap_or("");
                     if src.is_empty() {
-                        String::new()
+                        Content::default()
                     } else {
-                        format!(
+                        rope.text(&format!(
                             "![{}]({}{})",
                             escape(&clean_attribute(self.dom.attr(id, "alt").unwrap_or(""))),
                             destination(src),
                             title(self.dom.attr(id, "title"))
-                        )
+                        ))
                     }
                 }
-                _ if block => wrap_block(&content),
+                _ if block => wrap_block(content),
                 _ => content,
             }
         };
         if leading.is_empty() && trailing.is_empty() {
             replacement
         } else {
-            format!("{leading}{replacement}{trailing}")
+            {
+                let leading = rope.text(leading);
+                let trailing = rope.text(trailing);
+                let body = rope.concat(leading, replacement);
+                rope.concat(body, trailing)
+            }
         }
     }
-}
-
-fn join(output: &mut String, mut replacement: String) {
-    let trailing = output.len() - output.trim_end_matches('\n').len();
-    let leading = replacement.len() - replacement.trim_start_matches('\n').len();
-    if output.is_empty() {
-        // Deep chains of identity elements transfer their child's buffer
-        // instead of copying a large payload once for every ancestor.
-        replacement.drain(..leading.saturating_sub(2));
-        *output = replacement;
-        return;
-    }
-    output.truncate(output.len() - trailing);
-    for _ in 0..trailing.max(leading).min(2) {
-        output.push('\n');
-    }
-    output.push_str(&replacement[leading..]);
 }
 
 fn escape(text: &str) -> String {
@@ -493,7 +501,7 @@ impl HtmlToMarkdown for Turndown {
         // that closes it early. Parsing a fragment/body changes malformed input.
         let mut dom = parse_document(&format!(
             "<x-turndown id=\"turndown-root\">{html}</x-turndown>"
-        ));
+        ))?;
         let root = dom
             .element_by_id("turndown-root")
             .ok_or("HTML root missing")?;
@@ -501,29 +509,32 @@ impl HtmlToMarkdown for Turndown {
         collapse(&mut dom, root, &names);
         let order: Vec<_> = std::iter::once(root).chain(dom.descendants(root)).collect();
         let render = Render::new(&dom, &names, &order);
-        let mut output: Vec<String> = (0..dom.nodes.len()).map(|_| String::new()).collect();
+        let mut rope = Rope::default();
+        let mut output = vec![Content::default(); dom.nodes.len()];
         for &id in order.iter().rev() {
             let value = match &dom.nodes[id].kind {
-                Kind::Text(text) if render.summary[id].code => text.clone(),
-                Kind::Text(text) => escape(text),
+                Kind::Text(text) if render.summary[id].code => rope.text(text),
+                Kind::Text(text) => rope.text(&escape(text)),
                 Kind::Element { .. } => {
-                    let mut content = String::new();
+                    let mut content = Content::default();
                     for child in dom.children(id) {
-                        join(&mut content, std::mem::take(&mut output[child]));
+                        content = rope.join(content, output[child]);
                     }
                     if id == root {
                         content
                     } else {
-                        render.replace(id, content)
+                        render.replace(&mut rope, id, content)
                     }
                 }
-                _ => String::new(),
+                _ => Content::default(),
             };
             output[id] = value;
         }
-        Ok(output[root]
-            .trim_start_matches(['\t', '\r', '\n'])
-            .trim_end_matches(js_space)
-            .to_owned())
+        let mut output = rope.flatten(output[root]);
+        let start = output.len() - output.trim_start_matches(['\t', '\r', '\n']).len();
+        let end = output.trim_end_matches(js_space).len();
+        output.truncate(end.max(start));
+        output.drain(..start);
+        Ok(output)
     }
 }
