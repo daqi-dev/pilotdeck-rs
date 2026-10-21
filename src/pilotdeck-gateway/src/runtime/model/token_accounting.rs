@@ -4,6 +4,7 @@ use super::{HyperCountTransport, ProviderCountTransport};
 use crate::host::modules::budget::{EvaluationOptions, RequestBudgetEvaluator, accounting_request};
 use crate::host::{HostError, HostFuture, ModuleError};
 use crate::model_cost;
+use crate::runtime::network::{Cancellation, Exchange, exchange, node_timer_duration};
 use pilotdeck_protocol::{
     JsObject, JsValue,
     model::{ContentBlock, ContentBody, Message},
@@ -11,7 +12,7 @@ use pilotdeck_protocol::{
 };
 use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct TokenBudgetManager {
@@ -338,18 +339,35 @@ impl TokenAccountingRuntime {
     async fn provider_count(
         &self,
         request: JsObject,
-        signal: Option<watch::Receiver<bool>>,
+        signal: Option<Cancellation>,
     ) -> Result<Option<f64>, HostError> {
         let config = self.config.clone();
         let request = super::cpu::run(move || count_request(&config, &request)).await?;
         let Some(request) = request else {
             return Ok(None);
         };
-        let raw = tokio::select! {
-            biased;
-            () = cancelled(signal) => return Err(ModuleError::new("This operation was aborted").into()),
-            result = tokio::time::timeout(self.timeout, self.transport.post(request)) => result
-                .map_err(|_| ModuleError::new("This operation was aborted"))??,
+        // TS arms the outer timer before calling fetch. Fulfilled promises
+        // keep their result through synchronous abort; undispatched response
+        // timers yield to it, even when their deadlines have already passed.
+        let deadline =
+            tokio::time::Instant::now() + node_timer_duration(self.timeout.as_secs_f64() * 1000.0);
+        let raw = match exchange(
+            self.transport.post(request),
+            async {
+                match &signal {
+                    Some(signal) => signal.cancelled().await,
+                    None => std::future::pending().await,
+                }
+            },
+            || signal.as_ref().and_then(Cancellation::abort_event_at),
+            Some(deadline),
+        )
+        .await
+        {
+            Exchange::Response(result, _) => result?,
+            Exchange::Aborted | Exchange::Timeout => {
+                return Err(ModuleError::new("This operation was aborted").into());
+            }
         };
         for key in ["input_tokens", "inputTokens", "tokens"] {
             if let Some(value) = raw
@@ -378,19 +396,6 @@ fn positive(value: Option<&JsValue>) -> Option<f64> {
     value
         .and_then(JsValue::as_number)
         .filter(|v| v.is_finite() && *v > 0.0)
-}
-async fn cancelled(signal: Option<watch::Receiver<bool>>) {
-    if let Some(mut signal) = signal {
-        loop {
-            if *signal.borrow_and_update() {
-                return;
-            }
-            if signal.changed().await.is_err() {
-                break;
-            }
-        }
-    }
-    std::future::pending::<()>().await;
 }
 fn cache_key(request: &JsObject) -> Result<[u8; 32], HostError> {
     let mut projected = JsObject::new();
@@ -439,10 +444,145 @@ fn js_min(a: f64, b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::model::{CountFuture, CountHttpRequest};
+    use std::{
+        future::Future,
+        sync::atomic::{AtomicBool, Ordering},
+        task::Poll,
+    };
+
+    fn configured_count(
+        transport: impl ProviderCountTransport + 'static,
+    ) -> TokenAccountingRuntime {
+        TokenAccountingRuntime::new(
+            pilotdeck_protocol::parse_json(
+                r#"{"providers":{"p":{"id":"p","protocol":"anthropic","url":"http://example.test","apiKey":"fixture","headers":{},"models":{"m":{"id":"m"}}}}}"#,
+            )
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone(),
+        )
+        .with_transport(Arc::new(transport))
+        .with_timeout(Duration::from_millis(100))
+    }
+
+    fn count_input() -> JsObject {
+        pilotdeck_protocol::parse_json(r#"{"provider":"p","model":"m","messages":[]}"#)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    struct FulfilledCount {
+        signal: Cancellation,
+        fail: bool,
+    }
+    impl ProviderCountTransport for FulfilledCount {
+        fn post(&self, _: CountHttpRequest) -> CountFuture {
+            let result = if self.fail {
+                Err(ModuleError::new("fixture transport failure").into())
+            } else {
+                Ok(object([("input_tokens", JsValue::Number(73.0))]))
+            };
+            // A settled fetch Promise cannot be rejected by a subsequent
+            // controller.abort() in the same JS stack (real TS Node probe).
+            self.signal.abort();
+            CountFuture::ready(result)
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn count_fulfilled_promise_keeps_result_through_synchronous_abort() {
+        for fail in [false, true] {
+            let signal = Cancellation::new();
+            let runtime = configured_count(FulfilledCount {
+                signal: signal.clone(),
+                fail,
+            });
+            let result = runtime
+                .provider_count(count_input(), Some(signal.clone()))
+                .await;
+            assert!(signal.is_cancelled());
+            if fail {
+                assert_eq!(
+                    result.unwrap_err().module_error.unwrap().message,
+                    "fixture transport failure".into()
+                );
+            } else {
+                assert_eq!(result.unwrap(), Some(73.0));
+            }
+        }
+    }
+
+    struct TimedCount {
+        started: Arc<AtomicBool>,
+        response_ms: u64,
+    }
+    impl ProviderCountTransport for TimedCount {
+        fn post(&self, _: CountHttpRequest) -> CountFuture {
+            self.started.store(true, Ordering::SeqCst);
+            CountFuture::after(
+                Duration::from_millis(self.response_ms),
+                Ok(object([("input_tokens", JsValue::Number(73.0))])),
+            )
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn count_overdue_response_orders_synchronous_abort_parent_and_timeout() {
+        for (response_ms, parent_ms, synchronous, success) in [
+            (50, 60, true, false),
+            (50, 60, false, true),
+            (50, 50, false, true),
+            (50, 40, false, false),
+            (110, 120, false, false),
+            (100, 120, false, false),
+        ] {
+            let started = Arc::new(AtomicBool::new(false));
+            let runtime = configured_count(TimedCount {
+                started: started.clone(),
+                response_ms,
+            });
+            let signal = Cancellation::new();
+            let mut pending = Box::pin(runtime.provider_count(count_input(), Some(signal.clone())));
+            // Let the CPU request-builder finish without spawning the exchange:
+            // it must remain unpolled between advance() and abort delivery.
+            while !started.load(Ordering::SeqCst) {
+                std::future::poll_fn(|cx| {
+                    assert!(pending.as_mut().poll(cx).is_pending());
+                    Poll::Ready(())
+                })
+                .await;
+                tokio::task::yield_now().await;
+            }
+            let at = tokio::time::Instant::now();
+            tokio::time::advance(Duration::from_millis(130)).await;
+            if synchronous {
+                signal.abort();
+            } else {
+                signal.cancel_at(at + Duration::from_millis(parent_ms));
+            }
+            let result = std::future::poll_fn(|cx| match pending.as_mut().poll(cx) {
+                Poll::Ready(result) => Poll::Ready(result),
+                Poll::Pending => panic!("must settle without advancing the paused clock"),
+            })
+            .await;
+            if success {
+                assert_eq!(result.unwrap(), Some(73.0));
+            } else {
+                assert_eq!(
+                    result.unwrap_err().module_error.unwrap().message,
+                    "This operation was aborted".into()
+                );
+            }
+        }
+    }
 
     struct UnreachableTransport;
     impl super::super::ProviderCountTransport for UnreachableTransport {
-        fn post(&self, _: super::super::CountHttpRequest) -> HostFuture<JsValue> {
+        fn post(&self, _: super::super::CountHttpRequest) -> super::super::CountFuture {
             panic!("malformed provider body must fail before transport")
         }
     }

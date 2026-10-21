@@ -1,9 +1,9 @@
 use pilotdeck_gateway::host::modules::{ModuleRouter, budget::*};
 use pilotdeck_gateway::host::{HostError, HostFuture, HostHandler, ModuleError};
 use pilotdeck_gateway::model_cost::{ModelPricing, PricingMap};
+use pilotdeck_gateway::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("fixtures/host-budget/oracle.json");
 static UNDEFINED: JsValue = JsValue::Undefined;
@@ -43,7 +43,7 @@ struct Fake {
     spec: JsValue,
     calls: Arc<Mutex<Vec<JsValue>>>,
     local: Ports,
-    signal: Option<watch::Receiver<bool>>,
+    signal: Option<Cancellation>,
 }
 impl Fake {
     fn record(&self, call: JsObject) -> Result<(), HostError> {
@@ -98,7 +98,7 @@ impl RequestBudgetEvaluator for Fake {
             (None, None) => "absent",
             (Some(actual), Some(expected)) => {
                 assert!(actual.same_channel(expected));
-                if *actual.borrow() {
+                if actual.is_cancelled() {
                     "aborted"
                 } else {
                     "active"
@@ -176,7 +176,13 @@ async fn budget_dispatch_matches_real_ts_calls_responses_and_capabilities() {
         let name = text(field(case, "name"));
         let calls = Arc::new(Mutex::new(Vec::new()));
         let signal = match field(case, "signal").as_string() {
-            Some(s) if !s.equals_str("absent") => Some(watch::channel(s.equals_str("aborted")).1),
+            Some(s) if !s.equals_str("absent") => Some({
+                let signal = Cancellation::new();
+                if s.equals_str("aborted") {
+                    signal.abort();
+                }
+                signal
+            }),
             _ => None,
         };
         let fake = Arc::new(Fake {

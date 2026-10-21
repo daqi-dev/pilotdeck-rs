@@ -1,10 +1,8 @@
-use pilotdeck_gateway::host::HostFuture;
 use pilotdeck_gateway::host::modules::budget::{EvaluationOptions, RequestBudgetEvaluator};
 use pilotdeck_gateway::runtime::model::token_accounting::TokenAccountingRuntime;
 use pilotdeck_gateway::runtime::model::{
-    CountHttpRequest, HyperCountTransport, ProviderCountTransport,
+    CountFuture, CountHttpRequest, HyperCountTransport, ProviderCountTransport,
 };
-use pilotdeck_protocol::JsValue;
 use std::{
     convert::Infallible,
     sync::{Arc, Mutex},
@@ -16,7 +14,7 @@ mod fixture;
 
 struct Guarded(Arc<Mutex<fixture::Exchange>>);
 impl ProviderCountTransport for Guarded {
-    fn post(&self, request: CountHttpRequest) -> HostFuture<JsValue> {
+    fn post(&self, request: CountHttpRequest) -> CountFuture {
         fixture::guard(&request, &self.0);
         HyperCountTransport::default().post(request)
     }

@@ -2,12 +2,12 @@
 mod baseline;
 use pilotdeck_gateway::host::modules::{ModuleRouter, budget, context::*, model, tool_context::*};
 use pilotdeck_gateway::host::{HostError, HostFuture, HostHandler, ModuleError};
+use pilotdeck_gateway::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
-use tokio::sync::watch;
 const ORACLE: &str = include_str!("fixtures/host-context/oracle.json");
 static UNDEFINED: JsValue = JsValue::Undefined;
 fn field<'a>(v: &'a JsValue, k: &str) -> &'a JsValue {
@@ -92,7 +92,7 @@ fn call(payload: JsValue, module: &str) -> JsValue {
 struct Fake {
     spec: JsValue,
     calls: Arc<Mutex<Vec<JsValue>>>,
-    signal: Option<watch::Receiver<bool>>,
+    signal: Option<Cancellation>,
     abort: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 impl Fake {
@@ -131,7 +131,7 @@ impl Fake {
             }
             let abort = if let Some(abort) = &input.abort_signal {
                 assert!(Arc::ptr_eq(abort, fake.abort.as_ref().unwrap()));
-                Some(if *fake.signal.as_ref().unwrap().borrow() {
+                Some(if fake.signal.as_ref().unwrap().is_cancelled() {
                     "aborted".into()
                 } else {
                     "active".into()
@@ -236,7 +236,11 @@ impl budget::RequestBudgetEvaluator for Fake {
             assert!(options.use_provider_count.is_none());
             let signal = if let Some(s) = options.signal {
                 assert!(s.same_channel(fake.signal.as_ref().unwrap()));
-                if *s.borrow() { "aborted" } else { "active" }
+                if s.is_cancelled() {
+                    "aborted"
+                } else {
+                    "active"
+                }
             } else {
                 "absent"
             };
@@ -363,12 +367,16 @@ async fn real_ts_context_dispatcher_replay() {
         let name = text(field(case, "name"));
         let spec = decode(case, &root);
         let calls = Arc::new(Mutex::new(vec![]));
-        let (tx, rx) = watch::channel(
-            field(case, "signal")
+        let signal = case.get("signal").map(|_| {
+            let signal = Cancellation::new();
+            if field(case, "signal")
                 .as_string()
-                .is_some_and(|s| s.equals_str("aborted")),
-        );
-        let signal = case.get("signal").map(|_| rx);
+                .is_some_and(|s| s.equals_str("aborted"))
+            {
+                signal.abort();
+            }
+            signal
+        });
         let abort = signal
             .as_ref()
             .map(|_| Arc::new(()) as Arc<dyn std::any::Any + Send + Sync>);
@@ -496,6 +504,5 @@ async fn real_ts_context_dispatcher_replay() {
             "calls {name}"
         );
         router.dispose().await.unwrap();
-        drop(tx);
     }
 }

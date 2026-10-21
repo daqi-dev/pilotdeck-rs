@@ -10,8 +10,9 @@ use pilotdeck_gateway::runtime::model::token_accounting::{
     TokenAccountingRuntime, TokenBudgetManager,
 };
 use pilotdeck_gateway::runtime::model::{
-    CountHttpRequest, HyperCountTransport, ProviderCountTransport,
+    CountFuture, CountHttpRequest, HyperCountTransport, ProviderCountTransport,
 };
+use pilotdeck_gateway::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
@@ -22,7 +23,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::watch};
+use tokio::net::TcpListener;
 #[path = "common/baseline.rs"]
 mod baseline;
 
@@ -104,9 +105,9 @@ struct Transport {
     http: bool,
 }
 impl ProviderCountTransport for Transport {
-    fn post(&self, mut request: CountHttpRequest) -> HostFuture<JsValue> {
+    fn post(&self, mut request: CountHttpRequest) -> CountFuture {
         let transport = self.clone();
-        Box::pin(async move {
+        CountFuture::io(async move {
             transport
                 .exchange
                 .lock()
@@ -367,10 +368,10 @@ impl Drop for Dropped {
     }
 }
 impl ProviderCountTransport for NeverCount {
-    fn post(&self, _: CountHttpRequest) -> HostFuture<JsValue> {
+    fn post(&self, _: CountHttpRequest) -> CountFuture {
         let started = self.started.clone();
         let dropped = self.dropped.clone();
-        Box::pin(async move {
+        CountFuture::io(async move {
             let _guard = Dropped(dropped);
             started.store(true, Ordering::SeqCst);
             std::future::pending().await
@@ -409,13 +410,13 @@ async fn timeout_and_abort_drop_transport_without_blocking_handler() {
                 started: started.clone(),
                 dropped: dropped.clone(),
             }));
-        let (sender, signal) = watch::channel(false);
+        let signal = Cancellation::new();
         let mut options = options(&json!({"maxContextTokens":100}));
-        options.signal = Some(signal);
+        options.signal = Some(signal.clone());
         let task = tokio::spawn(runtime.evaluate_request_budget(request(), options));
         until_started(&started).await;
         if abort {
-            sender.send(true).unwrap();
+            signal.abort();
         }
         let result = tokio::time::timeout(Duration::from_secs(2), task)
             .await
@@ -456,9 +457,10 @@ async fn already_aborted_count_skips_transport() {
         started: started.clone(),
         dropped,
     }));
-    let (_sender, signal) = watch::channel(true);
+    let signal = Cancellation::new();
+    signal.abort();
     let mut options = options(&json!({"maxContextTokens":100}));
-    options.signal = Some(signal);
+    options.signal = Some(signal.clone());
     let result = runtime
         .evaluate_request_budget(request(), options)
         .await

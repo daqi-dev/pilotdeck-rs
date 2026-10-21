@@ -84,6 +84,9 @@ impl Cancellation {
     pub fn is_cancelled(&self) -> bool {
         self.0.borrow().is_some()
     }
+    pub fn same_channel(&self, other: &Self) -> bool {
+        self.0.same_channel(&other.0)
+    }
     pub async fn cancelled(&self) {
         let mut receiver = self.0.subscribe();
         while receiver.borrow_and_update().is_none() {
