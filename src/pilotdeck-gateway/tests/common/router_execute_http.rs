@@ -473,25 +473,31 @@ async fn replay_http_case(case: &JsValue, oracle: &JsValue) -> Result<(), String
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires freshly generated --http oracle and loopback listening permissions"]
-async fn expected_http_request_mutation_is_detected() {
+async fn expected_http_mutations_are_detected() {
     let oracle = http_oracle();
     let case = items(get(&oracle, "executeCases"))
         .iter()
         .find(|case| !items(get(case, "requests")).is_empty())
         .expect("HTTP oracle must contain a case with a recorded request");
     replay_http_case(case, &oracle).await.unwrap();
-    let mut requests = items(get(case, "requests")).to_vec();
-    let original = requests[0].clone();
-    requests[0] = merge(
-        &original,
-        &obj(&[(
-            "body",
-            format!("{} ", text(get(&original, "body"))).as_str().into(),
-        )]),
-    );
-    let mutated = merge(case, &obj(&[("requests", JsValue::Array(requests))]));
-    let error = replay_http_case(&mutated, &oracle).await.unwrap_err();
-    assert!(error.contains("HTTP requests"), "{error}");
+    // Pin every comparison point of the HTTP family separately; a regression
+    // that self-compares just one of them must fail under the named point.
+    for (point, label) in [
+        ("trace", "trace"),
+        ("calls", "invocations"),
+        ("requests", "HTTP requests"),
+        ("sessionUsage", "session usage"),
+    ] {
+        let tampered = match point {
+            "sessionUsage" => tampered_usage(get(case, point)),
+            _ => appended(get(case, point), point),
+        };
+        let mutated = merge(case, &obj(&[(point, tampered)]));
+        let error = replay_http_case(&mutated, &oracle)
+            .await
+            .expect_err(&format!("{point}: tampered expectation must be rejected"));
+        assert!(error.contains(label), "{point}: {error}");
+    }
 }
 fn text_name(case: &JsValue) -> String {
     text(get(get(case, "spec"), "name"))
