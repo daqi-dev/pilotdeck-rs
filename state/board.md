@@ -1,12 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 18:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | impl | ready | PR #407 @3d8cd3c gate3：boundary P0（child-signals 是 deny，#[expect(unsafe_code)] 能压低，守卫只数 allow）+ P1（其余成员的 lint 继承没有机检）+ sibling P2（同源）→ codex 修复轮 5 在跑（`_tmp/20261021-issue-386/fix5.md`）；GLM r5、Grok r5 在跑
+updated: 2026-10-21 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- #386 | impl | ready | PR #407：修复轮 5 已交付（未提交，14 项负控全失败）；Grok r5 1/2/3 中 P0 与两条 P1 已被修复轮 5 覆盖，余下缺口（vendor/exclude 路径依赖、child 表头白名单、pre_exec 闭包内容）→ codex 修复轮 6 在跑（`_tmp/20261021-issue-386/fix6.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 @8c3b166：Grok r3 0/0/0/1；GLM r3 + gate2 在跑，收齐后无 P0/P1 即贴结果块入队
-- A6.5-pr9b | impl | ready | PR #406 gate5 concurrency P1：250 层嵌套 code 加 10 MiB 内容，峰值 RSS 2690 MiB（单层只要 109 MiB；协调者实测，`_tmp/20261021-a65-pr9b/arb-inline-rss.txt`）→ codex 修复轮 3 在跑（`fix3.md`，输出逐字节不变，只改分配策略）
-- A6.4-pr9a | impl | ready | PR #418 @66560e2：Grok r1 0/0/1（用量估算路径无用例）+ gate1 P2×2 → codex 修复轮 1 在跑（`_tmp/20261021-a64-pr9/fix1.md`）；GLM r1 在跑
+- A7.1-pr2 | impl | ready | PR #412 @8c3b166：GLM r3 0/0/0/2、Grok r3 0/0/0/1；gate2 两条 TS 平价核过不改码（idle 默认 30 min/60 s 同 TS；重建中丢 dirty 同 TS:144-166），负控装置独立 target 与变异补登 → codex 修复轮 3 在跑（`fix3.md`）
+- A6.5-pr9b | review | ready | PR #406 @7ea02c9：修复轮 3 已推送（250 层嵌套 code RSS 2355→68 MiB，真实 TS 金样沙箱外两次一致）；GLM r5、Grok r5、gate6 在跑
+- A6.4-pr9a | review | ready | PR #418 @3629cb3：修复轮 1 已推送（沙箱外 oracle 6601e84f… 两次一致、--http 两次一致，router_execute 7/0、HTTP 对拍 1/0）；GLM r2、Grok r2、gate2 在跑
+- A7.1-pr3 | impl | ready | 连接 context / auth / binding：codex 首轮在跑（wt-a64-pr7 复用，分支 codex/a7-1-pr3，`_tmp/20261021-a7-1-pr3/task.md`）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -341,3 +342,5 @@ updated: 2026-10-21 18:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 > **18:00**：#418 全量测试与 gate1 完成，两条 P2 等评审后同批修。#417（board）的 CI check 未完成，下轮入队。其余线评审在跑。
 
 > **18:05**：#407 gate3 又报一条 P0（expect 能压低 deny），派修复轮 5，把所有成员的 lint 继承都加上机检。#418 派修复轮 1。#412 Grok r3 已清零。#417 的 CI check 还在跑。
+
+> **18:30**：#417 已合入（d921c14，提交者为账号主邮箱，同前）。#406、#418 推新提交，各派确认评审和闸门。#407 修复轮 5 已交付，Grok r5 剩下的缺口派修复轮 6。#412 gate2 的两条按 TS 源码核过，属于平价不改码，其余 P2 当轮修。A7.1-pr3 开工，复用已合并的 wt-a64-pr7 树。已合并的 #391、#403 两棵树清了 target，`_build`+`_tmp` 从 99.6 降到 86.1 GiB。另发现：Grok 首条回复只是确认收到，结论要用 `--read` 取。
