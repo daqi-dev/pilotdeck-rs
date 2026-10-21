@@ -107,7 +107,7 @@ def main():
                 destination = (fixture_copy if file == "oracle.json" else source_copy)
                 (destination / file).write_text(content)
             gate = subprocess.run(
-                ["bash", "-c", "until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done"],
+                ["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")],
                 capture_output=True, text=True, check=True)
             test = ("runtime::session::tests::old_abort_never_targets_replacement_across_threads"
                     if name == "restore-original-abort" else

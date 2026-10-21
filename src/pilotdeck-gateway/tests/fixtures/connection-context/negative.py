@@ -37,6 +37,8 @@ mutants = [
     ("ticket-scoped-in-flight", None, None, None, 0),
     ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(Value::Null)',
      'frame.get("params").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!({}))', 1),
+    ("non-string-session-as-empty", "mod.rs", 'truthy(&input["sessionKey"])',
+     'input["sessionKey"].as_str().is_some_and(|session| !session.is_empty())', 1),
     ("tampered-source-hash", "oracle.json",
      json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/server/GatewayWsConnection.ts"], "0" * 64, 1),
 ]
@@ -45,14 +47,14 @@ mutants = [
 # second ticket exists. This is the old behavior the TS close trace must reject.
 ticket_patches = {
     "context.rs": [
-        ('    pub in_flight: Vec<String>,', '    pub in_flight: Vec<String>,\n    pub ticket: u64,\n    pub tickets: Vec<(String, u64)>,'),
-        ('    pub fn track_in_flight(&mut self, session: &str) {',
-         '    pub fn track_in_flight(&mut self, session: &str) {\n        self.ticket += 1;\n        self.tickets.push((session.to_owned(), self.ticket));'),
+        ('    pub in_flight: Vec<SessionKey>,', '    pub in_flight: Vec<SessionKey>,\n    pub ticket: u64,\n    pub tickets: Vec<(SessionKey, u64)>,'),
+        ('    pub fn track_in_flight(&mut self, session: &SessionKey) {',
+         '    pub fn track_in_flight(&mut self, session: &SessionKey) {\n        self.ticket += 1;\n        self.tickets.push((session.clone(), self.ticket));'),
     ],
     "mod.rs": [
         ('        drop(state);\n        let cleanup', '        let ticket = state.ticket;\n        drop(state);\n        let cleanup'),
         ('            connection: self,\n            session,', '            connection: self,\n            session,\n            ticket,'),
-        ('    session: Option<String>,', '    session: Option<String>,\n    ticket: u64,'),
+        ('    session: Option<SessionKey>,', '    session: Option<SessionKey>,\n    ticket: u64,'),
         ("""        self.connection
             .state
             .lock()
@@ -96,6 +98,8 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
             passed = passed and '\"same-session-concurrent-submit-first-finishes-before-close\" step 3' in raw
         if name == "null-params-as-object":
             passed = passed and '"permission-decide-null-and-missing-params" step 1' in raw
+        if name == "non-string-session-as-empty":
+            passed = passed and '\"session-key-5\" step 1' in raw
         if name == "tampered-source-hash":
             passed = passed and "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match" in raw
         (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "COMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")

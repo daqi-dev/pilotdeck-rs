@@ -6018,6 +6018,4255 @@
           "interactions": []
         }
       ]
+    },
+    {
+      "name": "session-key-5",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": 5,
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":5}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":5,\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": 5,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 5,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            5
+          ],
+          "interactions": [
+            5
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": 5,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 5,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 5,
+                "nextBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            5
+          ],
+          "interactions": [
+            5
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": 5,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 5,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 5,
+                "nextBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 5,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            5
+          ],
+          "interactions": [
+            5
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": 5,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 5,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 5,
+                "nextBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 5,
+                "requestId": "control"
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": 5,
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "abort",
+              "params": {
+                "sessionKey": 5
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-19",
+                "generation": 19
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": 5,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 5,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 5,
+                "nextBinding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 5,
+                "requestId": "control"
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": 5,
+                "binding": {
+                  "connectionId": "@connection-19",
+                  "generation": 19
+                }
+              }
+            },
+            {
+              "method": "abort",
+              "params": {
+                "sessionKey": 5
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "session-key-true",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": true,
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":true}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":true,\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": true,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": true,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            true
+          ],
+          "interactions": [
+            true
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": true,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": true,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": true,
+                "nextBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            true
+          ],
+          "interactions": [
+            true
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": true,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": true,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": true,
+                "nextBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": true,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            true
+          ],
+          "interactions": [
+            true
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": true,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": true,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": true,
+                "nextBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": true,
+                "requestId": "control"
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": true,
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "abort",
+              "params": {
+                "sessionKey": true
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-20",
+                "generation": 20
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": true,
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": true,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": true,
+                "nextBinding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": true,
+                "requestId": "control"
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": true,
+                "binding": {
+                  "connectionId": "@connection-20",
+                  "generation": 20
+                }
+              }
+            },
+            {
+              "method": "abort",
+              "params": {
+                "sessionKey": true
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "session-key-0",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": 0,
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":0}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":0,\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 0,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 0,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 0,
+                "nextBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 0,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 0,
+                "nextBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 0,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 0,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 0,
+                "nextBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 0,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-21",
+                "generation": 21
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": 0,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": 0,
+                "nextBinding": {
+                  "connectionId": "@connection-21",
+                  "generation": 21
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": 0,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "session-key-false",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": false,
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":false}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":false,\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": false,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": false,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": false,
+                "nextBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": false,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": false,
+                "nextBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": false,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": false,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": false,
+                "nextBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": false,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-22",
+                "generation": 22
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": false,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": false,
+                "nextBinding": {
+                  "connectionId": "@connection-22",
+                  "generation": 22
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": false,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "session-key-null",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": null,
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":null}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":null,\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": null,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": null,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": null,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": null,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": null,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": null,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-23",
+                "generation": 23
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": null,
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-23",
+                  "generation": 23
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": null,
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "session-key-\"\"",
+      "permissionEvent": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "",
+              "projectKey": "p"
+            }
+          }
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":\"\"}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":\"\",\"requestId\":\"control\"}}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-24",
+                "generation": 24
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "reconnected",
+                "binding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "",
+                "nextBinding": {
+                  "connectionId": "@connection-24",
+                  "generation": 24
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "",
+                "requestId": "control"
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "submit-throw",
+      "submitMode": "throw",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"submit_turn\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"s\",\"projectKey\":\"p\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-25",
+                "generation": 25
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-25",
+                "generation": 25
+              }
+            },
+            {
+              "type": "response",
+              "id": "submit_turn",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "fixture submit failed"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-25",
+                  "generation": 25
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "submit-completed-then-throw",
+      "submitMode": "completed-then-throw",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"submit_turn\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"s\",\"projectKey\":\"p\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-26",
+                "generation": 26
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-26",
+                "generation": 26
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "response",
+              "id": "submit_turn",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "fixture submit failed"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-26",
+                  "generation": 26
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "submit-empty",
+      "submitMode": "empty",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"submit_turn\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"s\",\"projectKey\":\"p\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-27",
+                "generation": 27
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-27",
+                "generation": 27
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 0,
+              "final": true,
+              "event": {
+                "type": "error",
+                "code": "result_unknown",
+                "message": "Gateway stream ended without a terminal result.",
+                "recoverable": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-27",
+                  "generation": 27
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "submit-permission",
+      "submitMode": "permission",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"submit_turn\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"s\",\"projectKey\":\"p\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-28",
+                "generation": 28
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-28",
+                "generation": 28
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "requested",
+                "sessionKey": "s",
+                "projectKey": "p",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "permission_request",
+                "requestId": "fixture-permission"
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "interactionBinding": {
+                  "connectionId": "@connection-28",
+                  "generation": 28
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "disconnect-failure-stops-close",
+      "failDisconnect": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"reconnect_interaction\",\"method\":\"reconnect_interaction\",\"params\":{\"sessionKey\":\"s1\"}}"
+        },
+        {
+          "op": "start",
+          "frame": {
+            "type": "request",
+            "id": "running",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "s2"
+            }
+          }
+        },
+        {
+          "op": "close_error"
+        },
+        {
+          "op": "close_error"
+        },
+        {
+          "op": "finish"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "closeErrors": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "s1",
+                "nextBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [
+            "s1"
+          ],
+          "closeErrors": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "s1",
+                "nextBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s2",
+                "interactionBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            "s2"
+          ],
+          "interactions": [
+            "s1",
+            "s2"
+          ],
+          "closeErrors": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "s1",
+                "nextBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s2",
+                "interactionBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "s2",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            "s2"
+          ],
+          "interactions": [
+            "s1",
+            "s2"
+          ],
+          "closeErrors": [
+            "fixture disconnect failed"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                },
+                "requests": []
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "s1",
+                "nextBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s2",
+                "interactionBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "s2",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "s2",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [
+            "s2"
+          ],
+          "interactions": [
+            "s1",
+            "s2"
+          ],
+          "closeErrors": [
+            "fixture disconnect failed",
+            "fixture disconnect failed"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-29",
+                "generation": 29
+              }
+            },
+            {
+              "type": "response",
+              "id": "reconnect_interaction",
+              "ok": true,
+              "result": {
+                "outcome": "no_pending",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                },
+                "requests": []
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "running",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "reconnect_interaction",
+              "params": {
+                "sessionKey": "s1",
+                "nextBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "s2",
+                "interactionBinding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "s2",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "s2",
+                "binding": {
+                  "connectionId": "@connection-29",
+                  "generation": 29
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "s1",
+            "s2"
+          ],
+          "closeErrors": [
+            "fixture disconnect failed",
+            "fixture disconnect failed"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "request-after-close",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"permission_decide\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":\"s\",\"requestId\":\"after-close\"}}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"submit_turn\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"new-after-close\"}}"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-30",
+                "generation": 30
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-30",
+                "generation": 30
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-30",
+                "generation": 30
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "s",
+                "requestId": "after-close"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "s",
+                "requestId": "after-close",
+                "interactionBinding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-30",
+                "generation": 30
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "s",
+                "requestId": "after-close"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "s",
+                "requestId": "after-close",
+                "interactionBinding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "new-after-close",
+                "interactionBinding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": [
+            "new-after-close"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-30",
+                "generation": 30
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "s",
+                "requestId": "after-close"
+              }
+            },
+            {
+              "type": "response",
+              "id": "permission_decide",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            },
+            {
+              "type": "event",
+              "id": "submit_turn",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "fixture-run"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "s",
+                "requestId": "after-close",
+                "interactionBinding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            },
+            {
+              "method": "submit_turn",
+              "params": {
+                "sessionKey": "new-after-close",
+                "interactionBinding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            },
+            {
+              "method": "disconnect",
+              "params": {
+                "sessionKey": "new-after-close",
+                "binding": {
+                  "connectionId": "@connection-30",
+                  "generation": 30
+                }
+              }
+            }
+          ],
+          "finalInFlight": [
+            []
+          ],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
     }
   ],
   "bindingSteps": [
