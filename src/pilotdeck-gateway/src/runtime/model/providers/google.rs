@@ -193,15 +193,18 @@ fn thinking_plan(request: &JsValue, model: &JsValue) -> Result<ThinkingPlan, Mod
     let provider =
         super::super::count_body::object([("id", "google".into()), ("protocol", "google".into())]);
     let plan = super::thinking::resolve(request, &provider, model)?;
-    if let Err(ModelStreamError::Request {
-        message, details, ..
-    }) = super::thinking::throw_if_unsupported(&plan, request)
-    {
-        return Err(ModelStreamError::Provider(thinking_error(
-            request,
-            *details.expect("unsupported thinking details"),
+    match super::thinking::throw_if_unsupported(&plan, request) {
+        Ok(()) => {}
+        Err(ModelStreamError::Request {
             message,
-        )));
+            details: Some(details),
+            ..
+        }) => {
+            return Err(ModelStreamError::Provider(thinking_error(
+                request, *details, message,
+            )));
+        }
+        Err(error) => return Err(error),
     }
     Ok(plan)
 }

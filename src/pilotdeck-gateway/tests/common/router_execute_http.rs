@@ -465,60 +465,72 @@ fn text_name(case: &JsValue) -> String {
 
 #[tokio::test]
 async fn request_validation_details_match_real_ts() {
-    use pilotdeck_gateway::runtime::model::http::stream_model;
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "validationCases"));
-    assert_eq!(cases.len(), 8);
+    assert_eq!(cases.len(), 10);
     for case in cases {
-        let name = text_name(case);
-        let transport = Replies {
-            remaining: Mutex::new(VecDeque::new()),
-            requests: Arc::default(),
-        };
-        let mut events = Vec::new();
-        let error = stream_model(
-            &transport,
-            get(case, "request"),
-            get(case, "config"),
-            &StreamOptions::default(),
-            &mut |output| match output {
-                StreamOutput::Event(event) => events.push(event),
-                _ => panic!("unexpected validation stream output"),
-            },
-        )
-        .await
-        .unwrap_err();
-        let ModelStreamError::Request {
+        replay_validation_case(case).await.unwrap();
+    }
+}
+
+pub(super) async fn replay_validation_case(case: &JsValue) -> Result<(), String> {
+    use pilotdeck_gateway::runtime::model::http::stream_model;
+    let name = text_name(case);
+    let transport = Replies {
+        remaining: Mutex::new(VecDeque::new()),
+        requests: Arc::default(),
+    };
+    let mut events = Vec::new();
+    let result = stream_model(
+        &transport,
+        get(case, "request"),
+        get(case, "config"),
+        &StreamOptions::default(),
+        &mut |output| match output {
+            StreamOutput::Event(event) => events.push(event),
+            _ => panic!("unexpected validation stream output"),
+        },
+    )
+    .await;
+    compare_bytes(
+        &JsValue::Array(events.clone()),
+        get(case, "events"),
+        &format!("{name} events"),
+    )?;
+    let actual = match result {
+        Ok(()) => events
+            .iter()
+            .find(|event| {
+                get(event, "type")
+                    .as_string()
+                    .is_some_and(|v| v.equals_str("error"))
+            })
+            .map(|event| get(event, "error").clone())
+            .ok_or_else(|| format!("{name}: missing validation error event"))?,
+        Err(ModelStreamError::Request {
             code,
             message,
             details,
-        } = error
-        else {
-            panic!("{name}: expected request validation, got {error:?}");
-        };
-        expected_bytes(
-            &JsValue::Array(events),
-            get(case, "events"),
-            &format!("{name} events"),
-        );
-        let expected = get(case, "error");
-        assert_eq!(
-            &code,
-            get(expected, "code").as_string().unwrap(),
-            "{name} code"
-        );
-        assert_eq!(
-            &message,
-            get(expected, "message").as_string().unwrap(),
-            "{name} message"
-        );
-        assert_eq!(
-            details.as_deref().unwrap(),
-            get(expected, "details"),
-            "{name} details"
-        );
-        assert!(transport.requests.lock().unwrap().is_empty());
+        }) => obj(&[
+            ("name", "ModelRequestError".into()),
+            ("code", JsValue::String(code)),
+            ("message", JsValue::String(message)),
+            ("details", details.map(|v| *v).unwrap_or(JsValue::Undefined)),
+        ]),
+        Err(ModelStreamError::Provider(canonical)) => JsValue::Object(canonical),
+        other => return Err(format!("{name}: unexpected validation error {other:?}")),
+    };
+    let expected = get(case, "error");
+    for key in ["code", "message"] {
+        compare_bytes(
+            get(&actual, key),
+            get(expected, key),
+            &format!("{name} {key}"),
+        )?;
     }
+    compare_bytes(&actual, expected, &format!("{name} error"))?;
+    assert!(transport.requests.lock().unwrap().is_empty());
+    Ok(())
 }
 
 #[tokio::test]
