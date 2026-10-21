@@ -46,6 +46,11 @@ with open(conf["log"], "a") as f:
                         "cfg_empty": bool(cfg) and os.path.isdir(cfg) and not os.listdir(cfg)}) + "\n")
 init_model = "claude-sonnet-5-5" if mode == "wrong_init" else model
 print(json.dumps({"type": "system", "subtype": "init", "tools": tools, "model": init_model}), flush=True)
+trace = conf.get("trace")
+if trace:
+    with open(trace, "a") as f:
+        f.write(f"start {time.time()}\n")
+    time.sleep(0.3)
 if mode == "hang":
     time.sleep(30)
 if mode != "no_assistant":
@@ -55,6 +60,9 @@ final = "只有半截" if mode == "noverdict" else conf["final"]
 usage = {("claude-sonnet-5-5" if mode == "wrong_usage" else model): {}}
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0,
                   "modelUsage": usage}))
+if trace:
+    with open(trace, "a") as f:
+        f.write(f"end {time.time()}\n")
 '''
 
 
@@ -192,87 +200,27 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate_errs(ok_block + "\n" + ok_block):
             fails.append(f"闸门：分批的两个合法块应接受：{gate_errs(ok_block + chr(10) + ok_block)}")
 
-        # 逐角色串行 + merge-review-roles.py：单角色块闸门拒收，合并块接受；任何源块错误都不得被合并洗白
-        merger = ROOT / "scripts" / "merge-review-roles.py"
-
-        def solo(name: str, role: str, mode: str = "ok", runner: str = "zai") -> str:
-            (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL, "keys": {}}))
-            d = out_base / name
-            subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
-                            "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1", "--out", str(d),
-                            "--roles", role], capture_output=True, text=True)
-            return str(d)
-
-        def merge(name: str, dirs: list[str]) -> tuple[int, str]:
-            o = out_base / name
-            cp = subprocess.run([sys.executable, "-I", str(merger), "--out", str(o), *dirs], capture_output=True, text=True)
-            return cp.returncode, (o / "summary.md").read_text(encoding="utf-8") if (o / "summary.md").exists() else ""
-
-        def forged(src: str, name: str, edit) -> str:
-            # 复制一个合法单角色目录，再按 edit 篡改 summary.md 或 status.json
-            d = out_base / name
-            shutil.copytree(src, d)
-            edit(d)
-            return str(d)
-
-        def sub(path: Path, old: str, new: str) -> None:
-            t = path.read_text(encoding="utf-8")
-            assert old in t, (path, old)
-            path.write_text(t.replace(old, new, 1), encoding="utf-8")
-
-        def same_lines_other_diff(d: Path) -> None:
-            n = (d / "diff.patch").read_text(encoding="utf-8", errors="replace").count("\n")
-            (d / "diff.patch").write_text("".join(f"x{i}\n" for i in range(n)), encoding="utf-8")
-
-        names = ROLES.split(",")
-        per_role = [solo(f"solo-{r}", r) for r in names]
-        if not gate_errs((Path(per_role[0]) / "summary.md").read_text(encoding="utf-8")):
-            fails.append("merge：单角色块应被闸门拒收（缺其余角色）")
-        rc, s = merge("merged", per_role)
-        if rc != 0 or gate_errs(s):
-            fails.append(f"merge：四角色合并块应过闸（rc={rc}）：{gate_errs(s)}")
-        rc, s = merge("merged-three", per_role[:3])
-        if rc != 0 or not gate_errs(s):
-            fails.append(f"merge：只合三个角色可以合并，但闸门应拒收（rc={rc}）")
-        # 非 PASS 角色：合并如实带出，rc=1，闸门拒收（#432 GLM P1）
-        partial = solo("solo-partial", names[3], mode="noverdict")
-        rc, s = merge("merged-partial", per_role[:3] + [partial])
-        if rc != 1 or f"{names[3]}:PARTIAL" not in s or not gate_errs(s):
-            fails.append(f"merge：含 PARTIAL 角色应 rc=1 且闸门拒收（rc={rc}）")
-        # 以下每例都用角色不重叠的目录，确保只有被测的那条校验在拦（#432 两家 P2：旧例被角色重复遮蔽）
-        anth = solo("solo-anth", names[3], runner="anthropic")
-        cases = [
-            ("dup", per_role + per_role[:1]),
-            ("mixed-runner", per_role[:3] + [anth]),
-            ("diff", per_role[:3] + [forged(per_role[3], "f-diff", same_lines_other_diff)]),
-            ("head", per_role[:3] + [forged(per_role[3], "f-head", lambda d: sub(d / "summary.md", " head=", " head=0000000"))]),
-            ("dup-key", per_role[:3] + [forged(per_role[3], "f-dupkey", lambda d: sub(d / "summary.md", " head=", " head=0000000 head="))]),
-            ("readonly", per_role[:3] + [forged(per_role[3], "f-ro", lambda d: sub(d / "summary.md", "readonly=tools", "readonly=snapshot"))]),
-            ("roles-vs-status", per_role[:3] + [forged(per_role[3], "f-roles", lambda d: sub(d / "summary.md", ":PASS", ":TIMEOUT"))]),
-            ("p0-vs-status", per_role[:3] + [forged(per_role[3], "f-p0", lambda d: sub(d / "summary.md", " p0=0", " p0=1"))]),
-            ("unknown-key", per_role[:3] + [forged(per_role[3], "f-extra", lambda d: sub(d / "summary.md", " readonly=tools", " readonly=tools extra=sibling:TIMEOUT"))]),
-            ("bare-token", per_role[:3] + [forged(per_role[3], "f-bare", lambda d: sub(d / "summary.md", " readonly=tools", " readonly=tools sibling:TIMEOUT"))]),
-            ("role-dup-in-block", per_role[:3] + [forged(per_role[3], "f-rdup", lambda d: sub(d / "summary.md", ":PASS", ":PASS," + names[3] + ":PASS"))]),
-            ("status-not-object", per_role[:3] + [forged(per_role[3], "f-list", lambda d: (d / "status.json").write_text("[1]", encoding="utf-8"))]),
-            ("two-blocks", per_role[:3] + [forged(per_role[3], "f-2blk", lambda d: (d / "summary.md").write_text((d / "summary.md").read_text(encoding="utf-8") * 2, encoding="utf-8"))]),
-            ("p1-vs-status", per_role[:3] + [forged(per_role[3], "f-p1", lambda d: sub(d / "summary.md", " p1=0", " p1=1"))]),
-            ("diff-lines", per_role[:3] + [forged(per_role[3], "f-lines", lambda d: sub(d / "summary.md", " diff_lines=", " diff_lines=9"))]),
-            ("empty-status", per_role[:3] + [forged(per_role[3], "f-empty", lambda d: (d / "status.json").write_text("{}", encoding="utf-8"))]),
-            ("missing", per_role[:3] + [forged(per_role[3], "f-missing", lambda d: (d / "status.json").unlink())]),
-        ]
-        multi = out_base / "multi-reordered"
-        rc_m = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
-                               "--worktree", str(wt), "--base", "HEAD~1", "--out", str(multi), "--roles", ",".join(names[:2])],
-                              capture_output=True, text=True).returncode
-        st = json.loads((multi / "status.json").read_text(encoding="utf-8"))
-        (multi / "status.json").write_text(json.dumps(dict(reversed(list(st.items())))), encoding="utf-8")
-        rc, s = merge("merged-reordered", [str(multi)] + per_role[2:])
-        if rc_m != 0 or rc != 0 or gate_errs(s):
-            fails.append(f"merge：status.json 角色序与 summary 不同的多角色目录应正常合并并过闸（rc={rc}）")
-        for why, dirs in cases:
-            rc, s = merge(f"merged-{why}", dirs)
-            if rc != 2 or s:
-                fails.append(f"merge：{why} 应拒绝合并且不落 summary（rc={rc}）")
+        # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
+        trace = tmp / "trace.txt"
+        for mode_name, serial_flag in (("serial", True), ("parallel", False)):
+            trace.write_text("")
+            (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                       "trace": str(trace)}))
+            out = out_base / f"{mode_name}-ok"
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                                 "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
+                                 *(["--serial"] if serial_flag else [])], capture_output=True, text=True)
+            ev = [(float(x.split()[1]), x.split()[0]) for x in trace.read_text().splitlines()]
+            depth = peak = 0
+            for _, kind in sorted(ev):
+                depth += 1 if kind == "start" else -1
+                peak = max(peak, depth)
+            s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
+            if mode_name == "serial":
+                if cp.returncode != 0 or gate_errs(s) or len(ev) != 8 or peak != 1:
+                    fails.append(f"serial：应逐个跑四角色（峰值并发 {peak}，事件 {len(ev)}）且单块过闸（rc={cp.returncode}）：{gate_errs(s)}")
+            elif peak < 2:
+                fails.append(f"parallel：对照组应观察到并发（峰值 {peak}），否则 serial 断言无判别力")
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
