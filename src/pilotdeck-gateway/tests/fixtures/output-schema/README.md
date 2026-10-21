@@ -231,5 +231,6 @@ different ordinary error where the port returns overflow; these observations
 are never parity passes. Below the budget, unsupported regex syntax still has
 `portUnsupported`. Source guards, SDK hashes and cold/default-stack probes are
 unchanged. Measurements and difference intervals are recorded in
-`_tmp/20261020-a65-pr10b/RESULT.md`, round 9. The separate depth budget remains
-unapproved and unchanged; see that round's depth-impact section.
+`_tmp/20261020-a65-pr10b/RESULT.md`, round 9. The separate depth budget was
+later raised to 2048 and human-approved (2026-10-21); see round 10 and the
+gateway ledger entry A6.5-MCP-OUTSCHEMA-DEPTH-001.
