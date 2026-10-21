@@ -15,6 +15,7 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 
 用法：
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
+  python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate --serial
   python3 scripts/run-review-roles.py --diff-file X.patch --worktree . --out ... --roles boundary --dry-run
 退出码：0 全部 PASS · 1 有非 PASS · 2 参数/前置错误
 """
@@ -241,6 +242,8 @@ def main() -> int:
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
     ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
+    ap.add_argument("--serial", action="store_true",
+                    help="角色逐个顺序跑（同一进程、同一 diff，产出单个四角色结果块）；并行全跑在本机会挂起时用")
     a = ap.parse_args()
 
     wt = Path(a.worktree).resolve()
@@ -318,11 +321,15 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
             results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
 
-    threads = [threading.Thread(target=guarded, args=(r, p)) for r, p in jobs]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    if a.serial:
+        for r, p in jobs:
+            guarded(r, p)
+    else:
+        threads = [threading.Thread(target=guarded, args=(r, p)) for r, p in jobs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
     (out / "status.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     ok = all(results[r]["status"] == "PASS" for r in roles)

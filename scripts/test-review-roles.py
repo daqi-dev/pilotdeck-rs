@@ -46,6 +46,15 @@ with open(conf["log"], "a") as f:
                         "cfg_empty": bool(cfg) and os.path.isdir(cfg) and not os.listdir(cfg)}) + "\n")
 init_model = "claude-sonnet-5-5" if mode == "wrong_init" else model
 print(json.dumps({"type": "system", "subtype": "init", "tools": tools, "model": init_model}), flush=True)
+trace = conf.get("trace")
+if trace:
+    with open(trace, "a") as f:
+        f.write(f"start {time.time()}\n")
+    time.sleep(0.3)
+hang_first = conf.get("hang_first")
+if hang_first and not os.path.exists(hang_first):
+    open(hang_first, "w").close()
+    mode = "hang"
 if mode == "hang":
     time.sleep(30)
 if mode != "no_assistant":
@@ -55,6 +64,9 @@ final = "只有半截" if mode == "noverdict" else conf["final"]
 usage = {("claude-sonnet-5-5" if mode == "wrong_usage" else model): {}}
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0,
                   "modelUsage": usage}))
+if trace:
+    with open(trace, "a") as f:
+        f.write(f"end {time.time()}\n")
 '''
 
 
@@ -191,6 +203,43 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"闸门：{why} 应拒收")
         if gate_errs(ok_block + "\n" + ok_block):
             fails.append(f"闸门：分批的两个合法块应接受：{gate_errs(ok_block + chr(10) + ok_block)}")
+
+        # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
+        trace = tmp / "trace.txt"
+        for mode_name, serial_flag in (("serial", True), ("parallel", False)):
+            trace.write_text("")
+            (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                       "trace": str(trace)}))
+            out = out_base / f"{mode_name}-ok"
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                                 "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
+                                 *(["--serial"] if serial_flag else [])], capture_output=True, text=True)
+            ev = [(float(x.split()[1]), x.split()[0]) for x in trace.read_text().splitlines()]
+            depth = peak = 0
+            for _, kind in sorted(ev):
+                depth += 1 if kind == "start" else -1
+                peak = max(peak, depth)
+            s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
+            if mode_name == "serial":
+                if cp.returncode != 0 or gate_errs(s) or len(ev) != 8 or peak != 1:
+                    fails.append(f"serial：应逐个跑四角色（峰值并发 {peak}，事件 {len(ev)}）且单块过闸（rc={cp.returncode}）：{gate_errs(s)}")
+            elif peak < 2:
+                fails.append(f"parallel：对照组应观察到并发（峰值 {peak}），否则 serial 断言无判别力")
+        # --serial 首角色超时：后续三个角色仍须照跑，块含四角色、首角色 TIMEOUT，返回非 0 且闸门拒收
+        trace.write_text("")
+        marker = tmp / "hang-first.flag"
+        (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                   "trace": str(trace), "hang_first": str(marker)}))
+        out = out_base / "serial-timeout-first"
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                             "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
+                             "--serial", "--timeout", "2"], capture_output=True, text=True)
+        ends = trace.read_text().split().count("end")
+        s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
+        first, rest = ROLES.split(",")[0], ROLES.split(",")[1:]
+        if (cp.returncode == 0 or not gate_errs(s) or ends != 3 or f"{first}:TIMEOUT" not in s
+                or any(f"{r}:PASS" not in s for r in rest)):
+            fails.append(f"serial-timeout：首角色超时后应照跑其余三角色并拒收（rc={cp.returncode}，完成 {ends}）")
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")

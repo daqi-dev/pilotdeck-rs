@@ -27,7 +27,7 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
   const rows=[];let completed=false;
   t.after(()=>writeFileSync(join(parent,'source-identity-results.json'),JSON.stringify({status:completed&&!rows.some(r=>r.status==='FAIL')?'CHECKED_HELPER_ONLY':'FAILED_HELPER_ONLY',completed,rows,product:'NOT_RUN',artifactOrigin:'NOT_PROVED'},null,2)+'\n',{flag:'wx'}));
   function run(id,action){const f=fixture();try{action(f);rows.push({id,fixture:f.root,status:'CHECKED'});}catch(error){rows.push({id,fixture:f.root,status:'FAIL',error:String(error)});throw error;}}
-  run('G0-clean',f=>{const before=captureSourceIdentity(f.root);assert.ok(before.files.length>producerInputs.required.length);assert.ok(before.files.some(x=>x.path.includes('\n')));assert.ok(before.optional.some(x=>x.path.endsWith('/build.rs')&&!x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
+  run('G0-clean',f=>{const before=captureSourceIdentity(f.root);assert.ok(before.files.length>producerInputs.required.length);assert.ok(before.files.some(x=>x.path.includes('\n')));assert.ok(before.files.some(x=>x.path==='src/pilotdeck-child-signals/Cargo.toml'));assert.ok(before.files.some(x=>x.path==='src/pilotdeck-child-signals/src/entry.rs'));assert.ok(before.optional.some(x=>x.path.endsWith('/build.rs')&&!x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
   run('G0-optional-present',f=>{const path='src/pilotdeck-gateway/build.rs';f.put(path,'fixture build\n');f.git('add','-f','--',path);f.commit();const before=captureSourceIdentity(f.root);assert.ok(before.files.some(x=>x.path===path));assert.ok(before.optional.some(x=>x.path===path&&x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
   for(const [id,path,staged]of [
     ['G1-unstaged','src/pilotdeck-gateway/src/upstream.rs',false],
@@ -36,6 +36,9 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
     ['G4-acceptor','src/pilotdeck-gateway/src/acceptor.rs',true],
     ['G5-manifest','src/pilotdeck-gateway/Cargo.toml',true],
     ['G5-protocol','src/pilotdeck-protocol/src/entry.rs',true],
+    ['G5-child-signals-unstaged','src/pilotdeck-child-signals/src/entry.rs',false],
+    ['G5-child-signals-staged','src/pilotdeck-child-signals/src/entry.rs',true],
+    ['G5-child-signals-manifest','src/pilotdeck-child-signals/Cargo.toml',true],
     ['G11-newline','src/pilotdeck-gateway/src/space\n name.rs',true],
   ])run(id,f=>{f.put(path,'changed\n');if(staged)f.git('add','--',path);if(id==='G2-staged')assert.doesNotThrow(()=>f.git('diff','--exit-code','--','src/pilotdeck-gateway/src','src/Cargo.toml','src/Cargo.lock'));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
   run('G3-index-worktree-cancel',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';const original=readFileSync(join(f.root,path));f.put(path,'staged\n');f.git('add','--',path);f.put(path,original);assert.doesNotThrow(()=>f.git('diff','HEAD','--exit-code','--',path));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
@@ -110,7 +113,7 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
     assert.notDeepEqual(readFileSync(join(f.root,path)),f.git('show',`HEAD:${path}`));
     assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_DIRTY'&&error.details.flag==='s'&&error.details.path===path);
   });
-  assert.equal(rows.length,35,'all registered source-identity rows completed');
-  assert.equal(new Set(rows.map(row=>row.id)).size,35,'all source-identity row IDs unique');
+  assert.equal(rows.length,38,'all registered source-identity rows completed');
+  assert.equal(new Set(rows.map(row=>row.id)).size,38,'all source-identity row IDs unique');
   completed=true;
 });

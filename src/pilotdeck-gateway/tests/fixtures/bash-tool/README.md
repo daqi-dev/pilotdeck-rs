@@ -72,7 +72,7 @@ TS 的 `stdout += text` 在 data 监听里抛出未捕获的 RangeError，CLI �
 ## 已知边界
 
 - **Windows**：cmd/pwsh/Git Bash 选择与 GB18030 解码未移植。
-- **会话**：Node `detached` 调 `setsid()`；本 crate 禁 `unsafe`，子进程用 `process_group(0)` 建新进程组但仍在父会话。
+- **会话**：Node `detached` 调 `setsid()`；gateway 继承 workspace 的 `unsafe_code = "forbid"`；子进程信号重置例外仅在两文件成员 `pilotdeck-child-signals` 中，由其唯一函数在 fork 后、exec 前重置处置和屏蔽字。子进程用 `process_group(0)` 建新进程组但仍在父会话。
   终止语义（信号发给整组）一致。不同的是控制终端：网关自身有控制终端时，子进程打开 `/dev/tty` 会成功
   （TS 的 `setsid` 子进程得到 ENXIO），`sudo`/`ssh` 之类可能在用户终端提示乃至挂到超时。夹具不覆盖。
 - **3 s SIGKILL**：与 TS 同，返回后仍按时发出。实现是唯一一个比结果活得久的有界任务（3 s 内），只持有

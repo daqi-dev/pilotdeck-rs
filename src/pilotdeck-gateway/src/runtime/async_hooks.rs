@@ -59,13 +59,7 @@ impl AsyncHookClock for TokioHookClock {
         Box::new(TokioTimer(task.abort_handle()))
     }
 }
-pub fn timer_delay_ms(delay: f64) -> u64 {
-    if !(1.0..=2_147_483_647.0).contains(&delay) {
-        1
-    } else {
-        delay as u64
-    }
-}
+pub use pilotdeck_protocol::timer_delay_ms;
 
 #[derive(Clone)]
 pub struct AsyncHookTurn {

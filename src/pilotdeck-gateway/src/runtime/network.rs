@@ -107,11 +107,8 @@ impl Cancellation {
 /// `Duration::from_secs_f64`, which panics on non-finite or overflowing
 /// input.
 pub fn node_timer_delay_ms(ms: f64) -> f64 {
-    if ms.is_finite() && (1.0..=i32::MAX as f64).contains(&ms) {
-        ms.trunc()
-    } else {
-        1.0
-    }
+    // Single source of the rule: `pilotdeck_protocol::timer_delay_ms`.
+    pilotdeck_protocol::timer_delay_ms(ms) as f64
 }
 
 /// [`node_timer_delay_ms`] as a `Duration` for `tokio::time`.

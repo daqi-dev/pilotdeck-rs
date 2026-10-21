@@ -604,6 +604,8 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     }
     #[cfg(unix)]
     command.process_group(0);
+    #[cfg(unix)]
+    pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     let mut child = command
         .spawn()
         .map_err(|error| spawn_error(&shell, &error))?;
@@ -1751,3 +1753,45 @@ mod replace_tests {
 #[cfg(test)]
 #[path = "exec_http_tests.rs"]
 mod http_tests;
+
+#[cfg(all(test, unix))]
+mod signal_tests {
+    use super::*;
+    use crate::process_spawn::{child_signals, test_support};
+
+    #[test]
+    fn hook_resets_inherited_signals() {
+        child_signals::ChildSignalProbe::new().launch(
+            "runtime::hooks::exec::signal_tests::hook_signal_worker",
+            false,
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated worker launched with inherited ignored/blocked signals"]
+    async fn hook_signal_worker() {
+        test_support::assert_inherited();
+        let probe = child_signals::probe_path();
+        let mut env = JsObject::new();
+        // Inspect the configured shell itself, before bash can reset signals.
+        env.insert(
+            "PILOTDECK_SHELL_PATH".into(),
+            probe.to_str().unwrap().into(),
+        );
+        let result = LocalShellPort
+            .execute(ShellRequest {
+                command: "report".into(),
+                cwd: probe.parent().unwrap().to_str().unwrap().into(),
+                env: Some(env),
+                timeout_ms: 5_000.0,
+                stdin: "".into(),
+                signal: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.timed_out);
+        test_support::assert_reset_report(std::str::from_utf8(&result.stdout).unwrap());
+        test_support::assert_inherited();
+    }
+}

@@ -702,6 +702,7 @@ impl BackgroundTaskRuntime {
                 })
                 .map_err(|message| (false, message))
                 .and_then(|prepared| {
+                    // PreparedSpawn installs the shared child-only signal reset.
                     prepared.command(Stdio::null()).spawn().map_err(|error| {
                         match classify_spawn_error(&error, &prepared.shell) {
                             SpawnError::Async(message) => (true, message),

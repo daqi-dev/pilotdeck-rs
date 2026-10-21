@@ -9,9 +9,9 @@
 //! future is dropped mid-flight; the child itself has `kill_on_drop`.
 //!
 //! Known, documented differences from Node:
-//! - `detached` calls `setsid()`; the crate forbids `unsafe` (no `pre_exec`),
-//!   so the child gets a new process group via `process_group(0)` but stays in
-//!   the parent's session.
+//! - `detached` calls `setsid()`; here the child gets a new process group via
+//!   `process_group(0)` but stays in the parent's session. The sole approved
+//!   `pre_exec` hook only resets child signals.
 //! - Node's stdio pipes are UNIX socket pairs; these are `pipe(2)` FIFOs.
 //! - The baseline's SIGKILL follow-up fires 3 s after termination even when the
 //!   result has already settled. That one bounded timer is the only work that
@@ -384,6 +384,8 @@ impl PreparedSpawn {
                 process.env(lossy(key), lossy(value));
             }
         }
+        #[cfg(unix)]
+        pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
         process
     }
 }

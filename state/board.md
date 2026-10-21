@@ -1,15 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 01:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr9b | gate | doing | PR #406 @193e8a1e：gate-chain-0105 补 sibling/boundary/simplify，完后 merge-roles 合成结果块
-- #386 | gate | doing | PR #407 @49d26393：修复轮 10 已推（source fail-closed、E0453 实测、cwd 断言）；沙箱外全量 verify-0137 + gate-chain-0140 gate8
-- A7.1-pr3 | gate | doing | PR #421 @6c4c94d1：修复轮 2 已推；沙箱外全量 verify-0137 + gate-chain-0140 gate4
-- #390 | gate | doing | PR #430 @a09c2506：gate1 四角色 PASS，补 boundary P2 单测后 gate-chain-0125 重跑 gate2
-- #401 | gate | doing | PR #429 @0fdf24bd：gate1 PASS（P2×2 同源两份已收敛），gate-chain-0135 重跑 gate2
-- #410 | gate | doing | PR #434（Draft）@f46a1c79：codex 交付；#415 TS 实测不符跳过；verify-0137 + gate-chain-0140
-- #423 | gate | doing | PR #433（Draft）@53dd2313：DeepSeek 交付，全量 1002/0；gate-chain-0140
-- gate-merge | coord | doing | PR #432 merge-review-roles.py（挡 #430/#429/#406 入队的最小修复）：GLM+codex 评审 r1 在跑
+updated: 2026-10-22 04:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #401 | review | doing | PR #429 已入 merge queue（gate3 0/0、两家非作者 0 P0/P1）
+- #438 | gate | doing | PR #441 @974fd6d6 开 debug_assert_with_mut_call lint；codex + GLM r2 增量与 gate2 排队
+- #443 | gate | doing | PR #445 @d57b7e19 两家非作者 0 P0/P1、CI 绿，等 --serial 闸门块后入队；#446 前置于 #443 关单
+- #410 | gate | doing | PR #434 @f08c78f7 修复轮 2 推送；DeepSeek 增量 0/0，GLM 增量在跑；410-gate3 排队；#447 前置于 #410 关单
+- A7.1-pr3 | gate | doing | PR #421 @729ac713 修复轮 3 推送；GLM + DeepSeek 增量 0/0；a7-1-gate5 排队
+- #423 | gate | doing | PR #433 @4b23fdb3 修复轮 1；闸门排队；P2-1 开 #442
+- A6.5-pr9b | gate | doing | PR #406 @8f1a4fc1 沙箱外全量 1062/0；--serial 闸门排队
+- #386 | coord | doing | PR #407 已合入（Refs）；关单前置 #448、#449
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -459,3 +459,78 @@ updated: 2026-10-22 01:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 >
 > **下一步**：① gate8/gate6/gate2 完成后，核 P0/P1 → 若无则分别更新 #406/#407/#421 的 PR 正文写入结果块 → 入合并队列。② #407 需协调者沙箱外跑 router_execute（设 PDRS_BASELINE，用沙箱外 target 目录）。③ 发 Grok 给 #421 r2（待 fix round 1 commit 稳定后）。④ 已合入的 wt-a63-pr1、wt-a66-pr3 可清 target/ 减磁盘。⑤ #422/#423/#424/#426 是已开的 P2-跟进，不入 READY，不阻塞当前流程。
 
+> ## 2026-10-22 02:05 · /loop 协调轮
+> **#432**：r2 codex P0×1（未知键 extra=sibling:TIMEOUT 被合并丢弃）+ P1×1（roles 整串比较误拒真实 gate1 产物），GLM P2×3 → e473f89d 修（只收已知键、角色映射比较、补 6 负例 1 正例，变异 4/4 杀），r3 GLM+codex 在跑。该校验第 2 次修复，第 3 次不过挂起。
+> **#406**：gate10 四角色合并 P1×1（sibling：4/8 MiB 误嵌套页 TS 抛 Invalid array length、Rust 成功，未披露）+ P2 → 派 codex 修复轮 8（`_tmp/20261021-a65-pr9b/fix8.md`，追加「已知未对齐」第三条 + FROZEN 重登记 + 深度错误不写缓存断言）。
+> **#430**：gate2 四角色 PASS 贴 PR、转 ready，GLM+codex r1 在跑；sibling P2×2 开 #436（P2-跟进）。
+> **#429**：gate2 0/0/0 贴 PR、转 ready，GLM+DeepSeek r1 在跑。review.sh 的 dsh patch 改指 `scripts/dsh-headless-llm-center.patch.yml`。
+> **沙箱外全量**：#434 1003/0、#421 971/0（贴 PR）；#407 在跑。#435 入队。
+> **下一步**：gate-chain-0140（#433→#434→#421→#407）出块后贴 PR、派评审；#432 r3 收敛即合入，之后 merge-roles.sh 临时入口可删。
+
+> ## 2026-10-22 02:30 · /loop 协调轮
+> **#432 换路**：r3 第三次找到合并器 P0（块识别与闸门 MARKER 不一致），按「同一处修 3 次不过挂起」删 merge-review-roles.py，改 `run-review-roles.py --serial` 同进程逐个跑、单块（19ef3516；r4 codex P2 当轮补首角色超时用例 216ff93e，负控均杀）。GLM r4 在跑。gate-chain-0140 停，#434/#421/#407 改由 gate-chain-0216 `--serial` 重跑。
+> **#430** 入 merge queue；GLM P2-c 开 #437。**#429** dsh P2a 当轮修（4e13bbb1，负控 2147483647.5→1ms 失败）。
+> **#406** 修复轮 8 提交推送（8f1a4fc1，署名 Codex）；codex 顺带发现 release 下 MCP output_schema 4 条红，根因 `debug_assert_eq!(self.bump(), …)`，开 #438 进 READY。
+> **memory**：macOS exec SIGKILL（#407 router_execute 第三次）落规则。
+> **下一步**：GLM r4 收敛合 #432；0216 链出块贴 #434/#421/#407 派评审；#406 全量 + 闸门；派 #438；#433 P2 处理；wt-a67-pr2 回收仍待人批。
+
+> ## 2026-10-22 02:40 · /loop 协调轮
+> **#430 合入**（3b0019a3）；提交者邮箱为账号主邮箱 zhengdaqi@gmail.com（非 noreply，memory「merge-email-exposure」，需人在 GitHub 设置勾 Keep email private）。
+> **#432**：GLM r4 与 codex r4 独立撞上同一 P2（serial 失败路径无用例），216ff93e 已补；两家 0 P0/P1。补 no-issue 标记；--serial 闸门块在 gate-chain-0216 排队，出块即入队。
+> **#429**：GLM r1 0/0/P2×2（hooks/router 超时同类，P2c）→ 开 #440；新 head 闸门在 0216 链排队。
+> **#438 → PR #441**（Claude 实现）：bump() 移出 debug_assert_eq!；release 21/0，反向补丁 17/4，debug 21/0。GLM+codex r1 在跑，闸门在 0216 链排队。复用 wt-a66-pr3（_build+_tmp 99.55 GiB，未开新树）。
+> **#433**：gate1 sibling P2-2（HTTP 金样家族无篡改负控，按 P2b 当 P1）派 DeepSeek 修复轮 1（`_tmp/20261022-issue-423/fix1.md`）；P2-1 开 #442。
+> **#439**（board）入 merge queue。#406 沙箱外全量在跑。
+> **下一步**：0216 链出块依次贴 #434/#421/#407/#432/#429/#441 并派评审或入队；#433 修复轮 1 回来后审；#406 全量完 → --serial 闸门。磁盘逼近 100 GiB，下轮先查可清的 target。
+>
+> ## 2026-10-22 02:50 · /loop 协调轮
+> **#434**：--serial 闸门四角色 PASS 0/0（head f46a1c79，新机制第一份真实产物）贴正文、转 ready，派 GLM + DeepSeek r1（`_tmp/20261022-issue-410/review-r1.md`）。
+> **#406**：修复轮 8 沙箱外全量 1062/0 贴 PR；--serial 闸门排进 0216 链。
+> **#441**：codex r1 对本修复 0 新增缺陷；另报既有 P1（lookbehind 后不完整量词错误文本与 TS 不一致，main 已存在）→ 开 #443 进 READY，不挡 #441。codex 未独立复跑 release，GLM r1 在跑。
+> **memory**：zsh 未加引号 `===` 截断命令（本会话第 4 次）落规则 `state/memory/20261022-zsh-equals-echo.md`（未提交，随下一 board PR）。
+> **下一步**：0216 链继续出块（#421→#407→#432→#429→#441→#406）；#434 评审收敛入队；#433 修复轮 1；#439 在队列。
+>
+> ## 2026-10-22 03:00 · /loop 协调轮
+> **#439 合入**（66d5c5f5，提交者邮箱同为账号主邮箱，见 02:40 段）。
+> **#433**：DeepSeek 修复轮 1 提交推送（4b23fdb3）：HTTP 金样家族 Result 化 + 篡改负控；外部负控（自己比自己）下新负控失败；协调者复跑 router_execute 12/0/2 ignored。worker 无法写主仓 `_tmp`，结果从树内移回 `_tmp/20261022-issue-423/RESULT.md`。闸门排进 --serial 链。
+> **#434**：GLM r1 0/0/P2（abort 探针证据未入库）、DeepSeek r1 0/0/P2（provider_exchange Err 支路丢 before_abort，~15 分钟 P2a）→ 派 codex 修复轮 1（`_tmp/20261022-issue-410/fix1.md`）。
+> **#441**：GLM r1 0/0/0/1、codex r1 范围内 0 新增缺陷（既有 P1 拆 #443）→ 等闸门块后入队。
+> **下一步**：0216 链出块（在跑 #421 → #407 → #432 → #429 → #441 → #406 → #433）；#434 修复轮 1；#443 待派。
+
+> ## 2026-10-22 03:10 · /loop 协调轮
+> **#443 → PR #445**（Claude 实现）：断言后的不完整花括号在 /u 下报 Incomplete quantifier（Node 22.22.0 实测 14 例入金样）；debug 21/0，负控（恢复旧判断）20/1。GLM + codex r1 在跑，闸门排队。新开 wt-a68-pr1（11→12 棵，_build+_tmp 92.6 GiB）。
+> **#434**：codex 修复轮 1 提交推送（e2cad6e7）：provider_exchange 已拒绝 Promise 也复查父取消，TS 四协议实测入证据；model lib 96/0，负控 0/1。worker 写进树内 `_tmp` 与 board 的内容已移回主仓 `_tmp/20261022-issue-410/`，board 改动存 `codex-board-segment.diff` 后还原。GLM + DeepSeek r2（增量）在跑，闸门排队。
+> **#421**：--serial gate4 四角色 0/0（head 6c4c94d1）贴正文、转 ready；GLM r3 / Grok r3 无结论，改派 GLM + DeepSeek r4（主审 55261931..6c4c94d1）。
+> **#444**（board）CI 绿，在 merge queue。
+> **下一步**：0216 链继续（#407 → #432 → #429 → #441 → #406 → #433 → #445 → #434）；各评审回收。
+>
+> ## 2026-10-22 03:20 · /loop 协调轮
+> **#445**：codex r1 P1（本 PR 新增回归：断言后大数倒序量词错误文本）→ d57b7e19 修：量词上下界按 V8 在 2^31-1 饱和后再比顺序（Node 22.22.0 实测 10 例入金样；负控 2 条失败；顺带修正 main 上 `a{2147483648,2147483647}` 被误拒）。codex r2（增量）在跑，GLM r1 未完。project 看板实现方按分支前缀误标 codex，已改回 Claude。
+> **下一步**：同上；0216 链在跑 #407。
+>
+> ## 2026-10-22 03:30 · /loop 协调轮
+> **#444 合入**（39ea3279，提交者邮箱同为账号主邮箱）。
+> **#445**：codex r2 增量 0/0/0/0；GLM r1 0/0/P2×2（GLM 无 shell）→ P2-1 由协调者 Node 实测仲裁贴 PR（与实现一致），P2-2 开 #446；GLM r2 审增量中。
+> **#434**：GLM r2 0/0；DeepSeek r2 P2a（Err 复查过宽：双过期时序误判 AbortError，仅测试 transport 可达）→ codex 修复轮 2（`_tmp/20261022-issue-410/fix2.md`）；计数路径证据入库开 #447（前置于 #410 关闭）。
+> **#421**：GLM r4 0/0；DeepSeek r4 P2a（sessions() 插入序无反字典序用例）→ codex 修复轮 3（`_tmp/20261021-a7-1-pr3/fix3.md`）。
+> **#407**：--serial gate8 四角色 0/0（head 49d26393）贴正文、转 ready；Grok 多轮无结论，改派 GLM + DeepSeek r9（8c49fa4a..49d26393）。
+> **闸门链**：0216 原列表跑完（日志 03:26 DONE），追加段继续执行，现跑 #432；其后 #429 → #441 → #406 → #433 → #445 → #434（#434/#421 修复轮后需再跑）。
+>
+> ## 2026-10-22 03:40 · /loop 协调轮
+> **#434** 修复轮 2 推送（f08c78f7，署名 Codex）：Err 复查按取消事件与错误续体先后判定，TS 双过期实测入证据；协调者复跑 model lib 97/0/2 ignored。DeepSeek 增量评审在跑。
+> **#421** 修复轮 3 推送（729ac713，署名 Codex）：sessions() 反字典序真实 TS 金样 + 单测，负控失败；协调者复跑 connection 10/0/1 ignored。DeepSeek 增量评审在跑。
+> **#445**：GLM r2 0/0/P2（同意跟进）；两家在当前 head 均无 P0/P1，CI 绿。#446 改为前置于 #443 关单，PR 改 `Refs #443`。等 --serial 闸门块。
+> **事故**：03:35 移回 worker 证据时手写循环用树内 RESULT.md 覆盖了主仓含「修复轮 1」的版本（违反铁律 7）；已按 fix1.err 与分项日志重建该节。同类（worker 证据落树内）本日第 4 次 → 落脚本 `_tmp/20261021-loop/pull-evidence.sh`（按节追加、同名改名、永不覆盖，已用临时目录实测）+ memory `20261022-worker-evidence-pullback.md`。
+> **下一步**：0216 链（在跑 #432）；#434/#421 增量评审回收后需新 head 闸门；#407 r9 回收。
+>
+> ## 2026-10-22 03:50 · /loop 协调轮
+> **#432 入队**：本 PR 自身 diff 的 --serial 闸门四角色 0/0（head 216ff93e）贴正文；check-runs 核对当前 head 上 `check` success；r4 两家 0 P0/P1。
+> **#407 入队**：GLM r9 / DeepSeek r9 均 0 P0/P1，各一条 P2c → #448（树外 cargo 配置来源）、#449（vendored 声明边 path），均前置于 #386 关单；正文 `Closes #386` 改 `Refs #386`（首次 sed 因同行有 `· Refs #127` 未命中，已改 python 精确替换并核对无 Closes；编辑正文后重新入队）。
+> **#434 / #421**：DeepSeek 增量 0/0；GLM 增量已派。新 head 闸门（410-gate3、a7-1-gate5）追加进 0216 链；链里原 410-gate2 也会按当前 head 跑，属重复，不改运行中脚本。
+> **下一步**：#432/#407 合入后核邮箱；0216 链出 #429 → #441 → #406 → #433 → #445 → #434 → #421 块；#445 出块即入队。
+>
+> ## 2026-10-22 04:00 · /loop 协调轮
+> **合入**：#432（`run-review-roles.py --serial`；merger 已不在 main，临时入口 `_tmp/20261022-loop/merge-roles.sh` 已删）、#407（#386 子进程信号重置，Refs #386，#448/#449 前置关单）。提交者邮箱仍为账号主邮箱。
+> **#429 入队**：gate3（--serial，head 4e13bbb1）0/0 贴正文并删掉旧 0fdf24bd 块（双块致 pr-gate 失败，删后 pass）；boundary P2「封顶边界无 TS 出处」仲裁：`agentLoopSidecarServer.ts:253` 为 `Math.min(2_147_483_647, …)` 整数封顶，Node 实测三值均 2147483647，不升 P1。
+> **#441**：gate1（head 6fcf0c9b）0/0，sibling + boundary 独立撞同一 P2（无 release 档防线）→ 974fd6d6 workspace 开 `clippy::debug_assert_with_mut_call`，CI 的 clippy -D warnings 即成机检；负控（恢复原写法）报 output_schema.rs:1456。codex + GLM r2 增量与 gate2 排队。
+> **#421**：GLM 增量 0/0；与 DeepSeek 增量合计两家 0 P0/P1，等 a7-1-gate5。
