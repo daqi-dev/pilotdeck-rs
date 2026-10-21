@@ -1989,8 +1989,132 @@ fn is_js_syntax_character(ch: char) -> bool {
     )
 }
 
+/// Conservative irregexp backtracking-stack budget, independent of the schema
+/// recursion budget. Cold V8/Client probes are recorded in RESULT r8. Count
+/// UTF-16 input units (RegExp's subject representation), weighted by all groups
+/// in a pattern: captures/assertions nested inside a repeat increase its cost.
+/// This deliberately rejects before V8's runtime-dependent heap-stack limit.
+const MAX_REGEXP_STACK_UNITS: usize = 65_536;
+
+/// Detect repeated groups with captures, alternatives, assertions, or nested
+/// repetition, plus large counted repetitions of any atom. Simple noncapturing
+/// atom runs (including character classes) and
+/// groups that are not repeated do not grow irregexp's stack with input length.
+/// Scan iteratively, respecting escaped punctuation and character classes.
+/// This is a conservative structural model, not a V8 optimizer emulator.
+fn regexp_stack_weight(pattern: &str) -> usize {
+    let bytes = pattern.as_bytes();
+    let mut groups = Vec::new();
+    let mut group_count = 0usize;
+    let mut largest_repeat = 0usize;
+    let mut in_class = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => {
+                if matches!(bytes.get(index + 1), Some(b'u' | b'p' | b'P'))
+                    && bytes.get(index + 2) == Some(&b'{')
+                    && let Some(end) = bytes[index + 3..].iter().position(|byte| *byte == b'}')
+                {
+                    index += end + 4;
+                } else {
+                    index += 2;
+                }
+                continue;
+            }
+            b'[' if !in_class => in_class = true,
+            b']' if in_class => in_class = false,
+            _ if in_class => {}
+            b'(' => {
+                if let Some(complex) = groups.last_mut() {
+                    *complex = true;
+                }
+                group_count = group_count.saturating_add(1);
+                let simple = bytes.get(index + 1..index + 3) == Some(b"?:");
+                groups.push(!simple);
+                if simple {
+                    index += 2;
+                }
+            }
+            b')' => {
+                if groups.pop() == Some(true) {
+                    largest_repeat = largest_repeat.max(regexp_repeat_bound(&bytes[index + 1..]));
+                }
+            }
+            b'|' | b'*' | b'+' | b'?' | b'{' => {
+                if bytes[index] == b'{' {
+                    largest_repeat = largest_repeat.max(regexp_repeat_bound(&bytes[index..]));
+                }
+                if let Some(complex) = groups.last_mut() {
+                    *complex = true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    let group_count = group_count.max(1);
+    // Small fixed repetitions have a bounded stack cost, regardless of the
+    // subject length. Large counted repetitions need the same input guard.
+    if largest_repeat.saturating_mul(group_count) > MAX_REGEXP_STACK_UNITS {
+        group_count
+    } else {
+        0
+    }
+}
+
+fn regexp_repeat_bound(tail: &[u8]) -> usize {
+    match tail.first() {
+        Some(b'*' | b'+') => usize::MAX,
+        Some(b'{') => {
+            let Some(end) = tail.iter().position(|byte| *byte == b'}') else {
+                return 0;
+            };
+            let body = &tail[1..end];
+            let upper = body.rsplit(|byte| *byte == b',').next().unwrap_or_default();
+            if upper.is_empty() {
+                return usize::MAX;
+            }
+            upper.iter().fold(0usize, |value, byte| {
+                value
+                    .saturating_mul(10)
+                    .saturating_add(usize::from(byte.saturating_sub(b'0')))
+            })
+        }
+        _ => 0,
+    }
+}
+
+fn check_regexp_stack(weight: usize, input_units: usize) -> Result<(), ValidationError> {
+    if weight.saturating_mul(input_units) > MAX_REGEXP_STACK_UNITS {
+        return Err(ValidationError::Threw);
+    }
+    Ok(())
+}
+
+/// Full ajv-formats uses unbounded compound-group repetitions for these
+/// formats, including inside the `uri`/`byte` functions. Other formats have
+/// bounded matches, atom-only runs, or only compile a regexp (`regex`).
+/// Fixed baseline format expressions have bounded structural complexity;
+/// 64K UTF-16 units is below every measured overflowing recipe's breakpoint.
+fn format_stack_weight(format: &str) -> usize {
+    usize::from(matches!(
+        format,
+        "email"
+            | "uri"
+            | "uri-reference"
+            | "uri-template"
+            | "url"
+            | "json-pointer"
+            | "json-pointer-uri-fragment"
+            | "relative-json-pointer"
+            | "byte"
+    ))
+}
+
 fn regex_matches(pattern: &JsString, text: &JsString) -> Result<bool, ValidationError> {
     let pattern_text = String::from_utf16_lossy(pattern.units());
+    check_regexp_stack(regexp_stack_weight(&pattern_text), text.units().len())?;
     let text = text.to_utf8().map_err(|_| {
         ValidationError::Unsupported(
             "pattern cannot be applied to a string with an unpaired surrogate".into(),
@@ -2652,6 +2776,7 @@ impl<'a> Validator<'a> {
         }
         if let Some(format) = schema.get("format").and_then(JsValue::as_string) {
             let name = String::from_utf16_lossy(format.units());
+            check_regexp_stack(format_stack_weight(&name), text.units().len())?;
             let value = String::from_utf16_lossy(text.units());
             match string_format_valid(&name, &value) {
                 Some(false) => self.fail(path, format!("must match format \"{name}\"")),
@@ -3784,6 +3909,107 @@ mod tests {
         assert_eq!(number_format_valid("float", 1.5e300), Some(true));
     }
 
+    #[test]
+    fn regexp_stack_model_distinguishes_repeated_groups_from_atom_runs() {
+        for pattern in [
+            r"^[ab]*$",
+            r"^([ab]*)$",
+            r"^(?:ab)*$",
+            r"^\([ab]*\)$",
+            r"^[()*+?|]*$",
+            r"^[ab]*?$",
+            r"^(?:ab)*?$",
+            r"^\u{100000}*$",
+            r"^(?:a|b){2}$",
+            r"^(?:a|b)?$",
+        ] {
+            assert_eq!(regexp_stack_weight(pattern), 0, "{pattern}");
+        }
+        for (pattern, weight) in [
+            ("^(?:a|b)*$", 1),
+            ("^(a|b)*$", 1),
+            ("^((a)|(b))*c?$", 3),
+            ("^(?:(?:a|b)(?=.))*.?$", 3),
+            ("^(ab)*$", 1),
+            ("^(ab)*?$", 1),
+            ("^(?:ab?)*$", 1),
+            ("^(?:a|b){1,20000000}$", 1),
+            ("^[ab]{1,40000000}$", 1),
+            ("^(?:ab){1,20000000}$", 1),
+            ("^(😀|😁)*$", 1),
+        ] {
+            assert_eq!(regexp_stack_weight(pattern), weight, "{pattern}");
+            let last = MAX_REGEXP_STACK_UNITS / weight;
+            assert_eq!(check_regexp_stack(weight, last), Ok(()), "{pattern}");
+            assert_eq!(
+                check_regexp_stack(weight, last + 1),
+                Err(ValidationError::Threw),
+                "{pattern}"
+            );
+            let text = JsString::from("ab".repeat(last / 2 + 1));
+            assert_eq!(
+                regex_matches(&JsString::from(pattern), &text),
+                Err(ValidationError::Threw),
+                "{pattern}"
+            );
+        }
+        // RegExp subjects are UTF-16, not UTF-8 bytes or Unicode code points.
+        let schema = pilotdeck_protocol::parse_json(r#"{"pattern":"^(😀|😁)*$"}"#).unwrap();
+        assert_eq!(
+            validate(
+                &schema,
+                &JsValue::String(JsString::from("😀".repeat(32768)))
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            validate(
+                &schema,
+                &JsValue::String(JsString::from("😀".repeat(32769)))
+            ),
+            Err(ValidationError::Threw)
+        );
+        assert_eq!(
+            regex_matches(
+                &JsString::from("^[ab]*$"),
+                &JsString::from("ab".repeat(1_000_000))
+            ),
+            Ok(true)
+        );
+    }
+
+    /// Inflate large inputs only at replay time. The oracle stores lengths and
+    /// generation rules, never megabytes of repeated string data/property keys.
+    fn string_data(recipe: &JsValue) -> JsValue {
+        let field = |name| {
+            recipe
+                .get(name)
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap()
+        };
+        let repeats = recipe.get("repeats").unwrap().as_number().unwrap() as usize;
+        let text = format!(
+            "{}{}{}",
+            field("prefix"),
+            field("unit").repeat(repeats),
+            field("suffix")
+        );
+        assert_eq!(
+            text.encode_utf16().count(),
+            recipe.get("length").unwrap().as_number().unwrap() as usize
+        );
+        let mut object = JsObject::new();
+        if field("target") == "key" {
+            object.insert(JsString::from(text), JsValue::Number(1.0));
+        } else {
+            object.insert("s".into(), JsValue::String(JsString::from(text)));
+        }
+        JsValue::Object(object)
+    }
+
     /// Generated by `tests/fixtures/output-schema/generate.mjs` against the
     /// real SDK 1.29.0 `AjvJsonSchemaValidator`.
     #[test]
@@ -3795,7 +4021,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 598);
+        assert_eq!(cases.len(), 670);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
@@ -3853,12 +4079,16 @@ mod tests {
                 let depth = recipe.get("depth").unwrap().as_number().unwrap() as usize;
                 recursive_data(&shape, depth)
             });
+            let long_string = case.get("stringData").map(string_data);
             let data = comparison
                 .as_ref()
                 .map(|(_, data)| data)
                 .or(recursive_data.as_ref())
+                .or(long_string.as_ref())
                 .unwrap_or_else(|| case.get("data").unwrap());
-            if case.get("portDepthLimit").and_then(JsValue::as_bool) == Some(true) {
+            if case.get("portDepthLimit").and_then(JsValue::as_bool) == Some(true)
+                || case.get("portRegexpLimit").and_then(JsValue::as_bool) == Some(true)
+            {
                 use super::super::client::{McpErrorCode, validate_structured_content};
                 assert!(check_schema(schema).is_ok(), "{id}");
                 assert_eq!(validate(schema, data), Err(ValidationError::Threw), "{id}");
@@ -3868,9 +4098,14 @@ mod tests {
                 assert_eq!(error.message(), expected_message, "{id}");
                 if let Some(gap) = case.get("knownDifference") {
                     assert!(
-                        gap.as_string()
-                            .unwrap()
-                            .equals_str("conservative-stack-budget"),
+                        gap.as_string().unwrap().equals_str(
+                            if case.get("portRegexpLimit").and_then(JsValue::as_bool) == Some(true)
+                            {
+                                "conservative-regexp-stack-budget"
+                            } else {
+                                "conservative-stack-budget"
+                            }
+                        ),
                         "{id}"
                     );
                     assert!(

@@ -791,6 +791,60 @@ try {
   fs.rmSync(recursiveDataScratch, {recursive: true, force: true});
 }
 
+// r8: observe long RegExp subjects via the same real SDK Client path. Only
+// recipes enter the oracle. Search for overflow dynamically; no V8 breakpoint
+// is encoded as an expectation. Bounded search must fail if a probe regresses.
+let stringDataTemplate = fs.readFileSync(
+  fileURLToPath(new URL('./string-data.mjs', import.meta.url)), 'utf8',
+);
+for (const [name, file] of Object.entries(sdkFiles)) {
+  const marker = `'pdrs:baseline-${name}'`;
+  assert.equal(stringDataTemplate.split(marker).length, 2);
+  stringDataTemplate = stringDataTemplate.replace(marker,
+    JSON.stringify(pathToFileURL(path.join(baseline, `node_modules/@modelcontextprotocol/sdk/dist/esm/${file}`)).href));
+}
+const stringScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pdrs-string-data-'));
+const stringProbe = path.join(stringScratch, 'probe.mjs');
+fs.writeFileSync(stringProbe, stringDataTemplate);
+const observeString = (kind, repeats) => JSON.parse(execFileSync(process.execPath,
+  [stringProbe, kind, String(repeats)], {env: recursiveDataEnv, encoding: 'utf8', timeout: 60000}));
+try {
+  // Last supported repeats follow the port's 65536 UTF-16-unit budget divided
+  // by the number of groups (or 1 for fixed baseline format expressions).
+  for (const [kind, last, unsupported] of [
+    ['alt', 32768], ['capture', 32768], ['nested', 10922], ['look', 10922, true],
+    ['countedSimple', 32768, true], ['countedAtom', 32768, true], ['lazyCap', 32768],
+    ['cap', 32768], ['optional', 32768], ['bounded', 32768, true], ['unicode', 16384],
+    ['key', 32768], ['additionalKey', 32768],
+    ['email', 32761], ['uri', 32767], ['uriReference', 32767], ['uriTemplate', 21845],
+    ['jsonPointer', 32768], ['fragment', 32767], ['relative', 32767], ['byte', 16384], ['url', 32757],
+  ]) {
+    for (const repeats of [last, last + 1]) {
+      const observed = observeString(kind, repeats);
+      assert.ok(!observed.sdkError, `SDK must pass below safety margin: ${kind}/${repeats}`);
+      cases.push({id: `regexp-input/${kind}-${repeats}`, ...observed,
+        ...(repeats > last ? {portRegexpLimit: true, knownDifference: 'conservative-regexp-stack-budget'}
+          : unsupported ? {portUnsupported: true} : {}),
+      });
+    }
+    let repeats = 65536, observed;
+    for (; repeats <= 33554432; repeats *= 2) {
+      observed = observeString(kind, repeats);
+      if (observed.sdkError) break;
+    }
+    assert.ok(repeats <= 33554432, `no SDK RegExp overflow found: ${kind}`);
+    assert.deepEqual(observed.sdkError, overflow, `SDK RegExp overflow: ${kind}`);
+    cases.push({id: `regexp-input/${kind}-sdk-overflow`, ...observed, portRegexpLimit: true});
+  }
+  for (const kind of ['plain', 'group', 'simple', 'lazyAtom', 'lazySimple', 'skippedKey']) {
+    const observed = observeString(kind, 8388608);
+    assert.ok(!observed.sdkError, `non-growing RegExp input must pass: ${kind}`);
+    cases.push({id: `regexp-input/${kind}-long-valid`, ...observed});
+  }
+} finally {
+  fs.rmSync(stringScratch, {recursive: true, force: true});
+}
+
 Object.assign(cases.find(({id}) => id === 'ref/recursive-499'), {portDepthLimit: true, knownDifference: 'conservative-stack-budget'});
 
 const oracle = {
@@ -804,10 +858,10 @@ const oracle = {
   recursiveDataRuntime: {
     node: process.version, v8: process.versions.v8,
     platform: process.platform, arch: process.arch,
-    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024,
+    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024, regexpStackUnits: 65536, regexpInputUnit: 'UTF-16 code unit',
   },
   cases: cases.map((entry) => {
-    if (entry.recursiveData || entry.comparisonData) return entry;
+    if (entry.recursiveData || entry.comparisonData || entry.stringData) return entry;
     const {id, schema, data} = entry;
     const validator = new AjvJsonSchemaValidator();
     let compiled = false;

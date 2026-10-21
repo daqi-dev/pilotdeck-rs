@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **598** cases. Each case is either:
+count of **670** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -163,3 +163,40 @@ exercised both as a value pattern and as a property-name pattern.
 | validation requiring >1024 active weighted JSON / comparison units | exact SDK stack-overflow RPC error; earlier rejection is explicitly labelled, including wide shallow schemas, metadata/ignored keyword costs and deep equality |
 | classes with nested `[`, `&&` / `~~` / `--`, or empty classes | accepted at compile time; using the pattern returns `ValidationError::Unsupported` (the real Ajv result is preserved in the oracle) |
 | `patternProperties` whose children are all always-valid and whose sibling `additionalProperties` is absent/always-valid | Ajv's `patternProperties` codegen early-returns without compiling the keys; both `check_schema` and validation skip them (`alwaysValid` early-exit, r4 GLM P1) |
+
+## Long RegExp subjects (repair round 8)
+
+`string-data.mjs` runs one cold, default-stack real SDK `Client.callTool` per
+process using linked in-memory transports. `stringData` records only `prefix`,
+`unit`, `suffix`, `repeats`, UTF-16 `length`, and a `value`/`key` target. Replay
+inflates the subject in memory. No multi-megabyte repeated subjects enter JSON.
+
+The 72 new cases cover repeated alternatives, captures, nested captures,
+lookahead, optional atoms, large counted repetitions (including a character
+class without any group), astral subjects, active/skipped `patternProperties`,
+`additionalProperties` pattern reuse, and nine full formats: email, uri,
+uri-reference, uri-template, url, json-pointer, json-pointer-uri-fragment,
+relative-json-pointer, and byte. Each growing class has the last supported
+recipe, its next repetition, and a dynamically found SDK overflow. The bounded
+doubling search fails if it cannot observe the exact SDK error; no V8-specific
+breakpoint is hard-coded. Six large valid controls retain ordinary replay,
+including greedy/lazy atom runs, simple noncapturing runs, a single capture,
+and Ajv's skipped always-valid patternProperties branch.
+
+The port conservatively limits UTF-16 subject units times group count to
+65536 for compound repeated groups and large counted atom/group repetitions.
+Small bounded repetitions and simple noncapturing atom runs are exempt. The
+fixed baseline's nine growing formats use weight 1. The check precedes both
+Rust matching and an unsupported-syntax response, and all call sites share
+`ValidationError::Threw` with the existing RPC projection. It does not emulate
+V8's optimizer or its runtime-dependent backtracking-stack allocation limit.
+Unvisited patterns, Ajv-skipped patterns, and unrelated formats are unaffected.
+
+`portRegexpLimit` requires precisely code -32602 and
+`MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded`.
+`knownDifference: conservative-regexp-stack-budget` preserves SDK success where
+the port rejects earlier. These are explicit conservative differences, never
+parity passes. Below the limit, lookahead and enormous counted expressions
+retain `portUnsupported` because Rust cannot evaluate them; their real SDK
+results stay unchanged. Exact measurements and per-class difference intervals
+are in `_tmp/20261020-a65-pr10b/RESULT.md`, round 8.
