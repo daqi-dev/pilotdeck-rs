@@ -42,8 +42,8 @@ impl Cancellation {
     }
     /// Deliver a timer/event cancellation with its original occurrence time.
     /// The event must already have occurred; this does not schedule a task.
-    /// At equal deadlines, web exchanges dispatch their already registered
-    /// response/timeout timers before this subsequently delivered event.
+    /// Delivery time does not imply registration order: a caller can arm its
+    /// parent timer before starting the exchange, then deliver both overdue.
     pub fn cancel_at(&self, at: Instant) {
         assert!(
             at <= Instant::now(),
@@ -237,8 +237,8 @@ pub(crate) async fn delay(
 
 /// Dispatch pending events as Node does: synchronous parent aborts are already
 /// delivered; timestamped parent events follow earlier response/timeout timers.
-/// The timeout was registered before the response, and the parent event after
-/// both, which also determines ties. A queued promise continuation runs before
+/// The timeout is registered before the response, and the parent event after
+/// both, which determines ties for this entry. A queued promise continuation runs before
 /// timers. Socket readiness is polled after due timers in this dispatcher;
 /// transports must distinguish it from a queued continuation.
 /// `ExchangeFuture::after` makes a delayed response's deadline observable.
@@ -249,6 +249,24 @@ pub(crate) async fn exchange<T: Send + 'static>(
     deadline: Option<Instant>,
 ) -> Exchange<T> {
     exchange_continuing(send, abort, parent_event_at, deadline, false).await
+}
+
+/// Provider/count callers can arm their parent cancellation timer before
+/// entering the exchange. Node runs that timer first on an exact deadline tie.
+/// Keep this registration order explicit; web/MCP use the existing entry above.
+pub(crate) async fn exchange_with_prearmed_parent<T: Send + 'static>(
+    send: ExchangeFuture<T>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    deadline: Option<Instant>,
+) -> Exchange<T> {
+    let order = DispatchOrder {
+        scheduled_at: send.scheduled_at(),
+        microtask: send.is_microtask(),
+        continuation_before_abort: false,
+        parent_first: true,
+    };
+    dispatch(send, abort, parent_event_at, deadline, order).await
 }
 
 /// Carry an earlier timer's queued continuation into the next exchange. A
@@ -267,9 +285,12 @@ pub(crate) async fn exchange_continuing<T: Send + 'static>(
         abort,
         parent_event_at,
         deadline,
-        scheduled_at,
-        microtask,
-        continuation_before_abort,
+        DispatchOrder {
+            scheduled_at,
+            microtask,
+            continuation_before_abort,
+            parent_first: false,
+        },
     )
     .await
 }
@@ -310,9 +331,12 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
         abort,
         parent_event_at,
         idle.map(|idle| Instant::now() + idle),
-        None,
-        false,
-        std::mem::take(continuation),
+        DispatchOrder {
+            scheduled_at: None,
+            microtask: false,
+            continuation_before_abort: std::mem::take(continuation),
+            parent_first: false,
+        },
     )
     .await;
     if let Exchange::Response(_, before_abort) = &next {
@@ -321,15 +345,26 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
     next
 }
 
+struct DispatchOrder {
+    scheduled_at: Option<Instant>,
+    microtask: bool,
+    continuation_before_abort: bool,
+    parent_first: bool,
+}
+
 async fn dispatch<T>(
     send: impl Future<Output = T>,
     abort: impl Future<Output = ()>,
     parent_event_at: impl Fn() -> Option<Instant>,
     deadline: Option<Instant>,
-    scheduled_at: Option<Instant>,
-    microtask: bool,
-    mut continuation_before_abort: bool,
+    order: DispatchOrder,
 ) -> Exchange<T> {
+    let DispatchOrder {
+        scheduled_at,
+        microtask,
+        mut continuation_before_abort,
+        parent_first,
+    } = order;
     let mut send = std::pin::pin!(send);
     let mut abort = Box::pin(abort);
     let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
@@ -364,15 +399,19 @@ async fn dispatch<T>(
             (_, None) => true,
         };
         let response_before_parent = parent_at.is_none_or(|at| {
-            scheduled_at.map_or_else(|| microtask, |response_at| response_at <= at)
+            scheduled_at.map_or_else(
+                || microtask,
+                |response_at| response_at < at || (!parent_first && response_at == at),
+            )
         });
         let response_first = response_before_timeout && response_before_parent;
         initial = false;
         if response_first && let Poll::Ready(result) = send.as_mut().poll(cx) {
             return Poll::Ready(Exchange::Response(result, aborted));
         }
-        if parent_at.is_none_or(|at| deadline.is_some_and(|deadline| deadline <= at))
-            && let Some(timer) = &mut timer
+        if parent_at.is_none_or(|at| {
+            deadline.is_some_and(|deadline| deadline < at || (!parent_first && deadline == at))
+        }) && let Some(timer) = &mut timer
             && timer.as_mut().poll(cx).is_ready()
         {
             return Poll::Ready(Exchange::Timeout);

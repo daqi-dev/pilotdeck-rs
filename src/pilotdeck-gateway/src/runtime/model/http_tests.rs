@@ -490,6 +490,7 @@ enum RejectionOrder {
     ErrorBeforeParentTimer,
     BothOverdueErrorFirst,
     BothOverdueParentFirst,
+    BothOverdueParentTie,
 }
 
 /// #415/#410: actual streamModel.ts at cc7c4e65 (SHA-256
@@ -525,7 +526,7 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
                     self.signal.abort();
                     rejected
                 }
-                RejectionOrder::BothOverdueParentFirst => {
+                RejectionOrder::BothOverdueParentTie | RejectionOrder::BothOverdueParentFirst => {
                     TransportFuture::after(Duration::from_millis(10), error)
                 }
                 _ => TransportFuture::after(Duration::from_millis(5), error),
@@ -571,10 +572,15 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
                 poll_pending(pending.as_mut()).await;
                 tokio::time::advance(Duration::from_millis(5)).await;
             }
-            RejectionOrder::BothOverdueErrorFirst | RejectionOrder::BothOverdueParentFirst => {
+            RejectionOrder::BothOverdueErrorFirst
+            | RejectionOrder::BothOverdueParentFirst
+            | RejectionOrder::BothOverdueParentTie => {
                 poll_pending(pending.as_mut()).await;
                 tokio::time::advance(Duration::from_millis(30)).await;
-                let parent_delay = if matches!(order, RejectionOrder::BothOverdueErrorFirst) {
+                let parent_delay = if matches!(
+                    order,
+                    RejectionOrder::BothOverdueErrorFirst | RejectionOrder::BothOverdueParentTie
+                ) {
                     10
                 } else {
                     5
@@ -648,6 +654,73 @@ async fn provider_rejection_microtasks_finish_before_later_parent_timer() {
 async fn provider_both_overdue_timers_preserve_error_continuation_order() {
     assert_provider_rejection_order(RejectionOrder::BothOverdueErrorFirst).await;
     assert_provider_rejection_order(RejectionOrder::BothOverdueParentFirst).await;
+}
+
+/// Real TS/Node 22 probe: parent timer registered first at the exact same
+/// deadline wins both fulfilled and rejected transport timers. The probe checks
+/// Node Timeout._idleStart + _idleTimeout, rather than assuming equal delays.
+#[tokio::test(start_paused = true)]
+async fn provider_parent_timer_wins_exact_rejection_tie() {
+    assert_provider_rejection_order(RejectionOrder::BothOverdueParentTie).await;
+}
+
+/// Real streamModel.ts: an overdue 100ms Google idle watchdog finishes its
+/// error microtasks before the overdue 120ms parent callback. Check the public
+/// stream entry, including throwIfGoogleAbort and canonical error emission.
+#[tokio::test(start_paused = true)]
+async fn google_idle_timeout_continuation_precedes_later_parent_timer() {
+    struct PendingHeaders;
+    impl ModelHttpTransport for PendingHeaders {
+        fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+            TransportFuture::io(std::future::pending())
+        }
+    }
+    for (parent_ms, timeout_wins) in [(120, true), (100, false), (80, false)] {
+        let (request, mut config) = stream_config();
+        let mut provider = field(field(&config, "providers"), "p").clone();
+        put(&mut provider, "protocol", "google".into());
+        put(
+            &mut provider,
+            "retry",
+            parse_json(r#"{"streamMaxRetries":0}"#).unwrap(),
+        );
+        let mut providers = JsObject::new();
+        providers.insert("p".into(), provider);
+        put(&mut config, "providers", JsValue::Object(providers));
+        let signal = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(signal.clone()),
+            stream_timeout_ms: Some(100.0),
+            ..StreamOptions::default()
+        };
+        let mut events = Vec::new();
+        let mut sink = |event| events.push(event);
+        let mut pending = Box::pin(stream_model(
+            &PendingHeaders,
+            &request,
+            &config,
+            &options,
+            &mut sink,
+        ));
+        let started = tokio::time::Instant::now();
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(150)).await;
+        signal.cancel_at(started + Duration::from_millis(parent_ms));
+        let result = poll_ready(pending.as_mut()).await;
+        drop(pending);
+        if timeout_wins {
+            result.unwrap();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(&events[1], StreamOutput::Event(event)
+                if field(event, "type") == &JsValue::from("error")
+                    && field(field(event, "error"), "code") == &JsValue::from("timeout")
+                    && field(field(event, "error"), "message") == &JsValue::from("Stream idle timeout: no data received for 100ms")
+                    && field(field(field(event, "error"), "raw"), "name") == &JsValue::from("StreamIdleTimeoutError")));
+        } else {
+            assert!(result.unwrap_err().name().equals_str("AbortError"));
+            assert_eq!(events.len(), 1);
+        }
+    }
 }
 
 /// TS throwIfGoogleAbort checks the message before canonicalization/retries,
@@ -1008,7 +1081,7 @@ async fn provider_exchange_orders_response_timeout_and_parent() {
         (100, 120, false, "timeout"),
         (110, 90, false, "abort"),
         (60, 80, true, "abort"),
-        (60, 60, false, "response"),
+        (60, 60, false, "abort"),
     ] {
         let provider = parse_json(r#"{"id":"p","protocol":"anthropic","url":"http://example.test/v1","apiKey":"k","headers":{}}"#).unwrap();
         let abort = AbortFlag::new();
@@ -1121,7 +1194,7 @@ async fn google_exchange_orders_response_timeout_and_parent() {
         (100, 120, false, "timeout"),
         (110, 90, false, "abort"),
         (60, 80, true, "abort"),
-        (60, 60, false, "response"),
+        (60, 60, false, "abort"),
     ] {
         let provider = parse_json(r#"{"id":"p","protocol":"google","url":"http://example.test","apiKey":"k","headers":{}}"#).unwrap();
         let abort = AbortFlag::new();
