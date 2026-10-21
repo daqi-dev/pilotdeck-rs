@@ -1,3 +1,12 @@
+//! 守卫边界：检查 workspace 成员源码的 lint 继承与 manifest、child crate
+//! 内容、gateway 的解析后依赖闭包、仓内 Cargo 配置与 toolchain 文件，以及
+//! 测试进程可见的编译相关环境变量。
+//! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
+//! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
+//! state/decisions-20261021.md「#386 守卫的构建配置检查」及修复轮 7b 范围澄清。
+//! vendor 与 registry 依赖内部的 unsafe 不属于本守卫的审计范围；
+//! 既有 vendor pin 的变更仍须按冻结件规则评审。
+
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs,
@@ -6,6 +15,7 @@ use std::{
 };
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 fn section<'a>(manifest: &'a str, name: &str) -> Vec<&'a str> {
     manifest
@@ -66,10 +76,10 @@ const VENDORED_PACKAGES: [&str; 2] = ["vendor/tiktoken-rs", "data/icu_collator_d
 
 fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
     let output = Command::new(std::env::var_os("CARGO").expect("Cargo executable from CARGO"))
-        .args(["metadata", "--format-version", "1", "--offline"])
+        .args(["metadata", "--format-version", "1"])
         .current_dir(workspace)
         .output()
-        .expect("run cargo metadata offline");
+        .expect("run cargo metadata (honoring Cargo network policy)");
     assert!(
         output.status.success(),
         "cargo metadata failed: {}",
@@ -348,67 +358,97 @@ fn child_source_boundary(source: &str) {
     }
 }
 
-// No repository Cargo config, toolchain, build script, or build entrypoint may
-// inject compiler lint flags/wrappers. Check new files too, before they are staged.
-fn build_configuration_boundary(directory: &Path) {
+// These are the only existing exceptions. Keep the toolchain hash in FROZEN.md.
+// Changing transport/build.rs requires updating this hash and review confirming
+// it emits no cargo:rustc-flags, cargo:rustc-env=RUSTC*, --cap-lints, or other
+// directives that can affect lint enforcement. Its compilation inherits forbid.
+fn registered_build_files(root: &Path) {
+    let frozen = fs::read_to_string(root.join("specs/ui-server-parity/FROZEN.md")).unwrap();
+    let hashes: Vec<_> = frozen
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            (fields.len() == 2 && fields[1] == "../../rust-toolchain.toml").then(|| fields[0])
+        })
+        .collect();
+    assert_eq!(hashes.len(), 1, "unique frozen root toolchain registration");
+    for (relative, expected) in [
+        ("rust-toolchain.toml", hashes[0]),
+        (
+            "src/pilotdeck-transport/build.rs",
+            "f55927d26226112d4362567deec12002855906c15e53c4fbf1f2e80a9458cd56",
+        ),
+    ] {
+        let path = root.join(relative);
+        assert!(
+            fs::symlink_metadata(&path).unwrap().file_type().is_file(),
+            "registered build file must be a regular file: {relative}"
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(&path).unwrap())),
+            expected,
+            "registered build file changed: {relative}"
+        );
+    }
+}
+
+// Check names rather than contents, including empty and unstaged files.
+fn build_configuration_boundary(root: &Path, directory: &Path) {
     for name in entries(directory) {
-        if name.starts_with(".env")
-            || [
-                ".git",
-                "_build",
-                "_tmp",
-                "_archive",
-                "target",
-                "node_modules",
-                "resources",
-                "vault",
-                "notes",
-            ]
-            .contains(&name.as_str())
+        if [
+            ".git",
+            "_build",
+            "_tmp",
+            "target",
+            "node_modules",
+            "resources",
+            "vault",
+            "notes",
+        ]
+        .contains(&name.as_str())
         {
             continue;
         }
         let path = directory.join(&name);
         let kind = fs::symlink_metadata(&path).unwrap().file_type();
-        if name == ".cargo" {
-            assert!(!kind.is_symlink(), ".cargo must not be a symlink");
-        }
-        let cargo_config = directory.file_name().is_some_and(|name| name == ".cargo")
-            && name.starts_with("config");
-        let configuration = cargo_config
-            || name.starts_with("rust-toolchain")
-            || name == "build.rs"
-            || name.ends_with(".sh")
-            || name.ends_with(".yml")
-            || name.ends_with(".yaml");
-        if configuration {
-            assert!(
-                !kind.is_symlink(),
-                "build configuration must not be a symlink: {}",
-                path.display()
-            );
-            if kind.is_file() {
-                let text = fs::read_to_string(&path).unwrap().to_ascii_lowercase();
-                for forbidden in [
-                    "rustflags",
-                    "rustc-flags",
-                    "cap-lints",
-                    "unsafe_code",
-                    "unsafe-code",
-                    "rustc-wrapper",
-                    "rustc-workspace-wrapper",
-                ] {
-                    assert!(
-                        !text.contains(forbidden),
-                        "lint override {forbidden} in {}",
-                        path.display()
-                    );
-                }
-            }
-        }
+        let registered = path == root.join("rust-toolchain.toml")
+            || path == root.join("src/pilotdeck-transport/build.rs");
+        assert!(
+            registered
+                || (name != ".cargo"
+                    && !name.starts_with("rust-toolchain")
+                    && name != "build.rs"
+                    && (kind.is_dir() || !["config", "config.toml"].contains(&name.as_str()))),
+            "repository Cargo configuration/toolchain paths can replace the compiler or override lint policy and are forbidden: {}",
+            path.display()
+        );
         if kind.is_dir() {
-            build_configuration_boundary(&path);
+            build_configuration_boundary(root, &path);
         }
+    }
+}
+
+fn compiler_environment_boundary() {
+    for (name, value) in std::env::vars_os() {
+        let key = name.to_string_lossy();
+        let compiler_override = [
+            "RUSTFLAGS",
+            "RUSTDOCFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+        ]
+        .contains(&key.as_ref())
+            || key.starts_with("CARGO_BUILD_")
+            || (key.starts_with("CARGO_TARGET_")
+                && ["_RUSTFLAGS", "_LINKER", "_RUNNER"]
+                    .iter()
+                    .any(|suffix| key.ends_with(suffix)));
+        assert!(
+            !compiler_override || value.is_empty(),
+            "{key} can replace the compiler, alter compilation/linking, or bypass the lint policy; nonempty values are forbidden. For this guard test only, run: env -u {key} cargo test -p pilotdeck-gateway --test unsafe_boundary -- --exact compiler_enforces_gateway_boundary"
+        );
     }
 }
 
@@ -416,6 +456,10 @@ fn build_configuration_boundary(directory: &Path) {
 fn compiler_enforces_gateway_boundary() {
     let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = gateway.parent().unwrap();
+    compiler_environment_boundary();
+    let root = workspace.parent().unwrap();
+    registered_build_files(root);
+    build_configuration_boundary(root, root);
     let workspace_manifest = fs::read_to_string(workspace.join("Cargo.toml")).unwrap();
     assert_eq!(
         section(&workspace_manifest, "[workspace.lints.rust]"),
@@ -434,8 +478,16 @@ fn compiler_enforces_gateway_boundary() {
         assert!(
             !section(&manifest, "[package]")
                 .iter()
-                .any(|line| line.starts_with("build")),
-            "custom build scripts require extending the lint guard: {member}"
+                // Fail closed on quoted/escaped keys as well: TOML can spell
+                // the build key as "build" or with Unicode escapes.
+                .any(|line| line.starts_with("build") || line.starts_with(['"', '\''])),
+            "custom build scripts or quoted package keys require extending the lint guard: {member}"
+        );
+        assert!(
+            member == "pilotdeck-transport"
+                || fs::symlink_metadata(workspace.join(member).join("build.rs"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "only the hash-checked transport build.rs is allowed: {member}"
         );
         let lint_tables: Vec<_> = manifest
             .lines()
@@ -504,15 +556,6 @@ fn compiler_enforces_gateway_boundary() {
     let mut expected_excludes = VENDORED_PACKAGES;
     expected_excludes.sort();
     assert_eq!(excludes, expected_excludes, "workspace exclude whitelist");
-    for (name, value) in std::env::vars_os() {
-        if name.to_string_lossy().ends_with("RUSTFLAGS") {
-            assert!(
-                value.is_empty(),
-                "compiler flags must not override lint policy: {name:?}"
-            );
-        }
-    }
-    build_configuration_boundary(workspace.parent().unwrap());
 
     let child = workspace.join("pilotdeck-child-signals");
     assert_eq!(entries(&child), ["Cargo.toml", "src"]);

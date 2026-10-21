@@ -32,36 +32,49 @@ impl ChildSignalProbe {
 
     pub(crate) fn launch(&self, test: &str, all: bool) {
         let probe = self.0.path().join("probe");
+        // Regular files avoid waiting for EOF from inherited pipe writers in
+        // grandchildren, even when the direct worker has already exited.
+        let stdout_path = self.0.path().join("worker.stdout");
+        let stderr_path = self.0.path().join("worker.stderr");
         let mut child = Command::new(&probe)
             .arg(if all { "launch-all" } else { "launch" })
             .arg(std::env::current_exe().unwrap())
             .args(["--exact", test, "--ignored", "--nocapture"])
             .env("PDRS_CHILD_SIGNAL_PROBE", &probe)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(std::fs::File::create(&stdout_path).unwrap())
+            .stderr(std::fs::File::create(&stderr_path).unwrap())
             .spawn()
             .unwrap();
         // These fixed workers emit at most a few KiB. Bound a broken pre-exec
         // hook or wait path without ever signalling libtest's shared parent.
         let deadline = Instant::now() + Duration::from_secs(30);
-        let mut timed_out = false;
-        while child.try_wait().unwrap().is_none() {
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
             if Instant::now() >= deadline {
-                timed_out = true;
-                let _ = child.kill();
-                break;
+                let kill_result = child.kill();
+                let reap_deadline = Instant::now() + Duration::from_secs(2);
+                while child.try_wait().unwrap().is_none() {
+                    assert!(
+                        Instant::now() < reap_deadline,
+                        "signal-injected worker {test} exceeded 30 s; kill result {kill_result:?}; still not reaped after 2 s"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                panic!(
+                    "signal-injected worker {test} exceeded 30 s; kill result {kill_result:?}; reaped within 2 s"
+                );
             }
             std::thread::sleep(Duration::from_millis(10));
-        }
-        let output = child.wait_with_output().unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        };
+        let stdout = std::fs::read_to_string(stdout_path).unwrap();
+        let stderr = std::fs::read_to_string(stderr_path).unwrap();
         assert!(stdout.contains("INT_IGN=1 TERM_BLOCKED=1"), "{stdout}");
         assert!(
-            !timed_out && output.status.success(),
-            "signal-injected worker {} (timed_out={timed_out}): {stdout}\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
+            status.success(),
+            "signal-injected worker {status}: {stdout}\n{stderr}"
         );
         assert_eq!(
             stdout
