@@ -1754,7 +1754,6 @@ mod replace_tests {
 #[path = "exec_http_tests.rs"]
 mod http_tests;
 
-
 #[cfg(all(test, unix))]
 mod signal_tests {
     use super::*;
