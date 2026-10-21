@@ -1,14 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 01:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr9b | gate | doing | PR #406 @193e8a1e：gate10 concurrency 0/0/2（P2 并入 #409）；gate-chain-0105 补 sibling/boundary/simplify 后重写结果块
-- #386 | gate | doing | PR #407 @01e90559：修复轮 9 已推（unsafe 守卫闭包种子改全成员），gate-chain-0100 重跑 boundary
-- A7.1-pr3 | impl | doing | PR #421 @e8c952d0：gate3 P1×1+P2×5 合成修复轮 2，codex 在 wt-a64-pr7（_tmp/20261022-a7-1-gate3-boundary/fix2.md）
-- #390 | gate | doing | PR #430（Draft）@e78b845c：DeepSeek 交付，gate-chain-0100 跑首轮四角色
-- #401 | gate | doing | PR #429（Draft）@b381291c：dispose 栅栏一条按 TS 实测不改（依据贴 issue），gate-chain-0100 跑首轮四角色
-- #415 | impl | doing | 与 #410 同模块连做，codex 在 wt-a63-pr1（codex/issue-415-410），任务书 _tmp/20261022-issue-415/impl.md
-- #423 | impl | doing | DeepSeek 在 wt-a6-recorder（codex/issue-423），任务书 _tmp/20261022-issue-423/impl.md
+updated: 2026-10-22 01:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9b | gate | doing | PR #406 @193e8a1e：gate-chain-0105 补 sibling/boundary/simplify，完后 merge-roles 合成结果块
+- #386 | gate | doing | PR #407 @49d26393：修复轮 10 已推（source fail-closed、E0453 实测、cwd 断言）；沙箱外全量 verify-0137 + gate-chain-0140 gate8
+- A7.1-pr3 | gate | doing | PR #421 @6c4c94d1：修复轮 2 已推；沙箱外全量 verify-0137 + gate-chain-0140 gate4
+- #390 | gate | doing | PR #430 @a09c2506：gate1 四角色 PASS，补 boundary P2 单测后 gate-chain-0125 重跑 gate2
+- #401 | gate | doing | PR #429 @0fdf24bd：gate1 PASS（P2×2 同源两份已收敛），gate-chain-0135 重跑 gate2
+- #410 | gate | doing | PR #434（Draft）@f46a1c79：codex 交付；#415 TS 实测不符跳过；verify-0137 + gate-chain-0140
+- #423 | gate | doing | PR #433（Draft）@53dd2313：DeepSeek 交付，全量 1002/0；gate-chain-0140
+- gate-merge | coord | doing | PR #432 merge-review-roles.py（挡 #430/#429/#406 入队的最小修复）：GLM+codex 评审 r1 在跑
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -19,6 +20,13 @@ updated: 2026-10-22 01:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 01:40 · /loop 协调轮
+> **卡点与脱困**：逐角色串行跑出的单角色块会被 `check-pr-gate.py` 拒收，因为它要求每块含四角色，#430/#429/#406 因此入不了队。新增 `scripts/merge-review-roles.py`：只合并 status.json，要求 head、diff 字节、runner/model 一致，角色不重复；test-review-roles 加正负例，负控 2 项命中。CLAUDE.md pr-ready 停点同步。PR #432；合入前用 `_tmp/20261022-loop/merge-roles.sh`。
+> **交付**：#423 → PR #433（DeepSeek，1002/0）；#410 → PR #434（codex）。#415 TS 实测返回 AbortError，与 issue 不符，跳过。#421 修复轮 2 推 6c4c94d1；#407 修复轮 10 推 49d26393。
+> **自修**：#430 补直调 builder 非字符串 url 单测（a09c2506）；#429 network.rs 计时器规则委托 protocol 单份（0fdf24bd，三 crate 1215/0）。#431 已合入。
+> **在跑**：闸门链 0105 → 0125 → 0135 → 0140（全局串行）；verify-0137 沙箱外全量（#434/#421/#407）；#432 评审 GLM+codex。worktree 11/12，wt-a67-pr2 可回收，待人批 remove。
+> **下一步**：各链出块后贴 PR、派两家非作者评审、入队；READY 无新 ready 项，空出的树留给评审修复轮。
 
 > ## 2026-10-22 01:00 · /loop 协调轮
 > **#406**：CI `check` 两次因 `dense-inline-10mib-grouped` debug 预算 30 s 超限（31.57 / 32.50 s）——46033287 放宽时漏了同类分组用例；改 60 s 提交 193e8a1e，本机 11/0。release 5 s 不动。
