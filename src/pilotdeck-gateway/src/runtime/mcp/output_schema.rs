@@ -1495,6 +1495,9 @@ impl JsPatternParser {
     }
 
     fn decimal_digits(&mut self) -> Option<u64> {
+        // V8 saturates quantifier bounds at 2^31-1 (Node 22.22.0:
+        // `a{2147483648,2147483647}` compiles, `a{2147483648,1}` is out of order).
+        const V8_QUANTIFIER_MAX: u64 = i32::MAX as u64;
         let start = self.position;
         let mut value = 0_u64;
         while let Some(ch) = self.peek() {
@@ -1503,7 +1506,8 @@ impl JsPatternParser {
             }
             value = value
                 .saturating_mul(10)
-                .saturating_add(u64::from(ch as u8 - b'0'));
+                .saturating_add(u64::from(ch as u8 - b'0'))
+                .min(V8_QUANTIFIER_MAX);
             self.position += 1;
         }
         (self.position > start).then_some(value)
@@ -3700,6 +3704,19 @@ mod tests {
             ("(?<=a){", "Incomplete quantifier"),
             ("(?<=a){2", "Incomplete quantifier"),
             ("(?=a){2x}", "Incomplete quantifier"),
+            // #445 codex r1 P1: V8 saturates bounds at 2^31-1 before the order check.
+            ("(?<=a){2,1}", "numbers out of order in {} quantifier"),
+            (
+                "(?<=a){2147483647,2147483646}",
+                "numbers out of order in {} quantifier",
+            ),
+            ("(?<=a){2147483648,2147483647}", "Invalid quantifier"),
+            ("(?<=a){99999999999,99999999998}", "Invalid quantifier"),
+            (
+                "(?<=a){2147483648,1}",
+                "numbers out of order in {} quantifier",
+            ),
+            ("a{2147483648,1}", "numbers out of order in {} quantifier"),
         ];
         for (pattern, detail) in cases {
             let mut object = JsObject::new();
@@ -3905,6 +3922,10 @@ mod tests {
             ("regex", "(?<=a){2x}", Some(true)),
             ("regex", "(?<=a){,3}", Some(true)),
             ("regex", "(?=a){2x}", Some(true)),
+            ("regex", "a{2147483648,2147483647}", Some(true)),
+            ("regex", "a{99999999999,99999999998}", Some(true)),
+            ("regex", "a{2147483648,1}", Some(false)),
+            ("regex", "(?<=a){2147483648,2147483647}", Some(false)),
             ("regex", "(?=a)*", Some(true)),
             ("password", "anything", Some(true)),
             ("binary", "anything", Some(true)),
