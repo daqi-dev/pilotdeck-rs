@@ -550,7 +550,7 @@ mod tests {
         ] {
             // Real TS keeps an earlier rejected fetch value too: the count
             // catch does not recheck a later parent signal (unlike providers).
-            for fail in [false, true] {
+            for fail in [true, false] {
                 let started = Arc::new(AtomicBool::new(false));
                 let runtime = configured_count(TimedCount {
                     started: started.clone(),

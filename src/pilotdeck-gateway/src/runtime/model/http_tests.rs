@@ -723,6 +723,90 @@ async fn google_idle_timeout_continuation_precedes_later_parent_timer() {
     }
 }
 
+/// The same TS watchdog wraps every stream.next(), after headers and after
+/// partial text. Exercise the outer Google abort recheck, not only read_frame.
+#[tokio::test(start_paused = true)]
+async fn google_body_idle_timeout_continuation_precedes_later_parent_timer() {
+    for partial in [true, false] {
+        for (parent_ms, synchronous, timeout_wins) in [
+            (120, false, true),
+            (100, false, false),
+            (80, false, false),
+            (120, true, false),
+        ] {
+            let (request, mut config) = stream_config();
+            let mut provider = field(field(&config, "providers"), "p").clone();
+            put(&mut provider, "protocol", "google".into());
+            put(
+                &mut provider,
+                "retry",
+                parse_json(r#"{"streamMaxRetries":0}"#).unwrap(),
+            );
+            let mut providers = JsObject::new();
+            providers.insert("p".into(), provider);
+            put(&mut config, "providers", JsValue::Object(providers));
+            let frames = if partial {
+                vec![Some(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}]}\n\n".as_slice()), None]
+            } else {
+                vec![None]
+            };
+            let transport = Scripted(std::sync::Mutex::new(vec![(200, frames)]));
+            let signal = AbortFlag::new();
+            let options = StreamOptions {
+                abort: Some(signal.clone()),
+                stream_timeout_ms: Some(100.0),
+                ..StreamOptions::default()
+            };
+            let mut events = Vec::new();
+            let mut sink = |output| {
+                if let StreamOutput::Event(event) = output {
+                    events.push(event);
+                }
+            };
+            let mut pending = Box::pin(stream_model(
+                &transport, &request, &config, &options, &mut sink,
+            ));
+            let started = tokio::time::Instant::now();
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(150)).await;
+            if synchronous {
+                signal.abort();
+            } else {
+                signal.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            let result = poll_ready(pending.as_mut()).await;
+            drop(pending);
+            assert_eq!(transport.0.lock().unwrap().len(), 0);
+            let mut expected_tags = vec!["request_started"];
+            if partial {
+                expected_tags.extend(["message_start", "text_delta"]);
+                assert_eq!(field(&events[2], "text"), &JsValue::from("hello"));
+            }
+            if timeout_wins {
+                result.unwrap();
+                expected_tags.push("error");
+                let error = field(events.last().unwrap(), "error");
+                assert_eq!(field(error, "code"), &JsValue::from("timeout"));
+                assert_eq!(
+                    field(field(error, "raw"), "name"),
+                    &JsValue::from("StreamIdleTimeoutError")
+                );
+                assert_eq!(
+                    field(error, "message"),
+                    &JsValue::from("Stream idle timeout: no data received for 100ms")
+                );
+                assert_eq!(
+                    field(field(error, "streamInterruption"), "phase"),
+                    &JsValue::from(if partial { "text" } else { "empty" })
+                );
+            } else {
+                assert!(result.unwrap_err().name().equals_str("AbortError"));
+            }
+            assert_eq!(tags(&events), expected_tags);
+        }
+    }
+}
+
 /// TS throwIfGoogleAbort checks the message before canonicalization/retries,
 /// even when the parent signal has never been cancelled.
 #[tokio::test(start_paused = true)]
