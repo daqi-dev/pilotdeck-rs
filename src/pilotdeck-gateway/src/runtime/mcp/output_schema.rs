@@ -1394,14 +1394,18 @@ impl JsPatternParser {
     fn reject_quantifier(&mut self, detail: &'static str) -> Result<(), JsPatternSyntaxError> {
         match self.peek() {
             Some('*' | '+' | '?') => Err(JsPatternSyntaxError(detail)),
-            Some('{') if self.unicode => Err(JsPatternSyntaxError(detail)),
             Some('{') => {
-                // Without `/u`, `{` is literal unless it forms a quantifier.
+                // A complete quantifier after `^ $ \b \B` reports `detail`, even
+                // when its bounds are out of order (V8: `^{2,1}` is "Nothing to
+                // repeat"). An incomplete brace is a literal without `/u`; with
+                // `/u` V8 reports lone brackets (Node 22.22.0: `^{2x}`, `\b{,3}`).
                 // `try_quantifier` restores the position on failure.
-                if self.try_quantifier()?.is_some() {
-                    Err(JsPatternSyntaxError(detail))
-                } else {
-                    Ok(())
+                match self.try_quantifier() {
+                    Ok(Some(())) | Err(_) => Err(JsPatternSyntaxError(detail)),
+                    Ok(None) if self.unicode => {
+                        Err(JsPatternSyntaxError("Lone quantifier brackets"))
+                    }
+                    Ok(None) => Ok(()),
                 }
             }
             _ => Ok(()),
@@ -3717,6 +3721,19 @@ mod tests {
                 "numbers out of order in {} quantifier",
             ),
             ("a{2147483648,1}", "numbers out of order in {} quantifier"),
+            // #445 gate1 sibling P2: braces after `^ $ \b \B`, Node 22.22.0.
+            ("^{2}", "Nothing to repeat"),
+            ("^{2,1}", "Nothing to repeat"),
+            ("^{2147483648,2147483647}", "Nothing to repeat"),
+            (r"\b{2,}", "Nothing to repeat"),
+            ("${2}", "Nothing to repeat"),
+            ("^{2x}", "Lone quantifier brackets"),
+            ("^{,3}", "Lone quantifier brackets"),
+            ("^{", "Lone quantifier brackets"),
+            (r"\b{2x}", "Lone quantifier brackets"),
+            (r"\b{,3}", "Lone quantifier brackets"),
+            (r"\B{2x}", "Lone quantifier brackets"),
+            ("${2x}", "Lone quantifier brackets"),
         ];
         for (pattern, detail) in cases {
             let mut object = JsObject::new();
@@ -3925,6 +3942,10 @@ mod tests {
             ("regex", "a{2147483648,2147483647}", Some(true)),
             ("regex", "a{99999999999,99999999998}", Some(true)),
             ("regex", "a{2147483648,1}", Some(false)),
+            ("regex", "^{2x}", Some(true)),
+            ("regex", "\\b{,3}", Some(true)),
+            ("regex", "^{2}", Some(false)),
+            ("regex", "^{2,1}", Some(false)),
             ("regex", "(?<=a){2147483648,2147483647}", Some(false)),
             ("regex", "(?=a)*", Some(true)),
             ("password", "anything", Some(true)),
