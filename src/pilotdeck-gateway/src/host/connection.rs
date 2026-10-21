@@ -57,7 +57,7 @@ impl Connection {
         #[cfg(unix)]
         command.process_group(0);
         #[cfg(unix)]
-        crate::process_spawn::install_child_signal_reset(command.as_std_mut());
+        pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

@@ -695,6 +695,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-child-signals"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
@@ -721,6 +728,7 @@ dependencies = [
  "icu_collator",
  "icu_locale_core",
  "libc",
+ "pilotdeck-child-signals",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-transport",

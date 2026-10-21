@@ -1,0 +1,18 @@
+[package]
+name = "pilotdeck-child-signals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+# Cargo cannot inherit one lint group while overriding another; keep this
+# identical to workspace.lints.clippy (checked by unsafe_boundary).
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+libc = "=0.2.190"
