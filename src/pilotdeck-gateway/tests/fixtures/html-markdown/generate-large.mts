@@ -46,6 +46,14 @@ function pack(text: string, periods: number[]): Rule {
 }
 const denseBlock = repeat(1, '<p>', repeat(1024, '<em>x</em>'), '</p>');
 const denseBlocks = Math.floor((10 * 1024 * 1024) / expand(denseBlock).length);
+// Misnested formatting repeatedly reparents a wide P subtree. At 2 MiB
+// domino succeeds; its larger-input array-limit gap is disclosed separately.
+const formatting = 240;
+const widePrefix = Array.from({ length: formatting }, (_, i) => `<b a=${i}>`).join('') + '<p>';
+const wideSuffix = '</b>'.repeat(formatting);
+const wideBytes = 2 * 1024 * 1024;
+const wideCount = Math.floor((wideBytes - widePrefix.length - wideSuffix.length) / '<span>x</span>'.length);
+const widePadding = wideBytes - widePrefix.length - wideSuffix.length - wideCount * '<span>x</span>'.length;
 const specs = [
   { name: 'table-4-columns-30000-rows', html: repeat(1, '<table>', repeat(30000, '<tr>', repeat(4, '<td>cell</td>'), '</tr>'), '</table>'), periods: [6] },
   { name: 'paragraphs-100000', html: repeat(100000, '<p>paragraph</p>'), periods: [11] },
@@ -54,6 +62,7 @@ const specs = [
   { name: 'dense-inline-10mib-grouped', html: repeat(1, repeat(denseBlocks, denseBlock), 'x'.repeat(10 * 1024 * 1024 - denseBlocks * expand(denseBlock).length)), periods: [3074, 3, 1] },
   // A single wide inline run independently covers the old node rejection.
   { name: 'dense-inline-50000', html: repeat(50000, '<em>x</em>'), periods: [3] },
+  { name: 'reparent-wide-2mib', html: repeat(1, widePrefix, repeat(wideCount, '<span>x</span>'), 'x'.repeat(widePadding), wideSuffix), periods: [2, 1] },
 ];
 const cases = [];
 for (const spec of specs) {

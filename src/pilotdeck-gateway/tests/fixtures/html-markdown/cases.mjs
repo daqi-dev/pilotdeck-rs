@@ -115,6 +115,15 @@ export const cases = [
 export const parserGaps = [
   ['select-hr', '<select><hr></select>'],
   ['search-element', '<p>a<search>b</search>c</p>'],
+  ["select-div-in-p", "<p>a<select><div>b</div></select>c</p>"],
+  ["select-p", "<select><p>x</p></select>tail"],
+  ["select-li", "<div>a<select><li>b</li></select>c</div>"],
+  ["select-table", "<div>a<select><table><tr><td>b</td></tr></table></select>c</div>"],
+  ["select-h1", "<div>a<select><h1>b</h1></select>c</div>"],
+  ["select-ul", "<div>a<select><ul><li>b</li></ul></select>c</div>"],
+  ["select-img", "<div>a<select><img src=\"x\" alt=\"b\"></select>c</div>"],
+  ["select-br", "<div>a<select>b<br>d</select>c</div>"],
+  ["select-option-div", "<div>a<select><option><div>b</div></option></select>c</div>"],
 ].map(([name, html]) => ({ name, html }));
 
 export const fetchHtml = '<h1>😀 title</h1><p>Read <a href="/doc">docs</a> &amp; <strong>code</strong>.</p><pre><code>x_*\n</code></pre>';

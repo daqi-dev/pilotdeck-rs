@@ -153,3 +153,24 @@ n=25 的成功输出只存 UTF-16 长度 335544309 与完整 UTF-8 字节的 SHA
 不保存大串正文；Rust 回放同样断言完整长度与 SHA256，n=25 成功、n=26 报同一错误，
 未发现这两个交叉点样本上的向严或向宽偏差。两次独立生成需与金样逐字节一致。
 交叉点两侧回放结果与原始日志见工作区 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 5」。
+
+
+## 修复轮 9：select 家族披露与宽子树金样
+
+上文「2 条解析器版本缺口」与「parserGaps 两条」为原始样例计数；现为
+**3 类已发现的解析器差异、11 个 parserGaps 样例**（原 2 个 + 本轮 9 个），
+另有 1 类宽子树运行时差异，已知未对齐表共 4 条，全部未批准、非已接受差异。
+select 家族未穷举：实测 div / p / li / table / h1 / ul / img / br / option>div
+与 TS 不同，真实 TS 原值由 `generate.mts` 录入 `oracle.json`；
+span 和纯文本两例一致，原值仅记工作区 RESULT「修复轮 9」。
+`parser_version_gaps_match_real_ts` 仍 ignore，不把未对齐计为通过。
+
+`generate-large.mts` 追加 `reparent-wide-2mib`：240 个属性各异的 `<b a=i>`、
+`<p>`、重复 `<span>x</span>`、补齐 x、240 个 `</b>`，精确 2 MiB。
+`large-oracle.json` 保存真实 TS 完整返回值的无损重复配方、字节数与 SHA256；
+生成器展开配方逐字节核对真实输出，Rust 的
+`large_shallow_pages_match_real_ts_bytes_and_stay_fast` 比较完整 Markdown 字节。
+原 4 个大页样例保持原值；8 MiB 性能测试保留，新增
+`reparented_wide_four_mib_succeeds` 仅断言 Rust 转换成功。
+4 / 8 MiB 的 TS `Invalid array length` 仍是未批准的向宽差异，
+不新增豁免，也不改变深度批准或判分语义。
