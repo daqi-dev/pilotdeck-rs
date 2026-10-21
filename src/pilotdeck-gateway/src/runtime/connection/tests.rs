@@ -99,9 +99,14 @@ impl ConnectionGateway for Gateway {
                 "reconnect_interaction" => {
                     self.record(&method, params.clone());
                     let next = WsBinding::from_json(&params["nextBinding"]).unwrap();
+                    // The real TS provider treats a falsy previous as absent;
+                    // the connection still forwards explicit null unchanged.
                     let previous = params
                         .get("previousBinding")
-                        .map(|v| WsBinding::from_json(v).unwrap());
+                        .filter(|value| truthy(value))
+                        .map(WsBinding::from_json)
+                        .transpose()
+                        .map_err(RequestError::new)?;
                     Ok(self.bindings.reconnect(
                         &params["sessionKey"].to_string(),
                         next,
@@ -211,7 +216,7 @@ async fn replay() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 10);
-    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 31);
+    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 35);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     for (index, scenario) in oracle["scenarios"].as_array().unwrap().iter().enumerate() {
@@ -325,8 +330,8 @@ async fn socket_close_matches_a5_trace() {
 fn real_ts_binding_provider() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 17);
-    assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 17);
+    assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 24);
+    assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 24);
     let bindings = BindingOwners::default();
     for (i, step) in oracle["bindingSteps"]
         .as_array()
@@ -338,7 +343,11 @@ fn real_ts_binding_provider() {
             Ok(match step["op"].as_str().unwrap() {
                 "reconnect" => {
                     let next = WsBinding::from_json(&step["next"])?;
-                    let previous = step.get("previous").map(WsBinding::from_json).transpose()?;
+                    let previous = step
+                        .get("previous")
+                        .filter(|value| truthy(value))
+                        .map(WsBinding::from_json)
+                        .transpose()?;
                     bindings.reconnect("owner", next, previous.as_ref())
                 }
                 "disconnect" => {
