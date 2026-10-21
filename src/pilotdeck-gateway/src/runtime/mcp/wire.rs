@@ -640,6 +640,31 @@ async fn write_queue(stdin: Option<ChildStdin>, mut queue: mpsc::UnboundedReceiv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process_spawn::{child_signals, test_support};
+
+    #[test]
+    fn mcp_resets_inherited_signals() {
+        child_signals::ChildSignalProbe::new()
+            .launch("runtime::mcp::wire::tests::mcp_signal_worker", false);
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated worker launched with inherited ignored/blocked signals"]
+    async fn mcp_signal_worker() {
+        test_support::assert_inherited();
+        let probe = child_signals::probe_path();
+        let report = probe.with_file_name("mcp-report.txt");
+        let wire = Wire::spawn_stdio(
+            probe.to_str().unwrap(),
+            &["report-file".into(), report.to_str().unwrap().into()],
+            &[],
+            None,
+        )
+        .unwrap();
+        test_support::assert_reset_report_file(&report).await;
+        wire.close().await;
+        test_support::assert_inherited();
+    }
 
     /// gate2 P1-2: dropping `close()` mid-grace must not disarm SIGTERM. The
     /// child (`sleep`) ignores stdin EOF, so only the signal ends it.
