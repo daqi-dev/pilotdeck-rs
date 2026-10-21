@@ -1,8 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 14:35 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | impl | ready | 人定 14:25 深度预算取 2048；rebase 后全量 1712/0（sequences_replay 在 nohup 下失败属 #386 环境，前台单跑 8/0）；codex 修复轮 10 改常数并重算区间（`_tmp/20261020-a65-pr10b/fix10.status`），回来后协调者登记 accepted-diffs 深度条目、推送、派 r10 + 全量 gate
+updated: 2026-10-21 14:42 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | ready | 修复轮 10 提交 1bd9904（深度预算 2048，oracle 845，128/128 SDK valid），accepted-diffs #7 已登记为人批（9254220）；全量测试等 cargo 槽后跑，过后推送、派 r10（任务书已更新）+ 全量 gate
 - #396 | impl | ready | PR #403 r3：GLM P1（read_frame 默认 600000 平局应 undici 先触发报 terminated，Rust 用 < 报 idle timeout）、Grok P2（MCP MAX_STRING_LENGTH 无测试）；codex 修复轮 3 在跑
 - #386 | impl | ready | 人定 14:20 选 B：gateway 改 deny(unsafe_code)，只允许 install_child_signal_reset 一个函数；codex 在 wt-a65-pr2 实现（`_tmp/20261021-issue-386/task3.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
