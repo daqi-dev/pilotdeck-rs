@@ -58,6 +58,16 @@ fn merge(base: &JsValue, patch: &JsValue) -> JsValue {
 fn parsed(text: &str) -> JsValue {
     pilotdeck_protocol::parse_json(text).unwrap()
 }
+fn appended(value: &JsValue, tag: &str) -> JsValue {
+    let mut values = items(value).to_vec();
+    values.push(obj(&[("mutated", tag.into())]));
+    JsValue::Array(values)
+}
+fn tampered_usage(value: &JsValue) -> JsValue {
+    let mut object = value.as_object().cloned().unwrap_or_default();
+    object.insert("mutated".into(), JsValue::Bool(true));
+    JsValue::Object(object)
+}
 fn compare_bytes(actual: &JsValue, expected: &JsValue, label: &str) -> Result<(), String> {
     let actual = stringify_json(actual).unwrap();
     let expected = stringify_json(expected).unwrap();
@@ -535,17 +545,28 @@ async fn replay_execute_case(case: &JsValue) -> Result<(), String> {
 }
 
 #[tokio::test]
-async fn expected_execute_trace_mutation_is_detected() {
+async fn expected_execute_mutations_are_detected() {
     let oracle = baseline::oracle(ORACLE);
     let original = &items(get(&oracle, "executeCases"))[0];
     replay_execute_case(original).await.unwrap();
-    let mutated = merge(original, &obj(&[("trace", JsValue::Array(Vec::new()))]));
-    assert!(
-        replay_execute_case(&mutated)
+    // Every comparison point of the execute family is pinned on its own: a
+    // regression that makes just one of them compare a value with itself must
+    // fail the control named by `point`.
+    for (point, label) in [
+        ("calls", "calls"),
+        ("trace", "trace"),
+        ("sessionUsage", "usage"),
+    ] {
+        let tampered = match point {
+            "sessionUsage" => tampered_usage(get(original, point)),
+            _ => appended(get(original, point), point),
+        };
+        let mutated = merge(original, &obj(&[(point, tampered)]));
+        let error = replay_execute_case(&mutated)
             .await
-            .unwrap_err()
-            .contains("trace")
-    );
+            .expect_err(&format!("{point}: tampered expectation must be rejected"));
+        assert!(error.contains(label), "{point}: {error}");
+    }
 }
 
 #[test]
