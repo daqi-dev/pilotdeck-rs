@@ -5,7 +5,10 @@
 use super::{object, string, tool_error};
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::{mcp::bridge::MCP_TOOL_MAX_RESULT_BYTES, tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext}},
+    runtime::{
+        mcp::bridge::MCP_TOOL_MAX_RESULT_BYTES,
+        tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
+    },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc};
