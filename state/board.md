@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 14:42 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | impl | ready | 修复轮 10 提交 1bd9904（深度预算 2048，oracle 845，128/128 SDK valid），accepted-diffs #7 已登记为人批（9254220）；全量测试等 cargo 槽后跑，过后推送、派 r10（任务书已更新）+ 全量 gate
-- #396 | impl | ready | PR #403 r3：GLM P1（read_frame 默认 600000 平局应 undici 先触发报 terminated，Rust 用 < 报 idle timeout）、Grok P2（MCP MAX_STRING_LENGTH 无测试）；codex 修复轮 3 在跑
-- #386 | impl | ready | 人定 14:20 选 B：gateway 改 deny(unsafe_code)，只允许 install_child_signal_reset 一个函数；codex 在 wt-a65-pr2 实现（`_tmp/20261021-issue-386/task3.md`）
+updated: 2026-10-21 14:50 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | ready | 修复轮 10 后全量 1712/1：mcp_client::late_handshake_after_timeout_is_closed 间歇超时（pr10b 整二进制 13/15，main 同条件 10/10），按「不可复现」P1 处理，codex 修复轮 11 定位根因（`_tmp/20261020-a65-pr10b/fix11.status`）
+- #396 | review | ready | PR #403 修复轮 3 提交 abe13c3（平局 <=、MCP 上限测试）；沙箱外全量在跑，过后推送派 r4
+- #386 | impl | ready | B 已实现 0e8fd61（wt-a65-pr2，codex/sig-reset-nix，未推送）：gateway deny + 唯一 allow 函数、五处接入、两条信号回归与负控，Tokio spawn +21.4%；沙箱外全量在跑，过后开 PR、派两家 unsafe 专审（任务书 review-r1.md）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | impl | ready | PR #405 gate1 0/0/2：夹具回放绕过统一溯源守卫（P2-b 按 P1）、begin_maintenance 拒绝分支无 TS 场景；codex 修复轮 2 在跑
-- A6.5-pr9b | impl | ready | PR #406 r2：两家撞同一 P1——节点上限 100,000 无 TS 依据，误拒维基大页与 2 万行表（TS 成功）；超线性已消除；codex 修复轮 2 删节点上限、只留深度 256（向严，待人批）
+- A7.1-pr1 | review | ready | PR #405 修复轮 2 提交 4cd218d（统一溯源守卫、补维护拒绝场景，18/18 负控）；沙箱外全量在跑，过后推送派 r3、重跑 gate
+- A6.5-pr9b | review | ready | PR #406 修复轮 2 提交 3ede704（删节点上限，大页与 TS 逐字节一致，最慢 1.87 s）；深度 256 向严待人批；沙箱外全量在跑，过后推送派 r3
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
