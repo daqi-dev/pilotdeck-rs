@@ -71,6 +71,13 @@ const scenarios: { name: string; steps: Step[]; pending?: string[] }[] = [
     { op: 'begin', key: 'b', run: 'parallel' }, { op: 'active', key: 'a' },
     { op: 'maintenance_end' }, { op: 'begin', key: 'a', run: 'after' },
   ] },
+  { name: 'active-turn-rejects-maintenance', steps: [
+    { op: 'begin', key: 'a', run: 'active' }, { op: 'maintenance_start', key: 'a' },
+    { op: 'active', key: 'a' }, { op: 'begin', key: 'b', run: 'parallel' },
+    { op: 'end', key: 'a', run: 'active' }, { op: 'maintenance_start', key: 'a' },
+    { op: 'begin', key: 'a', run: 'blocked' }, { op: 'maintenance_end' },
+    { op: 'begin', key: 'a', run: 'after' },
+  ] },
   { name: 'completion-identity', steps: [
     { op: 'fence_begin', key: 'a', run: 'same', id: 'old' },
     { op: 'wait', key: 'a', id: 'old-wait' },
@@ -128,7 +135,7 @@ scenarios.push({ name: 'gateway-old-after-replace', steps: [
 const recorded = [];
 for (const scenario of scenarios) {
   const aborts: any[] = [];
-  let releaseMaintenance!: () => void;
+  let releaseMaintenance: (() => void) | undefined;
   let maintenance: Promise<any> | undefined;
   // A zero idle timeout does NOT disable sweepIdle in the real Router. Freeze
   // time so a millisecond tick cannot evict our fake session before admission.
@@ -158,12 +165,24 @@ for (const scenario of scenarios) {
       case 'end': router.endTurn(key, step.run); break;
       case 'shutdown': await router.shutdown(); break;
       case 'maintenance_start': {
-        maintenance = router.seedReadState({ sessionKey: key, channelKey: 'fixture' }, { path: 'x', mtime: 1 });
-        // seedReadState reserves synchronously; drain its finite creation chain.
-        while (!releaseMaintenance) await Promise.resolve();
+        let rejected = false;
+        let rejection: unknown;
+        releaseMaintenance = undefined;
+        maintenance = router.seedReadState({ sessionKey: key, channelKey: 'fixture' }, { path: 'x', mtime: 1 })
+          .catch((error: unknown) => {
+            rejection = error;
+            rejected = true;
+          });
+        // Drain the real reservation/creation chain or its active-turn rejection.
+        while (!releaseMaintenance && !rejected) await Promise.resolve();
+        if (rejected) {
+          assert.ok(rejection instanceof Error);
+          assert.equal(rejection.message, 'Cannot seed file read state while a turn or session control is active.');
+        }
+        value = !rejected;
         break;
       }
-      case 'maintenance_end': releaseMaintenance(); await maintenance; break;
+      case 'maintenance_end': releaseMaintenance!(); await maintenance; break;
       case 'fence_begin': {
         const handle = fence.begin(key, step.run!);
         handles.set(step.id!, handle); break;

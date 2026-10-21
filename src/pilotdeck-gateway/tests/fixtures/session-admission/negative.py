@@ -23,6 +23,7 @@ def main():
     rust = fixture.parents[3]
     source = rust / "pilotdeck-gateway/src/runtime/session"
     originals = {path.name: path.read_text() for path in source.glob("*.rs")}
+    originals["oracle.json"] = (fixture / "oracle.json").read_text()
     complete_guard = """if state
             .get(session_key)
             .is_some_and(|current| Arc::ptr_eq(&current.0, &handle.0))"""
@@ -37,6 +38,8 @@ def main():
         ("skip-shutdown", "admission.rs", "if state.shutdown\n            || state.turns.contains_key(session_key)",
          "if state.turns.contains_key(session_key)"),
         ("skip-maintenance", "admission.rs", "\n            || state.maintenance.contains(session_key)", ""),
+        ("maintenance-ignores-active-turn", "admission.rs",
+         "if state.shutdown || state.turns.contains_key(session_key)", "if state.shutdown"),
         ("run-id-is-identity", "completion.rs", "Arc::ptr_eq(&current.0, &handle.0)",
          "current.run_id() == handle.run_id()"),
         ("old-complete-deletes-new", "completion.rs", complete_guard, "if true"),
@@ -73,8 +76,12 @@ def main():
 """
     mutants.append(("restore-original-abort", "mod.rs",
                     "        // One admission snapshot" + fixed_prefix, old_prefix))
+    recorded_hash = json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/SessionRouter.ts"]
+    mutants.append(("tampered-source-hash", "oracle.json", recorded_hash, "0" * 64))
     if not os.environ.get("CARGO_HOME"):
         parser.error("CARGO_HOME must be set to the existing offline cargo cache")
+    if not os.environ.get("PDRS_BASELINE"):
+        parser.error("PDRS_BASELINE must be set to verify the tampered source hash against the fixed baseline")
     env = dict(os.environ, CARGO_NET_OFFLINE="true",
                CARGO_HOME=os.environ["CARGO_HOME"],
                CARGO_TARGET_DIR=str(rust / "target"))
@@ -83,8 +90,10 @@ def main():
         scratch = Path(directory)
         (scratch / "src/runtime/session").mkdir(parents=True)
         (scratch / "tests/fixtures/session-admission").mkdir(parents=True)
-        (scratch / "tests/fixtures/session-admission/oracle.json").write_bytes((fixture / "oracle.json").read_bytes())
-        (scratch / "src/lib.rs").write_text('#[path = "runtime/session/mod.rs"] pub mod session;\n')
+        (scratch / "src/lib.rs").write_text(
+            '#[path = "runtime/session/mod.rs"] pub mod session;\n'
+            f'#[cfg(test)]\n#[path = {json.dumps(str(rust / "pilotdeck-gateway/tests/common/baseline.rs"))}] '
+            'mod test_baseline;\n')
         # Same versions/features already present in pilotdeck-gateway. This
         # temporary harness introduces no repository manifests or dependencies.
         (scratch / "Cargo.toml").write_text(
@@ -92,6 +101,8 @@ def main():
             '[dependencies]\n'
             f'pilotdeck-protocol={{path={json.dumps(str(rust / "pilotdeck-protocol"))}}}\n'
             'serde_json={version="=1.0.151",features=["float_roundtrip"]}\n'
+            'sha2="=0.10.9"\n'
+            'uuid={version="=1.27.0",features=["v4"]}\n'
             'tokio={version="=1.48.0",features=["macros","rt-multi-thread","net","signal",'
             '"time","io-util","sync","process","test-util"]}\n')
         cases = [("baseline", None, None, None)] + mutants
@@ -101,7 +112,9 @@ def main():
                     count = content.count(before)
                     assert count == (2 if name in ("run-id-is-identity", "discard-is-completion") else 1), (name, count)
                     content = content.replace(before, after)
-                (scratch / "src/runtime/session" / file).write_text(content)
+                destination = (scratch / "tests/fixtures/session-admission" if file == "oracle.json"
+                               else scratch / "src/runtime/session")
+                (destination / file).write_text(content)
             gate = subprocess.run(
                 ["bash", "-c", "until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done"],
                 capture_output=True, text=True, check=True)
@@ -119,6 +132,10 @@ def main():
             hits = re.search(r"replacement hits: (\d+)/(\d+)", raw)
             if name == "restore-original-abort":
                 passed = passed and hits is not None and int(hits[1]) == int(hits[2]) == 2_000
+            if name == "tampered-source-hash":
+                passed = passed and "oracle hash for src/gateway/SessionRouter.ts does not match" in raw
+            if name == "maintenance-ignores-active-turn":
+                passed = passed and '"active-turn-rejects-maintenance" step 1' in raw
             summary.append({"replacement_hits": int(hits[1]) if hits else None,
                             "rounds": int(hits[2]) if hits else None,
                             "name": name, "file": filename, "before": before, "after": after,
