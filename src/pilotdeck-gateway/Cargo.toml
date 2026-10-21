@@ -6,15 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# #386: only process_spawn::install_child_signal_reset may allow unsafe.
-# Keep every other workspace lint equivalent here.
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true
 
 [dependencies]
+pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
 libc = "=0.2.190"
 sha2.workspace = true

@@ -255,7 +255,7 @@ impl Wire {
             process.current_dir(cwd);
         }
         #[cfg(unix)]
-        crate::process_spawn::install_child_signal_reset(process.as_std_mut());
+        pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
         let mut child = process.spawn().map_err(|error| {
             let code = super::protocol::errno_text(&error).0;
             McpClientError::errno(&error, format!("spawn {command} {code}"))

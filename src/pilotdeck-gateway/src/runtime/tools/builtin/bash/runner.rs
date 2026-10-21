@@ -385,7 +385,7 @@ impl PreparedSpawn {
             }
         }
         #[cfg(unix)]
-        crate::process_spawn::install_child_signal_reset(process.as_std_mut());
+        pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
         process
     }
 }
