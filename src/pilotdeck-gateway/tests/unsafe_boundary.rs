@@ -1,26 +1,33 @@
 //! 守卫边界：检查 workspace 成员源码的 lint 继承与 manifest、child crate
-//! 内容、gateway 的解析后依赖闭包、仓内 Cargo 配置与 toolchain 文件，以及
-//! 测试进程可见的编译相关环境变量。
+//! 内容、gateway 的解析后依赖闭包、仓内 Cargo 配置与 toolchain 文件、
+//! manifest 目录到文件系统根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
+//! config*，以及测试进程可见的编译相关环境变量。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
-//! state/decisions-20261021.md「#386 守卫的构建配置检查」及修复轮 7b 范围澄清。
+//! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
 //! vendor 与 registry 依赖内部的 unsafe 不属于本守卫的审计范围；
 //! 既有 vendor pin 的变更仍须按冻结件规则评审。
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-fn section<'a>(manifest: &'a str, name: &str) -> Vec<&'a str> {
+fn stripped_lines(manifest: &str) -> Vec<&str> {
     manifest
         .lines()
         .map(|line| line.split('#').next().unwrap().trim())
+        .collect()
+}
+
+fn section<'a>(manifest: &'a str, name: &str) -> Vec<&'a str> {
+    stripped_lines(manifest)
+        .into_iter()
         .skip_while(|line| *line != name)
         .skip(1)
         .take_while(|line| !line.starts_with('['))
@@ -393,8 +400,26 @@ fn registered_build_files(root: &Path) {
 }
 
 // Check names rather than contents, including empty and unstaged files.
+fn assert_build_configuration_path(root: &Path, path: &Path) {
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let kind = fs::symlink_metadata(path).unwrap().file_type();
+    let registered = path == root.join("rust-toolchain.toml")
+        || path == root.join("src/pilotdeck-transport/build.rs");
+    assert!(
+        registered
+            || (name != ".cargo"
+                && !name.starts_with("rust-toolchain")
+                && name != "build.rs"
+                && (kind.is_dir() || !["config", "config.toml"].contains(&name))),
+        "repository Cargo configuration/toolchain paths can replace the compiler or override lint policy and are forbidden: {}",
+        path.display()
+    );
+}
+
 fn build_configuration_boundary(root: &Path, directory: &Path) {
     for name in entries(directory) {
+        let path = directory.join(&name);
+        assert_build_configuration_path(root, &path);
         if [
             ".git",
             "_build",
@@ -407,24 +432,60 @@ fn build_configuration_boundary(root: &Path, directory: &Path) {
         ]
         .contains(&name.as_str())
         {
+            // Large trees skip recursion only; their immediate children still
+            // obey the same name policy (in particular _build/.cargo).
+            // Git metadata is outside the repository source/config tree;
+            // its own .git/config is not a Cargo input.
+            if name != ".git" && fs::symlink_metadata(&path).unwrap().is_dir() {
+                for child in entries(&path) {
+                    assert_build_configuration_path(root, &path.join(child));
+                }
+            }
             continue;
         }
-        let path = directory.join(&name);
-        let kind = fs::symlink_metadata(&path).unwrap().file_type();
-        let registered = path == root.join("rust-toolchain.toml")
-            || path == root.join("src/pilotdeck-transport/build.rs");
-        assert!(
-            registered
-                || (name != ".cargo"
-                    && !name.starts_with("rust-toolchain")
-                    && name != "build.rs"
-                    && (kind.is_dir() || !["config", "config.toml"].contains(&name.as_str()))),
-            "repository Cargo configuration/toolchain paths can replace the compiler or override lint policy and are forbidden: {}",
-            path.display()
-        );
-        if kind.is_dir() {
+        if fs::symlink_metadata(&path).unwrap().is_dir() {
             build_configuration_boundary(root, &path);
         }
+    }
+}
+
+fn cargo_configuration_locations_boundary(manifest: &Path) {
+    // Cargo discovers config from the build cwd through all ancestors, even
+    // above a nested worktree. The supported build cwd is the manifest tree.
+    for directory in manifest.ancestors() {
+        for name in ["config", "config.toml"] {
+            let path = directory.join(".cargo").join(name);
+            assert!(
+                fs::symlink_metadata(&path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "ancestor Cargo configuration can replace the compiler or override lint policy and is forbidden: {}. For this guard test only, use a checkout whose manifest ancestors have no .cargo/config or .cargo/config.toml",
+                path.display()
+            );
+        }
+    }
+    let cargo_home = std::env::var_os("CARGO_HOME").map_or_else(
+        || {
+            PathBuf::from(std::env::var_os("HOME").expect("HOME required when CARGO_HOME is unset"))
+                .join(".cargo")
+        },
+        PathBuf::from,
+    );
+    match fs::read_dir(&cargo_home) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.expect("read Cargo home entry");
+                assert!(
+                    !entry.file_name().to_string_lossy().starts_with("config"),
+                    "Cargo home config* can replace the compiler or override lint policy and is forbidden: {}. For this guard test only, set CARGO_HOME to a config-free Cargo home with dependencies cached, or run the compiled guard binary with that CARGO_HOME",
+                    entry.path().display()
+                );
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!(
+            "cannot inspect Cargo home {}: {error}",
+            cargo_home.display()
+        ),
     }
 }
 
@@ -457,6 +518,7 @@ fn compiler_enforces_gateway_boundary() {
     let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = gateway.parent().unwrap();
     compiler_environment_boundary();
+    cargo_configuration_locations_boundary(gateway);
     let root = workspace.parent().unwrap();
     registered_build_files(root);
     build_configuration_boundary(root, root);
@@ -489,15 +551,13 @@ fn compiler_enforces_gateway_boundary() {
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
             "only the hash-checked transport build.rs is allowed: {member}"
         );
-        let lint_tables: Vec<_> = manifest
-            .lines()
-            .map(|line| line.split('#').next().unwrap().trim())
+        let lint_tables: Vec<_> = stripped_lines(&manifest)
+            .into_iter()
             .filter(|line| line.starts_with("[lints"))
             .collect();
         if member == "pilotdeck-child-signals" {
-            let tables: Vec<_> = manifest
-                .lines()
-                .map(|line| line.split('#').next().unwrap().trim())
+            let tables: Vec<_> = stripped_lines(&manifest)
+                .into_iter()
                 .filter(|line| line.starts_with('['))
                 .collect();
             assert_eq!(

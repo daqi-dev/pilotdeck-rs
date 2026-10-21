@@ -4,10 +4,10 @@ import {lstatSync,readFileSync,realpathSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve,join,dirname} from 'node:path';
 
-const packages=['src/pilotdeck-gateway','src/pilotdeck-protocol','src/pilotdeck-yaml','src/data/icu_collator_data'];
+const packages=['src/pilotdeck-gateway','src/pilotdeck-protocol','src/pilotdeck-yaml','src/pilotdeck-child-signals','src/data/icu_collator_data'];
 export const producerInputs=Object.freeze({
   version:1,
-  trees:Object.freeze([...packages.slice(0,3).map(p=>p+'/src'),'src/data/icu_collator_data/data']),
+  trees:Object.freeze([...packages.slice(0,4).map(p=>p+'/src'),'src/data/icu_collator_data/data']),
   required:Object.freeze([...packages.map(p=>p+'/Cargo.toml'),'src/data/icu_collator_data/lib.rs','src/Cargo.toml','src/Cargo.lock','rust-toolchain.toml',
     ...['record.mjs','observe.mjs','check_suffix.mjs','source_identity.mjs'].map(p=>'src/pilotdeck-gateway/tests/upgrade/'+p),'scripts/gateway-parity/watcher.mjs']),
   optional:Object.freeze([...packages.map(p=>p+'/build.rs'),...['','src',...packages].flatMap(p=>['config','config.toml'].map(n=>(p?p+'/':'')+'.cargo/'+n))]),
