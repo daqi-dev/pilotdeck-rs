@@ -176,6 +176,7 @@ async fn replay() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 10);
+    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 18);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     for (index, scenario) in oracle["scenarios"].as_array().unwrap().iter().enumerate() {
@@ -277,6 +278,8 @@ async fn socket_close_matches_a5_trace() {
 fn real_ts_binding_provider() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 17);
+    assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 17);
     let bindings = BindingOwners::default();
     for (i, step) in oracle["bindingSteps"]
         .as_array()

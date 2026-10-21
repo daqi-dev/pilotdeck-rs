@@ -5776,6 +5776,248 @@
           "interactions": []
         }
       ]
+    },
+    {
+      "name": "permission-decide-null-and-missing-params",
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"null-params\",\"method\":\"permission_decide\",\"params\":null}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"missing-params\",\"method\":\"permission_decide\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"object-params\",\"method\":\"permission_decide\",\"params\":{}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-18",
+                "generation": 18
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-18",
+                "generation": 18
+              }
+            },
+            {
+              "type": "response",
+              "id": "null-params",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Cannot read properties of null (reading 'sessionKey')"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-18",
+                "generation": 18
+              }
+            },
+            {
+              "type": "response",
+              "id": "null-params",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Cannot read properties of null (reading 'sessionKey')"
+              }
+            },
+            {
+              "type": "response",
+              "id": "missing-params",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Cannot read properties of undefined (reading 'sessionKey')"
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-18",
+                "generation": 18
+              }
+            },
+            {
+              "type": "response",
+              "id": "null-params",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Cannot read properties of null (reading 'sessionKey')"
+              }
+            },
+            {
+              "type": "response",
+              "id": "missing-params",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Cannot read properties of undefined (reading 'sessionKey')"
+              }
+            },
+            {
+              "type": "response",
+              "id": "object-params",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "interactionBinding": {
+                  "connectionId": "@connection-18",
+                  "generation": 18
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": []
+        }
+      ]
     }
   ],
   "bindingSteps": [

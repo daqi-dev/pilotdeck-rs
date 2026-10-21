@@ -175,11 +175,30 @@ impl GatewayConnection {
             let result = if is_submit {
                 self.submit(&id, params, cleanup).await.map(|()| None)
             } else {
-                self.gateway.request(method.clone(), params).await.map(Some)
+                self.gateway
+                    .request(method.clone(), params)
+                    .await
+                    .and_then(|result| {
+                        // TS reads the original params only after dispatch succeeds.
+                        // Null/undefined throw here even though dispatch saw an object.
+                        if method == "permission_decide" && input.is_null() {
+                            let kind = if frame.get("params").is_some() {
+                                "null"
+                            } else {
+                                "undefined"
+                            };
+                            Err(RequestError::new(format!(
+                                "Cannot read properties of {kind} (reading 'sessionKey')"
+                            )))
+                        } else {
+                            Ok(Some(result))
+                        }
+                    })
             };
             match result {
                 Ok(Some(result)) => {
                     if method == "permission_decide"
+                        && input.is_object()
                         && input["sessionKey"].is_string()
                         && input["requestId"].is_string()
                     {
