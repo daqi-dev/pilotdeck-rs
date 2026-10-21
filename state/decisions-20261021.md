@@ -65,3 +65,13 @@
 - **原话**：「pr9b 选 A，批准 256 层限制及对应向严差异。若此前已收到同项批准，请沿用并补齐登记，不再重复请批；按既定测试、评审和兼容性跟进安排继续推进。」
 - **执行**：此前未就该项请批过，本条为首次人批。accepted-diffs 追加深度条目，状态「已批：郑达奇 · 2026-10-21」；依据 `_tmp/20261021-a65-pr9b/depth-brief.md` 与 RESULT「TS 断点测量方法与原值」。内存放大（#409）与解析器差异（pr9c）照原安排跟进。
 - **原则**：同一项人批只请一次；后续登记、评审与兼容性跟进按既定流程推进，不再回头请批。
+
+## 卡 · gateway 差异登记账本放错（AI 代批，待人复核）
+- **卡在哪**：仓里有两本已接受差异账本：`specs/parity/accepted-diffs.md`（阶段 C sidecar 对拍，#1–#3 都是 deadline 场景）与 `specs/gateway-parity/accepted-diffs.md`（阶段 A gateway，冻结件，按 `A4-…-001` 分节、每条写类别 / 基线依据 / Rust 行为 / 范围 / 机器判据 / 批准记录，改动须在 FROZEN.md 重登记哈希）。A6.5 的 gateway 差异被写进了前者：#4 handshakeClose、#5 background-task-async-spawn（10-20 会话经 #372 合入，今天由 #404 标为人批），以及协调者今天给 pr10b 写的 #6 正则长串、#7 深度 / 宽度预算（尚未合入）。pr9b 的 gate1 sibling 指出应登在 gateway 账本，协调者核实属实。
+- **谁受影响**：对拍判分时读错账本会把已批差异当成未登记（假 FAIL）或把 sidecar 账本混入 gateway 判据。不改变任何已批内容与批准状态。
+- **能否撤回**：能，都是只追加的登记动作。
+- **动不动尺子 / 意向**：动两个冻结件的登记位置，不改判分语义；人批内容原样迁移。
+- **选项**：A. 迁到 gateway 账本——pr10b 未合入的 #6 #7 直接改登到 `specs/gateway-parity/accepted-diffs.md`（A6.5-MCP-OUTSCHEMA-REGEX-001、A6.5-MCP-OUTSCHEMA-DEPTH-001）；已合入的 #4 #5 在 gateway 账本补登（A6.5-MCP-HANDSHAKE-CLOSE-001、A6.5-BG-ASYNC-SPAWN-001，批准记录引 #404），在 sidecar 账本按「只增不删，作废划线写原因」把 #4 #5 划线注明迁移去向；各自在 FROZEN.md 重登记。B. 维持现状，两本都认。
+- **建议 / 执行**：A。pr9b 已按 A 登记（A6.5-WEBFETCH-DEPTH-001）；pr10b 在第十轮评审结束后同批改登；#4 #5 的迁移另开小 PR。
+- **原则**：差异登在被测对象所属阶段的账本；新登记前先确认账本归属与格式。
+- **可机检**：`scripts/gateway-parity/check_frozen.py` 与 `scripts/parity/check_frozen.py` 都 PASS；gateway 账本每节含六项字段。
