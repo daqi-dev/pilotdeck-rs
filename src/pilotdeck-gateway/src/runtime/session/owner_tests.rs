@@ -276,6 +276,34 @@ fn compare(name: &str, value: Value, probe: &Probe) {
 }
 
 #[tokio::test]
+async fn dirty_mark_during_recreation_is_cleared_matches_ts() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    owner.mark_all_dirty("first refresh");
+    let gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert("a".into(), gate.clone());
+    let replacing = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:2")).await;
+    let marked = owner.mark_all_dirty("refresh during recreation");
+    gate.open();
+    let fresh = bounded(replacing).await.unwrap();
+    let next = owner.get_or_create(context("a")).await.unwrap();
+    compare(
+        "dirty_mark_during_recreation_is_cleared",
+        json!({"marked": marked, "replaced": !old.same_identity(&fresh),
+            "nextIsFresh": next.same_identity(&fresh)}),
+        &probe,
+    );
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn dirty_identity_and_publication_matches_ts() {
     let probe = Probe::default();
     let owner = probe.owner();

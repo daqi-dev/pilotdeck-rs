@@ -51,13 +51,16 @@ cargo test -p pilotdeck-gateway --lib runtime::session::
 `negative.py <evidence-dir>` 在独占 `/tmp/pdrs-a71-negative-*` 下复制真实 Cargo workspace
 （排除 target、git、node_modules、env 文件）与 specs，复用原 manifests、依赖和
 共享 `tests/common/baseline.rs`；在当前生命周期模块中运行 admission 测试，结束即删除。
-不改工作区产品文件，不写基线或 node_modules。先跑原实现基线（含多线程回归），再串行注入 18 个
+不改工作区产品文件，不写基线或 node_modules。先跑原实现基线（含多线程回归），再串行注入 19 个
 变异：跳过 busy、全局键、忽略 end 的 runId、跳过 shutdown、跳过 maintenance、
 用 runId 当 handle 身份、旧 complete 删除新 handle、忽略 cancel 的 runId、
 空 cancel 当无 ID、覆盖首个取消原因、丢失 completion、丢弃 resolver 冒充完成、不等待 drain、无条件 abort、
 丢失 Router-before-fence abort 分支、maintenance 忽略活动 turn、
-恢复原 abort 前缀（两次 active 读取、sink 不带 runId），以及篡改 oracle 的 sourceSha256。
+恢复原 abort 前缀（两次 active 读取、sink 不带 runId），去掉 end_turn 的预约身份复核，以及篡改 oracle 的 sourceSha256。
 16 项行为变异必须编译成功、oracle 测试以断言失败退出；活动 turn 变异还须命中新增场景。
+`end_turn` 身份变异单独运行
+`exact_end_requires_original_admission_identity_but_empty_end_is_unfenced`，
+必须命中 `stale exact end released new identity` 断言。
 恢复 abort 前缀的变异运行屏障控制的
 `old_abort_never_targets_replacement_across_threads`，要求 2000/2000 轮新 run 被命中，
 从而证明竞态回归确实拒绝旧写法；修复实现必须为 0/2000。
@@ -65,8 +68,9 @@ cargo test -p pilotdeck-gateway --lib runtime::session::
 源码哈希不匹配断言拒绝，不能以格式检查或其它行为失败代替。
 编译错误/超时不算抓到负控。原始日志与含完整变异表达式的 JSON 汇总写入指定目录。
 `CARGO_HOME` 与 `PDRS_BASELINE` 必须由环境提供，缺省立即报错；后者确保哈希负控
-实际校验固定基线源码。`CARGO_TARGET_DIR` 为当前树的
-`src/target`，编译前执行 cargo-slots。
+实际校验固定基线源码。每次调用将 `CARGO_TARGET_DIR` 覆盖为独占 `/tmp` 副本内的
+`src/target`，不与真实树或另一装置共享，结束时与副本一起删除。
+首次 baseline 冷构建限时 600 秒，其余变异限时 120 秒；编译前执行 cargo-slots。
 
 abort sink 签名为 `(Option<JsString>, JsString)`，分别传入请求 runId 与 reason。
 显式空 runId 仍是 `Some(空串)`，只有 `None` 才允许按当前会话 abort。

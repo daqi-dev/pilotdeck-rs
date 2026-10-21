@@ -15,12 +15,30 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     assert os.environ.get('PDRS_BASELINE'), 'PDRS_BASELINE is required for the shared replay guard'
     assert os.environ.get('CARGO_HOME'), 'CARGO_HOME is required'
-    env = dict(os.environ, CARGO_NET_OFFLINE='true', CARGO_TARGET_DIR=str(rust / 'target'))
+    env = dict(os.environ, CARGO_NET_OFFLINE='true')
     owner = 'pilotdeck-gateway/src/runtime/session/owner.rs'
     admission = 'pilotdeck-gateway/src/runtime/session/admission.rs'
+    handle = 'pilotdeck-gateway/src/runtime/session/handle.rs'
     fixture = 'pilotdeck-gateway/tests/fixtures/session-owner/oracle.json'
     module = 'runtime::session::owner::tests::'
     mutants = [
+        ('reserve-activity-ignores-inactive-handle', handle,
+         'if progress.state != HandleState::Active {', 'if false {',
+         'publication_cutoff_revokes_cached_handle_before_async_disposal_starts',
+         'publication admitted activity on the old handle'),
+        ('idle-ignores-inflight-and-queued-close', owner,
+         '!state\n                    .gates\n                    .get(*key)\n                    .is_some_and(|gate| gate.strong_count() > 0)',
+         'true', 'idle_sweep_skips_same_key_creation_and_queued_close',
+         'idle sweep evicted a session during same-key creation'),
+        ('close-without-ticket-serialization', owner,
+         'tokio::spawn(async move {\n            let _exclusive = ticket.enter().await;\n            let (record, identity) = {',
+         'tokio::spawn(async move {\n            let _unused_ticket = ticket;\n            let (record, identity) = {',
+         'close_waits_for_prior_same_key_close_to_drain',
+         'close returned before the prior same-key close drained'),
+        ('empty-project-is-paused', owner,
+         '!project.is_empty() && state.paused_projects.contains(project)',
+         'state.paused_projects.contains(project)',
+         'empty_project_pause_and_close_matches_ts', 'Project is being deleted.'),
         ('old-handle-is-current', owner,
          '.get(key)\n            .is_some_and(|record| record.handle.same_identity(handle))',
          '.get(key)\n            .is_some_and(|_record| { let _ = handle; true })',
@@ -67,6 +85,7 @@ def main():
     results = []
     with tempfile.TemporaryDirectory(prefix='pdrs-session-owner-negative-', dir='/tmp') as directory:
         scratch = Path(directory) / 'src'
+        env['CARGO_TARGET_DIR'] = str(scratch / 'target')
         # Same workspace, dependencies and manifests; no new dependency or mock
         # copy of project/refresh behavior is introduced by this harness.
         shutil.copytree(rust, scratch, ignore=shutil.ignore_patterns('target', '.git', 'node_modules', '.env*'))
@@ -82,7 +101,7 @@ def main():
                                   capture_output=True, text=True, check=True)
             command = ['cargo', 'test', '--offline', '--manifest-path', str(scratch / 'Cargo.toml'),
                        '-p', 'pilotdeck-gateway', '--lib', module + test, '--', '--nocapture']
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=240)
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=600 if name == 'baseline' else 240)
             raw = result.stdout + result.stderr
             (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
             valid = marker in raw and (result.returncode == 0 if name == 'baseline' else

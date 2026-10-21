@@ -12,6 +12,22 @@
   },
   "cases": [
     {
+      "name": "dirty_mark_during_recreation_is_cleared",
+      "value": {
+        "marked": 1,
+        "replaced": true,
+        "nextIsFresh": true
+      },
+      "events": [
+        "create:a:1",
+        "setup:1",
+        "create:a:2",
+        "setup:2",
+        "evict:a:dirty_recreate",
+        "dispose:1"
+      ]
+    },
+    {
       "name": "dirty_identity_and_publication",
       "value": {
         "during": {
