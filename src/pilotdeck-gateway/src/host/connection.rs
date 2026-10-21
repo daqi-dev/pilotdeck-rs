@@ -56,6 +56,7 @@ impl Connection {
         // #191: Unix descendants belong to this client, including on Drop.
         #[cfg(unix)]
         command.process_group(0);
+        crate::process_spawn::install_child_signal_reset(command.as_std_mut());
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

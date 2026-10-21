@@ -15,6 +15,7 @@ mod native_archive;
 mod node_io;
 mod pairing;
 mod process_group;
+mod process_spawn;
 mod project_files;
 pub mod runtime;
 mod session_model;
@@ -25,6 +26,9 @@ pub mod storage;
 mod test_baseline;
 #[cfg(test)]
 mod test_process;
+#[cfg(test)]
+#[path = "../tests/common/scratch.rs"]
+mod test_scratch;
 pub mod upload;
 mod upstream;
 pub mod user_dialog;
