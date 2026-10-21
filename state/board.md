@@ -1,12 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 12:35 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr9 | review | ready | PR #398 head 903e837；r10 Grok 0/0、GLM 0/0/1、gate9 0/0/2；收敛后 P2 一批（5 条边界用例，五处变异全抓住）已推送；确认轮 r11（GLM+Grok）+ gate10 在跑，确认轮新 P2 走 #400，无 P0/P1 且 CI 绿即入队
+updated: 2026-10-21 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr9 | review | ready | PR #398 head 903e837；r10 Grok 0/0、GLM 0/0/1、gate9 0/0/2；收敛后 P2 一批（5 条边界用例，五处变异全抓住）已推送；gate10 0/0/1（P2 记 #400），PR 正文结果块已换成 gate10；确认轮 r11（GLM+Grok）在跑，无 P0/P1 且 CI 绿即入队
 - A6.5-pr10b | impl | human | PR #391 head adf1c8a（沙箱外 1638/0，gate8 0/0/1）；Grok r9 又一条 P1（`.*`/取反类在混排文本上溢出、端口漏判），栈溢出模型第五次出问题，按「同一处 3 次不过」挂起；决策卡建议 A（无界重复一律权重≥1、阈值 1,048,576），人定后派 codex
-- #396 | review | ready | PR #403（draft，叠在 #398 上）head 64dd92c；沙箱外 1654/0/40（绝对路径重跑，含自身新测试）；GLM r1 + Grok r1 在跑
+- #396 | review | ready | PR #403（draft，叠在 #398 上）head 64dd92c；沙箱外 1654/0/40；Grok r1 0/0/0/1（补了 8 个 node 时序场景），GLM r1 在跑
 - #386 | impl | human | codex 实测后停在选型：零 unsafe、零新依赖做不到；决策卡「#386 子进程信号处置重置的实现边界」待人批（建议 C：极小 unsafe 边界）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
+- A7.1-pr1 | impl | ready | codex 在 wt-a63-pr1（codex/a7-1，基于 main）：先拆 A7.1（`_tmp/20261021-a7-1/split.md`），再做 pr1；A6 余项都在评审或待人，A7.1 只依赖已合入的 A6 宿主（自决：可撤回、在计划 005 范围内）
 - A6.5-pr9b | impl | ready | PR #390，head c9f29d7；等 pr9 合入后 rebase 再评审
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
