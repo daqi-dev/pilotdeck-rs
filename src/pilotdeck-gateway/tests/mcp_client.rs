@@ -816,12 +816,23 @@ async fn late_handshake_after_timeout_is_closed() {
             format!(r#"{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}"#),
             format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
         ],
-        Some(200.0),
+        Some(10_000.0),
     );
-    let error = client.start().await.expect_err("timed out");
+    let (started, ()) = tokio::join!(client.start(), async {
+        // The first initialize is gated, so only the handshake timer can
+        // finish this attempt. Advance it after the child receives the
+        // request, then restore wall time for late close and the retry.
+        // A fresh Node process under parallel test load must not have to
+        // start within 200 ms just to exercise that unrelated retry.
+        wait_logged(&dir, 0, "frame").await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        tokio::time::resume();
+    });
+    let error = started.expect_err("timed out");
     assert_eq!(
         error.message(),
-        "MCP handshake timed out after 200ms (server=mock)"
+        "MCP handshake timed out after 10000ms (server=mock)"
     );
     // The handshake can only finish now, strictly after the timeout.
     open_gate(&dir, "g0");
