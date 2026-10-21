@@ -60,7 +60,6 @@ impl Dom {
             template_host: None,
             depth: 0,
         });
-        self.exceeded |= self.nodes.len() > MAX_DOM_NODES;
         self.nodes.len() - 1
     }
 
@@ -426,12 +425,13 @@ impl TreeSink for Sink {
     }
 }
 
-/// Includes parser-created HTML/BODY and the Turndown wrapper. The measured
-/// minimum TS overflow is around 1050 element ancestors (Node 22 default
-/// stack); 256 leaves a wide margin across tags and cold/warm call paths.
+/// Includes parser-created HTML/BODY and the Turndown wrapper. Real baseline
+/// web_fetch on Node 22's default stack first overflowed at 1051 nested PREs
+/// (~1054 element ancestors); table overflow at 264 groups is ~1059 ancestors,
+/// not 264 DOM levels. See html-markdown/depth-oracle.json and RESULT round 1.
+/// 256 is a conservative pending-approval difference, not a TS cutoff: TS still
+/// succeeds at 257. Width/allocation count has no corresponding TS limit.
 pub const MAX_DOM_DEPTH: usize = 256;
-/// Counts all allocated nodes, including detached/template/parser nodes.
-pub const MAX_DOM_NODES: usize = 100_000;
 pub const DOM_LIMIT_ERROR: &str = "Maximum call stack size exceeded";
 
 /// `domino.createDocument(html)`, with a conservative resource budget.

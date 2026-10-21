@@ -5,7 +5,7 @@ mod scratch;
 
 use pilotdeck_gateway::runtime::tools::builtin::web::{
     HtmlToMarkdown, UrlFetcher,
-    html_markdown::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, MAX_DOM_NODES, Turndown},
+    html_markdown::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, Turndown},
 };
 
 const ORACLE: &str = include_str!("fixtures/html-markdown/oracle.json");
@@ -91,6 +91,11 @@ fn regenerates_twice_identically() {
             include_str!("fixtures/html-markdown/depth-oracle.json"),
             "depth-oracle.json",
         ),
+        (
+            "generate-large.mts",
+            include_str!("fixtures/html-markdown/large-oracle.json"),
+            "large-oracle.json",
+        ),
     ] {
         for _ in 0..2 {
             let scratch = scratch::Scratch::new("html-markdown");
@@ -152,15 +157,7 @@ fn depth_budget_boundaries_and_review_shapes_match_real_ts() {
 }
 
 #[test]
-fn node_budget_counts_parser_nodes_and_rejects_deep_non_list_shapes() {
-    // Document, HTML, HEAD, BODY, wrapper = five implicit nodes.
-    assert!(Turndown.convert(&"<br>".repeat(MAX_DOM_NODES - 5)).is_ok());
-    assert_eq!(
-        Turndown
-            .convert(&"<br>".repeat(MAX_DOM_NODES - 4))
-            .unwrap_err(),
-        DOM_LIMIT_ERROR
-    );
+fn depth_budget_rejects_deep_non_list_shapes() {
     for (open, close) in [
         ("<div>", "</div>"),
         ("<template>", "</template>"),
@@ -207,4 +204,98 @@ fn bounded_html_conversion_performance() {
         started.elapsed()
     );
     eprintln!("bounded list + 10 MiB flat HTML: {:?}", started.elapsed());
+}
+
+// Recipes keep multi-MiB HTML and Markdown out of the repository. The generator
+// losslessly expands and byte-compares each Markdown recipe with real TS output.
+fn expand_large_recipe(rule: &serde_json::Value) -> String {
+    if let Some(text) = rule.as_str() {
+        return text.to_owned();
+    }
+    rule["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(expand_large_recipe)
+        .collect::<String>()
+        .repeat(rule["repeat"].as_u64().unwrap() as usize)
+}
+
+#[test]
+fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
+    use sha2::{Digest, Sha256};
+    let raw = include_str!("fixtures/html-markdown/large-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let cases = oracle["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 4);
+    let mut failures = Vec::new();
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let html = expand_large_recipe(&case["html"]);
+        let expected = expand_large_recipe(&case["markdown"]);
+        assert_eq!(html.len() as u64, case["htmlBytes"].as_u64().unwrap());
+        assert_eq!(
+            expected.len() as u64,
+            case["markdownBytes"].as_u64().unwrap()
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(html.as_bytes())),
+            case["htmlSha256"].as_str().unwrap()
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(expected.as_bytes())),
+            case["markdownSha256"].as_str().unwrap()
+        );
+        let started = std::time::Instant::now();
+        let actual = Turndown.convert(&html);
+        let elapsed = started.elapsed();
+        eprintln!("{name}: {} HTML bytes, {:?}", html.len(), elapsed);
+        match actual {
+            Ok(actual) => {
+                assert!(
+                    actual.as_bytes() == expected.as_bytes(),
+                    "{name}: TS bytes differ"
+                );
+                // ~2.1 million DOM nodes at 10 MiB: allow scheduler/allocator
+                // variance while keeping conversion in single-digit seconds.
+                let budget = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
+                assert!(
+                    elapsed.as_secs_f64() < budget,
+                    "{name}: took {elapsed:?}, budget {budget}s"
+                );
+            }
+            Err(error) => failures.push(format!("{name}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn ten_mib_of_flat_inline_siblings_stays_fast() {
+    // TS's single wide sibling run has expensive string joins. Record 50,000
+    // tags in TS, then scale that byte-verified period to a full 10 MiB in Rust.
+    let raw = include_str!("fixtures/html-markdown/large-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let case = &oracle["cases"][3];
+    assert_eq!(case["name"], "dense-inline-50000");
+    let sampled = expand_large_recipe(&case["markdown"]);
+    let period = &sampled[..3];
+    assert_eq!(sampled, period.repeat(50_000));
+    let html = "<em>x</em>".repeat(1024 * 1024);
+    assert_eq!(html.len(), 10 * 1024 * 1024);
+    let started = std::time::Instant::now();
+    let actual = Turndown.convert(&html).unwrap();
+    let elapsed = started.elapsed();
+    assert!(actual.as_bytes() == period.repeat(1024 * 1024).as_bytes());
+    let budget = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
+    eprintln!(
+        "dense-inline-10mib-flat: {} HTML bytes, {elapsed:?}",
+        html.len()
+    );
+    assert!(
+        elapsed.as_secs_f64() < budget,
+        "flat inline: took {elapsed:?}, budget {budget}s"
+    );
 }
