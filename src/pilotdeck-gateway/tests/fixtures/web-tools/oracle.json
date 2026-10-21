@@ -4773,6 +4773,57 @@
    ]
   },
   {
+   "name": "http-418-preview-surrogate-cut",
+   "input": {
+    "url": "$TLS/psur",
+    "mode": "raw"
+   },
+   "replies": [
+    {
+     "status": 418,
+     "headers": {
+      "content-type": "text/plain"
+     },
+     "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx😀zzzzzzzzzz",
+     "reason": "I'm a Teapot"
+    }
+   ],
+   "requests": [
+    {
+     "method": "GET",
+     "path": "/psur",
+     "headers": [
+      [
+       "accept",
+       "text/markdown, text/html, */*"
+      ],
+      [
+       "user-agent",
+       "PilotDeck/0.1 (+https://github.com/pilotdeck) WebFetch"
+      ]
+     ],
+     "body": ""
+    }
+   ],
+   "modelRequests": [],
+   "results": [
+    {
+     "error": {
+      "code": "tool_execution_failed",
+      "message": "web_fetch HTTP fetch failed with status 418 I'm a Teapot for $TLS/psur. The target URL did not return a usable page; do not treat the error page as page content.",
+      "details": {
+       "stage": "http_fetch",
+       "status": 418,
+       "statusText": "I'm a Teapot",
+       "url": "$TLS/psur",
+       "contentType": "text/plain",
+       "bodyPreview": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d..."
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "http-418-long-preview",
    "input": {
     "url": "$TLS/teapot",
@@ -6234,6 +6285,206 @@
    }
   },
   {
+   "name": "glm-http-500-detail-exactly-500",
+   "options": {
+    "provider": "glm",
+    "apiKey": "k",
+    "endpoint": "$TLS/glm"
+   },
+   "input": {
+    "query": "q"
+   },
+   "replies": [
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "body": "{\"e\":1}",
+     "reason": "Internal Server Error"
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "body": "{\"e\":1}",
+     "reason": "Internal Server Error"
+    },
+    {
+     "status": 500,
+     "headers": {},
+     "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "reason": "Internal Server Error"
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    }
+   ],
+   "result": {
+    "error": {
+     "code": "tool_execution_failed",
+     "message": "GLM web search error (500): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   }
+  },
+  {
+   "name": "glm-http-500-detail-501",
+   "options": {
+    "provider": "glm",
+    "apiKey": "k",
+    "endpoint": "$TLS/glm"
+   },
+   "input": {
+    "query": "q"
+   },
+   "replies": [
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "body": "{\"e\":1}",
+     "reason": "Internal Server Error"
+    },
+    {
+     "status": 500,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "body": "{\"e\":1}",
+     "reason": "Internal Server Error"
+    },
+    {
+     "status": 500,
+     "headers": {},
+     "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "reason": "Internal Server Error"
+    }
+   ],
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    },
+    {
+     "method": "POST",
+     "path": "/glm",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ],
+      [
+       "authorization",
+       "Bearer k"
+      ],
+      [
+       "content-type",
+       "application/json"
+      ]
+     ],
+     "body": "{\"search_engine\":\"search-prime\",\"search_query\":\"q\",\"count\":8,\"search_recency_filter\":\"noLimit\"}"
+    }
+   ],
+   "result": {
+    "error": {
+     "code": "tool_execution_failed",
+     "message": "GLM web search error (500): xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    }
+   }
+  },
+  {
    "name": "glm-bad-json",
    "options": {
     "provider": "glm",
@@ -7282,6 +7533,82 @@
     "error": {
      "code": "tool_execution_failed",
      "message": "web_search (serpapi) request failed: API error (403): bad key [redacted] / [redacted] / [redacted]"
+    }
+   }
+  },
+  {
+   "name": "serpapi-redacted-exactly-500",
+   "options": {
+    "provider": "serpapi",
+    "apiKey": "sec ret",
+    "endpoint": "$TLS/serp"
+   },
+   "input": {
+    "query": "q"
+   },
+   "replies": [
+    {
+     "status": 403,
+     "headers": {},
+     "body": "sec ret yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "reason": "Forbidden"
+    }
+   ],
+   "requests": [
+    {
+     "method": "GET",
+     "path": "/serp?engine=google&q=q&api_key=sec+ret",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ]
+     ],
+     "body": ""
+    }
+   ],
+   "result": {
+    "error": {
+     "code": "tool_execution_failed",
+     "message": "web_search (serpapi) request failed: API error (403): [redacted] yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    }
+   }
+  },
+  {
+   "name": "serpapi-redacted-501",
+   "options": {
+    "provider": "serpapi",
+    "apiKey": "sec ret",
+    "endpoint": "$TLS/serp"
+   },
+   "input": {
+    "query": "q"
+   },
+   "replies": [
+    {
+     "status": 403,
+     "headers": {},
+     "body": "sec ret yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "reason": "Forbidden"
+    }
+   ],
+   "requests": [
+    {
+     "method": "GET",
+     "path": "/serp?engine=google&q=q&api_key=sec+ret",
+     "headers": [
+      [
+       "accept",
+       "application/json"
+      ]
+     ],
+     "body": ""
+    }
+   ],
+   "result": {
+    "error": {
+     "code": "tool_execution_failed",
+     "message": "web_search (serpapi) request failed: API error (403): [redacted] yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
     }
    }
   },
