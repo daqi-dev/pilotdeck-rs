@@ -85,6 +85,15 @@ export async function record(baseline: string, httpOnly=false) {
     {name:'cancel-mid-stream',abortAfterText:true,scripts:[{events:ok}]},
     {name:'generation-captured',generation:1,changeGeneration:2,scripts:[{events:[failure()]},{events:ok}]},
     {name:'thrown-network',scripts:[{throw:{name:'TypeError',message:'fetch failed'}},{events:ok}]},
+    // Thrown classification (timeout/aborted/network_error) and one case per
+    // retryable needle. Fallback is disabled so the canonical error itself,
+    // including code and retryable, is observable in the trace.
+    {name:'thrown-timeout-named',config:{fallback:{}},scripts:[{throw:{name:'TimeoutError',message:'boom'}}]},
+    {name:'thrown-timeout-message',config:{fallback:{}},scripts:[{throw:{name:'Error',message:'request timeout'}}]},
+    {name:'thrown-aborted-named',config:{fallback:{}},scripts:[{throw:{name:'AbortError',message:'boom'}}]},
+    {name:'thrown-aborted-message',config:{fallback:{}},scripts:[{throw:{name:'Error',message:'operation aborted'}}]},
+    ...[['econnreset','read ECONNRESET'],['econnrefused','connect ECONNREFUSED'],['etimedout','connect ETIMEDOUT'],['epipe','write EPIPE'],['socket-hang-up','socket hang up'],['network','network down'],['dns','getaddrinfo ENOTFOUND dns']].map(([needle,message])=>({name:`thrown-needle-${needle}`,config:{fallback:{}},scripts:[{throw:{name:'Error',message}}]})),
+    {name:'thrown-unmatched',config:{fallback:{}},scripts:[{throw:{name:'TypeError',message:'boom'}}]},
     {name:'request-error-details',scripts:[{throw:{name:'ModelRequestError',code:'too_many_images',message:'Image count exceeds model limits.',details:{imageCount:2,maxImagesPerRequest:1}}}]},
     {name:'request-error-no-details',scripts:[{throw:{name:'ModelRequestError',code:'invalid_speed',message:'speed must be between 0 and 1.'}}]},
     {name:'media-lone-surrogate',media:{a:['text'],b:['text']},request:{messages:[{role:'user',content:[{type:'image',mimeType:'image/\ud800',bytes:1536}]}]},scripts:[{events:ok}]},
@@ -204,6 +213,6 @@ export async function record(baseline: string, httpOnly=false) {
     validationCases.push({spec,request:req,config:{providers:{a:provider}},events,error});
   }
   Math.random=originalRandom;
-  assert.equal(healthCases.length,4);assert.equal(portActions.length,17);assert.equal(eligibility.length,60);assert.equal(executeCases.length,httpOnly?7:34);
+  assert.equal(healthCases.length,4);assert.equal(portActions.length,17);assert.equal(eligibility.length,60);assert.equal(executeCases.length,httpOnly?7:46);
   return {healthCases,portActions,eligibility,executeCases,transportHeaders,validationCases};
 }

@@ -5480,6 +5480,930 @@
     },
     {
       "spec": {
+        "name": "thrown-timeout-named",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "TimeoutError",
+              "message": "boom"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "timeout",
+              "message": "boom",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "timeout",
+              "message": "boom",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-timeout-message",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "request timeout"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "timeout",
+              "message": "request timeout",
+              "retryable": false
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "timeout",
+              "message": "request timeout",
+              "retryable": false,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-aborted-named",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "AbortError",
+              "message": "boom"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "aborted",
+              "message": "boom",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "aborted",
+              "message": "boom",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-aborted-message",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "operation aborted"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "aborted",
+              "message": "operation aborted",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "aborted",
+              "message": "operation aborted",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-econnreset",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "read ECONNRESET"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "read ECONNRESET",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "read ECONNRESET",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-econnrefused",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "connect ECONNREFUSED"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "connect ECONNREFUSED",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "connect ECONNREFUSED",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-etimedout",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "connect ETIMEDOUT"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "connect ETIMEDOUT",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "connect ETIMEDOUT",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-epipe",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "write EPIPE"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "write EPIPE",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "write EPIPE",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-socket-hang-up",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "socket hang up"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "socket hang up",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "socket hang up",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-network",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "network down"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "network down",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "network down",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-needle-dns",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "Error",
+              "message": "getaddrinfo ENOTFOUND dns"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "getaddrinfo ENOTFOUND dns",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "getaddrinfo ENOTFOUND dns",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
+        "name": "thrown-unmatched",
+        "config": {
+          "fallback": {}
+        },
+        "scripts": [
+          {
+            "throw": {
+              "name": "TypeError",
+              "message": "boom"
+            }
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "health",
+          "action": "recordFailure",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s",
+            "turnId": "t",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "boom",
+              "retryable": false
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "network_error",
+              "message": "boom",
+              "retryable": false,
+              "model": "m"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "spec": {
         "name": "request-error-details",
         "scripts": [
           {
