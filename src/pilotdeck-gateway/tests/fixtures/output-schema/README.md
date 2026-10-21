@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **771** cases. Each case is either:
+count of **845** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -66,17 +66,23 @@ matched, recorded as `validationThrow` rather than `compileError`.
 The worker-stack tests run both `check_schema` and `validate_inner` directly
 on 2 MiB, as well as the public `validate` wrapper.
 
-`recursive-data/*` records five recursive shapes (`properties`,
+`recursive-data/*` records twelve recursive shapes (`properties`,
 `patternProperties`, `additionalProperties`, object-wrapped recursive `items`,
-and `anyOf`) at zero depth, both sides of the port budget, and a dynamically
-found SDK overflow sample. `wideAnyOf` adds 512 branches, including a shallow
+`anyOf`, `oneOf`, `allOf`, `not`, `if`, `then`, `else`, and `ref`) at zero
+depth, both sides of the port budget, and a dynamically found SDK overflow
+sample. The original 1024-boundary samples are retained, with their port
+expectations updated to the approved 2048 budget. Fifteen wide recipes cover
+anyOf/oneOf/allOf/if/dependencies at widths 128/256/512. `wideAnyOf` adds 512 branches, including a shallow
 SDK-valid / port-error sample and a real SDK overflow. Every observation runs
 in a new default-stack Node process through the real SDK `Client.callTool`
 and linked `InMemoryTransport` / `Server`, after `listTools` compiles the
 schema. Imports are bound to the baseline in a temporary probe; SDK source
 hashes are recorded in `recursiveSdkSha256`.
 
-The uniform bound is **1024 active weighted units**. Each schema invocation
+The uniform bound is **2048 active weighted units**. **深度预算差异已人批**
+(human decision, 2026-10-21 14:25): this is the approved conservative support
+policy, including earlier rejection while the SDK can still validate.
+The schema compile-check bound remains independently **256**. Each schema invocation
 occupies the number of JSON value nodes in its static subtree (objects include
 all their values, arrays include all elements, scalars count one; string
 contents are not expanded). References do not expand during this static pass.
@@ -90,11 +96,21 @@ schema can be refused even for shallow or empty data.
 
 | fixture shape | last accepted data depth | first refused depth |
 |---|---:|---:|
-| properties / patternProperties | 145 | 146 |
-| additionalProperties | 170 | 171 |
-| object-wrapped items | 168 | 169 |
-| anyOf with one properties branch | 67 | 68 |
+| properties / patternProperties | 291 | 292 |
+| additionalProperties | 340 | 341 |
+| object-wrapped items | 338 | 339 |
+| anyOf / oneOf / allOf with one properties branch | 135 | 136 |
+| not / if / then / else / ref | 96 / 112 / 119 / 101 / 225 | 97 / 113 / 120 / 102 / 226 |
 | anyOf with 512 properties branches | none | 0 |
+
+At width 512, anyOf still refuses depth zero (root weight 2563); allOf and
+property dependencies now accept depth zero and refuse depth one. The synthetic
+`{name, children: self[]}` directory-tree recipe supports **106 edges** and
+refuses **107 or more**; the `{rows: [{column_0: string, ...}]}` query recipe
+with per-column descriptions and required fields supports **168 columns** and
+refuses **169 or more**, even though the data is only three container levels.
+These values describe those exact recipes, not every directory/query schema;
+metadata, ignored keywords and unused branches still count toward the budget.
 
 Over budget returns `ValidationError::Threw`. The client projects code
 `-32602` and body `Failed to validate structured content: Maximum call stack
@@ -111,8 +127,8 @@ wraps its array in `{a: ...}` to satisfy the SDK outputSchema object contract.
 `comparisonData: {kind, depth}` also reconstructs deep const/enum literals and
 uniqueItems data. The iterative fast-deep-equal port charges comparison depth
 to the same remaining budget; otherwise const/enum/uniqueItems could bypass
-schema recursion accounting. Their fixture boundaries are 510/511 (const),
-509/510 (enum) and 1016/1017 (uniqueItems). The duplicate-items fixture has an
+schema recursion accounting. Their fixture boundaries are 1022/1023 (const),
+1021/1022 (enum) and 2040/2041 (uniqueItems). The duplicate-items fixture has an
 ordinary validation error below the budget; over-budget errors are explicit
 message differences until the SDK also overflows.
 
@@ -160,7 +176,7 @@ exercised both as a value pattern and as a property-name pattern.
 | valid `/u` regex Rust cannot evaluate (lookarounds, backreferences, some `\p{...}` values) in `pattern`/`patternProperties` | `check_schema` accepts it, matching Ajv; `validate` returns `ValidationError::Unsupported` when the pattern is used, never a silent pass |
 | relative/remote `$ref` that needs an `$id` base | `check_schema` error (`can't resolve reference … from id #`), same as Ajv when there is no base |
 | schema nesting > 256 for the compile check | explicit `SchemaError`; Ajv throws `RangeError` at ~600 nested schemas |
-| validation requiring >1024 active weighted JSON / comparison units | exact SDK stack-overflow RPC error; earlier rejection is explicitly labelled, including wide shallow schemas, metadata/ignored keyword costs and deep equality |
+| validation requiring >2048 active weighted JSON / comparison units | exact SDK stack-overflow RPC error; earlier rejection is explicitly labelled, including wide shallow schemas, metadata/ignored keyword costs and deep equality |
 | classes with nested `[`, `&&` / `~~` / `--`, or empty classes | accepted at compile time; using the pattern returns `ValidationError::Unsupported` (the real Ajv result is preserved in the oracle) |
 | `patternProperties` whose children are all always-valid and whose sibling `additionalProperties` is absent/always-valid | Ajv's `patternProperties` codegen early-returns without compiling the keys; both `check_schema` and validation skip them (`alwaysValid` early-exit, r4 GLM P1) |
 
