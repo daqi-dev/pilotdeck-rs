@@ -4,7 +4,7 @@
 updated: 2026-10-21 14:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - A6.5-pr10b | impl | ready | 修复轮 9 提交（9749e18，方案 A），追加 accepted-diffs #6（已批）；沙箱外 rebase 前 1638/0（单独重跑，首跑 host resume 超时属并发负载）；已 rebase 到 main（wire.rs、accepted-diffs 冲突逐块合并，定时器截断只留 network 一份，0597fda），全量重跑中，过后推送、派 r10 + gate；深度预算待人在 1024/2048/4096 中定
 - #396 | review | ready | PR #403 修复轮 2 已推送 a855bd3（google 路径、MCP streamable/SSE bodyTimeout、逐帧读取下沉一处），沙箱外 1687/0/42；GLM r3 + Grok r3 在跑
-- #386 | impl | human | nix 安全信号 API 可用（macOS 174 例过），但无子进程 cwd，替代都破坏并发或启动错误语义；crates.io 未找到成熟安全替代。待人在 B（gateway 改 deny+一个函数 allow 的局部 unsafe）/ C（全安全 helper 架构）/ A′（登记差异）中选，说明 `_tmp/20261021-issue-386/decision-brief.md`，建议 B
+- #386 | impl | ready | 人定 14:20 选 B：gateway 改 deny(unsafe_code)，只允许 install_child_signal_reset 一个函数；codex 在 wt-a65-pr2 实现（`_tmp/20261021-issue-386/task3.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr1 | review | ready | PR #405 修复轮 1 已推送 3130630（abort 竞态 0/2000，负控 2000/2000），沙箱外 1670/0/42；GLM r2 + Grok r2 在跑
 - A6.5-pr9b | review | ready | PR #406 修复轮 1 提交 606408c（深度 256 / 节点 100,000 预算、列表前缀线性化、spawn_blocking；release 最坏 275 ms），沙箱外全量在跑；GLM r2 + Grok r2 在跑；节点预算无 TS 对应断点、可能误拒大页，codex 只测不改补影响范围（`_tmp/20261021-a65-pr9b/measure1.md`），数据回来再定是否报人

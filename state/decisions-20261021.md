@@ -49,3 +49,9 @@
 - **原话**：「#386 继续推进：允许为本项修复引入提供安全 API 的必要依赖，保留项目自身的 unsafe 禁令。nix 可作为候选，先验证能否完整接入现有子进程流程，覆盖信号处置与屏蔽掩码、工作目录和管道、启动失败、取消及进程回收，并在 macOS/Linux 实测。验证通过后可按正常评审流程引入，无须重复请批。若找不到合适方案，再提交局部 unsafe 例外的具体范围与风险供我决定，不自行放宽禁令。」
 - **执行**：协调者把 nix 0.31.3 源码拉进 `_build/cargo-home`（安全的 `posix_spawn`、`set_sigdefault`、`set_sigmask`；未见 addchdir）；codex 在 wt-a65-pr2 先做七项可行性验证，再实现。Linux 实测走 CI（本机无 Linux 环境；起容器需要拉预编译镜像，碰红线）。
 - **原则**：依赖批准附带条件时，先逐条验证条件，不满足就回到人，不降级成 unsafe。
+
+## 人定 · 2026-10-21 14:20 · #386 选 B（局部 unsafe 例外）
+- **原话**：「#386 按照你的推荐，选B」
+- **B 的内容**（`_tmp/20261021-issue-386/decision-brief.md`、`unsafe-exception-draft.md`）：只有 `pilotdeck-gateway` 一个 crate 从 `forbid(unsafe_code)` 改为 `deny(unsafe_code)`，只给一个共享函数 `install_child_signal_reset(&mut Command)` 加 `#[allow(unsafe_code)]`；函数内只用 `pre_exec` 注册，并在 fork 之后、exec 之前调用 async-signal-safe 的 `sigemptyset` / `sigaction(SIG_DFL)` / `sigprocmask(SIG_SETMASK, 空集)`；其余 workspace crate 继续 forbid。五处 spawn 在 `.spawn()` 前调用它，cwd、管道、错误上报、kill_on_drop、回收都沿用 std / Tokio。
+- **审查条件**：两家非作者专审 unsafe 合法性与 fork 后 async-signal-safety（附实际工具链 std / Tokio 的调用顺序与平台 libc 声明）；信号集合以 Node / libuv 实测为准（第一轮 Node 464 例）；父进程注入 INT 忽略 + TERM 屏蔽后，`background_tasks` 的 exit-statuses 与 TS 一致，并用原生报告器 / Linux `/proc` 断言处置与掩码；去掉调用后两条回归都必须失败；macOS 本机 + Linux CI 都跑。
+- **原则**：unsafe 例外按「一个函数、一份清单、一套专审」批；超出清单的任何 unsafe 都要重新请批。
