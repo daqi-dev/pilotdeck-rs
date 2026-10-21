@@ -498,13 +498,9 @@ impl ExecutionServer {
             accepted.insert("outcome".into(), JsValue::from("failed"));
             accepted.insert("code".into(), JsValue::from("DEADLINE_EXCEEDED"));
         }
-        // Match original Node timer clamping; its earliest deadline is frozen
-        // once rather than re-parsed from a later untrusted host response.
-        let deadline = deadline_ms.and_then(|ms| {
-            Instant::now().checked_add(Duration::from_secs_f64(
-                (ms - now).clamp(0.0, 2_147_483_647.0) / 1000.0,
-            ))
-        });
+        // Freeze the earliest deadline once, never from a later host response.
+        let deadline = deadline_ms
+            .and_then(|ms| Instant::now().checked_add(execution_deadline_delay(ms - now)));
         let timer = if expired {
             None
         } else {
@@ -1016,6 +1012,44 @@ fn failure_terminal(error: PortError) -> ExecutionTerminal {
         error: Some(error),
     }
 }
+/// TS agentLoopSidecarServer.ts:252-253 expires nonpositive delays immediately;
+/// positive delays pass through setTimeout after capping at 2^31-1 ms. The real
+/// Node timer-list probe for #401 confirmed 0.5 -> 1, 1.9 -> 1, 2.9 -> 2 ms.
+fn execution_deadline_delay(remaining_ms: f64) -> Duration {
+    if remaining_ms <= 0.0 {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(pilotdeck_protocol::timer_delay_ms(
+            remaining_ms.min(2_147_483_647.0),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod deadline_delay_tests {
+    use super::*;
+
+    #[test]
+    fn execution_deadline_matches_ts_timer_list_and_immediate_expiry() {
+        // Real TS server + Node 22 timer-list values (not just _idleTimeout).
+        for (remaining_ms, expected_ms) in [
+            (-1.0, 0),
+            (0.0, 0),
+            (0.5, 1),
+            (1.0, 1),
+            (1.9, 1),
+            (2.9, 2),
+            (2_147_483_648.0, 2_147_483_647),
+        ] {
+            assert_eq!(
+                execution_deadline_delay(remaining_ms),
+                Duration::from_millis(expected_ms),
+                "remaining_ms={remaining_ms}",
+            );
+        }
+    }
+}
+
 fn js_whitespace(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
 }

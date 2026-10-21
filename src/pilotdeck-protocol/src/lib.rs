@@ -17,6 +17,16 @@ pub mod wire;
 pub const MODULE_PROTOCOL_VERSION: &str = "2.0";
 pub const GATEWAY_PROTOCOL_VERSION: &str = "1.2";
 
+/// Node `setTimeout` delay: out-of-range/NaN values become one millisecond,
+/// and valid fractional milliseconds truncate when inserted into the timer list.
+pub fn timer_delay_ms(delay: f64) -> u64 {
+    if !(1.0..=2_147_483_647.0).contains(&delay) {
+        1
+    } else {
+        delay as u64
+    }
+}
+
 /// JavaScript strings contain UTF-16 code units, including unpaired surrogates.
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JsString(Vec<u16>);
