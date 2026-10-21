@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 15:20 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 15:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - A6.5-pr10b | review | ready | 修复轮 11：间歇失败根因是测试把第二次 Node 启动塞进 200 ms，仅改测试（重试用产品默认 10 s，断言不放宽），整二进制 30/30 + 协调者沙箱外 10/10；推送 7d1b586；GLM r10 + Grok r10 + 全量 gate9 在跑
-- #396 | impl | ready | PR #403 r4：Grok 实测称平局应 idle watchdog 赢（undici 定时器 >1 s 走约 499 ms 一跳的 fast timer、晚 0–1 s），与 GLM r3「undici 赢」相反；按规则实测仲裁：codex 在 /tmp 用真实 TS streamModel 跑默认 600000 平局（真实等待约 10 分钟，`_tmp/20261021-issue-396/arb/`），结果出来再定 `<` 还是 `<=`
+- #396 | impl | ready | PR #403 平局仲裁：codex 在真实 TS streamModel、真实 600000 ms 等待（内存 HTTP）下三协议均报 Stream idle timeout，缩短平局 60/60 idle 赢，旧探针 terminated 源于只手动推进 undici 时钟——支持 Grok，`<=` 方向反了；协调者在沙箱外补跑真实 TCP 版（默认三协议 + 5000 平局 + idle 稍长于 body）（`_tmp/20261021-issue-396/arb/tcp/`），出结果后派修
 - #386 | review | ready | PR #407：GLM r1 0/0/0/4、Grok r1 0/0/3/3（unsafe 范围与人定一致）；Linux CI（ubuntu-24.04）两条信号回归 ok；两条便宜 P2（allow(unsafe_code) 防扩散测试、hooks/MCP/host 三处接入回归）codex 修复轮 1 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | review | ready | PR #405 已入合并队列（15:13）
+- A7.1-pr1 | impl | ready | PR #405 已合入（15:2x，邮箱同前为账号主邮箱）；下一包 A7.1-pr2（live session handle 与 runtime 生命周期，`_tmp/20261021-a7-1/split.md:60`）待派
 - A6.5-pr9b | review | ready | PR #406 r3 两家无 P0/P1；内存放大拆 #409；全量 gate1 在跑；深度上限 256 人批 15:25（选 A），accepted-diffs 登记中；gate1 过后推送、入队
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
