@@ -234,7 +234,7 @@ const oracle = {
   prompts: cases.prompts.map(([md, prompt, pre]: [string, string, boolean]) => ({ md, prompt, pre, text: makeSecondaryModelPrompt(md, prompt, pre) })),
   validations, availability, cacheOps, fetches, searches,
 };
-assert.equal(fetches.length, 46);
+assert.equal(fetches.length, 45);
 assert.equal(searches.length, 39);
 assert.equal(cacheOps.length, 17);
 writeFileSync(join(output, 'oracle.json'), JSON.stringify(oracle, null, 1) + '\n', { flag: 'wx' });
