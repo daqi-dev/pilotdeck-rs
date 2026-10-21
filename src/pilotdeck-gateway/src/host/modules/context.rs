@@ -4,9 +4,9 @@ mod durable;
 mod request;
 use super::{budget, model, tool_context::ContextRequestIdentity, wire};
 use crate::host::{HostError, HostFuture, JsObject, JsValue, ModuleError};
+use crate::runtime::network::Cancellation;
 pub use durable::compact_with_recorder;
 use std::sync::Arc;
-use tokio::sync::watch;
 
 pub const COMPACTION_BUDGET_CONTRACT_ERROR_CODE: &str = "COMPACTION_BUDGET_CONTRACT_INVALID";
 
@@ -80,14 +80,14 @@ pub struct Handler {
     runtime: Option<Arc<dyn ContextRuntime>>,
     identity: Option<ContextRequestIdentity>,
     config: JsObject,
-    signal: Option<watch::Receiver<bool>>,
+    signal: Option<Cancellation>,
 }
 impl Handler {
     pub fn new(
         runtime: Arc<dyn ContextRuntime>,
         identity: ContextRequestIdentity,
         config: JsObject,
-        signal: Option<watch::Receiver<bool>>,
+        signal: Option<Cancellation>,
     ) -> Self {
         Self {
             recorder: None,

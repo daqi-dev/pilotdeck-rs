@@ -8,10 +8,10 @@ mod fixture;
 
 struct Scripted(Arc<Mutex<fixture::Exchange>>);
 impl ProviderCountTransport for Scripted {
-    fn post(&self, request: CountHttpRequest) -> HostFuture<JsValue> {
+    fn post(&self, request: CountHttpRequest) -> CountFuture {
         fixture::guard(&request, &self.0);
         let exchange = self.0.clone();
-        Box::pin(fetch_count(request, move |request| {
+        CountFuture::io(fetch_count(request, move |request| {
             let exchange = exchange.clone();
             async move {
                 let origin = format!(

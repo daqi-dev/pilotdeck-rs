@@ -9,7 +9,7 @@ use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 use std::future::Future;
 use url::Url;
 
-use crate::host::{HostError, HostFuture, ModuleError};
+use crate::host::{HostError, ModuleError};
 
 #[cfg(test)]
 #[path = "count_http_tests.rs"]
@@ -25,10 +25,14 @@ pub struct CountHttpRequest {
     pub body: JsValue,
 }
 
+pub type CountFuture = crate::runtime::network::ExchangeFuture<Result<JsValue, HostError>>;
+
 /// A transport owns no detached request work: dropping `post` cancels the call.
 /// Runtime wraps both headers and response body in its timeout/abort boundary.
+/// Preserve promise/timer completion sources with `CountFuture::ready`/`after`;
+/// socket transports use `io`.
 pub trait ProviderCountTransport: Send + Sync {
-    fn post(&self, request: CountHttpRequest) -> HostFuture<JsValue>;
+    fn post(&self, request: CountHttpRequest) -> CountFuture;
 }
 
 #[derive(Clone)]
@@ -54,9 +58,9 @@ impl Default for HyperCountTransport {
     }
 }
 impl ProviderCountTransport for HyperCountTransport {
-    fn post(&self, request: CountHttpRequest) -> HostFuture<JsValue> {
+    fn post(&self, request: CountHttpRequest) -> CountFuture {
         let client = self.client.clone();
-        Box::pin(fetch_count(request, move |request| {
+        CountFuture::io(fetch_count(request, move |request| {
             let client = client.clone();
             async move { client.request(request).await.map_err(|_| failed()) }
         }))

@@ -2,9 +2,9 @@
 use super::wire;
 use crate::host::{HostError, HostFuture, JsObject, JsValue, ModuleError};
 use crate::model_cost::{self, PricingMap};
+use crate::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsString, model::*};
 use std::sync::Arc;
-use tokio::sync::watch;
 
 /// Ports receive the shallow-validated request intact, including extensions.
 /// Implementations must be cooperative: dropping a future cancels owned I/O.
@@ -35,7 +35,7 @@ pub struct EvaluationOptions {
     pub use_provider_count: Option<bool>,
     pub calibration: Option<JsObject>,
     /// Trusted turn cancellation; never taken from payload.options.signal.
-    pub signal: Option<watch::Receiver<bool>>,
+    pub signal: Option<Cancellation>,
 }
 #[derive(Clone, Default)]
 pub struct Ports {
@@ -58,7 +58,7 @@ impl Ports {
 #[derive(Clone)]
 pub struct Handler {
     pub ports: Option<Ports>,
-    pub signal: Option<watch::Receiver<bool>>,
+    pub signal: Option<Cancellation>,
 }
 impl Default for Handler {
     fn default() -> Self {
