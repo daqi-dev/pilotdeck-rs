@@ -191,6 +191,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"闸门：{why} 应拒收")
         if gate_errs(ok_block + "\n" + ok_block):
             fails.append(f"闸门：分批的两个合法块应接受：{gate_errs(ok_block + chr(10) + ok_block)}")
+
+        # 逐角色串行 + merge-review-roles.py：单角色块闸门拒收，合并块接受；元数据不一致/角色重复须拒绝合并
+        merger = ROOT / "scripts" / "merge-review-roles.py"
+        (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {}}))
+        per_role = []
+        for r in ROLES.split(","):
+            d = out_base / f"solo-{r}"
+            subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                            "--worktree", str(wt), "--base", "HEAD~1", "--out", str(d), "--roles", r],
+                            capture_output=True, text=True)
+            per_role.append(str(d))
+        if not gate_errs((Path(per_role[0]) / "summary.md").read_text(encoding="utf-8")):
+            fails.append("merge：单角色块应被闸门拒收（缺其余角色）")
+
+        def merge(name: str, dirs: list[str]) -> tuple[int, str]:
+            o = out_base / name
+            cp = subprocess.run([sys.executable, "-I", str(merger), "--out", str(o), *dirs], capture_output=True, text=True)
+            return cp.returncode, (o / "summary.md").read_text(encoding="utf-8") if (o / "summary.md").exists() else ""
+
+        rc, s = merge("merged", per_role)
+        if rc != 0 or gate_errs(s):
+            fails.append(f"merge：四角色合并块应过闸（rc={rc}）：{gate_errs(s)}")
+        if merge("merged-dup", per_role + per_role[:1])[0] != 2:
+            fails.append("merge：角色重复应拒绝合并")
+        if merge("merged-mixed", per_role[:3] + [str(out_base / "anthropic-ok")])[0] != 2:
+            fails.append("merge：runner/model 不一致的目录应拒绝合并")
+        rc, s = merge("merged-three", per_role[:3])
+        if rc != 0 or not gate_errs(s):
+            fails.append(f"merge：只合三个角色可以合并，但闸门应拒收（rc={rc}）")
+        tampered = out_base / "solo-tampered"
+        shutil.copytree(per_role[3], tampered)
+        (tampered / "diff.patch").write_text("另一份 diff\n", encoding="utf-8")
+        if merge("merged-tampered", per_role[:3] + [str(tampered)])[0] != 2:
+            fails.append("merge：被审 diff 不同的目录应拒绝合并")
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
