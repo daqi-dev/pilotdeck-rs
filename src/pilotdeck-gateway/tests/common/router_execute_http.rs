@@ -450,7 +450,13 @@ async fn http_sequences_match_real_ts_oracle() {
             get(case, "requests"),
             &format!("{} HTTP requests", text_name(case)),
         );
-        assert_eq!(&usage, get(case, "sessionUsage"));
+        // The oracle is JSON: TS drops undefined usage fields when serialising.
+        assert_eq!(
+            stringify_json(&usage).unwrap(),
+            stringify_json(get(case, "sessionUsage")).unwrap(),
+            "{} session usage",
+            text_name(case)
+        );
     }
 }
 fn text_name(case: &JsValue) -> String {
