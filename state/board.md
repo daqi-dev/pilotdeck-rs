@@ -1,10 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 15:40 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | review | ready | 修复轮 11：间歇失败根因是测试把第二次 Node 启动塞进 200 ms，仅改测试（重试用产品默认 10 s，断言不放宽），整二进制 30/30 + 协调者沙箱外 10/10；推送 7d1b586；GLM r10 + Grok r10 + 全量 gate9 在跑
+updated: 2026-10-21 15:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | review | ready | r10：Grok 0/0/1/2（方案 A 外形状与 2048 以下均无假 PASS；P2：#6 区间描述漏了 hostname 的 message 差异与从不溢出的 format）；全量 gate9 0/0/1（bridge 同步读文件、可逃逸 cwd——TS 同样如此，并入 #394）；GLM r10 在跑；收齐后一批：#6 #7 改登 gateway 账本（决策卡）+ 补全区间描述
 - #396 | review | ready | PR #403 平局仲裁定案：真实 TS（内存 HTTP 默认 600000 三协议 + 沙箱外真实 TCP 5000/5000 平局 5/5）均 idle watchdog 赢，Grok 对；协调者改回 < 并翻转测试（a5df2f7，负控 <= 失败）；r5 两家确认 + gate3 在跑
-- #386 | review | ready | PR #407：GLM r1 0/0/0/4、Grok r1 0/0/3/3（unsafe 范围与人定一致）；Linux CI（ubuntu-24.04）两条信号回归 ok；两条便宜 P2（allow(unsafe_code) 防扩散测试、hooks/MCP/host 三处接入回归）codex 修复轮 1 在跑
+- #386 | review | ready | PR #407 修复轮 1 提交 9f695d6（unsafe 边界源码测试 + hooks/MCP/host 三处回归，四负控，未新增 unsafe）；沙箱外全量在跑，过后推送派确认评审
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr1 | impl | ready | PR #405 已合入（15:2x，邮箱同前为账号主邮箱）；下一包 A7.1-pr2（live session handle 与 runtime 生命周期，`_tmp/20261021-a7-1/split.md:60`）待派
 - A6.5-pr9b | review | ready | 深度 256 人批；已 rebase 到 main，gateway 账本登 A6.5-WEBFETCH-DEPTH-001 并 FROZEN 重登记（cac601e，修 gate1 sibling P1）；gate1 concurrency P2 并入 #409；全量重跑中，过后推送、补增量评审与 gate
