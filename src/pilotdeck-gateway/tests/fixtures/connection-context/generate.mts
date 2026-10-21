@@ -81,6 +81,10 @@ scenarios.push({name:'same-session-concurrent-submit-first-finishes-before-close
   {op:'finish',slot:'first'},
   request('permission_decide',{sessionKey:'shared',requestId:'still-run'}),
   {op:'close'}, {op:'finish',slot:'second'}]});
+scenarios.push({name:'permission-decide-null-and-missing-params',steps:[message(hello()),
+  request('permission_decide',null,'null-params'),
+  message({type:'request',id:'missing-params',method:'permission_decide'}),
+  request('permission_decide',{},'object-params')]});
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
   const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [];

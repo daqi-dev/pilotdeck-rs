@@ -35,6 +35,8 @@ mutants = [
     ("old-binding-disconnects-current", "binding.rs", 'if bindings.get(owner) != Some(binding) {', 'if false && bindings.get(owner) != Some(binding) {', 1),
     ("submit-clears-interaction-session", "mod.rs", '.retain(|s| s != session);', '.retain(|s| s != session);\n        self.connection.state.lock().unwrap().interactions.retain(|s| s != session);', 1),
     ("ticket-scoped-in-flight", None, None, None, 0),
+    ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(Value::Null)',
+     'frame.get("params").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!({}))', 1),
     ("tampered-source-hash", "oracle.json",
      json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/server/GatewayWsConnection.ts"], "0" * 64, 1),
 ]
@@ -84,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
                            else scratch / "src/runtime/connection")
             (destination / file).write_text(content)
         (scratch / "src/lib.rs").write_text(base_lib)
-        gate = subprocess.run(["bash", "-c", "until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done"], capture_output=True, text=True, check=True)
+        gate = subprocess.run(["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")], capture_output=True, text=True, check=True)
         test_filter = "connection::tests::"
         command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"), "--lib", test_filter, "--", "--nocapture"]
         result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=900)
@@ -92,6 +94,8 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         passed = result.returncode == 0 if name == "baseline" else result.returncode == 101 and "assertion `left" in raw and "could not compile" not in raw
         if name == "ticket-scoped-in-flight":
             passed = passed and '\"same-session-concurrent-submit-first-finishes-before-close\" step 3' in raw
+        if name == "null-params-as-object":
+            passed = passed and '"permission-decide-null-and-missing-params" step 1' in raw
         if name == "tampered-source-hash":
             passed = passed and "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match" in raw
         (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "COMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")
@@ -112,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         ("binding-generation-as-project-runtime", 'let _: std::sync::Arc<pilotdeck_gateway::runtime::project::ProjectRuntime> = binding.generation();'),
     ]:
         (scratch / "src/lib.rs").write_text(base_lib + 'fn reject(runtime: std::sync::Arc<pilotdeck_gateway::runtime::project::ProjectRuntime>, binding: connection::binding::WsBinding) {' + statement + '}')
-        gate = subprocess.run(["bash", "-c", "until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done"],capture_output=True,text=True,check=True)
+        gate = subprocess.run(["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")],capture_output=True,text=True,check=True)
         command=["cargo","check","--offline","--manifest-path",str(scratch / "Cargo.toml"),"--lib"]
         result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=900)
         raw=result.stdout+result.stderr
