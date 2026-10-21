@@ -69,5 +69,8 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 |---|---|---|---|---|
 | `<select><hr></select>` | 空串 `""` | `"* * *"` | `src/pilotdeck-gateway/tests/html_markdown.rs::parser_version_gaps_match_real_ts`（当前 ignore） | **未批准，非已接受差异**；待 pr9c 对齐 |
 | `<p>a<search>b</search>c</p>` | `"abc"` | `"a\n\nbc"`（两个换行） | `src/pilotdeck-gateway/tests/html_markdown.rs::parser_version_gaps_match_real_ts`（当前 ignore） | **未批准，非已接受差异**；待 pr9c 对齐 |
+| 240 个属性各异的 `<b a=i>` + `<p>` + 重复 `<span>x</span>` + 补齐 `x` + 240 个 `</b>`，精确补至 4 / 8 MiB；元素深度 < 256 | 4 MiB 本轮真实 TS 复测：`RangeError: Invalid array length`；8 MiB 同错（修复轮 7 原值）。2 MiB 本轮成功：`"**".repeat(240) + "x".repeat(149586) + "**".repeat(240)` | 成功返回 Markdown（向宽）；4 MiB：`"**".repeat(240) + "x".repeat(299390) + "**".repeat(240)`；8 MiB：`"**".repeat(240) + "x".repeat(598972) + "**".repeat(240)` | `src/pilotdeck-gateway/tests/html_markdown.rs::reparented_wide_subtrees_stay_fast` | **未批准，非已接受差异**；待 pr9c 对齐 |
 
 TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.json` 的 `parserGaps`；修复轮 5 显式运行上述 ignored 测试确认 Rust 原值，失败按未对齐保留，不计为通过。这两条若要改为接受差异，须另走人批程序。
+
+修复轮 8 追加说明：上表第三条是 domino 搬移宽子树时触发 V8 数组上限的运行时行为，与前两条解析器版本差异不同，也与 A6.5-WEBFETCH-DEPTH-001 的深度批准无关。上文「以下两条」仅指原有两条解析器差异；上文「除两条解析器版本差异外，深度 ≤ 256 两侧逐字节一致」须同时排除本条已知未对齐，不能据此声称该深度内全部一致。真实 Node 22.22.0 / V8 12.4.254.21-node.33 本轮重新实测 2 MiB 成功、4 MiB 抛上述错误，二分所得首错尺寸区间为 (3,407,872, 3,670,016] 字节（3.25–3.5 MiB，区间宽 256 KiB；限本输入形状与运行时，不作为通用阈值）。Rust 本轮 2 / 4 / 8 MiB 均成功，2 MiB 与 TS 逐字节一致。TS / Rust 原值、无损输出表达与 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。第三条同样未批准、非已接受差异，不新增豁免、不改判分语义；要改为接受差异须另走人批程序。
