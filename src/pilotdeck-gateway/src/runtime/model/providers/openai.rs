@@ -669,7 +669,7 @@ pub(crate) fn build_request(
 ) -> Result<JsValue, ModelStreamError> {
     let google = google_openai_compatible(provider);
     let plan = thinking::resolve(request, provider, model)?;
-    thinking::throw_if_unsupported(&plan)?;
+    thinking::throw_if_unsupported(&plan, request)?;
     let mut messages = Vec::new();
     for (index, message) in array(field(request, "messages")).iter().enumerate() {
         messages.extend(to_openai_messages(message, index)?);

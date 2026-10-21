@@ -60,6 +60,9 @@ export async function record(baseline: string, httpOnly=false) {
   const success={chunks:[start,text,end]};
   const httpError=(status:number)=>({status,headers:{'content-type':'application/json'},chunks:[JSON.stringify({type:'error',error:{type:status===429?'rate_limit_error':'api_error',message:status===429?'rate limit':'server fault'}})]});
   const specs:any[]=[
+    {name:'usage-estimate-missing',scripts:[{events:[frame,{type:'text_delta',text:'hello '},{type:'thinking_delta',text:'world'},{type:'tool_call_delta',id:'t',delta:'{}'},{type:'message_end',finishReason:'stop'}]}]},
+    ...[null,{}, {inputTokens:null,outputTokens:null,cacheReadTokens:null}, {inputTokens:0}].map((usage,index)=>({name:`usage-estimate-empty-${index}`,scripts:[{events:[frame,{type:'text_delta',text:'ok'},{type:'usage',usage},{type:'message_end',finishReason:'stop'}]}]})),
+    ...[{inputTokens:3,outputTokens:null,cacheReadTokens:null},{outputTokens:2}].map((usage,index)=>({name:`usage-preserve-partial-${index}`,scripts:[{events:[frame,{type:'text_delta',text:'ok'},{type:'usage',usage},{type:'message_end',finishReason:'stop'}]}]})),
     {name:'fallback-framing',scripts:[{events:[frame,failure()]},{events:ok}]},
     {name:'final-precontent-error',config:{fallback:{}},scripts:[{events:[frame,failure('invalid_request',false)]}]},
     ...['text_delta','thinking_delta','tool_call_start','tool_call_delta','tool_call_end'].map(type=>({name:`content-lock-${type}`,scripts:[{events:[frame,{type,text:'',delta:'',id:'t',name:'tool',input:{}},failure()]}]})),
@@ -156,7 +159,33 @@ export async function record(baseline: string, httpOnly=false) {
     executeCases.push(JSON.parse(origin?serialized.replaceAll(origin,'$MOCK').replaceAll(`http://127.0.0.1:${closedPort}`,'$CLOSED'):serialized));
     if(server){server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close((error:any)=>error?reject(error):resolve()));}
   }
+  // Real provider validation, before any transport can run. These are not
+  // scripted ModelRequestErrors: details come from the fixed TS implementation.
+  const image={type:'image',source:'base64',mimeType:'image/png',data:'AA==',bytes:2048};
+  const validationSpecs=[
+    {name:'content-unsupported-modality',multimodal:{input:['text']},content:[image]},
+    {name:'unsupported-image-mime-type',multimodal:{input:['image'],supportedImageMimeTypes:['image/jpeg']},content:[image]},
+    {name:'image-too-large',multimodal:{input:['image'],maxImageBytes:1024},content:[image]},
+    {name:'pdf-too-large',multimodal:{input:['pdf'],maxPdfBytes:4096},content:[{type:'pdf',source:'base64',data:'AA==',bytes:8192}]},
+    {name:'audio-too-long',multimodal:{input:['audio'],maxAudioSeconds:30},content:[{type:'audio',source:'base64',mimeType:'audio/wav',data:'AA==',durationSeconds:45}]},
+    ...['anthropic','openai','openai-responses'].map(protocol=>({name:`unsupported-thinking-${protocol}`,protocol,thinking:{state:'enabled',efforts:['low']},requestThinking:{mode:'high'},content:[{type:'text',text:'hello'}]})),
+  ];
+  const validationCases=[];
+  for(const spec of validationSpecs) {
+    const model={id:'m',capabilities:{supportsStreaming:true,supportsToolUse:true,supportsSystemPrompt:true,maxOutputTokens:64},multimodal:spec.multimodal??{input:['text']},...(spec.thinking?{thinking:spec.thinking}:{})};
+    const provider={id:'a',protocol:spec.protocol??'anthropic',url:'http://a.test/v1',apiKey:'fixture-key',models:{m:model}};
+    const req={...request,messages:[{role:'user',content:spec.content}],...(spec.requestThinking?{thinking:spec.requestThinking}:{})};
+    let error;const events=[];
+    try {
+      for await (const event of streamModel(req,{providers:{a:provider}},{fetch:async()=>{assert.fail('validation must precede transport')}}))events.push(event);
+    } catch(thrown:any) {
+      assert.ok(thrown instanceof ModelRequestError, spec.name);
+      error={name:thrown.name,code:thrown.code,message:thrown.message,details:thrown.details};
+    }
+    assert.ok(error,spec.name);
+    validationCases.push({spec,request:req,config:{providers:{a:provider}},events,error});
+  }
   Math.random=originalRandom;
-  assert.equal(healthCases.length,4);assert.equal(portActions.length,17);assert.equal(eligibility.length,60);assert.equal(executeCases.length,httpOnly?7:25);
-  return {healthCases,portActions,eligibility,executeCases,transportHeaders};
+  assert.equal(healthCases.length,4);assert.equal(portActions.length,17);assert.equal(eligibility.length,60);assert.equal(executeCases.length,httpOnly?7:32);
+  return {healthCases,portActions,eligibility,executeCases,transportHeaders,validationCases};
 }

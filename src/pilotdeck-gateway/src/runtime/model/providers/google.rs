@@ -193,12 +193,14 @@ fn thinking_plan(request: &JsValue, model: &JsValue) -> Result<ThinkingPlan, Mod
     let provider =
         super::super::count_body::object([("id", "google".into()), ("protocol", "google".into())]);
     let plan = super::thinking::resolve(request, &provider, model)?;
-    if let Err(ModelStreamError::Request { message, .. }) =
-        super::thinking::throw_if_unsupported(&plan)
+    if let Err(ModelStreamError::Request {
+        message, details, ..
+    }) = super::thinking::throw_if_unsupported(&plan, request)
     {
-        let mode = plan.mode.clone().unwrap_or_else(|| "default".into());
         return Err(ModelStreamError::Provider(thinking_error(
-            request, &mode, message,
+            request,
+            *details.expect("unsupported thinking details"),
+            message,
         )));
     }
     Ok(plan)
@@ -217,14 +219,10 @@ fn thinking_config(plan: ThinkingPlan) -> Option<JsValue> {
 }
 
 /// `throwIfUnsupportedThinkingPlan` + `ModelRequestError` projection.
-fn thinking_error(request: &JsValue, mode: &JsString, message: JsString) -> JsObject {
-    let mut details = value_object();
-    details.insert("provider".into(), field(request, "provider").clone());
-    details.insert("model".into(), field(request, "model").clone());
-    details.insert("thinkingMode".into(), JsValue::String(mode.clone()));
+fn thinking_error(request: &JsValue, details: JsValue, message: JsString) -> JsObject {
     let mut raw = value_object();
     raw.insert("code".into(), "unsupported_thinking".into());
-    raw.insert("details".into(), JsValue::Object(details));
+    raw.insert("details".into(), details);
     raw.insert("name".into(), "ModelRequestError".into());
     let mut canonical = value_object();
     canonical.insert("provider".into(), field(request, "provider").clone());

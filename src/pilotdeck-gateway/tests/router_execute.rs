@@ -308,7 +308,7 @@ async fn execute_port_sequences_match_real_ts() {
     let scratch = scratch::Scratch::new("router-execute");
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "executeCases"));
-    assert_eq!(cases.len(), 25);
+    assert_eq!(cases.len(), 32);
     for case in cases {
         let spec = get(case, "spec");
         let name = text(get(spec, "name"));

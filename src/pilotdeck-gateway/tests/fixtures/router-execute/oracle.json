@@ -1986,6 +1986,664 @@
   "executeCases": [
     {
       "spec": {
+        "name": "usage-estimate-missing",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "hello "
+              },
+              {
+                "type": "thinking_delta",
+                "text": "world"
+              },
+              {
+                "type": "tool_call_delta",
+                "id": "t",
+                "delta": "{}"
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "hello "
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "thinking_delta",
+            "text": "world"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "tool_call_delta",
+            "id": "t",
+            "delta": "{}"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 3,
+        "totalTokens": 4
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-estimate-empty-0",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": null
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": null
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 1,
+        "totalTokens": 2
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-estimate-empty-1",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {}
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {}
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 1,
+        "totalTokens": 2
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-estimate-empty-2",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": null,
+                  "outputTokens": null,
+                  "cacheReadTokens": null
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": null,
+              "outputTokens": null,
+              "cacheReadTokens": null
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 1,
+        "totalTokens": 2
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-estimate-empty-3",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 0
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 0
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 1,
+        "totalTokens": 2
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-preserve-partial-0",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": null,
+                  "cacheReadTokens": null
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": null,
+              "cacheReadTokens": null
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 3,
+        "outputTokens": null,
+        "cacheReadTokens": null
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-preserve-partial-1",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "outputTokens": 2
+      }
+    },
+    {
+      "spec": {
         "name": "fallback-framing",
         "scripts": [
           {
@@ -5002,5 +5660,658 @@
     "accept-encoding",
     "transfer-encoding",
     "keep-alive"
+  ],
+  "validationCases": [
+    {
+      "spec": {
+        "name": "content-unsupported-modality",
+        "multimodal": {
+          "input": [
+            "text"
+          ]
+        },
+        "content": [
+          {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "AA==",
+            "bytes": 2048
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "AA==",
+                "bytes": 2048
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "unsupported_modality",
+        "message": "Model does not support image input.",
+        "details": {
+          "modality": "image"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-image-mime-type",
+        "multimodal": {
+          "input": [
+            "image"
+          ],
+          "supportedImageMimeTypes": [
+            "image/jpeg"
+          ]
+        },
+        "content": [
+          {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "AA==",
+            "bytes": 2048
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "AA==",
+                "bytes": 2048
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "image"
+                  ],
+                  "supportedImageMimeTypes": [
+                    "image/jpeg"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "unsupported_image_mime_type",
+        "message": "Model does not support image MIME type image/png.",
+        "details": {
+          "mimeType": "image/png"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "image-too-large",
+        "multimodal": {
+          "input": [
+            "image"
+          ],
+          "maxImageBytes": 1024
+        },
+        "content": [
+          {
+            "type": "image",
+            "source": "base64",
+            "mimeType": "image/png",
+            "data": "AA==",
+            "bytes": 2048
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "AA==",
+                "bytes": 2048
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "image"
+                  ],
+                  "maxImageBytes": 1024
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "image_too_large",
+        "message": "Image content exceeds model limits.",
+        "details": {
+          "bytes": 2048,
+          "maxImageBytes": 1024
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "pdf-too-large",
+        "multimodal": {
+          "input": [
+            "pdf"
+          ],
+          "maxPdfBytes": 4096
+        },
+        "content": [
+          {
+            "type": "pdf",
+            "source": "base64",
+            "data": "AA==",
+            "bytes": 8192
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "pdf",
+                "source": "base64",
+                "data": "AA==",
+                "bytes": 8192
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "pdf"
+                  ],
+                  "maxPdfBytes": 4096
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "pdf_too_large",
+        "message": "PDF content exceeds model limits.",
+        "details": {
+          "bytes": 8192,
+          "maxPdfBytes": 4096
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "audio-too-long",
+        "multimodal": {
+          "input": [
+            "audio"
+          ],
+          "maxAudioSeconds": 30
+        },
+        "content": [
+          {
+            "type": "audio",
+            "source": "base64",
+            "mimeType": "audio/wav",
+            "data": "AA==",
+            "durationSeconds": 45
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "audio",
+                "source": "base64",
+                "mimeType": "audio/wav",
+                "data": "AA==",
+                "durationSeconds": 45
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "audio"
+                  ],
+                  "maxAudioSeconds": 30
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "audio_too_long",
+        "message": "Audio content exceeds model limits.",
+        "details": {
+          "durationSeconds": 45,
+          "maxAudioSeconds": 30
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-thinking-anthropic",
+        "protocol": "anthropic",
+        "thinking": {
+          "state": "enabled",
+          "efforts": [
+            "low"
+          ]
+        },
+        "requestThinking": {
+          "mode": "high"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100,
+        "thinking": {
+          "mode": "high"
+        }
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "anthropic",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                },
+                "thinking": {
+                  "state": "enabled",
+                  "efforts": [
+                    "low"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "request_started",
+          "provider": "a",
+          "model": "m",
+          "providerBaseUrl": "http://a.test/v1",
+          "requestFingerprint": "772134897afa69607620a2a83f0ed25c5219ed23dd03215d1a74a6890819e0ef"
+        }
+      ],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "unsupported_thinking",
+        "message": "m: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+        "details": {
+          "provider": "a",
+          "model": "m",
+          "thinkingMode": "high"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-thinking-openai",
+        "protocol": "openai",
+        "thinking": {
+          "state": "enabled",
+          "efforts": [
+            "low"
+          ]
+        },
+        "requestThinking": {
+          "mode": "high"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100,
+        "thinking": {
+          "mode": "high"
+        }
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "openai",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                },
+                "thinking": {
+                  "state": "enabled",
+                  "efforts": [
+                    "low"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "request_started",
+          "provider": "a",
+          "model": "m",
+          "providerBaseUrl": "http://a.test/v1",
+          "requestFingerprint": "772134897afa69607620a2a83f0ed25c5219ed23dd03215d1a74a6890819e0ef"
+        }
+      ],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "unsupported_thinking",
+        "message": "m: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+        "details": {
+          "provider": "a",
+          "model": "m",
+          "thinkingMode": "high"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-thinking-openai-responses",
+        "protocol": "openai-responses",
+        "thinking": {
+          "state": "enabled",
+          "efforts": [
+            "low"
+          ]
+        },
+        "requestThinking": {
+          "mode": "high"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100,
+        "thinking": {
+          "mode": "high"
+        }
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "openai-responses",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                },
+                "thinking": {
+                  "state": "enabled",
+                  "efforts": [
+                    "low"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "request_started",
+          "provider": "a",
+          "model": "m",
+          "providerBaseUrl": "http://a.test/v1",
+          "requestFingerprint": "772134897afa69607620a2a83f0ed25c5219ed23dd03215d1a74a6890819e0ef"
+        }
+      ],
+      "error": {
+        "name": "ModelRequestError",
+        "code": "unsupported_thinking",
+        "message": "m: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+        "details": {
+          "provider": "a",
+          "model": "m",
+          "thinkingMode": "high"
+        }
+      }
+    }
   ]
 }
