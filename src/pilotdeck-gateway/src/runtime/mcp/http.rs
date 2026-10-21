@@ -384,8 +384,8 @@ async fn network_fetch_continuing_with<B: Send + 'static>(
                 continuation_before_abort = before_abort;
                 outcome
             }
-            Exchange::Timeout { .. } => {
-                continuation_before_abort = aborted.is_cancelled();
+            Exchange::Timeout { before_abort } => {
+                continuation_before_abort = before_abort;
                 Err(network_error(
                     "network_timeout",
                     format!(

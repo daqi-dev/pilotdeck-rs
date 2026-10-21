@@ -452,9 +452,8 @@ async fn network_fetch_inner(
                         Exchange::Aborted => {
                             Err(abort_error("Network request aborted by parent signal."))
                         }
-                        Exchange::Timeout { .. } => {
-                            continuation_before_abort =
-                                options.parent.is_some_and(ToolRunContext::is_aborted);
+                        Exchange::Timeout { before_abort } => {
+                            continuation_before_abort = before_abort;
                             if let Some(outer) = outer_deadline
                                 && deadline == Some(outer.at)
                             {
