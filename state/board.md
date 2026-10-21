@@ -7,7 +7,7 @@ updated: 2026-10-21 15:20 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - #386 | review | ready | PR #407：GLM r1 0/0/0/4、Grok r1 0/0/3/3（unsafe 范围与人定一致）；Linux CI（ubuntu-24.04）两条信号回归 ok；两条便宜 P2（allow(unsafe_code) 防扩散测试、hooks/MCP/host 三处接入回归）codex 修复轮 1 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
 - A7.1-pr1 | review | ready | PR #405 已入合并队列（15:13）
-- A6.5-pr9b | review | human | PR #406 r3 两家无 P0/P1；内存放大拆 #409；全量 gate1 在跑；深度上限 256 待人批（说明 `_tmp/20261021-a65-pr9b/depth-brief.md`，建议 A）
+- A6.5-pr9b | review | ready | PR #406 r3 两家无 P0/P1；内存放大拆 #409；全量 gate1 在跑；深度上限 256 人批 15:25（选 A），accepted-diffs 登记中；gate1 过后推送、入队
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
