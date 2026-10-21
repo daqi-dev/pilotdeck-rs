@@ -42,7 +42,14 @@ int main(int argc, char **argv) {
     return 9;
   }
   if (argc == 2 && !strcmp(argv[1], "inherited")) return inherited();
-  if (argc != 2 || strcmp(argv[1], "report")) return 10;
+  /* Use the reporter as a configured hook shell, before any shell runtime
+   * can change dispositions; stdio transports can collect via a file. */
+  if (argc == 3 && !strcmp(argv[1], "report-file")) {
+    if (!freopen(argv[2], "w", stdout)) return 15;
+  } else if (!((argc == 2 && !strcmp(argv[1], "report")) ||
+               (argc == 3 && !strcmp(argv[1], "-c") && !strcmp(argv[2], "report")))) {
+    return 10;
+  }
   sigset_t mask;
   if (sigprocmask(SIG_SETMASK, NULL, &mask)) return 11;
   int count = 0, failed = 0, blocked = 0;

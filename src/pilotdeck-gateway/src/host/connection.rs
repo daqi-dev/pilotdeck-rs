@@ -425,7 +425,28 @@ fn best_effort_log(message: std::fmt::Arguments<'_>) {
 mod tests {
     use super::*;
     use crate::host::HostClient;
+    use crate::process_spawn::{child_signals, test_support};
     use std::time::Duration;
+
+    #[test]
+    fn host_resets_inherited_signals() {
+        child_signals::ChildSignalProbe::new()
+            .launch("host::connection::tests::host_signal_worker", false);
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated worker launched with inherited ignored/blocked signals"]
+    async fn host_signal_worker() {
+        test_support::assert_inherited();
+        let probe = child_signals::probe_path();
+        let report = probe.with_file_name("host-report.txt");
+        let mut command = Command::new(&probe);
+        command.arg("report-file").arg(&report);
+        let mut connection = Connection::spawn(&mut command, Limits::default()).unwrap();
+        test_support::assert_reset_report_file(&report).await;
+        connection.close().await.unwrap();
+        test_support::assert_inherited();
+    }
 
     fn peer(mode: &str) -> Command {
         let mut command = Command::new("python3");
