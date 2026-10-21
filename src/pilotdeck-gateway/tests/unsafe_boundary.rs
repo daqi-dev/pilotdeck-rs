@@ -1,13 +1,14 @@
 //! 守卫边界：检查 workspace 成员源码的 lint 继承与 manifest、child crate
-//! 内容、全部 workspace 成员的解析后依赖闭包及其所有声明的 path 依赖
+//! 内容、全部 workspace 成员的解析后依赖闭包及其所有声明依赖的 source/path
 //! （含 dev/build/target 与未启用的可选依赖）、仓内 Cargo 配置与 toolchain 文件、
-//! manifest 目录到文件系统根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
+//! workspace manifest 树内的测试 cwd 到根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
 //! config*，以及测试进程可见的编译相关环境变量。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
 //! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
-//! vendor 与 registry 依赖内部的 unsafe 不属于本守卫的审计范围；
-//! 既有 vendor pin 的变更仍须按冻结件规则评审。
+//! source 只接受 null（已审计本地包）与 registry+；git 等其它 kind 一律拒绝。
+//! vendor 与 registry 依赖内部的 unsafe 不属于本守卫的审计范围；registry
+//! 依赖由 Cargo.lock pin 评审，既有 vendor pin 的变更仍须按冻结件规则评审。
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -82,6 +83,14 @@ fn workspace_paths(manifest: &str, key: &str) -> Vec<String> {
 
 const VENDORED_PACKAGES: [&str; 2] = ["vendor/tiktoken-rs", "data/icu_collator_data"];
 
+fn is_local_source(source: &Value, description: &str) -> bool {
+    match source {
+        Value::Null => true,
+        Value::String(source) if source.starts_with("registry+") => false,
+        _ => panic!("unsupported dependency source for {description}: {source}"),
+    }
+}
+
 fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
     let output = Command::new(std::env::var_os("CARGO").expect("Cargo executable from CARGO"))
         .args(["metadata", "--format-version", "1"])
@@ -144,7 +153,7 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
             continue;
         }
         let package = packages[id];
-        if package.get("source").expect("package source").is_null() {
+        if is_local_source(package.get("source").expect("package source"), id) {
             let directory = package_directory(package);
             assert!(
                 (member_ids.contains(id) && checked_members.contains(&directory))
@@ -158,10 +167,21 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
             // even when they are absent from the active resolve graph. Cargo
             // normalizes inline/table/workspace-inherited dependency syntax.
             for dependency in package["dependencies"].as_array().unwrap() {
-                if let Some(path) = dependency.get("path") {
-                    let directory = Path::new(path.as_str().expect("dependency path"))
-                        .canonicalize()
-                        .expect("existing dependency directory");
+                let name = dependency["name"].as_str().unwrap();
+                if is_local_source(
+                    dependency
+                        .get("source")
+                        .expect("declared dependency source"),
+                    &format!("{id} dependency {name}"),
+                ) {
+                    let directory = Path::new(
+                        dependency
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .expect("local dependency path"),
+                    )
+                    .canonicalize()
+                    .expect("existing dependency directory");
                     assert!(
                         checked_members.contains(&directory) || vendored.contains(&directory),
                         "unknown declared path dependency of workspace member {id}: {} ({})",
@@ -465,8 +485,16 @@ fn build_configuration_boundary(root: &Path, directory: &Path) {
 
 fn cargo_configuration_locations_boundary(manifest: &Path) {
     // Cargo discovers config from the build cwd through all ancestors, even
-    // above a nested worktree. The supported build cwd is the manifest tree.
-    for directory in manifest.ancestors() {
+    // above a nested worktree. Enforce the supported workspace manifest tree
+    // and inspect the actual cwd chain, including directories below manifest.
+    let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+    assert!(
+        cwd.starts_with(manifest.canonicalize().unwrap()),
+        "guard cwd must be within the workspace manifest tree: {} (manifest {})",
+        cwd.display(),
+        manifest.display()
+    );
+    for directory in cwd.ancestors() {
         for name in ["config", "config.toml"] {
             let path = directory.join(".cargo").join(name);
             assert!(
@@ -532,7 +560,7 @@ fn compiler_enforces_gateway_boundary() {
     let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = gateway.parent().unwrap();
     compiler_environment_boundary();
-    cargo_configuration_locations_boundary(gateway);
+    cargo_configuration_locations_boundary(workspace);
     let root = workspace.parent().unwrap();
     registered_build_files(root);
     build_configuration_boundary(root, root);
@@ -612,6 +640,11 @@ fn compiler_enforces_gateway_boundary() {
                 ["libc = \"=0.2.190\""]
             );
         } else {
+            // Frozen rustc 1.99.0 (b940084d7, 2026-09-28) rejects source
+            // allow(unsafe_code) over Cargo's --forbid=unsafe_code with E0453:
+            // direct crate attribute and macro_rules! expansions of both
+            // outer function and inner module attributes were tested.
+            // Raw probes: _tmp/20261021-issue-386/RESULT3.md, 修复轮 10.
             assert_eq!(
                 lint_tables,
                 ["[lints]"],
