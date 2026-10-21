@@ -769,10 +769,10 @@ async fn provider_exchange(
     failure: impl FnOnce(TransportFailure) -> ModelStreamError,
     timeout: impl FnOnce() -> ModelStreamError,
 ) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
-    use crate::runtime::network::{Exchange, exchange};
+    use crate::runtime::network::{Exchange, exchange_with_prearmed_parent};
     let send = transport.send(request);
     let scheduled_at = send.scheduled_at();
-    match exchange(
+    match exchange_with_prearmed_parent(
         send,
         wait_abort(&options.abort),
         || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
@@ -791,7 +791,7 @@ async fn provider_exchange(
                         .abort
                         .as_ref()
                         .and_then(AbortFlag::abort_event_at)
-                        .is_some_and(|at| scheduled_at.is_none_or(|error_at| error_at <= at));
+                        .is_some_and(|at| scheduled_at.is_none_or(|error_at| error_at < at));
                 let error = if !error_before_abort && aborted(options) {
                     ModelStreamError::abort()
                 } else {
@@ -801,7 +801,17 @@ async fn provider_exchange(
                 (error, error_before_abort)
             }),
         Exchange::Aborted => Err((ModelStreamError::abort(), false)),
-        Exchange::Timeout => Err((timeout(), false)),
+        Exchange::Timeout => {
+            // The watchdog's rejection microtasks finish before a later parent
+            // timer, even if the executor observes both events in one poll.
+            // Preserve that order through Google's outer abort recheck too.
+            let before_abort = options
+                .abort
+                .as_ref()
+                .and_then(AbortFlag::abort_event_at)
+                .is_some_and(|at| deadline < at);
+            Err((timeout(), before_abort))
+        }
     }
 }
 

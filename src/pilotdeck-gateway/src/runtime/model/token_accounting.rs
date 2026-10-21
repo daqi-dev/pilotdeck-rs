@@ -4,7 +4,9 @@ use super::{HyperCountTransport, ProviderCountTransport};
 use crate::host::modules::budget::{EvaluationOptions, RequestBudgetEvaluator, accounting_request};
 use crate::host::{HostError, HostFuture, ModuleError};
 use crate::model_cost;
-use crate::runtime::network::{Cancellation, Exchange, exchange, node_timer_duration};
+use crate::runtime::network::{
+    Cancellation, Exchange, exchange_with_prearmed_parent, node_timer_duration,
+};
 use pilotdeck_protocol::{
     JsObject, JsValue,
     model::{ContentBlock, ContentBody, Message},
@@ -349,9 +351,10 @@ impl TokenAccountingRuntime {
         // TS arms the outer timer before calling fetch. Fulfilled promises
         // keep their result through synchronous abort; undispatched response
         // timers yield to it, even when their deadlines have already passed.
+        // A caller's prearmed parent timer wins an exact response-deadline tie.
         let deadline =
             tokio::time::Instant::now() + node_timer_duration(self.timeout.as_secs_f64() * 1000.0);
-        let raw = match exchange(
+        let raw = match exchange_with_prearmed_parent(
             self.transport.post(request),
             async {
                 match &signal {
@@ -519,13 +522,18 @@ mod tests {
     struct TimedCount {
         started: Arc<AtomicBool>,
         response_ms: u64,
+        fail: bool,
     }
     impl ProviderCountTransport for TimedCount {
         fn post(&self, _: CountHttpRequest) -> CountFuture {
             self.started.store(true, Ordering::SeqCst);
             CountFuture::after(
                 Duration::from_millis(self.response_ms),
-                Ok(object([("input_tokens", JsValue::Number(73.0))])),
+                if self.fail {
+                    Err(ModuleError::new("fixture transport failure").into())
+                } else {
+                    Ok(object([("input_tokens", JsValue::Number(73.0))]))
+                },
             )
         }
     }
@@ -535,47 +543,58 @@ mod tests {
         for (response_ms, parent_ms, synchronous, success) in [
             (50, 60, true, false),
             (50, 60, false, true),
-            (50, 50, false, true),
+            (50, 50, false, false),
             (50, 40, false, false),
             (110, 120, false, false),
             (100, 120, false, false),
         ] {
-            let started = Arc::new(AtomicBool::new(false));
-            let runtime = configured_count(TimedCount {
-                started: started.clone(),
-                response_ms,
-            });
-            let signal = Cancellation::new();
-            let mut pending = Box::pin(runtime.provider_count(count_input(), Some(signal.clone())));
-            // Let the CPU request-builder finish without spawning the exchange:
-            // it must remain unpolled between advance() and abort delivery.
-            while !started.load(Ordering::SeqCst) {
-                std::future::poll_fn(|cx| {
-                    assert!(pending.as_mut().poll(cx).is_pending());
-                    Poll::Ready(())
+            // Real TS keeps an earlier rejected fetch value too: the count
+            // catch does not recheck a later parent signal (unlike providers).
+            for fail in [false, true] {
+                let started = Arc::new(AtomicBool::new(false));
+                let runtime = configured_count(TimedCount {
+                    started: started.clone(),
+                    response_ms,
+                    fail,
+                });
+                let signal = Cancellation::new();
+                let mut pending =
+                    Box::pin(runtime.provider_count(count_input(), Some(signal.clone())));
+                // Let the CPU request-builder finish without spawning the exchange:
+                // it must remain unpolled between advance() and abort delivery.
+                while !started.load(Ordering::SeqCst) {
+                    std::future::poll_fn(|cx| {
+                        assert!(pending.as_mut().poll(cx).is_pending());
+                        Poll::Ready(())
+                    })
+                    .await;
+                    tokio::task::yield_now().await;
+                }
+                let at = tokio::time::Instant::now();
+                tokio::time::advance(Duration::from_millis(130)).await;
+                if synchronous {
+                    signal.abort();
+                } else {
+                    signal.cancel_at(at + Duration::from_millis(parent_ms));
+                }
+                let result = std::future::poll_fn(|cx| match pending.as_mut().poll(cx) {
+                    Poll::Ready(result) => Poll::Ready(result),
+                    Poll::Pending => panic!("must settle without advancing the paused clock"),
                 })
                 .await;
-                tokio::task::yield_now().await;
-            }
-            let at = tokio::time::Instant::now();
-            tokio::time::advance(Duration::from_millis(130)).await;
-            if synchronous {
-                signal.abort();
-            } else {
-                signal.cancel_at(at + Duration::from_millis(parent_ms));
-            }
-            let result = std::future::poll_fn(|cx| match pending.as_mut().poll(cx) {
-                Poll::Ready(result) => Poll::Ready(result),
-                Poll::Pending => panic!("must settle without advancing the paused clock"),
-            })
-            .await;
-            if success {
-                assert_eq!(result.unwrap(), Some(73.0));
-            } else {
-                assert_eq!(
-                    result.unwrap_err().module_error.unwrap().message,
-                    "This operation was aborted".into()
-                );
+                if success && fail {
+                    assert_eq!(
+                        result.unwrap_err().module_error.unwrap().message,
+                        "fixture transport failure".into()
+                    );
+                } else if success {
+                    assert_eq!(result.unwrap(), Some(73.0));
+                } else {
+                    assert_eq!(
+                        result.unwrap_err().module_error.unwrap().message,
+                        "This operation was aborted".into()
+                    );
+                }
             }
         }
     }
