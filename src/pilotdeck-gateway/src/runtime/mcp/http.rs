@@ -579,21 +579,36 @@ impl Utf8Stream {
     }
 }
 
+/// Production reads always use Node's global string bound. Unit tests can
+/// shrink it on their current thread to exercise the actual body call sites
+/// without allocating a 512 MiB string.
+fn string_limit() -> usize {
+    #[cfg(not(test))]
+    {
+        fetch_redirect::MAX_STRING_LENGTH
+    }
+    #[cfg(test)]
+    {
+        STRING_LIMIT.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static STRING_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(fetch_redirect::MAX_STRING_LENGTH) };
+}
+
 /// Both streamable response.text() and response.json() use undici's body
 /// idle timer and V8 string bound. Their callers retain the SDK's distinct
 /// failure projection (error POST substitutes null; JSON propagates failure).
-async fn streamable_text<B>(
-    body: B,
-    aborted: &ToolCancellation,
-    limit: usize,
-) -> Result<String, McpClientError>
+async fn streamable_text<B>(body: B, aborted: &ToolCancellation) -> Result<String, McpClientError>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
 {
     fetch_redirect::read_body_with_signal(
         body,
-        limit,
+        string_limit(),
         Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
         Some(aborted),
         false,
@@ -619,13 +634,9 @@ where
     B::Error: Send,
 {
     let status = response.status();
-    let text = streamable_text(
-        response.into_body(),
-        aborted,
-        fetch_redirect::MAX_STRING_LENGTH,
-    )
-    .await
-    .unwrap_or_else(|_| "null".into());
+    let text = streamable_text(response.into_body(), aborted)
+        .await
+        .unwrap_or_else(|_| "null".into());
     http_error(
         f64::from(status.as_u16()),
         format!("Error POSTing to endpoint: {text}"),
@@ -661,11 +672,7 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {
                     let mut items = Vec::new();
-                    if !parser.feed_limited(
-                        &decoder.push(&data),
-                        &mut items,
-                        fetch_redirect::MAX_STRING_LENGTH,
-                    ) {
+                    if !parser.feed_limited(&decoder.push(&data), &mut items, string_limit()) {
                         return false;
                     }
                     for item in items {
@@ -835,12 +842,7 @@ impl HttpLink {
             return Ok(());
         }
         if content.contains("application/json") {
-            let text = streamable_text(
-                response.into_body(),
-                &self.aborted,
-                fetch_redirect::MAX_STRING_LENGTH,
-            )
-            .await?;
+            let text = streamable_text(response.into_body(), &self.aborted).await?;
             if let Some(message) = json_syntax::parse_error(&text) {
                 return Err(McpClientError::plain("SyntaxError", message));
             }
@@ -1192,6 +1194,102 @@ mod tests {
         .await
     }
 
+    struct StringLimitGuard(usize);
+    impl StringLimitGuard {
+        fn set(limit: usize) -> Self {
+            Self(STRING_LIMIT.with(|cell| cell.replace(limit)))
+        }
+    }
+    impl Drop for StringLimitGuard {
+        fn drop(&mut self) {
+            STRING_LIMIT.with(|cell| cell.set(self.0));
+        }
+    }
+
+    #[tokio::test]
+    async fn streamable_body_uses_global_string_limit() {
+        assert_eq!(string_limit(), fetch_redirect::MAX_STRING_LENGTH);
+        let _limit = StringLimitGuard::set(8);
+        let signal = ToolCancellation::default();
+        let exact = streamable_text(Full::new(Bytes::from_static(b"12345678")), &signal)
+            .await
+            .unwrap();
+        assert_eq!(exact, "12345678");
+        let error = streamable_text(Full::new(Bytes::from_static(b"123456789")), &signal)
+            .await
+            .unwrap_err();
+        assert_eq!(error.name(), "RangeError");
+        assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
+        // response.text() on an error POST uses the same bound and the SDK's
+        // null fallback, while response.json() propagates the RangeError.
+        let error = streamable_error_response(
+            hyper::Response::builder()
+                .status(400)
+                .body(Full::new(Bytes::from_static(b"123456789")))
+                .unwrap(),
+            &signal,
+        )
+        .await;
+        assert_eq!(
+            error.to_string(),
+            "Streamable HTTP error: Error POSTing to endpoint: null"
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_body_uses_global_string_limit() {
+        assert_eq!(string_limit(), fetch_redirect::MAX_STRING_LENGTH);
+        let _limit = StringLimitGuard::set(16);
+        let signal = ToolCancellation::default();
+        // A pending line is bounded even before its newline arrives.
+        assert!(
+            read_events(
+                Full::new(Bytes::from_static(b"1234567890123456")),
+                &signal,
+                |_| panic!("no event")
+            )
+            .await
+        );
+        assert!(
+            !read_events(
+                Full::new(Bytes::from_static(b"12345678901234567")),
+                &signal,
+                |_| panic!("no event")
+            )
+            .await
+        );
+        // Each frame is below the bound, but data accumulates across frames.
+        // Seven emoji plus two inserted newlines are exactly 16 UTF-16 units.
+        for overflow in [false, true] {
+            let (sender, receiver) = mpsc::unbounded_channel();
+            for chunk in ["data: 😀😀😀\n", "data: 😀😀😀\n", "data: 😀\n"] {
+                sender.send(Bytes::from(chunk)).unwrap();
+            }
+            if overflow {
+                sender.send(Bytes::from_static(b"data: a\n")).unwrap();
+            }
+            sender.send(Bytes::from_static(b"\n")).unwrap();
+            drop(sender);
+            let mut events = Vec::new();
+            assert_eq!(
+                read_events(EventBody(receiver), &signal, |item| events.push(item)).await,
+                !overflow
+            );
+            if overflow {
+                assert!(events.is_empty());
+            } else {
+                assert_eq!(
+                    events,
+                    vec![SseItem::Event {
+                        id: None,
+                        event: None,
+                        data: "😀😀😀\n😀😀😀\n😀".into()
+                    }]
+                );
+            }
+        }
+    }
+
     struct StalledBody;
     impl hyper::body::Body for StalledBody {
         type Data = Bytes;
@@ -1236,9 +1334,7 @@ mod tests {
                 )
                 .await
             } else {
-                streamable_text(StalledBody, &signal, fetch_redirect::MAX_STRING_LENGTH)
-                    .await
-                    .unwrap_err()
+                streamable_text(StalledBody, &signal).await.unwrap_err()
             }
         });
         poll_pending(pending.as_mut()).await;
@@ -1269,11 +1365,7 @@ mod tests {
         for sync in [true, false] {
             let signal = ToolCancellation::default();
             let started = tokio::time::Instant::now();
-            let mut pending = Box::pin(streamable_text(
-                StalledBody,
-                &signal,
-                fetch_redirect::MAX_STRING_LENGTH,
-            ));
+            let mut pending = Box::pin(streamable_text(StalledBody, &signal));
             poll_pending(pending.as_mut()).await;
             tokio::time::advance(Duration::from_millis(600_001)).await;
             if sync {
@@ -1288,12 +1380,13 @@ mod tests {
             );
         }
         let signal = ToolCancellation::default();
-        let error = streamable_text(Full::new(Bytes::from_static(b"12345")), &signal, 4)
+        let _limit = StringLimitGuard::set(4);
+        let error = streamable_text(Full::new(Bytes::from_static(b"12345")), &signal)
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
         assert_eq!(
-            streamable_text(Full::new(Bytes::from_static(b"1234")), &signal, 4)
+            streamable_text(Full::new(Bytes::from_static(b"1234")), &signal)
                 .await
                 .unwrap(),
             "1234"
