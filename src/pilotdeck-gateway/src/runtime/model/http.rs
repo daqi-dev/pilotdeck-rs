@@ -1319,6 +1319,22 @@ fn request_started_event(
     Ok(JsValue::Object(started))
 }
 
+/// `throwIfGoogleAbort`: preserve abort-like errors, while an observed parent
+/// cancellation takes precedence. A non-abort error continues into retry handling.
+fn throw_if_google_abort(
+    error: ModelStreamError,
+    options: &StreamOptions,
+    before_abort: bool,
+) -> Result<ModelStreamError, ModelStreamError> {
+    if !before_abort && aborted(options) {
+        return Err(ModelStreamError::abort());
+    }
+    if error.is_abort() {
+        return Err(error);
+    }
+    Ok(error)
+}
+
 /// `streamGoogleProviderRequest`: request_started per attempt, SDK error
 /// canonicalization, continuation/network retries and error events.
 async fn stream_google_model(
@@ -1362,9 +1378,7 @@ async fn stream_google_model(
         let Err(error) = outcome else {
             return Ok(());
         };
-        if (!before_abort && aborted(options)) || error.name().equals_str("AbortError") {
-            return Err(ModelStreamError::abort());
-        }
+        let error = throw_if_google_abort(error, options, before_abort)?;
         let canonical = match &error {
             ModelStreamError::Provider(canonical) => canonical.clone(),
             other => normalize_model_error(

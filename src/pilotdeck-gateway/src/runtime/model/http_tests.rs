@@ -482,6 +482,75 @@ fn stream_config() -> (JsValue, JsValue) {
     (request, config)
 }
 
+/// TS throwIfGoogleAbort checks the message before canonicalization/retries,
+/// even when the parent signal has never been cancelled.
+#[tokio::test(start_paused = true)]
+async fn google_abort_message_preserves_error_without_retry() {
+    struct AbortedTransport(std::sync::atomic::AtomicUsize);
+    impl ModelHttpTransport for AbortedTransport {
+        fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            TransportFuture::ready(Err(TransportFailure {
+                cause_code: None,
+                message: "fetch failed: upstream request ABORTED unexpectedly".into(),
+            }))
+        }
+    }
+    let (request, mut config) = stream_config();
+    let mut provider = field(field(&config, "providers"), "p").clone();
+    put(&mut provider, "protocol", "google".into());
+    put(
+        &mut provider,
+        "retry",
+        parse_json(r#"{"streamMaxRetries":2,"baseDelayMs":1,"maxDelayMs":1}"#).unwrap(),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), provider);
+    put(&mut config, "providers", JsValue::Object(providers));
+    let signal = AbortFlag::new();
+    let options = StreamOptions {
+        abort: Some(signal.clone()),
+        ..StreamOptions::default()
+    };
+    let transport = AbortedTransport(std::sync::atomic::AtomicUsize::new(0));
+    let mut outputs = Vec::new();
+    let outcome = stream_model(&transport, &request, &config, &options, &mut |output| {
+        outputs.push(output);
+    })
+    .await;
+    assert!(!signal.is_aborted());
+    assert_eq!(
+        transport.0.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "abort-like transport errors must not start another attempt"
+    );
+    let error = outcome.expect_err("abort-like errors must be thrown, not emitted");
+    assert!(matches!(error, ModelStreamError::Thrown { name, message }
+        if name.equals_str("TypeError")
+            && message.equals_str("fetch failed: upstream request ABORTED unexpectedly")));
+    assert_eq!(
+        outputs.len(),
+        1,
+        "request_started only, no retry or error event"
+    );
+    assert!(matches!(&outputs[0], StreamOutput::Event(event)
+        if field(event, "type") == &JsValue::from("request_started")));
+}
+
+/// Internal cancellation constructs AbortError with a fixed message. Exercise
+/// the production catch handler directly to cover a distinct SDK abort reason.
+#[test]
+fn google_abort_name_preserves_original_message() {
+    let error = ModelStreamError::thrown("AbortError", "SDK cancelled this specific request");
+    let error = throw_if_google_abort(error, &StreamOptions::default(), false).unwrap_err();
+    assert!(
+        matches!(error, ModelStreamError::Thrown { name, message }
+        if name.equals_str("AbortError")
+            && message.equals_str("SDK cancelled this specific request")),
+        "the original AbortError name and message must survive"
+    );
+}
+
 #[tokio::test]
 async fn undelimited_sse_buffer_over_the_v8_limit_throws_range_error() {
     SSE_LIMIT.with(|limit| limit.set(64));
