@@ -488,6 +488,8 @@ enum RejectionOrder {
     ReadySyncAbort,
     OverdueSyncAbort,
     ErrorBeforeParentTimer,
+    BothOverdueErrorFirst,
+    BothOverdueParentFirst,
 }
 
 /// #415/#410: actual streamModel.ts at cc7c4e65 (SHA-256
@@ -500,6 +502,10 @@ enum RejectionOrder {
 /// emits an error event with that message. A settled rejection's continuation
 /// runs, but the provider catch rechecks signal.aborted (TS :749 / :502).
 /// Unlike countRequestInput, it cannot simply preserve the rejected value.
+/// Both timers overdue (busy-wait 30ms): error at 5ms / parent at 10ms keeps
+/// the provider error; parent at 5ms / error at 10ms throws AbortError for all
+/// four protocols. The event loop drains the error microtasks before the later
+/// parent callback. Probe: _tmp/20261022-issue-410/provider-abort-probe.mts.
 async fn assert_provider_rejection_order(order: RejectionOrder) {
     struct Rejecting {
         order: RejectionOrder,
@@ -518,6 +524,9 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
                     let rejected = TransportFuture::ready(error);
                     self.signal.abort();
                     rejected
+                }
+                RejectionOrder::BothOverdueParentFirst => {
+                    TransportFuture::after(Duration::from_millis(10), error)
                 }
                 _ => TransportFuture::after(Duration::from_millis(5), error),
             }
@@ -550,6 +559,7 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
         let mut pending = Box::pin(stream_model(
             &transport, &request, &config, &options, &mut sink,
         ));
+        let started_at = tokio::time::Instant::now();
         match order {
             RejectionOrder::ReadySyncAbort => {}
             RejectionOrder::OverdueSyncAbort => {
@@ -561,14 +571,32 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
                 poll_pending(pending.as_mut()).await;
                 tokio::time::advance(Duration::from_millis(5)).await;
             }
+            RejectionOrder::BothOverdueErrorFirst | RejectionOrder::BothOverdueParentFirst => {
+                poll_pending(pending.as_mut()).await;
+                tokio::time::advance(Duration::from_millis(30)).await;
+                let parent_delay = if matches!(order, RejectionOrder::BothOverdueErrorFirst) {
+                    10
+                } else {
+                    5
+                };
+                // Neither the 5ms nor the 10ms event has been polled since
+                // registration. Retain the parent's original timer deadline.
+                signal.cancel_at(started_at + Duration::from_millis(parent_delay));
+                assert!(signal.is_aborted(), "both timers overdue before polling");
+            }
         }
         let outcome = poll_ready(pending.as_mut()).await;
         drop(pending);
         assert_eq!(transport.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(matches!(&events[0], StreamOutput::Event(event)
             if field(event, "type") == &JsValue::from("request_started")));
-        if matches!(order, RejectionOrder::ErrorBeforeParentTimer) {
-            assert!(!signal.is_aborted(), "the error microtasks run first");
+        if matches!(
+            order,
+            RejectionOrder::ErrorBeforeParentTimer | RejectionOrder::BothOverdueErrorFirst
+        ) {
+            if matches!(order, RejectionOrder::ErrorBeforeParentTimer) {
+                assert!(!signal.is_aborted(), "the error microtasks run first");
+            }
             if protocol == "google" {
                 outcome.unwrap();
                 assert_eq!(events.len(), 2);
@@ -584,10 +612,12 @@ async fn assert_provider_rejection_order(order: RejectionOrder) {
             }
             // Deliver the parent only after the rejection continuation has
             // finished, as Node does between separate timer callbacks.
-            tokio::time::advance(Duration::from_millis(5)).await;
-            signal.cancel();
+            if matches!(order, RejectionOrder::ErrorBeforeParentTimer) {
+                tokio::time::advance(Duration::from_millis(5)).await;
+                signal.cancel();
+            }
         } else {
-            let error = outcome.expect_err("same-stack abort must be thrown");
+            let error = outcome.expect_err("earlier parent abort must be thrown");
             assert_eq!(
                 error.name(),
                 JsString::from("AbortError"),
@@ -612,6 +642,12 @@ async fn provider_overdue_rejection_loses_to_synchronous_abort() {
 #[tokio::test(start_paused = true)]
 async fn provider_rejection_microtasks_finish_before_later_parent_timer() {
     assert_provider_rejection_order(RejectionOrder::ErrorBeforeParentTimer).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_both_overdue_timers_preserve_error_continuation_order() {
+    assert_provider_rejection_order(RejectionOrder::BothOverdueErrorFirst).await;
+    assert_provider_rejection_order(RejectionOrder::BothOverdueParentFirst).await;
 }
 
 /// TS throwIfGoogleAbort checks the message before canonicalization/retries,
@@ -1108,7 +1144,9 @@ async fn google_exchange_orders_response_timeout_and_parent() {
         } else {
             abort.cancel_at(started + Duration::from_millis(parent_ms));
         }
-        let result = poll_ready(pending.as_mut()).await;
+        let result = poll_ready(pending.as_mut())
+            .await
+            .map_err(|(error, _)| error);
         match expected {
             "response" => assert!(result.is_ok(), "{result:?}"),
             "abort" => assert!(result.unwrap_err().name().equals_str("AbortError")),
@@ -1274,6 +1312,7 @@ async fn google_redirect_retains_absolute_deadline_and_second_hop_source() {
         poll_ready(pending.as_mut())
             .await
             .unwrap_err()
+            .0
             .name()
             .equals_str("StreamIdleTimeoutError")
     );
