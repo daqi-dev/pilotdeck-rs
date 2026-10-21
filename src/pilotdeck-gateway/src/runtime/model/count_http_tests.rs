@@ -81,3 +81,59 @@ async fn redirect_drops_unfinished_body_before_following_location() {
         Some(73.0)
     );
 }
+
+struct StalledBody(Arc<std::sync::atomic::AtomicBool>);
+impl Body for StalledBody {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::task::Poll::Pending
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn count_body_stall_uses_global_body_timeout() {
+    use std::{
+        future::Future,
+        sync::atomic::{AtomicBool, Ordering},
+        task::Poll,
+    };
+    let polled = Arc::new(AtomicBool::new(false));
+    let mut request = Box::pin(fetch_count(
+        CountHttpRequest {
+            url: "http://example.test/count".into(),
+            headers: JsObject::new(),
+            body: JsValue::Null,
+        },
+        |_| std::future::ready(Ok(Response::new(StalledBody(polled.clone())))),
+    ));
+    // Serialization runs in the bounded CPU pool. Keep the root task runnable
+    // until the real production body reader has armed its idle timer.
+    std::future::poll_fn(|cx| {
+        assert!(request.as_mut().poll(cx).is_pending());
+        if polled.load(Ordering::SeqCst) {
+            Poll::Ready(())
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
+    tokio::time::advance(std::time::Duration::from_millis(599_999)).await;
+    std::future::poll_fn(|cx| {
+        assert!(request.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    let error = std::future::poll_fn(|cx| match request.as_mut().poll(cx) {
+        Poll::Ready(result) => Poll::Ready(result.unwrap_err()),
+        Poll::Pending => panic!("count body must terminate at 600000 ms"),
+    })
+    .await;
+    assert_eq!(error.module_error.unwrap().message, "terminated".into());
+}

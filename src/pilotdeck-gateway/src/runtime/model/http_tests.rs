@@ -707,3 +707,138 @@ fn text_deltas_accumulate_under_the_v8_string_limit() {
     ));
     assert_eq!(deltas, 2);
 }
+
+/// The provider must preserve the transport's timer through redirects and
+/// endpoint fallback, including when all events are observed in one late poll.
+struct TimedHeaders(Duration);
+impl ModelHttpTransport for TimedHeaders {
+    fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::after(
+            self.0,
+            Ok(Response::new(
+                Full::new(Bytes::new())
+                    .map_err(|never| match never {})
+                    .boxed(),
+            )),
+        )
+    }
+}
+
+async fn poll_ready<F: Future>(mut future: Pin<&mut F>) -> F::Output {
+    std::future::poll_fn(|cx| match future.as_mut().poll(cx) {
+        std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+        std::task::Poll::Pending => panic!("must settle without advancing the paused clock"),
+    })
+    .await
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_exchange_orders_response_timeout_and_parent() {
+    for (response_ms, parent_ms, sync, expected) in [
+        (60, 80, false, "response"),
+        (100, 120, false, "timeout"),
+        (110, 90, false, "abort"),
+        (60, 80, true, "abort"),
+        (60, 60, false, "response"),
+    ] {
+        let provider = parse_json(r#"{"id":"p","protocol":"anthropic","url":"http://example.test/v1","apiKey":"k","headers":{}}"#).unwrap();
+        let abort = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(abort.clone()),
+            stream_timeout_ms: Some(100.0),
+            ..StreamOptions::default()
+        };
+        let started = tokio::time::Instant::now();
+        let transport = TimedHeaders(Duration::from_millis(response_ms));
+        let body = JsValue::Null;
+        let mut request = Box::pin(send_provider_request(
+            &transport, &provider, &body, &options,
+        ));
+        poll_pending(request.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(130)).await;
+        if sync {
+            abort.abort();
+        } else {
+            abort.cancel_at(started + Duration::from_millis(parent_ms));
+        }
+        let result = poll_ready(request.as_mut()).await;
+        match expected {
+            "response" => assert!(result.is_ok(), "{result:?}"),
+            "abort" => assert!(result.unwrap_err().name().equals_str("AbortError")),
+            "timeout" => assert!(
+                result
+                    .unwrap_err()
+                    .message_text()
+                    .contains("Stream idle timeout")
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_retry_delay_orders_expiry_and_parent() {
+    for (parent_ms, sync, success) in [
+        (49, false, false),
+        (50, false, true),
+        (60, false, true),
+        (60, true, false),
+    ] {
+        let abort = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(abort.clone()),
+            ..StreamOptions::default()
+        };
+        let started = tokio::time::Instant::now();
+        let mut pending = Box::pin(delay(50.0, &options));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(70)).await;
+        if sync {
+            abort.abort();
+        } else {
+            abort.cancel_at(started + Duration::from_millis(parent_ms));
+        }
+        let result = poll_ready(pending.as_mut()).await;
+        assert_eq!(
+            result.is_ok(),
+            success,
+            "parent_ms={parent_ms}, sync={sync}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_overdue_retry_continuation_starts_next_attempt_before_later_abort() {
+    let (request, mut config) = stream_config();
+    let mut provider = field(field(&config, "providers"), "p").clone();
+    put(
+        &mut provider,
+        "retry",
+        parse_json(r#"{"baseDelayMs":50,"maxDelayMs":50,"jitter":0}"#).unwrap(),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), provider);
+    put(&mut config, "providers", JsValue::Object(providers));
+    let transport = Scripted(std::sync::Mutex::new(vec![
+        (429, vec![Some(b"{}")]),
+        (204, Vec::new()),
+    ]));
+    let abort = AbortFlag::new();
+    let options = StreamOptions {
+        abort: Some(abort.clone()),
+        ..StreamOptions::default()
+    };
+    let started = tokio::time::Instant::now();
+    let mut sink = |_| {};
+    let mut pending = Box::pin(stream_model(
+        &transport, &request, &config, &options, &mut sink,
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(70)).await;
+    abort.cancel_at(started + Duration::from_millis(60));
+    poll_ready(pending.as_mut()).await.unwrap();
+    assert!(
+        transport.0.lock().unwrap().is_empty(),
+        "retry's continuation must issue attempt two"
+    );
+}

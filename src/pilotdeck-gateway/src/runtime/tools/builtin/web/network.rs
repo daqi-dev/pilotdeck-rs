@@ -11,9 +11,7 @@
 //! `accept-language` and `accept-encoding` headers are not sent (see the
 //! fixture README).
 use crate::runtime::{
-    model::http::{
-        ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure, UNDICI_BODY_TIMEOUT_MS,
-    },
+    model::http::{ModelBody, ModelHttpTransport, NetworkFetchError, TransportFailure},
     tools::ToolRunContext,
 };
 use bytes::Bytes;
@@ -27,7 +25,7 @@ use tokio::time::Instant;
 /// this long fails like `TypeError: terminated`. It is an idle timer, not a
 /// total deadline — undici resets it on every chunk, so a steadily dripping
 /// body can outlive it (same probe).
-const BODY_TIMEOUT: Duration = Duration::from_millis(UNDICI_BODY_TIMEOUT_MS as u64);
+const BODY_TIMEOUT: Duration = crate::runtime::network::UNDICI_BODY_TIMEOUT;
 
 use crate::runtime::network::{Exchange, delay, exchange};
 pub use crate::runtime::network::{node_timer_delay_ms, node_timer_duration};
@@ -326,9 +324,15 @@ async fn retry_wait(
     {
         Exchange::Response((), before_abort) => Ok(before_abort),
         Exchange::Aborted => Err(abort_error("Network retry aborted.")),
-        Exchange::Timeout => Err(outer_deadline
-            .expect("only a surrounding deadline can time out a retry wait")
-            .error(options.timeout_ms)),
+        Exchange::Timeout => {
+            let outer =
+                outer_deadline.expect("only a surrounding deadline can time out a retry wait");
+            Err(if outer.parent {
+                abort_error("Network retry aborted.")
+            } else {
+                outer.error(options.timeout_ms)
+            })
+        }
     }
 }
 
