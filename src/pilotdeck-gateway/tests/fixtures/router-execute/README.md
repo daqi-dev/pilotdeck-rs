@@ -4,7 +4,7 @@
 
 ## 本轮证据边界
 
-本任务禁止任何 Git 命令，因此本轮没有运行 `generate.mts` 的干净树守卫。入库 `oracle.json` 是真实 TS 两次运行的相同输出；650 项源码 SHA256 逐项与既有 `router-decision` / `model-stream` 金样核对。它是既有溯源链的增量证据，**不是本轮重新证明基线干净**。协调者仍须按下述命令重新正式生成、逐字节比较。
+本轮沙箱录制按任务要求使用无 Git 守卫的直接 `record.mts` 路径，没有运行 `generate.mts` 的干净树守卫。入库 `oracle.json` 是真实 TS 两次运行的相同输出；650 项源码 SHA256 逐项与既有 `router-decision` / `model-stream` 金样核对。它是既有溯源链的增量证据，**不是本轮重新证明基线干净**。协调者仍须按下述命令重新正式生成、逐字节比较。
 
 本轮沙箱禁止 loopback `listen`（原生 Node 探针为 EPERM），因此 `--http` 的 TS 金样尚未生成。HTTP parity 测试显式 ignored，提供生成物后由协调者在允许监听的环境运行；缺文件直接失败，不能把 ignored 计作通过。Rust 另有正常执行的进程内故障注入测试，覆盖 HTTP 429、503、拒绝连接、断流、超时、取消，验证的是真实 `stream_model` + Router 路径。
 
@@ -36,10 +36,12 @@ env -u PDRS_BASELINE TMPDIR=/tmp PDRS_ROUTER_HTTP_ORACLE=/tmp/<owned-http-1>/htt
 
 ## 覆盖与比较
 
-- 32 个 execute 场景：前置 framing 丢弃、最终错误重复输出、五类（含空）content 锁定、SDK fallback 对 explicit / disabled 生效、项目链回退、策略拒绝和动态筛空、fallback 优先 transient retry、zero-usage 使用最后一次 usage、open 中间项跳过但首尾必试、媒体重排与降级、孤立 UTF-16 代理码元、取消、generation 捕获、网络异常、请求错误 details；新增无 usage 的 text/thinking/tool-call 拼接估算、usage 为 null/空对象/字段为 null/缺字段时估算，以及只有单侧有效 token 时原样保留 usage。
-- 8 个真实 `streamModel` 请求验证错误：content 路径的 unsupported_modality、unsupported_image_mime_type、image_too_large、pdf_too_large、audio_too_long，以及 Anthropic / OpenAI / Responses 的 unsupported_thinking；逐项比较 code、message、details，传输层一旦被调用即失败。
+- 34 个 execute 场景：前置 framing 丢弃、最终错误重复输出、五类（含空）content 锁定、SDK fallback 对 explicit / disabled 生效、项目链回退、策略拒绝和动态筛空、fallback 优先 transient retry、zero-usage 使用最后一次 usage、open 中间项跳过但首尾必试、媒体重排与降级、孤立 UTF-16 代理码元、取消、generation 捕获、网络异常、请求错误 details；新增无 usage 的 text/thinking/tool-call 拼接估算、usage 为 null/空对象/字段为 null/缺字段时估算，以及只有单侧有效 token 时原样保留 usage；NaN 双侧触发估算、单侧有效而另一侧 NaN 时保留原 usage。
+- 10 个真实 `streamModel` 请求验证错误：content 路径的 unsupported_modality、unsupported_image_mime_type、image_too_large、pdf_too_large、audio_too_long，以及 Anthropic / OpenAI / Responses / Google 的 unsupported_thinking。Google 两例分别为请求未设 mode、模型禁用 thinking（真实 TS details.thinkingMode 为 `off`），和请求显式 `high`、模型只支持 `low`（details 为 `high`）；Google 通过 canonical error 事件返回。逐项比较完整事件及错误对象（含 code、message、details/raw），传输层或 Google client 一旦被调用即失败。
 - 60 个错误准入组合；4 组逐步 health 轨迹；17 步 session / generation / dispose。health 冷却另用 Tokio 暂停时钟验证边界。
 - 7 个 HTTP 场景：429、503、拒绝连接、内容后断流、首 provider 超时后恢复、取消、整链失败。正式 Rust 回放复用 `common/model_mock.rs` 与 `HyperModelTransport`，比较全部 invocation calls、HTTP 请求体/头/顺序、canonical/router/health trace、最终错误与 session usage；保持中的响应还验证 clientClosed。
+- execute trace、eligibility、health 状态、validation code 各有一条金样篡改负控：先用同一个回放函数证明原样通过，再只改期望值，要求回放返回具体比较错误。
+- NaN 无法用标准 JSON 数字表达：`record.mts` 在真实 TS 输入中构造 `Number.NaN`，spec 的 `nanUsageFields` 登记需恢复的字段；JSON 序列化后这些数值为 null。Rust Invoker 在 usage 事件交给 Router 前恢复为 `JsValue::Number(f64::NAN)`；预期事件仍按真实 TS JSON 比较，保留 NaN 的 session usage 还单独断言原始数值确实是 NaN，不能用 null 冒充。其余 session usage 维持 JsValue 严格比较。
 - 全部序列以 JS JSON 字节保序比较，不排序事件。HTTP 只替换独占端口 origin，并去除两边统一登记的传输层头。默认健康状态、generation nullish 与数字/字符串同键，均保留 TS 行为。
 - `pilotdeck_router_fallback` 本身没有 `fallbackTier`；该字段属于 decide 的 `pilotdeck_router_decision_fallback`，继续由既有 `router-decision` 金样覆盖，本轮不造字段。
 

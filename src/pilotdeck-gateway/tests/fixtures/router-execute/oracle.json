@@ -2644,6 +2644,202 @@
     },
     {
       "spec": {
+        "name": "usage-estimate-nan",
+        "nanUsageFields": [
+          "inputTokens",
+          "outputTokens"
+        ],
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": null,
+                  "outputTokens": null
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": null,
+              "outputTokens": null
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 1,
+        "outputTokens": 1,
+        "totalTokens": 2
+      }
+    },
+    {
+      "spec": {
+        "name": "usage-preserve-partial-nan",
+        "nanUsageFields": [
+          "outputTokens"
+        ],
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": null
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [],
+      "trace": [
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": null
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "health",
+          "action": "recordSuccess",
+          "input": {
+            "sessionId": "s",
+            "providerId": "a"
+          }
+        }
+      ],
+      "sessionUsage": {
+        "inputTokens": 3,
+        "outputTokens": null
+      }
+    },
+    {
+      "spec": {
         "name": "fallback-framing",
         "scripts": [
           {
@@ -6310,6 +6506,232 @@
           "provider": "a",
           "model": "m",
           "thinkingMode": "high"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-thinking-google-unset",
+        "protocol": "google",
+        "thinking": {
+          "state": "disabled",
+          "efforts": [
+            "low"
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "google",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                },
+                "thinking": {
+                  "state": "disabled",
+                  "efforts": [
+                    "low"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "request_started",
+          "provider": "a",
+          "model": "m",
+          "providerBaseUrl": "http://a.test/v1",
+          "requestFingerprint": "c6e103ea7b9effc67dac74981c6f38f21b7f6b4ceb13f8c7e689a5785b53b64b"
+        },
+        {
+          "type": "error",
+          "error": {
+            "provider": "a",
+            "protocol": "google",
+            "code": "unsupported_thinking",
+            "message": "m: Turning off thinking is not supported by this effort-only Gemini adapter. Uncheck both thinking options to use the server default.",
+            "retryable": false,
+            "raw": {
+              "code": "unsupported_thinking",
+              "details": {
+                "provider": "a",
+                "model": "m",
+                "thinkingMode": "off"
+              },
+              "name": "ModelRequestError"
+            }
+          }
+        }
+      ],
+      "error": {
+        "provider": "a",
+        "protocol": "google",
+        "code": "unsupported_thinking",
+        "message": "m: Turning off thinking is not supported by this effort-only Gemini adapter. Uncheck both thinking options to use the server default.",
+        "retryable": false,
+        "raw": {
+          "code": "unsupported_thinking",
+          "details": {
+            "provider": "a",
+            "model": "m",
+            "thinkingMode": "off"
+          },
+          "name": "ModelRequestError"
+        }
+      }
+    },
+    {
+      "spec": {
+        "name": "unsupported-thinking-google-set",
+        "protocol": "google",
+        "thinking": {
+          "state": "enabled",
+          "efforts": [
+            "low"
+          ]
+        },
+        "requestThinking": {
+          "mode": "high"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "hello"
+          }
+        ]
+      },
+      "request": {
+        "provider": "a",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100,
+        "thinking": {
+          "mode": "high"
+        }
+      },
+      "config": {
+        "providers": {
+          "a": {
+            "id": "a",
+            "protocol": "google",
+            "url": "http://a.test/v1",
+            "apiKey": "fixture-key",
+            "models": {
+              "m": {
+                "id": "m",
+                "capabilities": {
+                  "supportsStreaming": true,
+                  "supportsToolUse": true,
+                  "supportsSystemPrompt": true,
+                  "maxOutputTokens": 64
+                },
+                "multimodal": {
+                  "input": [
+                    "text"
+                  ]
+                },
+                "thinking": {
+                  "state": "enabled",
+                  "efforts": [
+                    "low"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "request_started",
+          "provider": "a",
+          "model": "m",
+          "providerBaseUrl": "http://a.test/v1",
+          "requestFingerprint": "772134897afa69607620a2a83f0ed25c5219ed23dd03215d1a74a6890819e0ef"
+        },
+        {
+          "type": "error",
+          "error": {
+            "provider": "a",
+            "protocol": "google",
+            "code": "unsupported_thinking",
+            "message": "m: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+            "retryable": false,
+            "raw": {
+              "code": "unsupported_thinking",
+              "details": {
+                "provider": "a",
+                "model": "m",
+                "thinkingMode": "high"
+              },
+              "name": "ModelRequestError"
+            }
+          }
+        }
+      ],
+      "error": {
+        "provider": "a",
+        "protocol": "google",
+        "code": "unsupported_thinking",
+        "message": "m: Reasoning effort 'high' is not configured. Select Default or configure the model's supported efforts.",
+        "retryable": false,
+        "raw": {
+          "code": "unsupported_thinking",
+          "details": {
+            "provider": "a",
+            "model": "m",
+            "thinkingMode": "high"
+          },
+          "name": "ModelRequestError"
         }
       }
     }
