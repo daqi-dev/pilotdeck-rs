@@ -75,13 +75,21 @@ for (const preserve of [false,true]) scenarios.push({name:`close-preserve-${pres
 scenarios.push({name:'close-union-order',steps:[message(hello()),request('reconnect_interaction',{sessionKey:'interaction-first'}),
   {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey:'in-flight-first'}}},
   {op:'close'}, {op:'finish'}]});
+scenarios.push({name:'same-session-concurrent-submit-first-finishes-before-close',steps:[message(hello('sdk')),
+  {op:'start',slot:'first',frame:{type:'request',id:'first',method:'submit_turn',params:{sessionKey:'shared'}}},
+  {op:'start',slot:'second',frame:{type:'request',id:'second',method:'submit_turn',params:{sessionKey:'shared'}}},
+  {op:'finish',slot:'first'},
+  request('permission_decide',{sessionKey:'shared',requestId:'still-run'}),
+  {op:'close'}, {op:'finish',slot:'second'}]});
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
   const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [];
   const port = createNativeInteractionReconnectPort();
   const coordinator = new GatewayInteractionCoordinator({reconnectPort:port});
   const registrations: any[] = [];
-  let messageHandler: any, closeHandler: any, release: any, started: any, startedDescribe: any, releaseDescribe: any;
+  let messageHandler: any, closeHandler: any, startedDescribe: any, releaseDescribe: any;
+  const submits = new Map<string, {ready(): void, wait: Promise<void>, release(): void, operation?: Promise<any>}>();
+  let startingSlot: string | undefined;
   let held: Promise<any> | undefined;
   const text = {onMessage(h: any) {messageHandler=h;},onClose(h: any) {closeHandler=h;},
     sendText(s: string) {const frame=JSON.parse(s);frames.push(frame);if(frame.final===true)finalInFlight.push([...connection.inFlightSessions]);}, close(code: number, reason: string) {closes.push({code,reason});}};
@@ -101,7 +109,10 @@ for (const scenario of scenarios) {
       coordinator.reconnectForTurn(params.sessionKey,params.interactionBinding);
       if (scenario.preserve) registrations.push(coordinator.getPermissionBus().register(params.sessionKey,
         {requestId:'fixture-pending',toolCallId:'fixture-tool',toolName:'fixture',resolve() {},reject() {}}));
-      if (started) {started(); await new Promise<void>(r => {release=r;});}
+      if (startingSlot !== undefined) {
+        const gate = submits.get(startingSlot)!;
+        gate.ready(); await gate.wait;
+      }
       yield {type:'turn_completed',runId:'fixture-run'};
     },
   };
@@ -122,13 +133,24 @@ for (const scenario of scenarios) {
       const ready = new Promise<void>(r=>{startedDescribe=r;});messageHandler(JSON.stringify(step.frame));held=operation!;await ready;
     } else if (step.op === 'finish_hello') {releaseDescribe();await held;}
     else if (step.op === 'start') {
-      const ready = new Promise<void>(r => {started=r;});
-      messageHandler(JSON.stringify(step.frame)); held=operation!; await ready;
+      const slot = step.slot ?? 'default';
+      let ready!: () => void, release!: () => void;
+      const entered = new Promise<void>(r => {ready=r;});
+      const wait = new Promise<void>(r => {release=r;});
+      const gate = {ready,wait,release,operation:undefined as Promise<any> | undefined};
+      assert.ok(!submits.has(slot)); submits.set(slot,gate); startingSlot=slot;
+      messageHandler(JSON.stringify(step.frame)); gate.operation=operation!; await entered;
+      startingSlot=undefined;
     } else if (step.op === 'close') {closeHandler(); await operation!;}
-    else if (step.op === 'finish') {release();await held;started=undefined;}
+    else if (step.op === 'finish') {
+      const slot = step.slot ?? 'default'; const gate = submits.get(slot)!;
+      gate.release(); await gate.operation; submits.delete(slot);
+    }
     else throw new Error(step.op);
-    scenario.results.push(snapshot({frames,closes,calls,finalInFlight}));
+    scenario.results.push(snapshot({frames,closes,calls,finalInFlight,
+      inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions]}));
   }
+  assert.equal(submits.size,0);
   for (const registration of registrations) registration.dispose();
 }
 // Real provider, raw result shape. No pending consumer/producer is simulated.

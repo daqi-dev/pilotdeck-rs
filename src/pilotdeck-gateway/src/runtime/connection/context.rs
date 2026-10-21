@@ -7,12 +7,17 @@ pub(super) struct State {
     pub authed: bool,
     pub client_name: Option<String>,
     pub closed: bool,
-    // Insertion order is visible in handleClose's gateway calls.
-    pub in_flight: Vec<(String, u64)>,
+    // Insertion-ordered session sets, matching TS Set (including its
+    // unconditional session deletion when any concurrent submit completes).
+    pub in_flight: Vec<String>,
     pub interactions: Vec<String>,
-    pub ticket: u64,
 }
 impl State {
+    pub fn track_in_flight(&mut self, session: &str) {
+        if !self.in_flight.iter().any(|s| s == session) {
+            self.in_flight.push(session.to_owned());
+        }
+    }
     pub fn track_interaction(&mut self, session: &str) {
         if !session.is_empty() && !self.interactions.iter().any(|s| s == session) {
             self.interactions.push(session.to_owned());
@@ -57,7 +62,6 @@ impl State {
         let mut seen = BTreeSet::new();
         self.in_flight
             .iter()
-            .map(|(s, _)| s)
             .chain(self.interactions.iter())
             .filter(|s| seen.insert((*s).clone()))
             .cloned()

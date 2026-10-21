@@ -22,14 +22,7 @@ impl GatewayTextConnection for MemoryText {
                 .as_ref()
                 .and_then(std::sync::Weak::upgrade)
         {
-            let sessions = owner
-                .state
-                .lock()
-                .unwrap()
-                .in_flight
-                .iter()
-                .map(|(s, _)| s.clone())
-                .collect();
+            let sessions = owner.state.lock().unwrap().in_flight.clone();
             self.final_in_flight.lock().unwrap().push(sessions);
         }
         self.frames.lock().unwrap().push(frame);
@@ -49,6 +42,7 @@ struct Gateway {
     hold_describe: std::sync::atomic::AtomicBool,
     started: Semaphore,
     release: Semaphore,
+    submit_gates: Mutex<Vec<Arc<Semaphore>>>,
 }
 impl Gateway {
     fn new(preserve: bool) -> Self {
@@ -60,6 +54,7 @@ impl Gateway {
             hold_describe: std::sync::atomic::AtomicBool::new(false),
             started: Semaphore::new(0),
             release: Semaphore::new(0),
+            submit_gates: Mutex::new(vec![]),
         }
     }
     fn record(&self, method: &str, params: Value) {
@@ -137,8 +132,10 @@ impl ConnectionGateway for Gateway {
         Box::pin(async move {
             self.record("submit_turn", params);
             if self.hold.load(std::sync::atomic::Ordering::SeqCst) {
+                let release = Arc::new(Semaphore::new(0));
+                self.submit_gates.lock().unwrap().push(release.clone());
                 self.started.add_permits(1);
-                self.release.acquire().await.unwrap().forget();
+                release.acquire().await.unwrap().forget();
             }
             emit(json!({"type":"turn_completed","runId":"fixture-run"}));
             Ok(())
@@ -200,6 +197,7 @@ async fn replay() {
         let connection = Arc::new(connection);
         *text.owner.lock().unwrap() = Some(Arc::downgrade(&connection));
         let mut held = None;
+        let mut submissions = BTreeMap::new();
         for (step_index, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
             match step["op"].as_str().unwrap() {
                 "message" => connection
@@ -228,21 +226,29 @@ async fn replay() {
                         .store(true, std::sync::atomic::Ordering::SeqCst);
                     let conn = connection.clone();
                     let raw = step["frame"].to_string();
-                    held = Some(tokio::spawn(
-                        async move { conn.receive(&raw).await.unwrap() },
-                    ));
+                    let task = tokio::spawn(async move { conn.receive(&raw).await.unwrap() });
                     gateway.started.acquire().await.unwrap().forget();
+                    let release = gateway.submit_gates.lock().unwrap().last().unwrap().clone();
+                    let slot = step["slot"].as_str().unwrap_or("default");
+                    assert!(submissions.insert(slot, (release, task)).is_none());
                 }
                 "close" => connection.closed().await.unwrap(),
                 "finish" => {
-                    gateway.release.add_permits(1);
-                    held.take().unwrap().await.unwrap();
+                    let slot = step["slot"].as_str().unwrap_or("default");
+                    let (release, task) = submissions.remove(slot).unwrap();
+                    release.add_permits(1);
+                    task.await.unwrap();
                 }
                 op => panic!("unknown step {op}"),
             }
+            let (in_flight, interactions) = {
+                let state = connection.state.lock().unwrap();
+                (state.in_flight.clone(), state.interactions.clone())
+            };
             let actual = mask(
                 json!({"frames":*text.frames.lock().unwrap(), "closes":*text.closes.lock().unwrap(),
-                "calls":*gateway.calls.lock().unwrap(), "finalInFlight":*text.final_in_flight.lock().unwrap()}),
+                "calls":*gateway.calls.lock().unwrap(), "finalInFlight":*text.final_in_flight.lock().unwrap(),
+                "inFlight":in_flight,"interactions":interactions}),
                 &ids,
             );
             assert_eq!(
@@ -251,7 +257,13 @@ async fn replay() {
                 scenario["name"], step_index
             );
         }
+        assert!(submissions.is_empty());
     }
+}
+#[test]
+#[ignore = "requires PDRS_BASELINE and its installed TypeScript dependencies"]
+fn connection_context_fixtures_regenerate_identically_from_ts() {
+    crate::test_baseline::regenerates_identically("connection-context");
 }
 #[tokio::test]
 async fn connection_state_frames_match_ts() {
@@ -335,7 +347,7 @@ fn old_disconnect_cannot_remove_replacement_across_threads() {
     assert_eq!(bindings.current("s"), Some(new));
 }
 #[test]
-fn old_submit_cleanup_cannot_clear_new_ticket() {
+fn old_submit_cleanup_clears_session_across_threads() {
     let gateway = Arc::new(Gateway::new(false));
     gateway
         .hold
@@ -366,8 +378,9 @@ fn old_submit_cleanup_cannot_clear_new_ticket() {
         gate.wait();
         gate.wait();
         worker.join().unwrap();
-        assert_eq!(connection.state.lock().unwrap().in_flight.len(), 1);
-        assert_eq!(connection.state.lock().unwrap().in_flight[0].1, 2);
+        // TS finally deletes by session even while the newer submit is pending.
+        assert!(connection.state.lock().unwrap().in_flight.is_empty());
+        assert_eq!(connection.state.lock().unwrap().interactions, ["s"]);
         drop(new);
         assert!(connection.state.lock().unwrap().in_flight.is_empty());
     });
