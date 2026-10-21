@@ -4,10 +4,14 @@ import {Client} from 'pdrs:baseline-client';
 import {Server} from 'pdrs:baseline-server';
 import {InMemoryTransport} from 'pdrs:baseline-memory';
 import {ListToolsRequestSchema, CallToolRequestSchema} from 'pdrs:baseline-types';
-const [kind, rawRepeats] = process.argv.slice(2);
+const [kind, rawRepeats, subject = 'default', mode] = process.argv.slice(2);
 const repeats = Number(rawRepeats);
 if (!Number.isSafeInteger(repeats) || repeats < 0) throw Error('invalid repeats');
 const patterns = {
+  dot: '^.*$', negated: '^[^<>]*$', astralClass: '^[a😀]*$', negatedX: '^[^x]*$',
+  property: '^[\\p{L}\\p{Emoji}]*$', mixedGroup: '^(a|😀)*$',
+  mixedCounted: '^[a😀]{0,20000000}$', plus: '^[a😀]+$', openCounted: '^[a😀]{1,}$',
+  literal: '^a$', boundedClass: '^[a😀]{0,16}$',
   alt: '^(?:a|b)*$', capture: '^(a|b)*$', nested: '^((a)|(b))*c?$',
   look: '^(?:(?:a|b)(?=.))*.?$', cap: '^(ab)*$', optional: '^(?:ab?)*$',
   bounded: '^(?:a|b){1,20000000}$', unicode: '^(😀|😁)*$',
@@ -16,6 +20,12 @@ const patterns = {
   plain: '^[ab]*$', group: '^([ab]*)$', simple: '^(?:ab)*$',
 };
 const formats = {
+  time: ['12:00:00.', '0', 'Z', 'time'],
+  dateTime: ['2000-01-01T12:00:00.', '0', 'Z', 'date-time'],
+  isoTime: ['12:00:00.', '0', '', 'iso-time'],
+  isoDateTime: ['2000-01-01T12:00:00.', '0', '', 'iso-date-time'],
+  duration: ['P', '0', 'D', 'duration'],
+  hostname: ['', 'a', '', 'hostname'],
   email: ['', 'a.', 'a@example.com', 'email'],
   uri: ['x:', '/a', '', 'uri'],
   uriReference: ['x:', '/a', '', 'uri-reference'],
@@ -37,6 +47,11 @@ const schema = key
   ? {type: 'object', patternProperties: {'^(?:a|b)*$': kind === 'key' ? {type: 'number'} : {}},
     ...(kind === 'additionalKey' ? {additionalProperties: false} : {})}
   : {type: 'object', properties: {s: rule}};
+if (subject === 'mixed') unit = 'a😀';
+else if (subject === 'bmp') unit = 'aa';
+else if (subject !== 'default') throw Error('invalid subject');
+if (mode === 'invalid') suffix += kind === 'negated' ? '<' : kind === 'negatedX' ? 'x' : '\n!';
+else if (mode) throw Error('invalid mode');
 const text = prefix + unit.repeat(repeats) + suffix;
 const data = key ? {[text]: 1} : {s: text};
 const client = new Client({name: 'oracle', version: '1'});
