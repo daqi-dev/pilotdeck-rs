@@ -464,6 +464,64 @@ fn text_name(case: &JsValue) -> String {
 }
 
 #[tokio::test]
+async fn request_validation_details_match_real_ts() {
+    use pilotdeck_gateway::runtime::model::http::stream_model;
+    let oracle = baseline::oracle(ORACLE);
+    let cases = items(get(&oracle, "validationCases"));
+    assert_eq!(cases.len(), 8);
+    for case in cases {
+        let name = text_name(case);
+        let transport = Replies {
+            remaining: Mutex::new(VecDeque::new()),
+            requests: Arc::default(),
+        };
+        let mut events = Vec::new();
+        let error = stream_model(
+            &transport,
+            get(case, "request"),
+            get(case, "config"),
+            &StreamOptions::default(),
+            &mut |output| match output {
+                StreamOutput::Event(event) => events.push(event),
+                _ => panic!("unexpected validation stream output"),
+            },
+        )
+        .await
+        .unwrap_err();
+        let ModelStreamError::Request {
+            code,
+            message,
+            details,
+        } = error
+        else {
+            panic!("{name}: expected request validation, got {error:?}");
+        };
+        expected_bytes(
+            &JsValue::Array(events),
+            get(case, "events"),
+            &format!("{name} events"),
+        );
+        let expected = get(case, "error");
+        assert_eq!(
+            &code,
+            get(expected, "code").as_string().unwrap(),
+            "{name} code"
+        );
+        assert_eq!(
+            &message,
+            get(expected, "message").as_string().unwrap(),
+            "{name} message"
+        );
+        assert_eq!(
+            details.as_deref().unwrap(),
+            get(expected, "details"),
+            "{name} details"
+        );
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn request_validation_details_reach_the_router_canonical_error() {
     use pilotdeck_gateway::runtime::model::http::stream_model;
     let mut config = providers().as_object().unwrap().clone();

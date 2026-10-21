@@ -36,7 +36,8 @@ env -u PDRS_BASELINE TMPDIR=/tmp PDRS_ROUTER_HTTP_ORACLE=/tmp/<owned-http-1>/htt
 
 ## 覆盖与比较
 
-- 25 个 execute 场景：前置 framing 丢弃、最终错误重复输出、五类（含空）content 锁定、SDK fallback 对 explicit / disabled 生效、项目链回退、策略拒绝和动态筛空、fallback 优先 transient retry、zero-usage 使用最后一次 usage、open 中间项跳过但首尾必试、媒体重排与降级、孤立 UTF-16 代理码元、取消、generation 捕获、网络异常、请求错误 details。
+- 32 个 execute 场景：前置 framing 丢弃、最终错误重复输出、五类（含空）content 锁定、SDK fallback 对 explicit / disabled 生效、项目链回退、策略拒绝和动态筛空、fallback 优先 transient retry、zero-usage 使用最后一次 usage、open 中间项跳过但首尾必试、媒体重排与降级、孤立 UTF-16 代理码元、取消、generation 捕获、网络异常、请求错误 details；新增无 usage 的 text/thinking/tool-call 拼接估算、usage 为 null/空对象/字段为 null/缺字段时估算，以及只有单侧有效 token 时原样保留 usage。
+- 8 个真实 `streamModel` 请求验证错误：content 路径的 unsupported_modality、unsupported_image_mime_type、image_too_large、pdf_too_large、audio_too_long，以及 Anthropic / OpenAI / Responses 的 unsupported_thinking；逐项比较 code、message、details，传输层一旦被调用即失败。
 - 60 个错误准入组合；4 组逐步 health 轨迹；17 步 session / generation / dispose。health 冷却另用 Tokio 暂停时钟验证边界。
 - 7 个 HTTP 场景：429、503、拒绝连接、内容后断流、首 provider 超时后恢复、取消、整链失败。正式 Rust 回放复用 `common/model_mock.rs` 与 `HyperModelTransport`，比较全部 invocation calls、HTTP 请求体/头/顺序、canonical/router/health trace、最终错误与 session usage；保持中的响应还验证 clientClosed。
 - 全部序列以 JS JSON 字节保序比较，不排序事件。HTTP 只替换独占端口 origin，并去除两边统一登记的传输层头。默认健康状态、generation nullish 与数字/字符串同键，均保留 TS 行为。

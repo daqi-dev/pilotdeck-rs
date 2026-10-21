@@ -17,7 +17,7 @@ pub(crate) fn build_request(
     provider: &JsValue,
 ) -> Result<JsValue, ModelStreamError> {
     let plan = super::thinking::resolve(request, provider, model)?;
-    super::thinking::throw_if_unsupported(&plan)?;
+    super::thinking::throw_if_unsupported(&plan, request)?;
     let mut tools: Vec<JsValue> = array(field(request, "tools"))
         .iter()
         .map(|tool| {

@@ -84,7 +84,7 @@ pub(crate) fn build_request(
     provider: &JsValue,
 ) -> Result<JsValue, ModelStreamError> {
     let plan = super::thinking::resolve(request, provider, model)?;
-    super::thinking::throw_if_unsupported(&plan)?;
+    super::thinking::throw_if_unsupported(&plan, request)?;
     let input = responses_input(request).map_err(thrown)?;
     let max_output_tokens = match field(request, "maxOutputTokens") {
         JsValue::Undefined | JsValue::Null => {

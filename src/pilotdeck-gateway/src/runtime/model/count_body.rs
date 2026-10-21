@@ -218,7 +218,7 @@ fn thinking(
         provider
     };
     let plan = super::providers::thinking::resolve(request, provider, model).map_err(to_host)?;
-    super::providers::thinking::throw_if_unsupported(&plan).map_err(to_host)?;
+    super::providers::thinking::throw_if_unsupported(&plan, request).map_err(to_host)?;
     Ok(if anthropic {
         plan.thinking_type
             .map_or(JsValue::Undefined, |kind| object([("type", kind.into())]))

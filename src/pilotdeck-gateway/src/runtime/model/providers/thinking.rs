@@ -304,13 +304,28 @@ pub(crate) fn resolve(
 }
 
 /// `throwIfUnsupportedThinkingPlan(plan, request)`.
-pub(crate) fn throw_if_unsupported(plan: &ThinkingPlan) -> Result<(), ModelStreamError> {
+pub(crate) fn throw_if_unsupported(
+    plan: &ThinkingPlan,
+    request: &JsValue,
+) -> Result<(), ModelStreamError> {
     match &plan.unsupported_reason {
-        Some(reason) => Err(ModelStreamError::Request {
-            code: "unsupported_thinking".into(),
-            message: reason.clone(),
-            details: None,
-        }),
+        Some(reason) => {
+            let mut details = JsObject::new();
+            details.insert("provider".into(), field(request, "provider").clone());
+            details.insert("model".into(), field(request, "model").clone());
+            details.insert(
+                "thinkingMode".into(),
+                plan.mode
+                    .clone()
+                    .map(JsValue::String)
+                    .unwrap_or(JsValue::Undefined),
+            );
+            Err(ModelStreamError::Request {
+                code: "unsupported_thinking".into(),
+                message: reason.clone(),
+                details: Some(Box::new(JsValue::Object(details))),
+            })
+        }
         None => Ok(()),
     }
 }
@@ -319,6 +334,25 @@ pub(crate) fn throw_if_unsupported(plan: &ThinkingPlan) -> Result<(), ModelStrea
 mod tests {
     use super::*;
     use pilotdeck_protocol::parse_json;
+
+    #[test]
+    fn unsupported_details_keep_the_request_and_undefined_mode() {
+        let request = parse_json(r#"{"provider":"custom","model":"alias"}"#).unwrap();
+        let plan = ThinkingPlan {
+            unsupported_reason: Some("unsupported".into()),
+            ..ThinkingPlan::default()
+        };
+        let ModelStreamError::Request {
+            details: Some(details),
+            ..
+        } = throw_if_unsupported(&plan, &request).unwrap_err()
+        else {
+            panic!("expected thinking request details");
+        };
+        assert_eq!(details.get("provider"), request.get("provider"));
+        assert_eq!(details.get("model"), request.get("model"));
+        assert_eq!(details.get("thinkingMode"), Some(&JsValue::Undefined));
+    }
 
     fn resolve_model(model_json: &str) -> Result<ThinkingPlan, ModelStreamError> {
         let request = parse_json(r#"{"thinking":{"mode":"high"}}"#).unwrap();
