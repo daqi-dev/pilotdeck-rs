@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 16:00 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | review | ready | PR #391 head 62d03c7（已 rebase 到含 #402 的 main，决策记录随之入树）；r10 两家无 P0/P1，r11（账本改登 gateway）Grok 0/0/0/0；gate10 的 P1×2 均为「决策记录不在树内」，rebase 后已解；全量 gate11 在跑、GLM r11 在跑，过后改 Ready 入队
-- #396 | impl | ready | PR #403：r5 两家无 P0/P1（平局 < 经内存 HTTP + 真实 TCP 默认 600000 三协议定案；近平局窗口拆 #411）；gate3 P1（headers 与首块同到时 provider / MCP 丢 before_abort）+ 同文件 P2×2，codex 修复轮 5 在跑；token_accounting 拆 #410
-- #386 | review | ready | PR #407：r2 Grok 0/0/2/2——护栏可被 #[expect(unsafe_code)] 与 unsafe /* */ { 绕过、扫描漏 tests/；codex 修复轮 2 在跑；GLM r2 在跑
+updated: 2026-10-21 16:08 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | review | ready | PR #391 head 8847d43（README 末段更正）；gate11 全量 0/0/3（README 已修，dispose 与编译失败负控记 #401）；增量 gate12 与 GLM r11 在跑；check_frozen 两本均 PASS（`_tmp/20261020-a65-pr10b/check-frozen-8847d43.txt`），过后贴正文、改 Ready、入队
+- #396 | review | ready | PR #403 修复轮 5 提交 98d762a（before_abort 传进 provider / google / MCP 正文首读，legacy 与 SSE 重连接入共享机制，10 回归 10 负控）；沙箱外全量在跑，TCP 补验待协调者跑
+- #386 | review | ready | PR #407：GLM r2 0/0/0/3、Grok r2 0/0/2/2；护栏绕过的修复轮 2 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | impl | ready | #405 A7.1-pr1 已合入；codex 在 wt-a63-pr1（codex/a7-1-pr2）做 live session handle 与 runtime 生命周期（`_tmp/20261021-a7-1-pr2/task.status`）
-- A6.5-pr9b | review | ready | PR #406 head 434b8c8（rebase 到含 #402 的 main）；r4 Grok P1「人批记录不在仓」已随 #402 合入解决；全量 gate2 在跑、GLM r4 在跑
+- A7.1-pr2 | impl | ready | codex 交付并提交 524e5b5（owner / handle、17 场景真实 TS、8/8 负控、多线程旧 abort 0/100）；沙箱外全量在跑，过后开 PR、派评审
+- A6.5-pr9b | review | ready | PR #406 head 434b8c8；GLM r4 两条 P1（决策记录不在树、缺 check_frozen 原始输出）——前者 rebase 后已解，后者原始输出 `_tmp/20261021-a65-pr9b/check-frozen-434b8c8.txt` 待贴正文；全量 gate2 在跑
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
