@@ -1,24 +1,32 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 01:57 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.4-pr8 | review | ready | PR #395 已开 auto-merge（head c398aa0），四轮两家与 gate4 均 0/0；入队后核 MERGED 与邮箱
-- A6.5-pr9 | impl | ready | head 979344b；沙箱外 842/0；Grok r7 P1×1（web-tools generate.mts:237 断言仍为 41，实际 43，README 重生成跑不通，一行修）+ P2×1；GLM r7 在跑；gate6 P1 属 main 既有行为，已拆 #396（决策卡 decisions-20261021）。等 GLM r7 结束后改那一行、重生成两次、推送，再审增量
-- A6.5-pr10b | impl | ready | PR #391 Draft，head 756a408；Grok r7 P1（Ajv 断点随 schema 形状下降到约 2700 层）+ gate6 P1（bash timer_delay，即 #392）；codex 修复轮 7 在跑（`_tmp/20261020-a65-pr10b/fix7.md`）。深度上限已是第三次出问题，这轮不过即挂起
-- A6.5-pr9b | impl | ready | 已推送 c9f29d7，叠在 pr9 上；pr9 合入后 rebase 再评审
-- A6.4-pr9 | impl | ready | fallback/health/stats + usage 投影；pr8 合入后开工
-- #396 | impl | ready | provider / hooks / count_http 改用共享 exchange 判定与 bodyTimeout（P1 口径，前置于 A6.4、A6.7 收尾）
-- #386 | impl | ready | 子进程未重置继承的信号处置（SIGINT 被忽略时后台任务退出状态与 TS 不一致）
-- 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate 失败，非产品代码，低优先级
-- gate-#275 | coord | blocked | #275 闸门作者谱系：draft，待非 draft 后处理
-- #150 | coord | human | draft PR，待人定
-- #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）
-- D4 | impl | blocked | 已人批（10-15 D4→B）；待 A5.4 定标时排期
-- #144-triage | coord | human | 人定暂缓（10-17，里程碑复查）
-- 167-ruler-a4 | coord | human | 人定暂缓（10-17，里程碑复查）
-- accepted-diffs-4-5 | coord | human | #372 已合入的两条「待批」条目（handshakeClose、background-task-async-spawn），等人批
-- A6.6-pr10 | impl | human | EdgeClaw memory core：sqlite 依赖待人批、D6
+updated: 2026-10-21 09:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9 | review | ready | PR #398，head ac87059；八轮GLM/Grok 0/0，gate7 P2×5待三分处理
+- A6.5-pr10b | review | ready | PR #391，head e5cf875；八轮GLM 0/0，gate7剩P2×2(concurrency+transport延迟),Grok r8需重跑
+- A6.5-pr9b | impl | ready | 已推送 c9f29d7，叠在 pr9 上；pr9 (#398) 合入后 rebase 再评审
+- A6.4-pr9a | impl | hold | fallback+health已交付候选(codex,805/14),缺正式溯源守卫与真实HTTP金样对拍,不标READY;pr9b(stats+usage)未启动
+- #396 | impl | ready | provider/hooks/count_http改用共享exchange判定与bodyTimeout(P1口径,前置于A6.4、A6.7收尾)
+- #386 | impl | ready | 子进程未重置继承的信号处置(SIGINT被忽略时后台任务退出状态与TS不一致)
+- 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码,低优先级
+- gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
+- #150 | coord | human | draft PR,待人定
+- #19 | coord | human | 人定暂缓(10-17,阻塞节点:关#19／阶段C 53/53标完成)
+- D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
+- #144-triage | coord | human | 人定暂缓(10-17,里程碑复查)
+- 167-ruler-a4 | coord | human | 人定暂缓(10-17,里程碑复查)
+- accepted-diffs-4-5 | coord | human | #372已合入的两条「待批」条目(handshakeClose、background-task-async-spawn),等人批
+- A6.6-pr10 | impl | human | EdgeClaw memory core:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 09:50 · /loop 协调轮(磁盘满清理后)
+> **合并**:#395 A6.4-pr8(google provider)已合入,提交邮箱仍是账号主邮箱。
+> **开PR**:#398 A6.5-pr9(web与MCP共享网络判定),#391 A6.5-pr10b(outputSchema深度预算)。
+> **pr9八轮收敛**:ac87059(补URL 2000边界用例),GLM/Grok r8各0/0,gate7 P2×5待三分。验证845/0。
+> **pr10b八轮收敛**:e5cf875(合并常量、复用resolve_process_path),GLM r8 0/0,gate7剩P2×2,Grok r8只收到任务需重跑。
+> **A6.4-pr9a交付候选**:fallback+health代码已落地(codex,wt-a66-pr3),805通过/14监听失败;缺正式溯源守卫与真实HTTP金样对拍,不标READY;pr9b(stats+usage)未启动。
+> **磁盘清理**:99%满时清理wt-a6-x0和wt-a65-pr10b编译缓存约12GiB,现剩22GiB。决策卡decisions-20261021.md追加pr9同源遗漏拆单与pr10b深度预算向严差异两张卡(AI代批,待人复核)。
+> **资源**:磁盘22GiB余;worktree 12/12;无后台编译进程。DeepSeek dsh key失效,实现全派codex;评审GLM+Grok。
 
 > ## 2026-10-21 01:57 · /loop 两小时交接（自 10-20 23:56 起）
 > **合并**：#385、#388 A6.6-pr8b、#393。#395 A6.4-pr8 已开 auto-merge，四轮收敛。
