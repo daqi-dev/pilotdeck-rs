@@ -248,6 +248,18 @@ pub(crate) async fn exchange<T: Send + 'static>(
     parent_event_at: impl Fn() -> Option<Instant>,
     deadline: Option<Instant>,
 ) -> Exchange<T> {
+    exchange_continuing(send, abort, parent_event_at, deadline, false).await
+}
+
+/// Carry an earlier timer's queued continuation into the next exchange. A
+/// pending first poll yields to cancellation, exactly as for a body frame.
+pub(crate) async fn exchange_continuing<T: Send + 'static>(
+    send: ExchangeFuture<T>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    deadline: Option<Instant>,
+    continuation_before_abort: bool,
+) -> Exchange<T> {
     let scheduled_at = send.scheduled_at();
     let microtask = send.is_microtask();
     dispatch(
@@ -257,7 +269,7 @@ pub(crate) async fn exchange<T: Send + 'static>(
         deadline,
         scheduled_at,
         microtask,
-        false,
+        continuation_before_abort,
     )
     .await
 }

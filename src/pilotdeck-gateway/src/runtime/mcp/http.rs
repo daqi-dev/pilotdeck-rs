@@ -24,7 +24,7 @@ use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
     model::http::retry_after_header_ms,
-    network::{Exchange, ExchangeFuture, delay, exchange, node_timer_duration},
+    network::{Exchange, ExchangeFuture, delay, exchange_continuing, node_timer_duration},
     tools::ToolCancellation,
 };
 use crate::{fetch_redirect, js_value};
@@ -230,6 +230,7 @@ where
 async fn legacy_post_response<B>(
     response: hyper::Response<B>,
     aborted: &ToolCancellation,
+    before_abort: bool,
 ) -> Result<(), McpClientError>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
@@ -239,11 +240,14 @@ where
     if status.is_success() {
         return Ok(());
     }
-    let bytes = tokio::select! {
-        biased;
-        _ = aborted.cancelled() => Err(fetch_redirect::BodyError::Terminated),
-        bytes = fetch_redirect::read_body(response.into_body(), fetch_redirect::MAX_STRING_LENGTH, Some(crate::runtime::network::UNDICI_BODY_TIMEOUT)) => bytes,
-    };
+    let bytes = fetch_redirect::read_body_with_signal(
+        response.into_body(),
+        fetch_redirect::MAX_STRING_LENGTH,
+        Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
+        Some(aborted),
+        before_abort,
+    )
+    .await;
     let text = bytes
         .map(|bytes| decode_text(&bytes))
         .map_err(|error| match error {
@@ -303,6 +307,7 @@ enum Fetch {
     Plain,
 }
 
+#[allow(clippy::too_many_arguments)] // Request fields plus the incoming timer continuation.
 async fn network_fetch(
     client: &HttpClient,
     method: Method,
@@ -311,33 +316,52 @@ async fn network_fetch(
     body: Option<String>,
     mode: Fetch,
     aborted: &ToolCancellation,
-) -> Result<hyper::Response<Incoming>, McpClientError> {
-    network_fetch_with(method.clone(), mode, aborted, || {
-        let (client, method, url, headers, body) = (
-            client.clone(),
-            method.clone(),
-            url.clone(),
-            headers.clone(),
-            body.clone(),
-        );
-        ExchangeFuture::io(async move { fetch_once(&client, method, &url, &headers, body).await })
-    })
+    continuation_before_abort: bool,
+) -> Result<hyper::Response<(Incoming, bool)>, McpClientError> {
+    network_fetch_continuing_with(
+        method.clone(),
+        mode,
+        aborted,
+        continuation_before_abort,
+        || {
+            let (client, method, url, headers, body) = (
+                client.clone(),
+                method.clone(),
+                url.clone(),
+                headers.clone(),
+                body.clone(),
+            );
+            ExchangeFuture::io(
+                async move { fetch_once(&client, method, &url, &headers, body).await },
+            )
+        },
+    )
     .await
 }
 
-/// Same policy as the socket path, with observable settlement for deterministic tests.
+#[cfg(test)]
 async fn network_fetch_with<B: Send + 'static>(
     method: Method,
     mode: Fetch,
     aborted: &ToolCancellation,
+    send: impl FnMut() -> ExchangeFuture<Result<hyper::Response<B>, McpClientError>>,
+) -> Result<hyper::Response<(B, bool)>, McpClientError> {
+    network_fetch_continuing_with(method, mode, aborted, false, send).await
+}
+
+/// Same policy as the socket path, with observable settlement for deterministic tests.
+async fn network_fetch_continuing_with<B: Send + 'static>(
+    method: Method,
+    mode: Fetch,
+    aborted: &ToolCancellation,
+    mut continuation_before_abort: bool,
     mut send: impl FnMut() -> ExchangeFuture<Result<hyper::Response<B>, McpClientError>>,
-) -> Result<hyper::Response<B>, McpClientError> {
+) -> Result<hyper::Response<(B, bool)>, McpClientError> {
     let (timeout_ms, retries) = match mode {
         Fetch::Network { timeout_ms } => (timeout_ms, true),
         Fetch::Plain => (0.0, false),
     };
     let retryable_method = retries && method == Method::GET;
-    let mut continuation_before_abort = false;
     for attempt in 0..=1 {
         if !continuation_before_abort && aborted.is_cancelled() {
             return Err(network_error(
@@ -347,11 +371,12 @@ async fn network_fetch_with<B: Send + 'static>(
         }
         let deadline = (timeout_ms > 0.0)
             .then(|| tokio::time::Instant::now() + node_timer_duration(timeout_ms));
-        let outcome = match exchange(
+        let outcome = match exchange_continuing(
             send(),
             aborted.cancelled(),
             || aborted.abort_event_at(),
             deadline,
+            continuation_before_abort,
         )
         .await
         {
@@ -381,7 +406,7 @@ async fn network_fetch_with<B: Send + 'static>(
                 drop(response);
                 retry_delay(retry_after.as_deref())
             }
-            Ok(response) => return Ok(response),
+            Ok(response) => return Ok(response.map(|body| (body, continuation_before_abort))),
             Err(error) => {
                 let code = error.code().cloned();
                 let retryable = !matches!(
@@ -601,7 +626,11 @@ thread_local! {
 /// Both streamable response.text() and response.json() use undici's body
 /// idle timer and V8 string bound. Their callers retain the SDK's distinct
 /// failure projection (error POST substitutes null; JSON propagates failure).
-async fn streamable_text<B>(body: B, aborted: &ToolCancellation) -> Result<String, McpClientError>
+async fn streamable_text<B>(
+    body: B,
+    aborted: &ToolCancellation,
+    before_abort: bool,
+) -> Result<String, McpClientError>
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
@@ -611,7 +640,7 @@ where
         string_limit(),
         Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
         Some(aborted),
-        false,
+        before_abort,
     )
     .await
     .map(|bytes| decode_text(&bytes))
@@ -628,13 +657,14 @@ where
 async fn streamable_error_response<B>(
     response: hyper::Response<B>,
     aborted: &ToolCancellation,
+    before_abort: bool,
 ) -> McpClientError
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
 {
     let status = response.status();
-    let text = streamable_text(response.into_body(), aborted)
+    let text = streamable_text(response.into_body(), aborted, before_abort)
         .await
         .unwrap_or_else(|_| "null".into());
     http_error(
@@ -648,12 +678,12 @@ where
 async fn read_events<B: hyper::body::Body<Data = Bytes>>(
     body: B,
     aborted: &ToolCancellation,
+    mut continuation: bool,
     mut on_item: impl FnMut(SseItem),
 ) -> bool {
     let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
-    let mut continuation = false;
     loop {
         let frame = match crate::runtime::network::body_frame(
             &mut body,
@@ -677,7 +707,7 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
                     }
                     for item in items {
                         on_item(item);
-                        if aborted.is_cancelled() {
+                        if !continuation && aborted.is_cancelled() {
                             return false;
                         }
                     }
@@ -802,9 +832,12 @@ impl HttpLink {
                 timeout_ms: self.post_timeout_ms,
             },
             &self.aborted,
+            false,
         )
         .await
         .map_err(strip_cause)?;
+        let before_abort = response.body().1;
+        let response = response.map(|(body, _)| body);
         if let Some(session) =
             header_value(response.headers(), "mcp-session-id").filter(|s| !s.is_empty())
         {
@@ -812,7 +845,7 @@ impl HttpLink {
         }
         let status = response.status();
         if !status.is_success() {
-            return Err(streamable_error_response(response, &self.aborted).await);
+            return Err(streamable_error_response(response, &self.aborted, before_abort).await);
         }
         if status == StatusCode::ACCEPTED {
             drop(response);
@@ -822,7 +855,7 @@ impl HttpLink {
                 .is_some_and(|method| method.equals_str("notifications/initialized"))
                 && message.get("id").is_none();
             if initialized {
-                tokio::spawn(start_sse(Arc::downgrade(wire), None));
+                tokio::spawn(start_sse(Arc::downgrade(wire), None, before_abort));
             }
             return Ok(());
         }
@@ -837,12 +870,13 @@ impl HttpLink {
             tokio::spawn(handle_sse_stream(
                 Arc::downgrade(wire),
                 response.into_body(),
+                before_abort,
                 false,
             ));
             return Ok(());
         }
         if content.contains("application/json") {
-            let text = streamable_text(response.into_body(), &self.aborted).await?;
+            let text = streamable_text(response.into_body(), &self.aborted, before_abort).await?;
             if let Some(message) = json_syntax::parse_error(&text) {
                 return Err(McpClientError::plain("SyntaxError", message));
             }
@@ -887,13 +921,16 @@ impl HttpLink {
             Some(body),
             Fetch::Plain,
             &self.aborted,
+            false,
         )
         .await
         .map_err(|error| {
             let (message, _) = fetch_message(&error);
             McpClientError::plain("TypeError", message.to_owned())
         })?;
-        legacy_post_response(response, &self.aborted).await
+        let before_abort = response.body().1;
+        let response = response.map(|(body, _)| body);
+        legacy_post_response(response, &self.aborted, before_abort).await
     }
 
     /// `_getNextReconnectionDelay(attempt)`.
@@ -913,7 +950,11 @@ fn link_of(wire: &Arc<Wire>) -> &HttpLink {
 
 /// `_startOrAuthSse({ resumptionToken })`: open the GET event stream; a 405
 /// means the server offers none. Errors only reach `onerror`.
-async fn start_sse(wire: Weak<Wire>, resumption: Option<String>) -> Result<(), McpClientError> {
+async fn start_sse(
+    wire: Weak<Wire>,
+    resumption: Option<String>,
+    continuation_before_abort: bool,
+) -> Result<(), McpClientError> {
     let Some(strong) = wire.upgrade() else {
         return Ok(());
     };
@@ -933,8 +974,11 @@ async fn start_sse(wire: Weak<Wire>, resumption: Option<String>) -> Result<(), M
             timeout_ms: link.get_timeout_ms,
         },
         &link.aborted,
+        continuation_before_abort,
     )
     .await?;
+    let before_abort = response.body().1;
+    let response = response.map(|(body, _)| body);
     let status = response.status();
     if !status.is_success() {
         if status == StatusCode::METHOD_NOT_ALLOWED {
@@ -949,12 +993,22 @@ async fn start_sse(wire: Weak<Wire>, resumption: Option<String>) -> Result<(), M
         ));
     }
     drop(strong);
-    tokio::spawn(handle_sse_stream(wire, response.into_body(), true));
+    tokio::spawn(handle_sse_stream(
+        wire,
+        response.into_body(),
+        before_abort,
+        true,
+    ));
     Ok(())
 }
 
 /// `_handleSseStream(stream, options, isReconnectable)`.
-async fn handle_sse_stream(wire: Weak<Wire>, body: Incoming, reconnectable: bool) {
+async fn handle_sse_stream(
+    wire: Weak<Wire>,
+    body: Incoming,
+    before_abort: bool,
+    reconnectable: bool,
+) {
     let Some(strong) = wire.upgrade() else {
         return;
     };
@@ -963,7 +1017,7 @@ async fn handle_sse_stream(wire: Weak<Wire>, body: Incoming, reconnectable: bool
     let mut last_event_id: Option<String> = None;
     let mut primed = false;
     let mut received_response = false;
-    read_events(body, &aborted, |item| {
+    read_events(body, &aborted, before_abort, |item| {
         let Some(wire) = wire.upgrade() else {
             return;
         };
@@ -1005,14 +1059,33 @@ fn schedule_reconnection(wire: Weak<Wire>, resumption: Option<String>, attempt: 
     let aborted = link.aborted.clone();
     drop(strong);
     tokio::spawn(async move {
-        tokio::select! {
-            _ = tokio::time::sleep(delay) => {}
-            _ = aborted.cancelled() => return,
-        }
-        if start_sse(wire.clone(), resumption.clone()).await.is_err() {
+        let Some(before_abort) = reconnect_wait(delay, &aborted).await else {
+            return;
+        };
+        if start_sse(wire.clone(), resumption.clone(), before_abort)
+            .await
+            .is_err()
+        {
             schedule_reconnection(wire, resumption, attempt + 1);
         }
     });
+}
+
+/// All SSE reconnect paths share the same ordered, cancellable timer.
+async fn reconnect_wait(duration: Duration, aborted: &ToolCancellation) -> Option<bool> {
+    match delay(
+        duration,
+        aborted.cancelled(),
+        || aborted.abort_event_at(),
+        None,
+        false,
+    )
+    .await
+    {
+        Exchange::Response((), before_abort) => Some(before_abort),
+        Exchange::Aborted => None,
+        Exchange::Timeout => unreachable!("SSE reconnect has no surrounding deadline"),
+    }
 }
 
 fn settle(
@@ -1029,6 +1102,7 @@ fn settle(
 async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpClientError>>) {
     let mut ready = Some(ready);
     let mut interval = Duration::from_millis(EVENT_SOURCE_RECONNECT_MS);
+    let mut continuation_before_abort = false;
     let sse_error =
         |message: String| McpClientError::plain("Error", format!("SSE error: {message}"));
     loop {
@@ -1036,7 +1110,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
             return;
         };
         let link = link_of(&strong);
-        if link.is_aborted() {
+        if !continuation_before_abort && link.is_aborted() {
             return;
         }
         let mut headers = link.common_headers();
@@ -1049,6 +1123,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
             None,
             Fetch::Plain,
             &link.aborted,
+            continuation_before_abort,
         )
         .await;
         let response = match fetched {
@@ -1066,11 +1141,17 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
                     settle(&mut ready, Err(sse_error(message)));
                     return;
                 }
+                let aborted = link.aborted.clone();
                 drop(strong);
-                tokio::time::sleep(interval).await;
+                let Some(before_abort) = reconnect_wait(interval, &aborted).await else {
+                    return;
+                };
+                continuation_before_abort = before_abort;
                 continue;
             }
         };
+        let before_abort = response.body().1;
+        let response = response.map(|(body, _)| body);
         let status = response.status();
         let fail = if status == StatusCode::NO_CONTENT {
             Some("Server sent HTTP 204, not reconnecting".to_owned())
@@ -1091,17 +1172,25 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         let aborted = link.aborted.clone();
         let base = link.url.clone();
         drop(strong);
-        let retry = legacy_stream(&wire, response.into_body(), &aborted, &base, &mut ready).await;
+        let retry = legacy_stream(
+            &wire,
+            response.into_body(),
+            &aborted,
+            &base,
+            &mut ready,
+            before_abort,
+        )
+        .await;
         if aborted.is_cancelled() {
             return;
         }
         if let Some(ms) = retry {
             interval = super::wire::node_delay(ms);
         }
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {}
-            _ = aborted.cancelled() => return,
-        }
+        let Some(before_abort) = reconnect_wait(interval, &aborted).await else {
+            return;
+        };
+        continuation_before_abort = before_abort;
     }
 }
 
@@ -1113,10 +1202,11 @@ async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
     aborted: &ToolCancellation,
     base: &Url,
     ready: &mut Option<oneshot::Sender<Result<(), McpClientError>>>,
+    before_abort: bool,
 ) -> Option<f64> {
     let mut retry = None;
     let mut endpoint_failure = None;
-    read_events(body, aborted, |item| {
+    read_events(body, aborted, before_abort, |item| {
         let Some(wire) = wire.upgrade() else {
             return;
         };
@@ -1194,6 +1284,181 @@ mod tests {
         .await
     }
 
+    /// The fetch result carries headers ordering through JSON, SSE and both
+    /// POST-error projections. No socket or wall-clock scheduling is involved.
+    async fn assert_headers_reach_body(kind: &str) {
+        use http_body_util::combinators::BoxBody;
+        for (parent_ms, sync, stalled, expected) in [
+            (30, false, false, true),
+            (10, false, false, false),
+            (30, true, false, false),
+            (30, false, true, false),
+        ] {
+            let signal = ToolCancellation::new();
+            let started = tokio::time::Instant::now();
+            let mut pending = Box::pin(network_fetch_with(
+                Method::POST,
+                Fetch::Plain,
+                &signal,
+                || {
+                    let body: BoxBody<Bytes, std::convert::Infallible> = if stalled {
+                        StalledBody.boxed()
+                    } else {
+                        Full::new(Bytes::from_static(if kind == "sse" {
+                            b"data: FIRST\n\ndata: SECOND\n\n"
+                        } else {
+                            b"FIRST"
+                        }))
+                        .boxed()
+                    };
+                    ExchangeFuture::after(
+                        Duration::from_millis(20),
+                        Ok(hyper::Response::builder()
+                            .status(if kind.ends_with("error") { 400 } else { 200 })
+                            .body(body)
+                            .unwrap()),
+                    )
+                },
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(70)).await;
+            if sync {
+                signal.cancel_synchronously();
+            } else {
+                signal.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            let fetched = poll_ready(pending.as_mut()).await;
+            if let Err(error) = fetched {
+                assert!(!expected);
+                assert_eq!(error.code(), Some(&McpErrorCode::Text("network_abort")));
+                continue;
+            }
+            let response = fetched.unwrap();
+            let before_abort = response.body().1;
+            let response = response.map(|(body, _)| body);
+            let text = match kind {
+                "json" => streamable_text(response.into_body(), &signal, before_abort)
+                    .await
+                    .ok(),
+                "streamable-error" => Some(
+                    streamable_error_response(response, &signal, before_abort)
+                        .await
+                        .to_string(),
+                ),
+                "legacy-error" => Some(
+                    legacy_post_response(response, &signal, before_abort)
+                        .await
+                        .unwrap_err()
+                        .to_string(),
+                ),
+                "sse" => {
+                    let mut events = Vec::new();
+                    read_events(response.into_body(), &signal, before_abort, |event| {
+                        events.push(event)
+                    })
+                    .await;
+                    if expected {
+                        assert_eq!(
+                            events.len(),
+                            2,
+                            "one ready frame drains both events before the later timer"
+                        );
+                    }
+                    Some(format!("{events:?}"))
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                text.as_deref().is_some_and(|s| s.contains("FIRST")),
+                expected,
+                "kind={kind}, sync={sync}, stalled={stalled}: {text:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn streamable_headers_continue_into_json() {
+        assert_headers_reach_body("json").await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn streamable_headers_continue_into_error_text() {
+        assert_headers_reach_body("streamable-error").await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn streamable_headers_continue_into_sse() {
+        assert_headers_reach_body("sse").await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn legacy_headers_continue_into_error_text() {
+        assert_headers_reach_body("legacy-error").await;
+    }
+
+    /// Covers the timer shared by streamable reconnection, EventSource EOF
+    /// and EventSource fetch failure. Poll once at a time: bare sleep must not
+    /// hide cancellation through paused-time auto-advance.
+    #[tokio::test(start_paused = true)]
+    async fn sse_reconnect_wait_orders_timer_and_abort() {
+        for (parent_ms, sync, expected) in [
+            (10, false, None),
+            (20, false, Some(true)),
+            (30, false, Some(true)),
+            (30, true, None),
+        ] {
+            let signal = ToolCancellation::new();
+            let started = tokio::time::Instant::now();
+            let mut wait = Box::pin(reconnect_wait(Duration::from_millis(20), &signal));
+            poll_pending(wait.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(70)).await;
+            if sync {
+                signal.cancel_synchronously();
+            } else {
+                signal.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            assert_eq!(
+                poll_ready(wait.as_mut()).await,
+                expected,
+                "parent={parent_ms}, sync={sync}"
+            );
+        }
+        let signal = ToolCancellation::new();
+        let mut wait = Box::pin(reconnect_wait(Duration::from_secs(30), &signal));
+        poll_pending(wait.as_mut()).await;
+        signal.cancel_synchronously();
+        assert_eq!(poll_ready(wait.as_mut()).await, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sse_reconnect_continuation_reaches_next_fetch() {
+        for ready in [true, false] {
+            let signal = ToolCancellation::new();
+            let started = tokio::time::Instant::now();
+            let mut wait = Box::pin(reconnect_wait(Duration::from_millis(20), &signal));
+            poll_pending(wait.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(70)).await;
+            signal.cancel_at(started + Duration::from_millis(30));
+            let before_abort = poll_ready(wait.as_mut()).await.unwrap();
+            let mut fetch = Box::pin(network_fetch_continuing_with(
+                Method::GET,
+                Fetch::Plain,
+                &signal,
+                before_abort,
+                || {
+                    ExchangeFuture::io(async move {
+                        if !ready {
+                            std::future::pending::<()>().await;
+                        }
+                        Ok(hyper::Response::new(()))
+                    })
+                },
+            ));
+            assert_eq!(
+                poll_ready(fetch.as_mut()).await.is_ok(),
+                ready,
+                "ready headers continue; pending socket must yield to abort"
+            );
+        }
+    }
+
     struct StringLimitGuard(usize);
     impl StringLimitGuard {
         fn set(limit: usize) -> Self {
@@ -1211,11 +1476,11 @@ mod tests {
         assert_eq!(string_limit(), fetch_redirect::MAX_STRING_LENGTH);
         let _limit = StringLimitGuard::set(8);
         let signal = ToolCancellation::default();
-        let exact = streamable_text(Full::new(Bytes::from_static(b"12345678")), &signal)
+        let exact = streamable_text(Full::new(Bytes::from_static(b"12345678")), &signal, false)
             .await
             .unwrap();
         assert_eq!(exact, "12345678");
-        let error = streamable_text(Full::new(Bytes::from_static(b"123456789")), &signal)
+        let error = streamable_text(Full::new(Bytes::from_static(b"123456789")), &signal, false)
             .await
             .unwrap_err();
         assert_eq!(error.name(), "RangeError");
@@ -1228,6 +1493,7 @@ mod tests {
                 .body(Full::new(Bytes::from_static(b"123456789")))
                 .unwrap(),
             &signal,
+            false,
         )
         .await;
         assert_eq!(
@@ -1246,6 +1512,7 @@ mod tests {
             read_events(
                 Full::new(Bytes::from_static(b"1234567890123456")),
                 &signal,
+                false,
                 |_| panic!("no event")
             )
             .await
@@ -1254,6 +1521,7 @@ mod tests {
             !read_events(
                 Full::new(Bytes::from_static(b"12345678901234567")),
                 &signal,
+                false,
                 |_| panic!("no event")
             )
             .await
@@ -1272,7 +1540,9 @@ mod tests {
             drop(sender);
             let mut events = Vec::new();
             assert_eq!(
-                read_events(EventBody(receiver), &signal, |item| events.push(item)).await,
+                read_events(EventBody(receiver), &signal, false, |item| events
+                    .push(item))
+                .await,
                 !overflow
             );
             if overflow {
@@ -1309,7 +1579,7 @@ mod tests {
             .status(400)
             .body(StalledBody)
             .unwrap();
-        let mut pending = Box::pin(legacy_post_response(response, &signal));
+        let mut pending = Box::pin(legacy_post_response(response, &signal, false));
         poll_pending(pending.as_mut()).await;
         tokio::time::advance(Duration::from_millis(599_999)).await;
         poll_pending(pending.as_mut()).await;
@@ -1331,10 +1601,13 @@ mod tests {
                         .body(StalledBody)
                         .unwrap(),
                     &signal,
+                    false,
                 )
                 .await
             } else {
-                streamable_text(StalledBody, &signal).await.unwrap_err()
+                streamable_text(StalledBody, &signal, false)
+                    .await
+                    .unwrap_err()
             }
         });
         poll_pending(pending.as_mut()).await;
@@ -1365,7 +1638,7 @@ mod tests {
         for sync in [true, false] {
             let signal = ToolCancellation::default();
             let started = tokio::time::Instant::now();
-            let mut pending = Box::pin(streamable_text(StalledBody, &signal));
+            let mut pending = Box::pin(streamable_text(StalledBody, &signal, false));
             poll_pending(pending.as_mut()).await;
             tokio::time::advance(Duration::from_millis(600_001)).await;
             if sync {
@@ -1381,12 +1654,12 @@ mod tests {
         }
         let signal = ToolCancellation::default();
         let _limit = StringLimitGuard::set(4);
-        let error = streamable_text(Full::new(Bytes::from_static(b"12345")), &signal)
+        let error = streamable_text(Full::new(Bytes::from_static(b"12345")), &signal, false)
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
         assert_eq!(
-            streamable_text(Full::new(Bytes::from_static(b"1234")), &signal)
+            streamable_text(Full::new(Bytes::from_static(b"1234")), &signal, false)
                 .await
                 .unwrap(),
             "1234"
@@ -1396,7 +1669,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn sse_stall_uses_global_body_timeout() {
         let signal = ToolCancellation::default();
-        let mut pending = Box::pin(read_events(StalledBody, &signal, |_| panic!("no data")));
+        let mut pending = Box::pin(read_events(StalledBody, &signal, false, |_| {
+            panic!("no data")
+        }));
         poll_pending(pending.as_mut()).await;
         tokio::time::advance(Duration::from_millis(599_999)).await;
         poll_pending(pending.as_mut()).await;
@@ -1407,7 +1682,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn sse_body_abort_is_immediate_and_live_strings_are_bounded() {
         let signal = ToolCancellation::default();
-        let mut pending = Box::pin(read_events(StalledBody, &signal, |_| panic!("no data")));
+        let mut pending = Box::pin(read_events(StalledBody, &signal, false, |_| {
+            panic!("no data")
+        }));
         poll_pending(pending.as_mut()).await;
         signal.cancel_synchronously();
         assert!(!poll_ready(pending.as_mut()).await);
@@ -1465,7 +1742,9 @@ mod tests {
             timer: Box::pin(tokio::time::sleep(Duration::from_millis(300_000))),
             remaining: 2,
         };
-        let mut pending = Box::pin(read_events(body, &signal, |_| count.set(count.get() + 1)));
+        let mut pending = Box::pin(read_events(body, &signal, false, |_| {
+            count.set(count.get() + 1)
+        }));
         poll_pending(pending.as_mut()).await;
         for expected in 1..=2 {
             tokio::time::advance(Duration::from_millis(300_000)).await;
@@ -1493,7 +1772,7 @@ mod tests {
         }
     }
 
-    fn assert_retry_aborted(result: Result<hyper::Response<()>, McpClientError>) {
+    fn assert_retry_aborted(result: Result<hyper::Response<((), bool)>, McpClientError>) {
         let error = result.unwrap_err();
         assert_eq!(error.code(), Some(&McpErrorCode::Text("network_abort")));
         assert_eq!(error.to_string(), "Network retry aborted.");
@@ -1876,7 +2155,15 @@ mod tests {
                 let weak = Arc::downgrade(&wire);
                 let aborted = link_of(&wire).aborted.clone();
                 let task = tokio::spawn(async move {
-                    legacy_stream(&weak, EventBody(body), &aborted, &url, &mut Some(ready)).await
+                    legacy_stream(
+                        &weak,
+                        EventBody(body),
+                        &aborted,
+                        &url,
+                        &mut Some(ready),
+                        false,
+                    )
+                    .await
                 });
                 if after_ready {
                     events
@@ -1975,7 +2262,7 @@ mod tests {
                 dropped: Some(dropped),
             })
             .unwrap();
-        let mut read = Box::pin(legacy_post_response(response, &link.aborted));
+        let mut read = Box::pin(legacy_post_response(response, &link.aborted, false));
         tokio::select! {
             biased;
             result = &mut read => panic!("unfinished body returned {result:?}"),

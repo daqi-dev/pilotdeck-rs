@@ -762,7 +762,7 @@ async fn provider_exchange(
     deadline: tokio::time::Instant,
     failure: impl FnOnce(TransportFailure) -> ModelStreamError,
     timeout: impl FnOnce() -> ModelStreamError,
-) -> Result<Response<ModelBody>, ModelStreamError> {
+) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
     use crate::runtime::network::{Exchange, exchange};
     match exchange(
         transport.send(request),
@@ -772,7 +772,9 @@ async fn provider_exchange(
     )
     .await
     {
-        Exchange::Response(result, _) => result.map_err(failure),
+        Exchange::Response(result, before_abort) => result
+            .map(|response| response.map(|body| (body, before_abort)))
+            .map_err(failure),
         Exchange::Aborted => Err(ModelStreamError::abort()),
         Exchange::Timeout => Err(timeout()),
     }
@@ -784,7 +786,7 @@ async fn send_provider_request(
     provider: &JsValue,
     body: &JsValue,
     options: &StreamOptions,
-) -> Result<Response<ModelBody>, ModelStreamError> {
+) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
     let timeout_ms = idle_timeout_ms(provider, options);
     let final_body = providers::final_body(body, provider);
     let headers = providers::provider_headers(provider, &final_body);
@@ -858,6 +860,7 @@ async fn send_provider_request(
 async fn response_text(
     body: &mut ModelBody,
     options: &StreamOptions,
+    mut continuation: bool,
 ) -> Result<String, ModelStreamError> {
     // TS reads this body after the request timer was cleared and the abort
     // listener detached; only undici's `bodyTimeout` bounds a stalled body
@@ -866,7 +869,6 @@ async fn response_text(
     let mut decoder = sse::Utf8Decoder::default();
     let mut text = String::new();
     let mut units = 0usize;
-    let mut continuation = false;
     loop {
         use crate::runtime::network::{Exchange, body_frame};
         match body_frame(
@@ -981,6 +983,7 @@ async fn read_frame(
     body: &mut ModelBody,
     idle_ms: f64,
     options: &StreamOptions,
+    continuation: &mut bool,
 ) -> Result<Option<Bytes>, ModelStreamError> {
     // undici's bodyTimeout races the idle watchdog; the shorter one wins.
     // Equal durations favor the watchdog: undici timers above 1 s run on its
@@ -993,14 +996,13 @@ async fn read_frame(
     } else {
         idle_ms
     };
-    let mut continuation = false;
     loop {
         use crate::runtime::network::{Exchange, body_frame};
         match body_frame(
             body,
             Some(duration(wait)),
             options.abort.as_ref(),
-            &mut continuation,
+            continuation,
         )
         .await
         {
@@ -1111,7 +1113,7 @@ async fn send_google_request(
     model: &JsValue,
     body: &JsValue,
     options: &StreamOptions,
-) -> Result<Response<ModelBody>, ModelStreamError> {
+) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
     let timeout_ms = idle_timeout_ms(provider, options);
     let final_body = providers::google::final_body(body, provider);
     let headers = providers::google::headers(provider)?;
@@ -1157,7 +1159,7 @@ async fn send_google_request(
 /// parsed like `Response.json()`; any other content type is synthesized into
 /// `{error:{message,code,status}}` before `JSON.stringify`.
 async fn google_response_error(
-    response: Response<ModelBody>,
+    response: Response<(ModelBody, bool)>,
     options: &StreamOptions,
     provider: &JsValue,
 ) -> Result<ModelStreamError, ModelStreamError> {
@@ -1181,8 +1183,8 @@ async fn google_response_error(
         .get("content-type")
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
         .unwrap_or_default();
-    let mut body = response.into_body();
-    let text = response_text(&mut body, options).await?;
+    let (mut body, before_abort) = response.into_body();
+    let text = response_text(&mut body, options, before_abort).await?;
     let error_body = if content_type.contains("application/json") {
         providers::google::parse_error_body(&text)?
     } else {
@@ -1215,67 +1217,79 @@ async fn google_attempt(
     options: &StreamOptions,
     sink: &mut (dyn FnMut(StreamOutput) + Send),
     checkpoint: &mut Checkpoint,
-) -> Result<(), ModelStreamError> {
-    let response = send_google_request(transport, provider, model, body, options).await?;
-    let status = response.status().as_u16();
-    if matches!(status, 204 | 205) {
-        // fetch exposes a null body for null-body statuses; the SDK's stream
-        // reader throws before yielding any chunk.
-        return Err(ModelStreamError::thrown("Error", "Response body is empty"));
-    }
-    if !(200..300).contains(&status) {
-        return Err(google_response_error(response, options, provider).await?);
-    }
-    let mut body = response.into_body();
-    let mut state = providers::google::StreamState::default();
-    let idle_ms = idle_timeout_ms(provider, options);
-    let mut guard = StreamGuard::new(provider, (options.clock)());
-    let mut buffer = sse::SseBuffer::with_limit(sse_limit());
-    loop {
-        throw_if_aborted(options)?;
-        let chunk = read_frame(&mut body, idle_ms, options).await?;
-        throw_if_aborted(options)?;
-        let parsed = match chunk {
-            Some(ref bytes) => buffer.push(bytes),
-            None => buffer.finish(),
-        };
-        for item in parsed {
-            let item = item.map_err(sse_error)?;
-            guard.check_duration((options.clock)())?;
-            let raw = match item {
-                sse::SseEvent::Done => continue,
-                sse::SseEvent::Data(raw) => raw,
+) -> (Result<(), ModelStreamError>, bool) {
+    // Error normalization is also a queued continuation: a later parent timer
+    // must not replace an already-read SDK error with AbortError.
+    let mut body_before_abort = false;
+    let outcome = async {
+        let response = send_google_request(transport, provider, model, body, options).await?;
+        body_before_abort = response.body().1;
+        let status = response.status().as_u16();
+        if matches!(status, 204 | 205) {
+            // fetch exposes a null body for null-body statuses; the SDK's stream
+            // reader throws before yielding any chunk.
+            return Err(ModelStreamError::thrown("Error", "Response body is empty"));
+        }
+        if !(200..300).contains(&status) {
+            return Err(google_response_error(response, options, provider).await?);
+        }
+        let (mut body, _) = response.into_body();
+        let mut state = providers::google::StreamState::default();
+        let idle_ms = idle_timeout_ms(provider, options);
+        let mut guard = StreamGuard::new(provider, (options.clock)());
+        let mut buffer = sse::SseBuffer::with_limit(sse_limit());
+        loop {
+            if !body_before_abort {
+                throw_if_aborted(options)?;
+            }
+            let chunk = read_frame(&mut body, idle_ms, options, &mut body_before_abort).await?;
+            if !body_before_abort {
+                throw_if_aborted(options)?;
+            }
+            let parsed = match chunk {
+                Some(ref bytes) => buffer.push(bytes),
+                None => buffer.finish(),
             };
-            for event in state.normalize(&raw)? {
-                let tag = field(&event, "type");
-                if tag.as_string().is_some_and(|tag| tag.equals_str("error")) {
-                    return Err(ModelStreamError::Provider(object_entries(field(
-                        &event, "error",
-                    ))));
-                }
-                let message_end = tag
-                    .as_string()
-                    .is_some_and(|tag| tag.equals_str("message_end"));
-                guard.observe(&event, (options.clock)())?;
-                checkpoint.on_event(&event)?;
-                sink(StreamOutput::Event(event));
-                if message_end {
-                    return Ok(());
+            for item in parsed {
+                let item = item.map_err(sse_error)?;
+                guard.check_duration((options.clock)())?;
+                let raw = match item {
+                    sse::SseEvent::Done => continue,
+                    sse::SseEvent::Data(raw) => raw,
+                };
+                for event in state.normalize(&raw)? {
+                    let tag = field(&event, "type");
+                    if tag.as_string().is_some_and(|tag| tag.equals_str("error")) {
+                        return Err(ModelStreamError::Provider(object_entries(field(
+                            &event, "error",
+                        ))));
+                    }
+                    let message_end = tag
+                        .as_string()
+                        .is_some_and(|tag| tag.equals_str("message_end"));
+                    guard.observe(&event, (options.clock)())?;
+                    checkpoint.on_event(&event)?;
+                    sink(StreamOutput::Event(event));
+                    if message_end {
+                        return Ok(());
+                    }
                 }
             }
+            if chunk.is_none() {
+                break;
+            }
         }
-        if chunk.is_none() {
-            break;
+        guard.check_duration((options.clock)())?;
+        if !state.ended() {
+            return Err(ModelStreamError::thrown(
+                "IncompleteStreamError",
+                "Network stream ended before provider completion sentinel.",
+            ));
         }
+        Ok(())
     }
-    guard.check_duration((options.clock)())?;
-    if !state.ended() {
-        return Err(ModelStreamError::thrown(
-            "IncompleteStreamError",
-            "Network stream ended before provider completion sentinel.",
-        ));
-    }
-    Ok(())
+    .await;
+    (outcome, body_before_abort)
 }
 
 fn request_started_event(
@@ -1330,7 +1344,7 @@ async fn stream_google_model(
 
         let (_, model) = providers::validate_model_request(&current, config)?;
         let model_id = field(&current, "model").clone();
-        let outcome = match providers::google::build_request(&current, &model) {
+        let (outcome, before_abort) = match providers::google::build_request(&current, &model) {
             Ok(body) => {
                 google_attempt(
                     transport,
@@ -1343,12 +1357,12 @@ async fn stream_google_model(
                 )
                 .await
             }
-            Err(error) => Err(error),
+            Err(error) => (Err(error), false),
         };
         let Err(error) = outcome else {
             return Ok(());
         };
-        if aborted(options) {
+        if (!before_abort && aborted(options)) || error.name().equals_str("AbortError") {
             return Err(ModelStreamError::abort());
         }
         let canonical = match &error {
@@ -1482,7 +1496,7 @@ pub async fn stream_model(
                 .collect();
             (!values.is_empty()).then(|| values.join(", "))
         };
-        let mut body = response.into_body();
+        let (mut body, mut body_before_abort) = response.into_body();
         if matches!(status, 204 | 205) {
             // Null-body statuses: `response.body` is null in fetch.
             let missing = JsError {
@@ -1502,7 +1516,7 @@ pub async fn stream_model(
             return Ok(());
         }
         if !(200..300).contains(&status) {
-            let text = response_text(&mut body, options).await?;
+            let text = response_text(&mut body, options, body_before_abort).await?;
             let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
             let mut error = normalize_model_error(
                 &provider_id(&provider),
@@ -1546,11 +1560,14 @@ pub async fn stream_model(
         let mut guard = StreamGuard::new(&provider, (options.clock)());
         let mut buffer = sse::SseBuffer::with_limit(sse_limit());
         let outcome: Result<(), ModelStreamError> = async {
-            throw_if_aborted(options)?;
             loop {
-                throw_if_aborted(options)?;
-                let chunk = read_frame(&mut body, idle_ms, options).await?;
-                throw_if_aborted(options)?;
+                if !body_before_abort {
+                    throw_if_aborted(options)?;
+                }
+                let chunk = read_frame(&mut body, idle_ms, options, &mut body_before_abort).await?;
+                if !body_before_abort {
+                    throw_if_aborted(options)?;
+                }
                 let parsed = match chunk {
                     Some(ref bytes) => buffer.push(bytes),
                     None => buffer.finish(),

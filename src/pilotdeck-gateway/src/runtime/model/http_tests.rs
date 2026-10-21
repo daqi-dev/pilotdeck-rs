@@ -37,7 +37,13 @@ async fn provider_idle_timeout_uses_node_timer_delay() {
         let configured = idle_timeout_ms(&provider, &options);
         assert_eq!(configured, idle);
         let mut body = PendingBody.boxed();
-        let mut read = Box::pin(read_frame(&mut body, configured, &options));
+        let mut continuation = false;
+        let mut read = Box::pin(read_frame(
+            &mut body,
+            configured,
+            &options,
+            &mut continuation,
+        ));
         poll_pending(read.as_mut()).await;
         if elapsed > 1 {
             tokio::time::advance(Duration::from_millis(elapsed - 1)).await;
@@ -74,7 +80,8 @@ async fn provider_default_idle_watchdog_wins_body_timeout_tie() {
     assert_eq!(idle, 600_000.0);
     assert_eq!(options.body_timeout_ms, idle);
     let mut body = PendingBody.boxed();
-    let mut read = Box::pin(read_frame(&mut body, idle, &options));
+    let mut continuation = false;
+    let mut read = Box::pin(read_frame(&mut body, idle, &options, &mut continuation));
     poll_pending(read.as_mut()).await;
     tokio::time::advance(Duration::from_millis(599_999)).await;
     poll_pending(read.as_mut()).await;
@@ -91,7 +98,8 @@ async fn provider_default_idle_watchdog_wins_body_timeout_tie() {
 async fn provider_finite_idle_and_shorter_body_are_negative_controls() {
     let options = StreamOptions::default();
     let mut body = PendingBody.boxed();
-    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options));
+    let mut continuation = false;
+    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options, &mut continuation));
     poll_pending(read.as_mut()).await;
     tokio::time::advance(Duration::from_millis(1)).await;
     poll_pending(read.as_mut()).await;
@@ -101,7 +109,8 @@ async fn provider_finite_idle_and_shorter_body_are_negative_controls() {
         body_timeout_ms: 10.0,
         ..StreamOptions::default()
     };
-    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options));
+    let mut continuation = false;
+    let mut read = Box::pin(read_frame(&mut body, 1000.0, &options, &mut continuation));
     poll_pending(read.as_mut()).await;
     tokio::time::advance(Duration::from_millis(10)).await;
     let error = read.await.unwrap_err();
@@ -399,7 +408,7 @@ async fn google_sdk_errors_match_the_recorded_status_text_and_content_type() {
             .map_err(|never| match never {})
             .boxed();
         let error = google_response_error(
-            response.body(body).unwrap(),
+            response.body((body, false)).unwrap(),
             &StreamOptions::default(),
             field(&oracle, "provider"),
         )
@@ -956,13 +965,14 @@ async fn google_overdue_retry_continuation_starts_next_attempt_before_later_abor
             } else {
                 abort.cancel_at(started + Duration::from_millis(parent_ms));
             }
-            assert!(
-                poll_ready(pending.as_mut())
-                    .await
-                    .unwrap_err()
-                    .name()
-                    .equals_str("AbortError")
-            );
+            let result = poll_ready(pending.as_mut()).await;
+            if calls == 2 {
+                // The queued retry and its ready 204 error both precede the
+                // later parent timer (real TS emits a provider error).
+                result.unwrap();
+            } else {
+                assert!(result.unwrap_err().name().equals_str("AbortError"));
+            }
             assert_eq!(2 - transport.0.lock().unwrap().len(), calls);
         }
     }
@@ -979,11 +989,14 @@ async fn assert_provider_body_ordering(text: bool) {
             ..StreamOptions::default()
         };
         let mut body = PendingBody.boxed();
+        let mut continuation = false;
         let mut pending = Box::pin(async {
             if text {
-                response_text(&mut body, &options).await.map(|_| ())
+                response_text(&mut body, &options, false).await.map(|_| ())
             } else {
-                read_frame(&mut body, 700_000.0, &options).await.map(|_| ())
+                read_frame(&mut body, 700_000.0, &options, &mut continuation)
+                    .await
+                    .map(|_| ())
             }
         });
         let started = tokio::time::Instant::now();
@@ -1063,4 +1076,135 @@ async fn google_redirect_retains_absolute_deadline_and_second_hop_source() {
             .name()
             .equals_str("StreamIdleTimeoutError")
     );
+}
+
+/// Exercise the public stream entry point, including its pre/post-read abort
+/// checks. TS drains the queued body continuation before a later abort timer.
+async fn assert_headers_reach_first_body(google: bool, error_body: bool) {
+    struct HeadersAndBody {
+        google: bool,
+        error_body: bool,
+        stalled: bool,
+    }
+    impl ModelHttpTransport for HeadersAndBody {
+        fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+            let data = if self.error_body {
+                r#"{"error":{"message":"FIRST","code":400,"status":"INVALID_ARGUMENT"}}"#
+            } else if self.google {
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"FIRST\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+            } else {
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"FIRST\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+            };
+            let body = if self.stalled {
+                PendingBody.boxed()
+            } else {
+                Full::new(Bytes::from(data))
+                    .map_err(|never| match never {})
+                    .boxed()
+            };
+            TransportFuture::after(
+                Duration::from_millis(20),
+                Ok(Response::builder()
+                    .status(if self.error_body { 400 } else { 200 })
+                    .header(
+                        "content-type",
+                        if self.error_body {
+                            "application/json"
+                        } else {
+                            "text/event-stream"
+                        },
+                    )
+                    .body(body)
+                    .unwrap()),
+            )
+        }
+    }
+    for (parent_ms, sync, stalled, expected) in [
+        (30, false, false, true),
+        (10, false, false, false),
+        (30, true, false, false),
+        (30, false, true, false),
+    ] {
+        let (request, mut config) = stream_config();
+        let mut provider = field(field(&config, "providers"), "p").clone();
+        put(
+            &mut provider,
+            "protocol",
+            if google { "google" } else { "anthropic" }.into(),
+        );
+        put(
+            &mut provider,
+            "retry",
+            parse_json(r#"{"streamMaxRetries":0}"#).unwrap(),
+        );
+        let mut providers = JsObject::new();
+        providers.insert("p".into(), provider);
+        put(&mut config, "providers", JsValue::Object(providers));
+        let signal = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(signal.clone()),
+            ..StreamOptions::default()
+        };
+        let transport = HeadersAndBody {
+            google,
+            error_body,
+            stalled,
+        };
+        let mut events = Vec::new();
+        let mut sink = |event| events.push(event);
+        let started = tokio::time::Instant::now();
+        let mut pending = Box::pin(stream_model(
+            &transport, &request, &config, &options, &mut sink,
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(70)).await;
+        if sync {
+            signal.abort();
+        } else {
+            signal.cancel_at(started + Duration::from_millis(parent_ms));
+        }
+        let outcome = poll_ready(pending.as_mut()).await;
+        drop(pending);
+        let first = events.iter().any(|event| match event {
+            StreamOutput::Event(value) if error_body => field(field(value, "error"), "message")
+                .as_string()
+                .is_some_and(|s| String::from_utf16_lossy(s.units()).contains("FIRST")),
+            StreamOutput::Event(value) => field(value, "text") == &JsValue::from("FIRST"),
+            _ => false,
+        });
+        assert_eq!(
+            first, expected,
+            "google={google}, error_body={error_body}, parent={parent_ms}, sync={sync}, stalled={stalled}: {outcome:?}"
+        );
+        if expected {
+            outcome.unwrap();
+            if !error_body {
+                assert!(events.iter().any(|event| matches!(event,
+                    StreamOutput::Event(value) if field(value, "type") == &JsValue::from("message_end"))));
+                assert!(
+                    !events.iter().any(|event| matches!(event,
+                    StreamOutput::Event(value) if field(value, "type") == &JsValue::from("error")))
+                );
+            }
+        } else {
+            assert!(outcome.unwrap_err().name().equals_str("AbortError"));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_headers_continue_into_first_frame() {
+    assert_headers_reach_first_body(false, false).await;
+}
+#[tokio::test(start_paused = true)]
+async fn provider_headers_continue_into_error_text() {
+    assert_headers_reach_first_body(false, true).await;
+}
+#[tokio::test(start_paused = true)]
+async fn google_headers_continue_into_first_frame() {
+    assert_headers_reach_first_body(true, false).await;
+}
+#[tokio::test(start_paused = true)]
+async fn google_headers_continue_into_error_text() {
+    assert_headers_reach_first_body(true, true).await;
 }
