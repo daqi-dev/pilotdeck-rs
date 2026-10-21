@@ -64,10 +64,11 @@ async fn provider_idle_timeout_uses_node_timer_delay() {
     }
 }
 
-/// Default idle and undici bodyTimeout are both 600000 ms. The body timer
-/// was armed first, so the visible error must match Node's `terminated`.
+/// Default idle and undici bodyTimeout are both 600000 ms. On a tie TS's
+/// native-timer idle watchdog wins (undici's coarse fast timer fires late), so
+/// the visible error is the idle timeout, not `terminated`.
 #[tokio::test(start_paused = true)]
-async fn provider_default_body_timeout_wins_idle_tie() {
+async fn provider_default_idle_watchdog_wins_body_timeout_tie() {
     let options = StreamOptions::default();
     let idle = idle_timeout_ms(&JsValue::Object(JsObject::new()), &options);
     assert_eq!(idle, 600_000.0);
@@ -79,8 +80,11 @@ async fn provider_default_body_timeout_wins_idle_tie() {
     poll_pending(read.as_mut()).await;
     tokio::time::advance(Duration::from_millis(1)).await;
     let error = poll_ready(read.as_mut()).await.unwrap_err();
-    assert_eq!(error.name(), JsString::from("TypeError"));
-    assert_eq!(error.message_text(), "terminated");
+    assert_eq!(error.name(), JsString::from("StreamIdleTimeoutError"));
+    assert_eq!(
+        error.message_text(),
+        "Stream idle timeout: no data received for 600000ms"
+    );
 }
 
 #[tokio::test(start_paused = true)]
