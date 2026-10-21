@@ -369,11 +369,16 @@ async fn shutdown_during_creation_matches_ts() {
     let creating = owner.get_or_create(context("a"));
     until(|| probe.seen("create:a:1")).await;
     let mut shutdown = owner.shutdown();
-    let during = json!({"stopped": std::future::poll_fn(|cx| std::task::Poll::Ready(shutdown.as_mut().poll(cx).is_ready())).await,
+    let stopped = tokio::time::timeout(Duration::from_millis(50), &mut shutdown).await;
+    assert!(
+        stopped.is_err(),
+        "shutdown returned before pending creation drained"
+    );
+    let during = json!({"stopped": false,
         "admitted": owner.begin_turn(&"b".into(), &"run".into()), "cached": count(&owner)});
     gate.open();
-    let error = failure(creating.await);
-    shutdown.await.unwrap();
+    let error = failure(bounded(creating).await);
+    bounded(shutdown).await.unwrap();
     let late_error = failure(owner.get_or_create(context("b")).await);
     compare(
         "shutdown_during_creation",
@@ -867,35 +872,166 @@ async fn abort_failure_does_not_wait_for_completion_matches_ts() {
     owner.shutdown().await.unwrap();
 }
 
-#[test]
-fn publication_cutoff_revokes_cached_handle_before_async_disposal_starts() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publication_cutoff_revokes_cached_handle_before_async_disposal_starts() {
     let probe = Probe::default();
-    let handle = LiveSessionHandle::new(
-        Arc::new(FakeSession {
-            id: 1,
-            probe: probe.clone(),
-        }),
-        None,
-    );
-    // This part of publication is safe under the owner lock: no callbacks or
-    // resource disposal run until the caller starts dispose after unlocking.
-    handle.stop_new();
-    assert_eq!(
-        state(&handle),
-        case("dirty_identity_and_publication")["value"]["during"]["oldState"]
-            .as_str()
-            .unwrap()
-    );
-    assert!(handle.begin_activity().is_err());
-    assert!(handle.begin_maintenance().is_err());
-    assert!(probe.events().is_empty());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        handle.dispose("replaced".into()).await.unwrap();
+    let (reached, publication) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let resume = Mutex::new(resume);
+    let pause = Arc::new(Mutex::new(None));
+    let clock_pause = pause.clone();
+    let mut options = SessionOwnerOptions::new(Arc::new(probe.clone()));
+    options.idle_sweep_interval_ms = 0;
+    options.now_ms = Arc::new(move || {
+        if let Some(reached) = clock_pause.lock().unwrap().take() {
+            // Record.last_used is evaluated under the publication lock, after
+            // stop_new and before dispose. Pause only this publication, not the
+            // sweep that precedes get_or_create. No product test hook is needed.
+            let reached: tokio::sync::oneshot::Sender<()> = reached;
+            reached.send(()).unwrap();
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+        }
+        0
     });
+    let owner = SessionOwner::new(options);
+    let key = JsString::from("a");
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    owner.mark_all_dirty("refresh");
+    let factory_gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert(key.clone(), factory_gate.clone());
+    let replacing = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:2")).await;
+    *pause.lock().unwrap() = Some(reached);
+    factory_gate.open();
+    bounded(publication).await.unwrap();
+    let old_state = old.state();
+    let activity_rejected = old.begin_activity().is_err();
+    let maintenance_rejected = old.begin_maintenance().is_err();
+    let disposal_started = probe.seen("dispose:1");
+    // Always unblock the worker before assertions, including on a mutation.
+    release.send(()).unwrap();
+    let new = bounded(replacing).await.unwrap();
+    assert_eq!(
+        old_state,
+        HandleState::Draining,
+        "publication did not revoke cached handle before disposal"
+    );
+    assert!(
+        activity_rejected,
+        "publication admitted activity on the old handle"
+    );
+    assert!(
+        maintenance_rejected,
+        "publication admitted maintenance on the old handle"
+    );
+    assert!(!disposal_started);
+    assert!(!old.same_identity(&new));
+    assert!(owner.is_current(&key, &new));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn idle_sweep_skips_same_key_creation_and_queued_close() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    owner.get_or_create(context("b")).await.unwrap();
+    let creation_gate = Gate::new();
+    let disposal_gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert(key.clone(), creation_gate.clone());
+    probe
+        .0
+        .disposals
+        .lock()
+        .unwrap()
+        .insert(1, disposal_gate.clone());
+    owner.mark_all_dirty("refresh");
+    let replacing = owner.get_or_create(context("a"));
+    until(|| probe.seen("create:a:3")).await;
+    probe.time(101);
+    owner.sweep_idle();
+    assert!(
+        owner.is_current(&key, &old),
+        "idle sweep evicted a session during same-key creation"
+    );
+    assert!(
+        owner.current_handle(&"b".into()).is_none(),
+        "unrelated idle session was not evicted"
+    );
+    creation_gate.open();
+    until(|| probe.seen("dispose:1")).await;
+    let new = owner.current_handle(&key).unwrap();
+    assert!(!old.same_identity(&new));
+    // Replacement has published but still owns the serial gate while draining
+    // the old writer. A close queued behind it must retain its Closed reason.
+    let mut closing = owner.close(&key);
+    probe.time(202);
+    owner.sweep_idle();
+    assert!(
+        owner.is_current(&key, &new),
+        "idle sweep evicted a session with a same-key close pending"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut closing)
+            .await
+            .is_err()
+    );
+    disposal_gate.open();
+    assert!(bounded(replacing).await.unwrap().same_identity(&new));
+    bounded(closing).await.unwrap();
+    assert!(owner.current_handle(&key).is_none());
+    assert!(probe.seen("evict:a:closed"));
+    assert!(!probe.seen("evict:a:idle"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn close_waits_for_prior_same_key_close_to_drain() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let key = JsString::from("a");
+    owner.get_or_create(context("a")).await.unwrap();
+    let gate = Gate::new();
+    probe.0.disposals.lock().unwrap().insert(1, gate.clone());
+    let first = owner.close(&key);
+    until(|| probe.seen("dispose:1")).await;
+    let mut second = owner.close(&key);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut second)
+            .await
+            .is_err(),
+        "close returned before the prior same-key close drained"
+    );
+    // Another key must make progress while the first close is blocked.
+    bounded(owner.get_or_create(context("b"))).await.unwrap();
+    gate.open();
+    bounded(first).await.unwrap();
+    bounded(second).await.unwrap();
+    assert_eq!(
+        probe
+            .events()
+            .iter()
+            .filter(|event| *event == "evict:a:closed")
+            .count(),
+        1
+    );
+    assert!(owner.current_handle(&key).is_none());
+    owner.shutdown().await.unwrap();
 }
 
 #[tokio::test]
