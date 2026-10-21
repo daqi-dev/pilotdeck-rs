@@ -194,7 +194,7 @@ impl<T> Future for ExchangeFuture<T> {
 pub(crate) enum Exchange<T> {
     Response(T, bool),
     Aborted,
-    Timeout,
+    Timeout { before_abort: bool },
 }
 
 /// `delay(ms, parentSignal)`, optionally bounded by a surrounding timer.
@@ -222,10 +222,13 @@ pub(crate) async fn delay(
             return Poll::Ready(Exchange::Aborted);
         }
         initial = false;
-        let timer_first = !aborted || parent_event_at().is_some_and(|at| next <= at);
+        let timer_first =
+            !aborted || parent_event_at().is_some_and(|at| timer_precedes_parent(next, at, false));
         if timer_first && timer.as_mut().poll(cx).is_ready() {
             return Poll::Ready(if outer_first {
-                Exchange::Timeout
+                Exchange::Timeout {
+                    before_abort: aborted,
+                }
             } else {
                 Exchange::Response((), aborted)
             });
@@ -263,10 +266,20 @@ pub(crate) async fn exchange_with_prearmed_parent<T: Send + 'static>(
     parent_event_at: impl Fn() -> Option<Instant>,
     deadline: Option<Instant>,
 ) -> Exchange<T> {
+    exchange_prearmed_continuing(send, abort, parent_event_at, deadline, false).await
+}
+
+pub(crate) async fn exchange_prearmed_continuing<T: Send + 'static>(
+    send: ExchangeFuture<T>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    deadline: Option<Instant>,
+    continuation_before_abort: bool,
+) -> Exchange<T> {
     let order = DispatchOrder {
         scheduled_at: send.scheduled_at(),
         microtask: send.is_microtask(),
-        continuation_before_abort: false,
+        continuation_before_abort,
         parent_first: true,
     };
     dispatch(send, abort, parent_event_at, deadline, order).await
@@ -329,6 +342,39 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
     parent_event_at: impl Fn() -> Option<Instant>,
     continuation: &mut bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    body_frame_ordered(body, idle, abort, parent_event_at, continuation, false).await
+}
+
+pub(crate) async fn body_frame_with_prearmed_parent<B: hyper::body::Body + Unpin>(
+    body: &mut B,
+    idle: Option<Duration>,
+    signal: Option<&Cancellation>,
+    continuation: &mut bool,
+) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    body_frame_ordered(
+        body,
+        idle,
+        async {
+            match signal {
+                Some(signal) => signal.cancelled().await,
+                None => std::future::pending().await,
+            }
+        },
+        || signal.and_then(Cancellation::abort_event_at),
+        continuation,
+        true,
+    )
+    .await
+}
+
+async fn body_frame_ordered<B: hyper::body::Body + Unpin>(
+    body: &mut B,
+    idle: Option<Duration>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    continuation: &mut bool,
+    parent_first: bool,
+) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
     let deadline = idle.map(|idle| Instant::now() + idle);
     let next = dispatch(
         body.frame(),
@@ -339,21 +385,21 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
             scheduled_at: None,
             microtask: false,
             continuation_before_abort: std::mem::take(continuation),
-            parent_first: false,
+            parent_first,
         },
     )
     .await;
     *continuation = match &next {
-        Exchange::Response(_, before_abort) => *before_abort,
-        // A watchdog rejection's microtasks also precede a later parent timer.
-        // Preserve the exact deadline used by dispatch through the caller's
-        // error normalization / Google abort recheck. A tie is not earlier.
-        Exchange::Timeout => {
-            parent_event_at().is_some_and(|at| deadline.is_some_and(|deadline| deadline < at))
-        }
+        Exchange::Response(_, before_abort) | Exchange::Timeout { before_abort } => *before_abort,
         Exchange::Aborted => false,
     };
     next
+}
+
+/// Node drains a timer callback's promise continuations before the next
+/// callback. Equal deadlines follow registration order, never poll order.
+fn timer_precedes_parent(event_at: Instant, parent_at: Instant, parent_first: bool) -> bool {
+    event_at < parent_at || (!parent_first && event_at == parent_at)
 }
 
 struct DispatchOrder {
@@ -388,7 +434,7 @@ async fn dispatch<T>(
             let result = std::task::ready!(send.as_mut().poll(cx));
             return Poll::Ready(Exchange::Response(
                 result,
-                abort.as_mut().poll(cx).is_ready(),
+                abort.as_mut().poll(cx).is_ready() && parent_event_at().is_some(),
             ));
         }
         if std::mem::take(&mut continuation_before_abort)
@@ -396,7 +442,7 @@ async fn dispatch<T>(
         {
             return Poll::Ready(Exchange::Response(
                 result,
-                abort.as_mut().poll(cx).is_ready(),
+                abort.as_mut().poll(cx).is_ready() && parent_event_at().is_some(),
             ));
         }
         let aborted = abort.as_mut().poll(cx).is_ready();
@@ -412,7 +458,7 @@ async fn dispatch<T>(
         let response_before_parent = parent_at.is_none_or(|at| {
             scheduled_at.map_or_else(
                 || microtask,
-                |response_at| response_at < at || (!parent_first && response_at == at),
+                |response_at| timer_precedes_parent(response_at, at, parent_first),
             )
         });
         let response_first = response_before_timeout && response_before_parent;
@@ -420,12 +466,16 @@ async fn dispatch<T>(
         if response_first && let Poll::Ready(result) = send.as_mut().poll(cx) {
             return Poll::Ready(Exchange::Response(result, aborted));
         }
-        if parent_at.is_none_or(|at| {
-            deadline.is_some_and(|deadline| deadline < at || (!parent_first && deadline == at))
-        }) && let Some(timer) = &mut timer
+        let timeout_before_parent = parent_at.is_none_or(|at| {
+            deadline.is_some_and(|deadline| timer_precedes_parent(deadline, at, parent_first))
+        });
+        if timeout_before_parent
+            && let Some(timer) = &mut timer
             && timer.as_mut().poll(cx).is_ready()
         {
-            return Poll::Ready(Exchange::Timeout);
+            return Poll::Ready(Exchange::Timeout {
+                before_abort: aborted && timeout_before_parent,
+            });
         }
         if aborted {
             return Poll::Ready(Exchange::Aborted);

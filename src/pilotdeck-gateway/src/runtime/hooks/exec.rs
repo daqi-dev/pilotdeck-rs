@@ -1200,7 +1200,7 @@ async fn http_exchange<T: Send + 'static>(
     {
         Exchange::Response(result, before_abort) => Ok((result, before_abort)),
         Exchange::Aborted => Err("This operation was aborted".into()),
-        Exchange::Timeout => Err("fetch failed".into()),
+        Exchange::Timeout { .. } => Err("fetch failed".into()),
     }
 }
 

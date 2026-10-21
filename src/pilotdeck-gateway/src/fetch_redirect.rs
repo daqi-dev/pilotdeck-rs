@@ -66,7 +66,7 @@ where
         let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
         {
             Exchange::Response(frame, _) => frame,
-            Exchange::Timeout => return Err(BodyError::Terminated),
+            Exchange::Timeout { .. } => return Err(BodyError::Terminated),
             Exchange::Aborted => return Err(BodyError::Aborted),
         };
         let Some(frame) = frame else {

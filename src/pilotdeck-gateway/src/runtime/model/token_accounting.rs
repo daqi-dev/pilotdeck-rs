@@ -368,7 +368,7 @@ impl TokenAccountingRuntime {
         .await
         {
             Exchange::Response(result, _) => result?,
-            Exchange::Aborted | Exchange::Timeout => {
+            Exchange::Aborted | Exchange::Timeout { .. } => {
                 return Err(ModuleError::new("This operation was aborted").into());
             }
         };
