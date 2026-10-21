@@ -1,0 +1,2012 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/SessionRouter.ts": "90a0dbb46565bae5e2a994cbcd83b8a53a155b9b73cf67d8be1295a35b1afbb6",
+    "src/gateway/client/GatewayTurnCompletionFence.ts": "4b409046c127ef09a9536d00e972a1f32bd04fc6eb53c9e03a5a34729f5cd940",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/agent/scope/AgentFactoryProvider.ts": "1486fe22690af6ca410b3ac784c75ecf3ac282c661ab8bce4f54bad0614478c4",
+    "src/agent/scope/AgentRegistry.ts": "9afac0b01b7b290e6e57a7665c7387f247ad5a4b184b491096aacd3b61fb5d80",
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/agent/scope/ScopedServiceRegistry.ts": "c6a70cc92ad955cac97ffdd08135be1be9335a443d0a3276cd48bfb697e1b9b8"
+  },
+  "scenarios": [
+    {
+      "name": "admission",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "old"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "duplicate"
+        },
+        {
+          "op": "begin",
+          "key": "b",
+          "run": "parallel"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "wrong"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "old"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "old"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": ""
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": ""
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "busy-even-empty"
+        },
+        {
+          "op": "end",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "会话\u0000a",
+          "run": "中文"
+        },
+        {
+          "op": "active",
+          "key": "会话\u0000a"
+        },
+        {
+          "op": "shutdown"
+        },
+        {
+          "op": "active",
+          "key": "b"
+        },
+        {
+          "op": "begin",
+          "key": "c",
+          "run": "late"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "old"
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "old"
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "new"
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": ""
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "中文"
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "maintenance",
+      "steps": [
+        {
+          "op": "maintenance_start",
+          "key": "a"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "blocked"
+        },
+        {
+          "op": "begin",
+          "key": "b",
+          "run": "parallel"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "maintenance_end"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "after"
+        }
+      ],
+      "results": [
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "completion-identity",
+      "steps": [
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "same",
+          "id": "old"
+        },
+        {
+          "op": "wait",
+          "key": "a",
+          "id": "old-wait"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "same",
+          "id": "new"
+        },
+        {
+          "op": "wait",
+          "key": "a",
+          "id": "new-wait"
+        },
+        {
+          "op": "current",
+          "key": "a",
+          "id": "old"
+        },
+        {
+          "op": "current",
+          "key": "a",
+          "id": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "old"
+        },
+        {
+          "op": "current",
+          "key": "a",
+          "id": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "old"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "run": "wrong",
+          "reason": "stale"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "run": "same",
+          "reason": "first"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "run": "same",
+          "reason": "second"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "new"
+        },
+        {
+          "op": "wait",
+          "key": "a",
+          "id": "absent"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "reason": "no-handle"
+        }
+      ],
+      "results": [
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": false,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": false,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": false,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": true,
+              "reason": "first"
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": true,
+              "reason": "first"
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": true,
+              "reason": "first"
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": true,
+              "reason": "first"
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": true,
+            "absent": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": true,
+              "reason": "first"
+            }
+          },
+          "settled": {
+            "old-wait": true,
+            "new-wait": true,
+            "absent": true
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "completion-empty-run",
+      "steps": [
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "r",
+          "id": "h"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "run": "",
+          "reason": "wrong"
+        },
+        {
+          "op": "cancel",
+          "key": "a"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "",
+          "id": "empty"
+        },
+        {
+          "op": "cancel",
+          "key": "a",
+          "run": "",
+          "reason": ""
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "empty"
+        }
+      ],
+      "results": [
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": false,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": {
+                "name": "AbortError",
+                "message": "This operation was aborted"
+              }
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": {
+                "name": "AbortError",
+                "message": "This operation was aborted"
+              }
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": {
+                "name": "AbortError",
+                "message": "This operation was aborted"
+              }
+            },
+            "empty": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": {
+                "name": "AbortError",
+                "message": "This operation was aborted"
+              }
+            },
+            "empty": {
+              "cancelled": true,
+              "reason": ""
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": {
+                "name": "AbortError",
+                "message": "This operation was aborted"
+              }
+            },
+            "empty": {
+              "cancelled": true,
+              "reason": ""
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "discarded-resolver-stays-pending",
+      "pending": [
+        "orphan"
+      ],
+      "steps": [
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "old",
+          "id": "old"
+        },
+        {
+          "op": "handle_wait",
+          "id": "old"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "new"
+        },
+        {
+          "op": "discard_handle",
+          "id": "old"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "new"
+        }
+      ],
+      "results": [
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "orphan": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "orphan": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "orphan": false
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "orphan": false
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "gateway-stale",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "h"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "old",
+          "id": "abort"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "gateway-exact",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "h"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "new",
+          "id": "abort"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted:new"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted:new"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted:new"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted:new"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gateway-admitted-before-fence",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "new",
+          "id": "abort"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "new"
+          },
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted:new"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted:new"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gateway-stale-before-fence",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "old",
+          "id": "abort"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "new"
+          },
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "gateway-absent-run",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "h"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "id": "abort"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gateway-empty-stale",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "h"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "",
+          "id": "abort"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": [
+            [
+              "a\u0000new",
+              "aborted"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gateway-empty-exact",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": ""
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "",
+          "id": "h"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "",
+          "id": "abort"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": ""
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "h"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": false
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {
+            "h": {
+              "cancelled": true,
+              "reason": "aborted"
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [
+            "aborted"
+          ],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "gateway-missing-session",
+      "steps": [
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "old",
+          "id": "abort"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        }
+      ],
+      "results": [
+        {
+          "value": null,
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": false,
+            "run": null
+          },
+          "handles": {},
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    },
+    {
+      "name": "gateway-old-after-replace",
+      "steps": [
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "old"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "old",
+          "id": "old"
+        },
+        {
+          "op": "end",
+          "key": "a",
+          "run": "old"
+        },
+        {
+          "op": "begin",
+          "key": "a",
+          "run": "new"
+        },
+        {
+          "op": "fence_begin",
+          "key": "a",
+          "run": "new",
+          "id": "new"
+        },
+        {
+          "op": "abort_start",
+          "key": "a",
+          "run": "old",
+          "id": "abort"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "old"
+        },
+        {
+          "op": "active",
+          "key": "a"
+        },
+        {
+          "op": "current",
+          "key": "a",
+          "id": "new"
+        },
+        {
+          "op": "complete",
+          "key": "a",
+          "id": "new"
+        }
+      ],
+      "results": [
+        {
+          "value": true,
+          "handles": {},
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {},
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": {
+            "active": true,
+            "run": "new"
+          },
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": true,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        },
+        {
+          "value": null,
+          "handles": {
+            "old": {
+              "cancelled": false,
+              "reason": null
+            },
+            "new": {
+              "cancelled": false,
+              "reason": null
+            }
+          },
+          "settled": {
+            "abort": true
+          },
+          "aborts": [],
+          "reasons": []
+        }
+      ]
+    }
+  ]
+}
