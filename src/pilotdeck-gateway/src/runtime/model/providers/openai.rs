@@ -1352,6 +1352,22 @@ mod tests {
     fn chunk(value: &str) -> JsValue {
         parse_json(value).unwrap()
     }
+    /// Direct builder calls with a non-string url coerce via `String(url)` and
+    /// answer `false` instead of TS's TypeError (see the note in
+    /// `google_openai_compatible`); config-normalized providers never reach this.
+    #[test]
+    fn google_compatible_non_string_url_is_false_not_panic() {
+        for url in ["null", "123", "{}"] {
+            let provider = chunk(&format!(
+                r#"{{"id":"custom","protocol":"openai","url":{url}}}"#
+            ));
+            assert!(!google_openai_compatible(&provider), "url={url}");
+        }
+        let provider = chunk(
+            r#"{"id":"custom","protocol":"openai","url":"https://generativelanguage.googleapis.com/v1beta/openai"}"#,
+        );
+        assert!(google_openai_compatible(&provider));
+    }
     use crate::runtime::model::http::LimitGuard;
     /// Both Google-compatible call sites are checked against TS wire bytes.
     #[test]
