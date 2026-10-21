@@ -8,7 +8,7 @@
 #   scripts/next-task.sh --check      只校验格式
 #   scripts/next-task.sh --route KIND 只输出该 kind 的路由
 #   --board FILE                      换一份 board（测试用）
-# 退出码：0 有队首 · 2 board 或 READY 块缺失 · 3 无 ready 项（队列空或只剩 human/blocked）· 4 格式错误 · 64 参数错
+# 退出码：0 有队首 · 2 board 或 READY 块缺失 · 3 无 ready 项（队列空或只剩 doing/human/blocked）· 4 格式错误 · 64 参数错
 # 副作用：无（只读）。stderr 提醒 human 项与外层循环锁状态。
 
 set -euo pipefail
@@ -64,7 +64,7 @@ parsed="$(awk '
     ref = f[1]; kind = f[2]; st = f[3]; sum = f[4]
     if (ref !~ /^[#A-Za-z0-9][A-Za-z0-9._#\/-]*$/) bad("第" NR "行：ref「" ref "」含空格或非法字符")
     if (kind !~ /^(impl|gate|review|research|docs|coord)$/) bad("第" NR "行：kind「" kind "」不在 impl/gate/review/research/docs/coord")
-    if (st !~ /^(ready|blocked|human)$/) bad("第" NR "行：state「" st "」不在 ready/blocked/human")
+    if (st !~ /^(ready|doing|blocked|human)$/) bad("第" NR "行：state「" st "」不在 ready/doing/blocked/human")
     if (sum ~ /^[ \t]*$/) bad("第" NR "行：summary 为空")
     printf "ITEM\t%s\t%s\t%s\t%s\n", ref, kind, st, sum
     next

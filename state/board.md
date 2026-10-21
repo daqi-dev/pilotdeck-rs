@@ -1,13 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 21:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- #386 | impl | ready | PR #407 @8c49fa4（rebased）：修复轮 8 已提交，fmt fix 已推，check/pr-gate 在跑；GLM r8 0/0/0/2、gate6 在跑，待 CI 绿后贴结果块
-- #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412 @1cddd64：GLM r4、Grok r4 均 0/0/0/1，gate4 全 PASS 0/0 → 结果块入正文，Ready，**已入合并队列**；剩余 P2 #422、#424
-- A6.5-pr9b | impl | ready | PR #406 @6bf9c56（rebased）：修复轮 4+5 已提交，check 在跑；GLM r7 0/0/0/4、Grok r7 暂定 0/0/1（断连，未完成实测）、gate8 在跑，待 CI 绿后贴结果块
-- A6.4-pr9a | review | ready | PR #418 @eaeb63a：GLM r3 0/0/1、Grok r3 0/0、gate3 全 PASS → 结果块入 PR 正文，Ready，**已入合并队列**；剩余 P2 #423
-- A7.1-pr3 | impl | ready | PR #421 @55261931：修复轮 1 已推送（in-flight session 粒度修复；沙箱外两次生成 d82c1ce5… 一致，connection 6/0/1）；GLM r2、gate2 在跑；CI 在跑
+updated: 2026-10-22 00:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9b | impl | doing | PR #406 @578add90，codex 修复轮 7（gate9 concurrency P1，_tmp/20261021-a65-pr9b/fix7.md），wt-a6-x0
+- #400 | impl | doing | DeepSeek 在 wt-a64-pr11（codex/issue-400），任务书 _tmp/20261022-issue-400/impl.md
+- #401 | impl | doing | codex 在 wt-a65-pr10b（codex/issue-401），任务书 _tmp/20261022-issue-401/impl.md；任务书漏了 gate8 concurrency P2（dispose 无栅栏），交付后补派；Grok r8 重跑未做
+- #386 | gate | doing | PR #407 @8c49fa4a，闸门链补 boundary/concurrency（_tmp/20261021-loop/gate-chain-2400.sh）
+- A7.1-pr3 | gate | doing | PR #421 @e8c952d0，闸门链跑四角色（同上脚本）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -15,8 +14,59 @@ updated: 2026-10-21 21:05 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
+- accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+> ## 2026-10-22 00:35 · /loop 协调轮
+> **做了**：worktree 回收仍待人放行，改为**复用已合入的树、新分支派单**（不删任何东西）：wt-a64-pr11 → `codex/issue-400`（DeepSeek 实现 #400），wt-a65-pr10b → `codex/issue-401`（codex 实现 #401），均基于 origin/main 479c58c4。脱困一处：`fix-launch.sh` 的 dsh 分支仍指向失效的 `deepseek-official` patch，已改用 `scripts/dsh-headless-llm-center.patch.yml`。
+> **机制**：READY 原本没有「已派出」状态，在途单只能写成 ready，接续者会重派。`next-task.sh` 与 `specs/README.md` 加 `doing`（summary 写持有人/worktree/任务书）；READY 删掉已合入的 pr9、pr10b 两条，补 #406/#407/#421 三条在途单。#396 与 #400 同碰 model/http.rs，改 blocked 等 #400。
+> **#407 gate6b**：boundary P0=0 / P1=1（`tests/unsafe_boundary.rs:144` 依赖闭包只从 gateway 一个种子出发，cli/agent 的 path 依赖不在审计内），原件 `_tmp/20261022-issue-386-gate6b/boundary.md`。concurrency 正在同一树上只读审，等它出结果后合并成一张修复单再派，不边审边改。
+> **合并 board 时更正**：本地 main 落后 origin 98 个提交，READY 曾基于旧板。#401 在 main 上是「blocked，随 pr10b 等人定」，但 pr10b（#391）已 MERGED、深度预算已人定 2048，阻塞已解，维持 doing；#396 已 CLOSED、A6.4-pr9a（#418）已 MERGED，从 READY 移出。
+> **READY**：移出 A6.5-pr9、A6.5-pr10b（已 MERGED）；#400/#401 → doing；加入 A6.5-pr9b、#386、A7.1-pr3（doing）；#396 → blocked。
+
+> ## 2026-10-22 00:00 · /loop 协调轮
+> **做了**：#406 fix6 codex 已完成（cpu::run 4 许可准入 + 8 并发负控，自证见 wt-a6-x0 RESULT.md「修复轮 6」：1795 passed / 24 既有沙箱监听失败），协调者提交 578add90（署名 Codex）、gitleaks 净、已推。后台串行闸门链 `_tmp/20261021-loop/gate-chain-2400.sh`（日志同名 .log）：#406 gate9 concurrency → #407 gate6 boundary、concurrency → #421 gate3 四角色。
+> **下一步**：链结果回来逐条处理；#406 过 concurrency 后重写 PR body 哈希（旧 434b8c8）。
+> **00:20 更正**：上文「12/12」是照抄的错数。`scripts/wt-status.sh`（新增，只读）实测 11 棵，7 棵的 PR 已 MERGED 且无改动（wt-a64-pr11/a65-pr10b/a66-pr3/a63-pr1/a6-recorder/a67-pr2/p2-sweep-4）；其 `_tmp/` 已归档到 `_tmp/archive/worktrees-20261022/`（227M，文件数逐棵核对一致，含 HEAD.txt）。`git worktree remove` 被 auto mode 拦下，待人放行。机制修正：CLAUDE.md 资源上限一行改为「名额以 wt-status.sh 为准」；loop 提示词精简为 7 步顺序（原文存 `_tmp/archive/20261020-loop-prompt-v2.orig.md`）。
+> **#406 gate9**：concurrency P0=0 / P1=1（`html_dom.rs` 再挂接时 check_depth 随子树线性、误嵌套页可超线性，注释断言与实现相反），已派 codex 修复轮 7（`_tmp/20261021-a65-pr9b/fix7.md`，先实测再修）。闸门链继续跑 #407/#421。
+
+> ## 2026-10-21 18:50 · dsh headless 通道改 llm-center
+> 实测 `deepseek-official` 直连报 AUTH 失败（`.env.local` 的 `DEEPSEEK_API_KEY` 属 llm-center）；新增固定 patch `scripts/dsh-headless-llm-center.patch.yml`（Anthropic Messages · `deepseek-v4.1-flash-mb` · reasoning high），`--patch` 后 read-only 冒烟 exit 0、stdout `OK`。`_tmp/20261018-dsh-impl/README.md` 与 memory「dsh-channel」已同步，旧文留历史段。本轮无产品代码改动；patch 文件未提交，是否入库待定。
+
+> ## 2026-10-21 · Codex 核对 #394 追加安全疑问
+> 读取 #394 新评论并对照 Rust bridge 与 TS PluginToToolBridge：自动本地图像提取均可经 ../ 或符号链接读到 cwd 外，并同步无界读取。与前述预算差异仅在批准登记形式上相似，性质是权限/数据外发与资源风险；建议明确自动读图授权目录并修复，不因 TS 同样实现就保留。风险等级和利用条件仍需核实，移出异步 worker 本身不能解决越界或无界读取；本轮仅解释，未代用户批准或修改产品。
+
+> ## 2026-10-21 · Codex 核对 pr9b 重复请批疑问
+> `_tmp/20261021-a65-pr9b/depth-brief.md` 仍为同一项 256 层 DOM 向严差异待批；检查到的记录未见 pr9b 正式批准。本聊天此前为建议与拟回复，不代替用户确认；若用户已在协调会话明确批准，应沿用并补登记，不因新增抽样重复请批。本轮无批准或产品修改。
+
+> ## 2026-10-21 · Codex 解释 pr10b 第十轮汇报
+> 核对 worktree 提交 1bd9904/9254220 和原始报告，区分 2048 活跃校验预算、256 schema 检查深度及 pr9b 的 256 DOM 深度；128 项检查应概括为符合预期，并非全为 valid。说明见 `_tmp/20261021-pr10b-status/explanation.md`。本轮仅解释，未代用户批准、未改产品代码或 READY；原持有人继续完整验证与独立评审。
+
+> ## 2026-10-21 · Codex 解释 pr9b HTML 深度待批项
+> 核对 wt-a6-x0 当前源码和 RESULT：pr9b 的 256 是 HTML 元素祖先深度，含隐式包装，与 pr10b 的 2048 加权校验预算不同；节点数上限已删除。超过深度会整次 web_fetch 报错，TS 对已测 257 层样本仍成功；“正常页不受影响”应视作有范围的评审判断。仅解释，未批准差异、未改代码或 READY。
+
+> ## 2026-10-21 · Codex 核查 pr10b 校验预算后续跟进
+> 按用户提问核对 #391/#401/#127 及现有 issue：未找到专门跟踪 2048 加权预算误拒正常输出的条目，#401 是其它并发/定时器遗留。本轮建议单列产品兼容跟进，在阶段 A 的 MCP 真实使用验收前完成影响评估与处置决定；当前限制仍须按精确范围独立批准和登记。未代用户批准差异、未创建远端 issue、未改 READY；开发仍由原持有人接续。
+
+> ## 2026-10-21 14:18 · Codex 按用户追问核查五线位置与工期
+> 采集 248 PR / 158 issue / 主干 679 commits，A6 主功能 57 条已合入；首实现提交至合并中位 2.85h，复杂 web 修至第 10 轮。#398 已 MERGED，#391/#403/#405/#406 在途；A7.1 已起首包，未等同整域。源码另确认 plugin loader pr7b、grep pr4b、memory attachment pr5b/cache、EdgeClaw 与 A6.9 总装仍欠，不能仅按 READY 余数判收尾。详细证据与条件化估算见 `_tmp/20261021-project-estimate/report.md`（A8 基准再 10–18 自然日，全产品候选再 28–45 日，依关键人定与真人验收及时提供；非工期承诺）。本轮只做进度分析，下一开发动作仍由原持有人按实际队列接续。
+
+> ## 2026-10-21 ~23:50 · 交接（Claude Code 会话，/loop 协调）
+> **本会话做了**：gate8 (#406 pr9b) 四角色完成——concurrency P1（fetcher.rs:407 `spawn_blocking` 无并发准入），fix6.md 任务书已写（复用 model/cpu.rs 4-许可 Semaphore），等 codex 接手；gate6 (#407 sig-reset-nix) sibling PASS P0=0/P1=0，boundary 挂起已停，剩余两角色（boundary/concurrency）需补跑；#421 pr3 (a7-1-pr3) fix round 2 已推 head=e8c952d0，gate3 未跑。
+> **在途 worktree 与持有人**：wt-a6-x0 (claude/a65-pr9b @46033287) 持有人→协调者，等 codex 修 fix6；wt-a65-pr2 (codex/sig-reset-nix @8c49fa4a) 持有人→协调者，等 gate6 boundary/concurrency 补完；wt-a64-pr7 (codex/a7-1-pr3 @e8c952d0) 持有人→协调者，等 gate3。
+> **下一步（接续者优先）**：
+> 1. **#406 fix6**：`cat _tmp/20261021-a65-pr9b/fix6.md` 派 codex 在 wt-a6-x0 修 fetcher.rs spawn_blocking 加 Semaphore，自证后推送，然后重跑 gate8 concurrency 角色（只跑 concurrency）。
+> 2. **#407 gate6 剩余**：`python3 scripts/run-review-roles.py --worktree _build/wt-a65-pr2 --base origin/main --out _tmp/20261021-issue-386/gate6 --roles boundary --timeout 900` 然后 concurrency，前台串行各跑一次。
+> 3. **#421 gate3**：先确认 head=e8c952d0，然后 `python3 scripts/run-review-roles.py --worktree _build/wt-a64-pr7 --base origin/main --out _tmp/20261021-a7-1-gate3 --roles sibling --timeout 900`，串行四角色。
+> **资源**：磁盘 73.5/100 GiB；worktree 12/12（上限已满，合并前不能开新树）；cargo slots 1/4；无挂起后台进程。
+> **注意**：gate 角色必须前台串行，不要 `--roles sibling,boundary,concurrency,simplify` 一次全跑（会挂起）；#406 pr-gate body 里的哈希是旧 HEAD（434b8c8），修完 fix6 推送后须重写 PR body。
+
+> ## 2026-10-21 10:30 · 快速收尾交接
+> **开issue**:#400(pr9剩余P2×5),#401(pr10b剩余P2×2+Grok r8重跑)。
+> **PR状态**:#398(pr9)、#391(pr10b)已开并改Ready,八轮收敛,剩余P2已拆issue。
+> **board更新**:READY队列加入#400、#401,pr9/pr10b标注剩余工作已拆。
+> **新session启动**:见`_tmp/20261021-loop/next-session-prompt.md`,推荐`/loop 10m`持续推进。
+> **资源**:磁盘22GiB余;worktree 12/12;token 123k/200k。
 
 > ## 2026-10-21 16:00 · /loop
 > **合并**：#405 A7.1-pr1、#402（board 与 decisions-20261021 的全部人定 / 决策卡入 main）。

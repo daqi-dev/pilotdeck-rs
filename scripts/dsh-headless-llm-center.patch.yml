@@ -1,0 +1,38 @@
+# dsh headless 的模型通道：llm-center（Anthropic Messages 协议）。
+# 用法：dsh --profile headless --patch <repo>/scripts/dsh-headless-llm-center.patch.yml - < task.md
+# 凭证：headless 禁用 GUI 凭据库，只认启动环境 / 运行目录 .env / $DSH_HOME/.env。
+#   本仓 .env.local 的 DEEPSEEK_API_KEY 就是 llm-center 的 key（2026-10-20 起）；
+#   若已导出桌面端同款 LLMPRO_API_KEY，把 apiKeyEnv 换回它即可。
+# 换模型/端点只改本文件，不要把密钥写进 YAML。
+
+- id: llm-pi-ai
+  config:
+    providers:
+      llmpro-anthropic:
+        displayName: llmpro · Anthropic
+        apiKeyEnv: DEEPSEEK_API_KEY
+        api: anthropic-messages
+        baseURL: https://llm-center.modelbest.co
+        defaultContextWindow: 262144
+        defaultMaxTokens: 32768
+        defaultInput: [text, image]
+        models:
+          - id: deepseek-v4.1-flash-mb
+            name: deepseek-v4.1-flash-mb
+            contextWindow: 262144
+            maxTokens: 32768
+            input: [text, image]
+            reasoningEfforts:
+              off: null
+              low: low
+              high: high
+              max: max
+            compat:
+              forceAdaptiveThinking: true
+        compat: {}
+
+- id: agent-default-model
+  config:
+    provider: llmpro-anthropic
+    model: deepseek-v4.1-flash-mb
+    reasoningEffort: high
