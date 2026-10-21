@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | impl | ready | 人定 13:10：选 A，正则预算差异与 #4 #5 已批，深度预算暂不批（先补正常工具受影响范围），>1 MB 不作本 PR 硬验收但须写明限制；codex 修复轮 9 在跑（`_tmp/20261020-a65-pr10b/fix9.status`）
+updated: 2026-10-21 13:48 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | ready | 修复轮 9：方案 A 代码与 771 条夹具已改（未提交），51 类负控；深度预算影响范围已测——当前 1024 会提前拒绝 84 列×3 层查询、54 边目录树，候选 2048 / 4096（`_tmp/20261021-a65-pr10b-r9/depth-impact.md`），待报人；codex 因磁盘超限暂停，已清理后续跑归档与全量测试
 - #396 | impl | ready | PR #403 head 399a6f3：Grok r2（冲突合并）0/0/1；全量 gate2 sibling P1（google provider 路径未迁到共享 exchange）+ Grok 同源 P2（google 重试未接续传），两家撞上；另 P2×4（provider 帧读取、MCP streamable/SSE 正文无 bodyTimeout、两套逐帧读取）；concurrency 角色超时需重跑；codex 修复轮 2 在跑（`_tmp/20261021-issue-396/fix2.status`）
-- #386 | impl | ready | 人定 13:15：允许安全 API 依赖（候选 nix 0.31.3，源码已入 cargo-home），保留 unsafe 禁令；codex 在 wt-a65-pr2（codex/sig-reset-nix）先做七项可行性再实现（`_tmp/20261021-issue-386/task2.status`）；Linux 实测走 CI
+- #386 | impl | human | nix 安全信号 API 可用（macOS 174 例过），但无子进程 cwd，替代都破坏并发或启动错误语义；crates.io 未找到成熟安全替代。待人在 B（gateway 改 deny+一个函数 allow 的局部 unsafe）/ C（全安全 helper 架构）/ A′（登记差异）中选，说明 `_tmp/20261021-issue-386/decision-brief.md`，建议 B
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | review | ready | PR #405：Grok r1 0/0/1/1——7 项语义与 TS 一致、夹具真、负控有效；P2 多线程下旧 abort 判定与 sink 调用之间有窗口（实测 20000 轮 41 次打到新 run），对应计划 122 行完成条件，等 GLM r1 后一批修
+- A7.1-pr1 | impl | ready | PR #405：GLM r1 0/0/1/1、Grok r1 0/0/1/1，两家撞同一 P2（旧 abort 判定与 sink 之间的多线程竞态），对应完成条件，本轮修；codex 修复轮 1 在跑
 - A6.5-pr9b | review | ready | PR #406（draft）head 661c919（两提交压成一个，署 Codex+Claude），沙箱外 1667/0/44；.gitleaks.toml 新增的精确哈希放行已复算属实；GLM r1 + Grok r1 在跑
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
@@ -19,6 +19,12 @@ updated: 2026-10-21 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - accepted-diffs-4-5 | coord | ready | PR #404 已入合并队列（13:26）
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 13:48 · /loop
+> **磁盘**：`_build+_tmp` 一度约 112 GiB 超 100 GiB 上限（codex 发现后暂停写入）。删掉两个空闲 worktree 的编译缓存（wt-a64-pr11 pr9 已合 19 G、wt-a66-pr3 pr9a 已存 WIP 20.5 G），回到 73.7 GiB。
+> **pr10b**：深度预算并非「只有极端深 JSON 才触到」——它按 schema 静态节点计费，84 列、仅 3 层的查询结果就会被提前拒绝。候选放宽 2048（目录树 106 边 / 168 列，48/48 SDK valid）或 4096（栈余量只剩约 32 KiB），交人定。
+> **#386**：nix 走不通（无子进程 cwd），也没找到成熟安全替代，按人定把局部 unsafe 例外的具体范围与风险交人决定。
+> **#405**：两家都撞上同一竞态 P2，派修。**#404** 在合并队列。
 
 > ## 2026-10-21 13:08 · /loop
 > **合并**：#398 A6.5-pr9（12:52 MERGED）。核邮箱：main 上最近 200 个提交的 committer 都是账号主邮箱 zhengdaqi@gmail.com（服务端合并所致，见 memory merge-email-exposure），需人在 GitHub Settings → Emails 勾选隐私，已告知用户。
