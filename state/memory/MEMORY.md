@@ -41,3 +41,4 @@
 - [ruler-real-data](20261020-ruler-real-data.md) — 尺子/装置改动用真实数据复算；对照全过不证明真实输入可用（#35、F2）
 - [GLM 5 小时额度](20261020-glm-5h-quota.md) — 429/1308「Usage limit reached for 5 hour」会让闸门全 ERROR（模型不符 <synthetic>）；等重置时间过了再重跑，不算闸门结论
 - [测试日志归属](20261021-test-log-tree-identity.md) — 跨 worktree 全量测试先用「本分支新测试在、他分支不在」核日志属于哪棵树；通过数相等先 diff 名单
+- [macOS exec SIGKILL](20261022-macos-exec-sigkill.md) — 测试二进制 `--list` 也 137 是系统拒启动非测试失败；复制新 inode + ad-hoc 重签取真实结果，不记通过

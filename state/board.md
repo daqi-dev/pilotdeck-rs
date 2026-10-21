@@ -1,15 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 01:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr9b | gate | doing | PR #406 @193e8a1e：gate-chain-0105 补 sibling/boundary/simplify，完后 merge-roles 合成结果块
-- #386 | gate | doing | PR #407 @49d26393：修复轮 10 已推（source fail-closed、E0453 实测、cwd 断言）；沙箱外全量 verify-0137 + gate-chain-0140 gate8
-- A7.1-pr3 | gate | doing | PR #421 @6c4c94d1：修复轮 2 已推；沙箱外全量 verify-0137 + gate-chain-0140 gate4
-- #390 | gate | doing | PR #430 @a09c2506：gate1 四角色 PASS，补 boundary P2 单测后 gate-chain-0125 重跑 gate2
-- #401 | gate | doing | PR #429 @0fdf24bd：gate1 PASS（P2×2 同源两份已收敛），gate-chain-0135 重跑 gate2
-- #410 | gate | doing | PR #434（Draft）@f46a1c79：codex 交付；#415 TS 实测不符跳过；verify-0137 + gate-chain-0140
-- #423 | gate | doing | PR #433（Draft）@53dd2313：DeepSeek 交付，全量 1002/0；gate-chain-0140
-- gate-merge | coord | doing | PR #432 merge-review-roles.py（挡 #430/#429/#406 入队的最小修复）：GLM+codex 评审 r1 在跑
+updated: 2026-10-22 02:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #438 | impl | ready | output_schema.rs:1455 debug_assert_eq! 内 bump()，release 量词解析失败（4 条 MCP 测试 release 红）；P1，待派实现方
+- A6.5-pr9b | gate | doing | PR #406 @8f1a4fc1 修复轮 8 已推（第三条已知未对齐披露 + FROZEN 重登记 + 不写缓存断言）；沙箱外全量在跑 `_tmp/20261022-a65-pr9b-verify8`，之后 --serial 重跑闸门
+- #401 | review | doing | PR #429 @4e13bbb1：dsh r1 P2a 当轮修；GLM r1 在跑；head 变，闸门需重跑
+- #390 | review | doing | PR #430 已入 merge queue（两家非作者 0 P0/P1）；同类遗漏开 #437
+- #423 | gate | doing | PR #433 gate1 PASS 但 P2×2（retryable_message 无金样、tamper 负控缺）待处理后贴块
+- #410 | gate | doing | PR #434 闸门 --serial 在跑（gate-chain-0216）
+- A7.1-pr3 | gate | doing | PR #421 闸门 --serial 在跑（gate-chain-0216）
+- #386 | gate | doing | PR #407 闸门 --serial 在跑（gate-chain-0216）；router_execute SIGKILL 见 memory「macos-exec-sigkill」
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -459,3 +459,17 @@ updated: 2026-10-22 01:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 >
 > **下一步**：① gate8/gate6/gate2 完成后，核 P0/P1 → 若无则分别更新 #406/#407/#421 的 PR 正文写入结果块 → 入合并队列。② #407 需协调者沙箱外跑 router_execute（设 PDRS_BASELINE，用沙箱外 target 目录）。③ 发 Grok 给 #421 r2（待 fix round 1 commit 稳定后）。④ 已合入的 wt-a63-pr1、wt-a66-pr3 可清 target/ 减磁盘。⑤ #422/#423/#424/#426 是已开的 P2-跟进，不入 READY，不阻塞当前流程。
 
+> ## 2026-10-22 02:05 · /loop 协调轮
+> **#432**：r2 codex P0×1（未知键 extra=sibling:TIMEOUT 被合并丢弃）+ P1×1（roles 整串比较误拒真实 gate1 产物），GLM P2×3 → e473f89d 修（只收已知键、角色映射比较、补 6 负例 1 正例，变异 4/4 杀），r3 GLM+codex 在跑。该校验第 2 次修复，第 3 次不过挂起。
+> **#406**：gate10 四角色合并 P1×1（sibling：4/8 MiB 误嵌套页 TS 抛 Invalid array length、Rust 成功，未披露）+ P2 → 派 codex 修复轮 8（`_tmp/20261021-a65-pr9b/fix8.md`，追加「已知未对齐」第三条 + FROZEN 重登记 + 深度错误不写缓存断言）。
+> **#430**：gate2 四角色 PASS 贴 PR、转 ready，GLM+codex r1 在跑；sibling P2×2 开 #436（P2-跟进）。
+> **#429**：gate2 0/0/0 贴 PR、转 ready，GLM+DeepSeek r1 在跑。review.sh 的 dsh patch 改指 `scripts/dsh-headless-llm-center.patch.yml`。
+> **沙箱外全量**：#434 1003/0、#421 971/0（贴 PR）；#407 在跑。#435 入队。
+> **下一步**：gate-chain-0140（#433→#434→#421→#407）出块后贴 PR、派评审；#432 r3 收敛即合入，之后 merge-roles.sh 临时入口可删。
+
+> ## 2026-10-22 02:30 · /loop 协调轮
+> **#432 换路**：r3 第三次找到合并器 P0（块识别与闸门 MARKER 不一致），按「同一处修 3 次不过挂起」删 merge-review-roles.py，改 `run-review-roles.py --serial` 同进程逐个跑、单块（19ef3516；r4 codex P2 当轮补首角色超时用例 216ff93e，负控均杀）。GLM r4 在跑。gate-chain-0140 停，#434/#421/#407 改由 gate-chain-0216 `--serial` 重跑。
+> **#430** 入 merge queue；GLM P2-c 开 #437。**#429** dsh P2a 当轮修（4e13bbb1，负控 2147483647.5→1ms 失败）。
+> **#406** 修复轮 8 提交推送（8f1a4fc1，署名 Codex）；codex 顺带发现 release 下 MCP output_schema 4 条红，根因 `debug_assert_eq!(self.bump(), …)`，开 #438 进 READY。
+> **memory**：macOS exec SIGKILL（#407 router_execute 第三次）落规则。
+> **下一步**：GLM r4 收敛合 #432；0216 链出块贴 #434/#421/#407 派评审；#406 全量 + 闸门；派 #438；#433 P2 处理；wt-a67-pr2 回收仍待人批。
