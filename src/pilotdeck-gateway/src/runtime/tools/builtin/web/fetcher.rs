@@ -17,7 +17,10 @@ use super::{
     url_validation::{is_permitted_redirect, parse_with_base, upgrade_http_to_https, validate_url},
 };
 use crate::runtime::{
-    model::http::{ModelHttpTransport, NetworkFetchError},
+    model::{
+        cpu,
+        http::{ModelHttpTransport, NetworkFetchError},
+    },
     tools::ToolRunContext,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -400,13 +403,13 @@ impl UrlFetcher {
             // TS runs turndown synchronously after the body and ignores an
             // abort delivered during conversion (including raw-mode success).
             // Preserve that result ordering, but keep CPU work off Tokio.
-            // The default converter limits DOM depth and releases replaced
-            // inline subtrees. This is not a total CPU/output-memory bound:
-            // nested blockquotes can still amplify output (#409). Dropping
-            // this future (e.g. the host deadline) does not stop the worker.
-            let content = tokio::task::spawn_blocking(move || converter.convert(&html))
+            // Share the model CPU pool's four permits. The worker retains its
+            // permit even if a host deadline drops this future, so abandoned
+            // conversions cannot admit unbounded replacement workers. Stopping
+            // an already executing conversion remains tracked in #409.
+            let content = cpu::run(move || Ok(converter.convert(&html)))
                 .await
-                .map_err(|error| other(&error.to_string()))?
+                .map_err(|error| other(&error.message))?
                 .map_err(|message| other(&message))?;
             let length = content.len();
             (content, length)

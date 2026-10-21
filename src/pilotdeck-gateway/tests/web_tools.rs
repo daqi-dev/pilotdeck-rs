@@ -2663,26 +2663,123 @@ async fn run_owned_conversion(tool: WebFetchTool, signal: ToolCancellation) -> J
     .await
 }
 
+/// Count actual blocking closures rather than allocating GiB-sized buffers.
+/// Every blocked closure stands for one conversion's live working set.
+#[tokio::test]
+async fn html_conversion_admission_survives_dropped_requests() {
+    use std::sync::{Condvar, atomic::AtomicUsize};
+
+    struct ConversionBatch {
+        release: (Mutex<bool>, Condvar),
+        started: tokio::sync::mpsc::UnboundedSender<()>,
+        active: AtomicUsize,
+        peak: AtomicUsize,
+    }
+    impl HtmlToMarkdown for ConversionBatch {
+        fn convert(&self, _: &str) -> Result<String, String> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(active, Ordering::SeqCst);
+            self.started.send(()).unwrap();
+            let (lock, wake) = &self.release;
+            // Bounded even if the async test driver stops making progress.
+            let (released, _) = wake
+                .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(20), |v| !*v)
+                .unwrap();
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            if !*released {
+                return Err("test did not release conversion workers".into());
+            }
+            Ok("converted".into())
+        }
+    }
+    struct ReleaseOnDrop(Arc<ConversionBatch>);
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            *self.0.release.0.lock().unwrap() = true;
+            self.0.release.1.notify_all();
+        }
+    }
+
+    let (started, mut entered) = tokio::sync::mpsc::unbounded_channel();
+    let batch = Arc::new(ConversionBatch {
+        release: (Mutex::new(false), Condvar::new()),
+        started,
+        active: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+    });
+    let release = ReleaseOnDrop(batch.clone());
+    let tool = || conversion_tool("<p>x</p>".into(), Some(batch.clone()));
+    let first: Vec<_> = (0..4)
+        .map(|_| tokio::spawn(run_owned_conversion(tool(), ToolCancellation::default())))
+        .collect();
+    for _ in 0..4 {
+        tokio::time::timeout(Duration::from_secs(10), entered.recv())
+            .await
+            .expect("all four permits must be usable")
+            .unwrap();
+    }
+    assert_eq!(batch.active.load(Ordering::SeqCst), 4);
+    // Drop all four callers while their non-interruptible workers remain alive.
+    for request in first {
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+    }
+    let mut queued: Vec<_> = (0..4)
+        .map(|_| Box::pin(run_owned_conversion(tool(), ToolCancellation::default())))
+        .collect();
+    for request in &mut queued {
+        poll_pending(request.as_mut()).await;
+    }
+    let fifth = tokio::time::timeout(Duration::from_millis(250), entered.recv()).await;
+    assert!(
+        fifth.is_err(),
+        "a fifth worker bypassed conversion admission"
+    );
+    assert_eq!(batch.active.load(Ordering::SeqCst), 4);
+    drop(release);
+    // The queued calls must resume after the detached workers release permits.
+    for request in queued {
+        let result = tokio::time::timeout(Duration::from_secs(10), request)
+            .await
+            .expect("queued conversion must resume");
+        assert!(
+            get(&result, "ok").as_object().is_some(),
+            "{}",
+            json(&result)
+        );
+    }
+    for _ in 0..4 {
+        entered.try_recv().expect("all eight conversions must run");
+    }
+    assert_eq!(batch.active.load(Ordering::SeqCst), 0);
+    assert_eq!(batch.peak.load(Ordering::SeqCst), 4);
+    eprintln!("8 conversions, 4 dropped callers: peak active workers = 4");
+}
+
 /// Host deadlines/drop can stop waiting immediately. spawn_blocking cannot
-/// kill an executing closure; the production converter's DOM budget bounds it.
+/// kill an executing closure; it retains its CPU permit until it finishes.
 #[tokio::test]
 async fn html_conversion_outer_timeout_does_not_wait_for_blocking_worker() {
     let (converter, entered, release) = paused_converter();
     let tool = conversion_tool("<p>x</p>".into(), Some(converter.clone()));
+    let mut pending = Box::pin(run_owned_conversion(tool, ToolCancellation::default()));
+    // Admission can be queued behind other conversions in a parallel test run.
+    // This test times out an executing worker, so arm its deadline only after
+    // the converter has entered rather than cancelling the queued request.
+    tokio::select! {
+        result = &mut pending => panic!("conversion completed before release: {result:?}"),
+        result = entered => result.unwrap(),
+    }
     let started = Instant::now();
-    let pending = tokio::spawn(async move {
-        tokio::time::timeout(
-            Duration::from_millis(50),
-            run_owned_conversion(tool, ToolCancellation::default()),
-        )
-        .await
-    });
-    entered.await.unwrap();
     assert!(
         !converter.finished.load(Ordering::SeqCst),
         "converter blocked Tokio"
     );
-    assert!(pending.await.unwrap().is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), pending)
+            .await
+            .is_err()
+    );
     assert!(started.elapsed() < Duration::from_millis(500));
     assert!(!converter.finished.load(Ordering::SeqCst));
     release.send(()).unwrap();
