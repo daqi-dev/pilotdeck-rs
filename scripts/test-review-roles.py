@@ -220,6 +220,10 @@ def _run(gate, rrr, out_base: Path) -> int:
             assert old in t, (path, old)
             path.write_text(t.replace(old, new, 1), encoding="utf-8")
 
+        def same_lines_other_diff(d: Path) -> None:
+            n = (d / "diff.patch").read_text(encoding="utf-8", errors="replace").count("\n")
+            (d / "diff.patch").write_text("".join(f"x{i}\n" for i in range(n)), encoding="utf-8")
+
         names = ROLES.split(",")
         per_role = [solo(f"solo-{r}", r) for r in names]
         if not gate_errs((Path(per_role[0]) / "summary.md").read_text(encoding="utf-8")):
@@ -240,16 +244,31 @@ def _run(gate, rrr, out_base: Path) -> int:
         cases = [
             ("dup", per_role + per_role[:1]),
             ("mixed-runner", per_role[:3] + [anth]),
-            ("diff", per_role[:3] + [forged(per_role[3], "f-diff", lambda d: (d / "diff.patch").write_text("另一份 diff\n", encoding="utf-8"))]),
+            ("diff", per_role[:3] + [forged(per_role[3], "f-diff", same_lines_other_diff)]),
             ("head", per_role[:3] + [forged(per_role[3], "f-head", lambda d: sub(d / "summary.md", " head=", " head=0000000"))]),
             ("dup-key", per_role[:3] + [forged(per_role[3], "f-dupkey", lambda d: sub(d / "summary.md", " head=", " head=0000000 head="))]),
             ("readonly", per_role[:3] + [forged(per_role[3], "f-ro", lambda d: sub(d / "summary.md", "readonly=tools", "readonly=snapshot"))]),
             ("roles-vs-status", per_role[:3] + [forged(per_role[3], "f-roles", lambda d: sub(d / "summary.md", ":PASS", ":TIMEOUT"))]),
+            ("p0-vs-status", per_role[:3] + [forged(per_role[3], "f-p0", lambda d: sub(d / "summary.md", " p0=0", " p0=1"))]),
+            ("unknown-key", per_role[:3] + [forged(per_role[3], "f-extra", lambda d: sub(d / "summary.md", " readonly=tools", " readonly=tools extra=sibling:TIMEOUT"))]),
+            ("bare-token", per_role[:3] + [forged(per_role[3], "f-bare", lambda d: sub(d / "summary.md", " readonly=tools", " readonly=tools sibling:TIMEOUT"))]),
+            ("role-dup-in-block", per_role[:3] + [forged(per_role[3], "f-rdup", lambda d: sub(d / "summary.md", ":PASS", ":PASS," + names[3] + ":PASS"))]),
+            ("status-not-object", per_role[:3] + [forged(per_role[3], "f-list", lambda d: (d / "status.json").write_text("[1]", encoding="utf-8"))]),
+            ("two-blocks", per_role[:3] + [forged(per_role[3], "f-2blk", lambda d: (d / "summary.md").write_text((d / "summary.md").read_text(encoding="utf-8") * 2, encoding="utf-8"))]),
             ("p1-vs-status", per_role[:3] + [forged(per_role[3], "f-p1", lambda d: sub(d / "summary.md", " p1=0", " p1=1"))]),
             ("diff-lines", per_role[:3] + [forged(per_role[3], "f-lines", lambda d: sub(d / "summary.md", " diff_lines=", " diff_lines=9"))]),
             ("empty-status", per_role[:3] + [forged(per_role[3], "f-empty", lambda d: (d / "status.json").write_text("{}", encoding="utf-8"))]),
             ("missing", per_role[:3] + [forged(per_role[3], "f-missing", lambda d: (d / "status.json").unlink())]),
         ]
+        multi = out_base / "multi-reordered"
+        rc_m = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                               "--worktree", str(wt), "--base", "HEAD~1", "--out", str(multi), "--roles", ",".join(names[:2])],
+                              capture_output=True, text=True).returncode
+        st = json.loads((multi / "status.json").read_text(encoding="utf-8"))
+        (multi / "status.json").write_text(json.dumps(dict(reversed(list(st.items())))), encoding="utf-8")
+        rc, s = merge("merged-reordered", [str(multi)] + per_role[2:])
+        if rc_m != 0 or rc != 0 or gate_errs(s):
+            fails.append(f"merge：status.json 角色序与 summary 不同的多角色目录应正常合并并过闸（rc={rc}）")
         for why, dirs in cases:
             rc, s = merge(f"merged-{why}", dirs)
             if rc != 2 or s:
