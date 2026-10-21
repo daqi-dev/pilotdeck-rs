@@ -806,41 +806,79 @@ for (const [name, file] of Object.entries(sdkFiles)) {
 const stringScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pdrs-string-data-'));
 const stringProbe = path.join(stringScratch, 'probe.mjs');
 fs.writeFileSync(stringProbe, stringDataTemplate);
-const observeString = (kind, repeats) => JSON.parse(execFileSync(process.execPath,
-  [stringProbe, kind, String(repeats)], {env: recursiveDataEnv, encoding: 'utf8', timeout: 60000}));
+const observeString = (kind, repeats, subject = 'default', mode) => JSON.parse(execFileSync(process.execPath,
+  [stringProbe, kind, String(repeats), subject, ...(mode ? [mode] : [])], {env: recursiveDataEnv, encoding: 'utf8', timeout: 60000}));
 try {
-  // Last supported repeats follow the port's 65536 UTF-16-unit budget divided
-  // by the number of groups (or 1 for fixed baseline format expressions).
-  for (const [kind, last, unsupported] of [
-    ['alt', 32768], ['capture', 32768], ['nested', 10922], ['look', 10922, true],
-    ['countedSimple', 32768, true], ['countedAtom', 32768, true], ['lazyCap', 32768],
-    ['cap', 32768], ['optional', 32768], ['bounded', 32768, true], ['unicode', 16384],
-    ['key', 32768], ['additionalKey', 32768],
-    ['email', 32761], ['uri', 32767], ['uriReference', 32767], ['uriTemplate', 21845],
-    ['jsonPointer', 32768], ['fragment', 32767], ['relative', 32767], ['byte', 16384], ['url', 32757],
-  ]) {
+  const budget = 1048576;
+  const recipes = [
+    ...[
+      ['alt'], ['capture'], ['nested', 3], ['look', 3, true],
+      ['countedSimple', 1, true], ['countedAtom', 1, true], ['lazyCap'],
+      ['cap'], ['optional'], ['bounded', 1, true], ['unicode'],
+      ['key'], ['additionalKey'], ['plain'], ['group'], ['simple'], ['lazyAtom'], ['lazySimple'],
+      ['email'], ['uri'], ['uriReference'], ['uriTemplate'], ['jsonPointer'],
+      ['fragment'], ['relative'], ['byte'], ['url'],
+      ['time'], ['dateTime'], ['isoTime'], ['isoDateTime'], ['duration'], ['hostname'],
+    ].map(([kind, weight = 1, unsupported = false]) => ({kind, weight, unsupported, subject: 'default'})),
+    ...['dot', 'negated', 'astralClass', 'negatedX', 'property', 'mixedGroup',
+      'mixedCounted', 'plus', 'openCounted'].flatMap(kind =>
+        ['bmp', 'mixed'].map(subject => ({kind, weight: 1, subject,
+          unsupported: kind === 'mixedCounted', negative: true}))),
+  ];
+  for (const {kind, weight, unsupported, subject, negative} of recipes) {
+    const stem = subject === 'default' ? kind : `${kind}-${subject}`;
+    const zero = observeString(kind, 0, subject);
+    const {prefix, unit, suffix} = zero.stringData;
+    const last = Math.floor((Math.floor(budget / weight) - prefix.length - suffix.length) / unit.length);
     for (const repeats of [last, last + 1]) {
-      const observed = observeString(kind, repeats);
-      assert.ok(!observed.sdkError, `SDK must pass below safety margin: ${kind}/${repeats}`);
-      cases.push({id: `regexp-input/${kind}-${repeats}`, ...observed,
+      const observed = observeString(kind, repeats, subject);
+      // hostname has an explicit 253-character gate, but plan A still charges
+      // its unbounded expression. Preserve the SDK's ordinary validation error.
+      if (kind === 'hostname') assert.ok(observed.sdkError && observed.sdkError.message !== overflow.message);
+      else assert.ok(!observed.sdkError, `SDK must pass below safety margin: ${stem}/${repeats}`);
+      cases.push({id: `regexp-input/${stem}-${repeats}`, ...observed,
         ...(repeats > last ? {portRegexpLimit: true, knownDifference: 'conservative-regexp-stack-budget'}
           : unsupported ? {portUnsupported: true} : {}),
       });
     }
-    let repeats = 65536, observed;
-    for (; repeats <= 33554432; repeats *= 2) {
-      observed = observeString(kind, repeats);
-      if (observed.sdkError) break;
+    if (negative) {
+      const observed = observeString(kind, 16, subject, 'invalid');
+      assert.ok(observed.sdkError && observed.sdkError.message !== overflow.message,
+        `invalid leaf must fail normally: ${stem}`);
+      cases.push({id: `regexp-input/${stem}-invalid`, ...observed,
+        ...(unsupported ? {portUnsupported: true} : {}),
+      });
     }
-    assert.ok(repeats <= 33554432, `no SDK RegExp overflow found: ${kind}`);
-    assert.deepEqual(observed.sdkError, overflow, `SDK RegExp overflow: ${kind}`);
-    cases.push({id: `regexp-input/${kind}-sdk-overflow`, ...observed, portRegexpLimit: true});
+    // Bounded doubling, from the budget rather than a machine-specific V8
+    // breakpoint. Optimized BMP-only runs may remain valid throughout; record
+    // that observation as a conservative gap, never invent an SDK overflow.
+    if (['time', 'dateTime', 'isoTime', 'isoDateTime', 'duration', 'hostname'].includes(kind)) continue;
+    let repeats = Math.max(65536, last + 1), observed;
+    for (; repeats <= 33554432; repeats *= 2) {
+      observed = observeString(kind, repeats, subject);
+      if (observed.sdkError?.message === overflow.message) break;
+    }
+    if (observed.sdkError?.message === overflow.message) {
+      assert.deepEqual(observed.sdkError, overflow, `SDK RegExp overflow: ${stem}`);
+      cases.push({id: `regexp-input/${stem}-sdk-overflow`, ...observed, portRegexpLimit: true});
+    } else {
+      assert.ok(!observed.sdkError, `unexpected SDK error during search: ${stem}`);
+      assert.ok(subject !== 'mixed', `mixed subject must expose SDK overflow: ${stem}`);
+      cases.push({id: `regexp-input/${stem}-sdk-search-valid`, ...observed,
+        portRegexpLimit: true, knownDifference: 'conservative-regexp-stack-budget'});
+    }
   }
   for (const kind of ['plain', 'group', 'simple', 'lazyAtom', 'lazySimple', 'skippedKey']) {
-    const observed = observeString(kind, 8388608);
-    assert.ok(!observed.sdkError, `non-growing RegExp input must pass: ${kind}`);
+    const observed = observeString(kind, kind === 'skippedKey' ? 8388608 : budget / 2);
+    assert.ok(!observed.sdkError, `long valid control must pass: ${kind}`);
     cases.push({id: `regexp-input/${kind}-long-valid`, ...observed});
   }
+  for (const [kind, repeats, subject] of [['literal', 1, 'default'], ['boundedClass', 8, 'mixed']]) {
+    const observed = observeString(kind, repeats, subject);
+    // literal uses 'ab' by default, so this is an ordinary validation negative.
+    cases.push({id: `regexp-input/${kind}-bounded-control`, ...observed});
+  }
+
 } finally {
   fs.rmSync(stringScratch, {recursive: true, force: true});
 }
@@ -858,7 +896,7 @@ const oracle = {
   recursiveDataRuntime: {
     node: process.version, v8: process.versions.v8,
     platform: process.platform, arch: process.arch,
-    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024, regexpStackUnits: 65536, regexpInputUnit: 'UTF-16 code unit',
+    coldStart: true, defaultStack: true, clientCallTool: true, validationBudget: 1024, regexpStackUnits: 1048576, regexpInputUnit: 'UTF-16 code unit',
   },
   cases: cases.map((entry) => {
     if (entry.recursiveData || entry.comparisonData || entry.stringData) return entry;

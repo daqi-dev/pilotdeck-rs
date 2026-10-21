@@ -39,7 +39,7 @@
     "defaultStack": true,
     "clientCallTool": true,
     "validationBudget": 1024,
-    "regexpStackUnits": 65536,
+    "regexpStackUnits": 1048576,
     "regexpInputUnit": "UTF-16 code unit"
   },
   "cases": [
@@ -15392,7 +15392,7 @@
       "portDepthLimit": true
     },
     {
-      "id": "regexp-input/alt-32768",
+      "id": "regexp-input/alt-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15407,13 +15407,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/alt-32769",
+      "id": "regexp-input/alt-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15428,8 +15428,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15451,8 +15451,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "value"
       },
       "sdkError": {
@@ -15462,7 +15462,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/capture-32768",
+      "id": "regexp-input/capture-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15477,13 +15477,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/capture-32769",
+      "id": "regexp-input/capture-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15498,8 +15498,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15521,8 +15521,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 2097152,
-        "length": 4194304,
+        "repeats": 2097156,
+        "length": 4194312,
         "target": "value"
       },
       "sdkError": {
@@ -15532,7 +15532,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/nested-10922",
+      "id": "regexp-input/nested-174762",
       "schema": {
         "type": "object",
         "properties": {
@@ -15547,13 +15547,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 10922,
-        "length": 21844,
+        "repeats": 174762,
+        "length": 349524,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/nested-10923",
+      "id": "regexp-input/nested-174763",
       "schema": {
         "type": "object",
         "properties": {
@@ -15568,8 +15568,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 10923,
-        "length": 21846,
+        "repeats": 174763,
+        "length": 349526,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15591,8 +15591,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 1048576,
-        "length": 2097152,
+        "repeats": 1398104,
+        "length": 2796208,
         "target": "value"
       },
       "sdkError": {
@@ -15602,7 +15602,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/look-10922",
+      "id": "regexp-input/look-174762",
       "schema": {
         "type": "object",
         "properties": {
@@ -15617,14 +15617,14 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 10922,
-        "length": 21844,
+        "repeats": 174762,
+        "length": 349524,
         "target": "value"
       },
       "portUnsupported": true
     },
     {
-      "id": "regexp-input/look-10923",
+      "id": "regexp-input/look-174763",
       "schema": {
         "type": "object",
         "properties": {
@@ -15639,8 +15639,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 10923,
-        "length": 21846,
+        "repeats": 174763,
+        "length": 349526,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15662,8 +15662,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 5592416,
+        "length": 11184832,
         "target": "value"
       },
       "sdkError": {
@@ -15673,7 +15673,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/countedSimple-32768",
+      "id": "regexp-input/countedSimple-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15688,14 +15688,14 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       },
       "portUnsupported": true
     },
     {
-      "id": "regexp-input/countedSimple-32769",
+      "id": "regexp-input/countedSimple-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15710,8 +15710,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15733,8 +15733,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 8388624,
+        "length": 16777248,
         "target": "value"
       },
       "sdkError": {
@@ -15744,7 +15744,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/countedAtom-32768",
+      "id": "regexp-input/countedAtom-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15759,14 +15759,14 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       },
       "portUnsupported": true
     },
     {
-      "id": "regexp-input/countedAtom-32769",
+      "id": "regexp-input/countedAtom-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15781,8 +15781,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15804,8 +15804,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "value"
       },
       "sdkError": {
@@ -15815,7 +15815,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/lazyCap-32768",
+      "id": "regexp-input/lazyCap-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15830,13 +15830,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/lazyCap-32769",
+      "id": "regexp-input/lazyCap-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15851,8 +15851,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15874,8 +15874,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 8388624,
+        "length": 16777248,
         "target": "value"
       },
       "sdkError": {
@@ -15885,7 +15885,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/cap-32768",
+      "id": "regexp-input/cap-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15900,13 +15900,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/cap-32769",
+      "id": "regexp-input/cap-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15921,8 +15921,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -15944,8 +15944,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "value"
       },
       "sdkError": {
@@ -15955,7 +15955,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/optional-32768",
+      "id": "regexp-input/optional-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -15970,13 +15970,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/optional-32769",
+      "id": "regexp-input/optional-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -15991,8 +15991,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16014,8 +16014,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 8388624,
+        "length": 16777248,
         "target": "value"
       },
       "sdkError": {
@@ -16025,7 +16025,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/bounded-32768",
+      "id": "regexp-input/bounded-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16040,14 +16040,14 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       },
       "portUnsupported": true
     },
     {
-      "id": "regexp-input/bounded-32769",
+      "id": "regexp-input/bounded-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -16062,8 +16062,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16085,8 +16085,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "value"
       },
       "sdkError": {
@@ -16096,7 +16096,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/unicode-16384",
+      "id": "regexp-input/unicode-262144",
       "schema": {
         "type": "object",
         "properties": {
@@ -16111,13 +16111,13 @@
         "prefix": "",
         "unit": "😀😁",
         "suffix": "",
-        "repeats": 16384,
-        "length": 65536,
+        "repeats": 262144,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/unicode-16385",
+      "id": "regexp-input/unicode-262145",
       "schema": {
         "type": "object",
         "properties": {
@@ -16132,8 +16132,8 @@
         "prefix": "",
         "unit": "😀😁",
         "suffix": "",
-        "repeats": 16385,
-        "length": 65540,
+        "repeats": 262145,
+        "length": 1048580,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16155,8 +16155,8 @@
         "prefix": "",
         "unit": "😀😁",
         "suffix": "",
-        "repeats": 2097152,
-        "length": 8388608,
+        "repeats": 2097160,
+        "length": 8388640,
         "target": "value"
       },
       "sdkError": {
@@ -16166,7 +16166,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/key-32768",
+      "id": "regexp-input/key-524288",
       "schema": {
         "type": "object",
         "patternProperties": {
@@ -16180,13 +16180,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "key"
       }
     },
     {
-      "id": "regexp-input/key-32769",
+      "id": "regexp-input/key-524289",
       "schema": {
         "type": "object",
         "patternProperties": {
@@ -16200,8 +16200,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "key"
       },
       "portRegexpLimit": true,
@@ -16222,8 +16222,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "key"
       },
       "sdkError": {
@@ -16233,7 +16233,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/additionalKey-32768",
+      "id": "regexp-input/additionalKey-524288",
       "schema": {
         "type": "object",
         "patternProperties": {
@@ -16246,13 +16246,13 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "key"
       }
     },
     {
-      "id": "regexp-input/additionalKey-32769",
+      "id": "regexp-input/additionalKey-524289",
       "schema": {
         "type": "object",
         "patternProperties": {
@@ -16265,8 +16265,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "key"
       },
       "portRegexpLimit": true,
@@ -16286,8 +16286,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "key"
       },
       "sdkError": {
@@ -16297,28 +16297,342 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/email-32761",
+      "id": "regexp-input/plain-524288",
       "schema": {
         "type": "object",
         "properties": {
           "s": {
             "type": "string",
-            "format": "email"
+            "pattern": "^[ab]*$"
           }
         }
       },
       "data": null,
       "stringData": {
         "prefix": "",
-        "unit": "a.",
-        "suffix": "a@example.com",
-        "repeats": 32761,
-        "length": 65535,
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/email-32762",
+      "id": "regexp-input/plain-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/plain-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/group-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^([ab]*)$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/group-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^([ab]*)$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/group-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^([ab]*)$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/simple-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/simple-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/simple-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/lazyAtom-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/lazyAtom-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/lazyAtom-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[ab]*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/lazySimple-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/lazySimple-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/lazySimple-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(?:ab)*?$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/email-524281",
       "schema": {
         "type": "object",
         "properties": {
@@ -16333,8 +16647,29 @@
         "prefix": "",
         "unit": "a.",
         "suffix": "a@example.com",
-        "repeats": 32762,
-        "length": 65537,
+        "repeats": 524281,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/email-524282",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a.",
+        "suffix": "a@example.com",
+        "repeats": 524282,
+        "length": 1048577,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16356,8 +16691,8 @@
         "prefix": "",
         "unit": "a.",
         "suffix": "a@example.com",
-        "repeats": 4194304,
-        "length": 8388621,
+        "repeats": 4194256,
+        "length": 8388525,
         "target": "value"
       },
       "sdkError": {
@@ -16367,7 +16702,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/uri-32767",
+      "id": "regexp-input/uri-524287",
       "schema": {
         "type": "object",
         "properties": {
@@ -16382,13 +16717,13 @@
         "prefix": "x:",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32767,
-        "length": 65536,
+        "repeats": 524287,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/uri-32768",
+      "id": "regexp-input/uri-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16403,8 +16738,8 @@
         "prefix": "x:",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65538,
+        "repeats": 524288,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16437,7 +16772,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/uriReference-32767",
+      "id": "regexp-input/uriReference-524287",
       "schema": {
         "type": "object",
         "properties": {
@@ -16452,13 +16787,13 @@
         "prefix": "x:",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32767,
-        "length": 65536,
+        "repeats": 524287,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/uriReference-32768",
+      "id": "regexp-input/uriReference-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16473,8 +16808,8 @@
         "prefix": "x:",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65538,
+        "repeats": 524288,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16507,7 +16842,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/uriTemplate-21845",
+      "id": "regexp-input/uriTemplate-349525",
       "schema": {
         "type": "object",
         "properties": {
@@ -16522,13 +16857,13 @@
         "prefix": "",
         "unit": "{a}",
         "suffix": "",
-        "repeats": 21845,
-        "length": 65535,
+        "repeats": 349525,
+        "length": 1048575,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/uriTemplate-21846",
+      "id": "regexp-input/uriTemplate-349526",
       "schema": {
         "type": "object",
         "properties": {
@@ -16543,8 +16878,8 @@
         "prefix": "",
         "unit": "{a}",
         "suffix": "",
-        "repeats": 21846,
-        "length": 65538,
+        "repeats": 349526,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16566,8 +16901,8 @@
         "prefix": "",
         "unit": "{a}",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 25165824,
+        "repeats": 11184832,
+        "length": 33554496,
         "target": "value"
       },
       "sdkError": {
@@ -16577,7 +16912,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/jsonPointer-32768",
+      "id": "regexp-input/jsonPointer-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16592,13 +16927,13 @@
         "prefix": "",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65536,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/jsonPointer-32769",
+      "id": "regexp-input/jsonPointer-524289",
       "schema": {
         "type": "object",
         "properties": {
@@ -16613,8 +16948,8 @@
         "prefix": "",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32769,
-        "length": 65538,
+        "repeats": 524289,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16636,8 +16971,8 @@
         "prefix": "",
         "unit": "/a",
         "suffix": "",
-        "repeats": 4194304,
-        "length": 8388608,
+        "repeats": 4194312,
+        "length": 8388624,
         "target": "value"
       },
       "sdkError": {
@@ -16647,7 +16982,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/fragment-32767",
+      "id": "regexp-input/fragment-524287",
       "schema": {
         "type": "object",
         "properties": {
@@ -16662,13 +16997,13 @@
         "prefix": "#",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32767,
-        "length": 65535,
+        "repeats": 524287,
+        "length": 1048575,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/fragment-32768",
+      "id": "regexp-input/fragment-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16683,8 +17018,8 @@
         "prefix": "#",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65537,
+        "repeats": 524288,
+        "length": 1048577,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16717,7 +17052,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/relative-32767",
+      "id": "regexp-input/relative-524287",
       "schema": {
         "type": "object",
         "properties": {
@@ -16732,13 +17067,13 @@
         "prefix": "0",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32767,
-        "length": 65535,
+        "repeats": 524287,
+        "length": 1048575,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/relative-32768",
+      "id": "regexp-input/relative-524288",
       "schema": {
         "type": "object",
         "properties": {
@@ -16753,8 +17088,8 @@
         "prefix": "0",
         "unit": "/a",
         "suffix": "",
-        "repeats": 32768,
-        "length": 65537,
+        "repeats": 524288,
+        "length": 1048577,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16787,7 +17122,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/byte-16384",
+      "id": "regexp-input/byte-262144",
       "schema": {
         "type": "object",
         "properties": {
@@ -16802,13 +17137,13 @@
         "prefix": "",
         "unit": "YWJj",
         "suffix": "",
-        "repeats": 16384,
-        "length": 65536,
+        "repeats": 262144,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/byte-16385",
+      "id": "regexp-input/byte-262145",
       "schema": {
         "type": "object",
         "properties": {
@@ -16823,8 +17158,8 @@
         "prefix": "",
         "unit": "YWJj",
         "suffix": "",
-        "repeats": 16385,
-        "length": 65540,
+        "repeats": 262145,
+        "length": 1048580,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16846,8 +17181,8 @@
         "prefix": "",
         "unit": "YWJj",
         "suffix": "",
-        "repeats": 2097152,
-        "length": 8388608,
+        "repeats": 2097160,
+        "length": 8388640,
         "target": "value"
       },
       "sdkError": {
@@ -16857,7 +17192,7 @@
       "portRegexpLimit": true
     },
     {
-      "id": "regexp-input/url-32757",
+      "id": "regexp-input/url-524277",
       "schema": {
         "type": "object",
         "properties": {
@@ -16872,13 +17207,13 @@
         "prefix": "https://",
         "unit": "a-",
         "suffix": "a.example.com/",
-        "repeats": 32757,
-        "length": 65536,
+        "repeats": 524277,
+        "length": 1048576,
         "target": "value"
       }
     },
     {
-      "id": "regexp-input/url-32758",
+      "id": "regexp-input/url-524278",
       "schema": {
         "type": "object",
         "properties": {
@@ -16893,8 +17228,8 @@
         "prefix": "https://",
         "unit": "a-",
         "suffix": "a.example.com/",
-        "repeats": 32758,
-        "length": 65538,
+        "repeats": 524278,
+        "length": 1048578,
         "target": "value"
       },
       "portRegexpLimit": true,
@@ -16916,8 +17251,1973 @@
         "prefix": "https://",
         "unit": "a-",
         "suffix": "a.example.com/",
-        "repeats": 4194304,
-        "length": 8388630,
+        "repeats": 4194224,
+        "length": 8388470,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/time-1048566",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "12:00:00.",
+        "unit": "0",
+        "suffix": "Z",
+        "repeats": 1048566,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/time-1048567",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "12:00:00.",
+        "unit": "0",
+        "suffix": "Z",
+        "repeats": 1048567,
+        "length": 1048577,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/dateTime-1048555",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "2000-01-01T12:00:00.",
+        "unit": "0",
+        "suffix": "Z",
+        "repeats": 1048555,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/dateTime-1048556",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "2000-01-01T12:00:00.",
+        "unit": "0",
+        "suffix": "Z",
+        "repeats": 1048556,
+        "length": 1048577,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/isoTime-1048567",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "iso-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "12:00:00.",
+        "unit": "0",
+        "suffix": "",
+        "repeats": 1048567,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/isoTime-1048568",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "iso-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "12:00:00.",
+        "unit": "0",
+        "suffix": "",
+        "repeats": 1048568,
+        "length": 1048577,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/isoDateTime-1048556",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "iso-date-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "2000-01-01T12:00:00.",
+        "unit": "0",
+        "suffix": "",
+        "repeats": 1048556,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/isoDateTime-1048557",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "iso-date-time"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "2000-01-01T12:00:00.",
+        "unit": "0",
+        "suffix": "",
+        "repeats": 1048557,
+        "length": 1048577,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/duration-1048574",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "duration"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "P",
+        "unit": "0",
+        "suffix": "D",
+        "repeats": 1048574,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/duration-1048575",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "duration"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "P",
+        "unit": "0",
+        "suffix": "D",
+        "repeats": 1048575,
+        "length": 1048577,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/hostname-1048576",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "hostname"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a",
+        "suffix": "",
+        "repeats": 1048576,
+        "length": 1048576,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match format \"hostname\""
+      }
+    },
+    {
+      "id": "regexp-input/hostname-1048577",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "format": "hostname"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a",
+        "suffix": "",
+        "repeats": 1048577,
+        "length": 1048577,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match format \"hostname\""
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/dot-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/dot-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/dot-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^.*$\""
+      }
+    },
+    {
+      "id": "regexp-input/dot-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/dot-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/dot-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/dot-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^.*$\""
+      }
+    },
+    {
+      "id": "regexp-input/dot-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^.*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/negated-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/negated-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negated-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "<",
+        "repeats": 16,
+        "length": 33,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[^<>]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/negated-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negated-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/negated-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negated-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "<",
+        "repeats": 16,
+        "length": 49,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[^<>]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/negated-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^<>]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/astralClass-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/astralClass-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/astralClass-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/astralClass-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/astralClass-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/astralClass-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/astralClass-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/astralClass-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/negatedX-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/negatedX-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negatedX-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "x",
+        "repeats": 16,
+        "length": 33,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[^x]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/negatedX-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negatedX-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/negatedX-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/negatedX-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "x",
+        "repeats": 16,
+        "length": 49,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[^x]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/negatedX-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[^x]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/property-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/property-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/property-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[\\p{L}\\p{Emoji}]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/property-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/property-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/property-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/property-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[\\p{L}\\p{Emoji}]*$\""
+      }
+    },
+    {
+      "id": "regexp-input/property-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[\\p{L}\\p{Emoji}]*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 2796208,
+        "length": 8388624,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/mixedGroup-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/mixedGroup-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/mixedGroup-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^(a|😀)*$\""
+      }
+    },
+    {
+      "id": "regexp-input/mixedGroup-bmp-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 2097156,
+        "length": 4194312,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/mixedGroup-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/mixedGroup-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/mixedGroup-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^(a|😀)*$\""
+      }
+    },
+    {
+      "id": "regexp-input/mixedGroup-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^(a|😀)*$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 2796208,
+        "length": 8388624,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/mixedCounted-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]{0,20000000}$\""
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-bmp-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 4194312,
+        "length": 8388624,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/mixedCounted-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]{0,20000000}$\""
+      },
+      "portUnsupported": true
+    },
+    {
+      "id": "regexp-input/mixedCounted-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,20000000}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 2796208,
+        "length": 8388624,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/plus-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/plus-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/plus-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]+$\""
+      }
+    },
+    {
+      "id": "regexp-input/plus-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/plus-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/plus-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/plus-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]+$\""
+      }
+    },
+    {
+      "id": "regexp-input/plus-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]+$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded"
+      },
+      "portRegexpLimit": true
+    },
+    {
+      "id": "regexp-input/openCounted-bmp-524288",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524288,
+        "length": 1048576,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/openCounted-bmp-524289",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 524289,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/openCounted-bmp-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 34,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]{1,}$\""
+      }
+    },
+    {
+      "id": "regexp-input/openCounted-bmp-sdk-search-valid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "aa",
+        "suffix": "",
+        "repeats": 16777248,
+        "length": 33554496,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/openCounted-mixed-349525",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349525,
+        "length": 1048575,
+        "target": "value"
+      }
+    },
+    {
+      "id": "regexp-input/openCounted-mixed-349526",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 349526,
+        "length": 1048578,
+        "target": "value"
+      },
+      "portRegexpLimit": true,
+      "knownDifference": "conservative-regexp-stack-budget"
+    },
+    {
+      "id": "regexp-input/openCounted-mixed-invalid",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "\n!",
+        "repeats": 16,
+        "length": 50,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^[a😀]{1,}$\""
+      }
+    },
+    {
+      "id": "regexp-input/openCounted-mixed-sdk-overflow",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{1,}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 5592416,
+        "length": 16777248,
         "target": "value"
       },
       "sdkError": {
@@ -16942,8 +19242,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
@@ -16963,8 +19263,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
@@ -16984,8 +19284,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
@@ -17005,8 +19305,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
@@ -17026,8 +19326,8 @@
         "prefix": "",
         "unit": "ab",
         "suffix": "",
-        "repeats": 8388608,
-        "length": 16777216,
+        "repeats": 524288,
+        "length": 1048576,
         "target": "value"
       }
     },
@@ -17047,6 +19347,52 @@
         "repeats": 8388608,
         "length": 16777216,
         "target": "key"
+      }
+    },
+    {
+      "id": "regexp-input/literal-bounded-control",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^a$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "ab",
+        "suffix": "",
+        "repeats": 1,
+        "length": 2,
+        "target": "value"
+      },
+      "sdkError": {
+        "code": -32602,
+        "message": "MCP error -32602: Structured content does not match the tool's output schema: data/s must match pattern \"^a$\""
+      }
+    },
+    {
+      "id": "regexp-input/boundedClass-bounded-control",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^[a😀]{0,16}$"
+          }
+        }
+      },
+      "data": null,
+      "stringData": {
+        "prefix": "",
+        "unit": "a😀",
+        "suffix": "",
+        "repeats": 8,
+        "length": 24,
+        "target": "value"
       }
     }
   ]

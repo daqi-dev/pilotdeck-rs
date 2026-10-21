@@ -1989,22 +1989,19 @@ fn is_js_syntax_character(ch: char) -> bool {
     )
 }
 
-/// Conservative irregexp backtracking-stack budget, independent of the schema
-/// recursion budget. Cold V8/Client probes are recorded in RESULT r8. Count
-/// UTF-16 input units (RegExp's subject representation), weighted by all groups
-/// in a pattern: captures/assertions nested inside a repeat increase its cost.
-/// This deliberately rejects before V8's runtime-dependent heap-stack limit.
-const MAX_REGEXP_STACK_UNITS: usize = 65_536;
+/// Conservative RegExp subject budget (human decision, 2026-10-21, plan A).
+/// Every unbounded/large counted repetition has weight >= 1; all groups in the
+/// pattern contribute to that weight. Measure the original UTF-16 subject.
+/// Above 1,048,576 weighted units the port returns the SDK stack-overflow error
+/// even when the SDK may accept the input. Output validation above 1 MB is
+/// outside this PR's acceptance scope (human decision, 2026-10-21).
+const MAX_REGEXP_STACK_UNITS: usize = 1_048_576;
 
-/// Detect repeated groups with captures, alternatives, assertions, or nested
-/// repetition, plus large counted repetitions of any atom. Simple noncapturing
-/// atom runs (including character classes) and
-/// groups that are not repeated do not grow irregexp's stack with input length.
-/// Scan iteratively, respecting escaped punctuation and character classes.
-/// This is a conservative structural model, not a V8 optimizer emulator.
+/// Scan quantifiers uniformly, without guessing V8's atom/group optimizations.
+/// Escaped punctuation, character classes and Unicode/property escape braces
+/// are not quantifiers. Small bounded repetitions alone need no subject cap.
 fn regexp_stack_weight(pattern: &str) -> usize {
     let bytes = pattern.as_bytes();
-    let mut groups = Vec::new();
     let mut group_count = 0usize;
     let mut largest_repeat = 0usize;
     let mut in_class = false;
@@ -2025,37 +2022,15 @@ fn regexp_stack_weight(pattern: &str) -> usize {
             b'[' if !in_class => in_class = true,
             b']' if in_class => in_class = false,
             _ if in_class => {}
-            b'(' => {
-                if let Some(complex) = groups.last_mut() {
-                    *complex = true;
-                }
-                group_count = group_count.saturating_add(1);
-                let simple = bytes.get(index + 1..index + 3) == Some(b"?:");
-                groups.push(!simple);
-                if simple {
-                    index += 2;
-                }
-            }
-            b')' => {
-                if groups.pop() == Some(true) {
-                    largest_repeat = largest_repeat.max(regexp_repeat_bound(&bytes[index + 1..]));
-                }
-            }
-            b'|' | b'*' | b'+' | b'?' | b'{' => {
-                if bytes[index] == b'{' {
-                    largest_repeat = largest_repeat.max(regexp_repeat_bound(&bytes[index..]));
-                }
-                if let Some(complex) = groups.last_mut() {
-                    *complex = true;
-                }
+            b'(' => group_count = group_count.saturating_add(1),
+            b'*' | b'+' | b'{' => {
+                largest_repeat = largest_repeat.max(regexp_repeat_bound(&bytes[index..]));
             }
             _ => {}
         }
         index += 1;
     }
     let group_count = group_count.max(1);
-    // Small fixed repetitions have a bounded stack cost, regardless of the
-    // subject length. Large counted repetitions need the same input guard.
     if largest_repeat.saturating_mul(group_count) > MAX_REGEXP_STACK_UNITS {
         group_count
     } else {
@@ -2092,15 +2067,20 @@ fn check_regexp_stack(weight: usize, input_units: usize) -> Result<(), Validatio
     Ok(())
 }
 
-/// Full ajv-formats uses unbounded compound-group repetitions for these
-/// formats, including inside the `uri`/`byte` functions. Other formats have
-/// bounded matches, atom-only runs, or only compile a regexp (`regex`).
-/// Fixed baseline format expressions have bounded structural complexity;
-/// 64K UTF-16 units is below every measured overflowing recipe's breakpoint.
+/// Baseline full formats containing unbounded RegExp repetitions, including
+/// expressions in helper functions. Plan A applies weight 1 even to atom-only
+/// runs and hostname's length-gated expression. `regex` only compiles its input;
+/// date/ipv4/ipv6/uuid are bounded; password/binary do no matching.
 fn format_stack_weight(format: &str) -> usize {
     usize::from(matches!(
         format,
-        "email"
+        "time"
+            | "date-time"
+            | "iso-time"
+            | "iso-date-time"
+            | "duration"
+            | "hostname"
+            | "email"
             | "uri"
             | "uri-reference"
             | "uri-template"
@@ -3910,16 +3890,12 @@ mod tests {
     }
 
     #[test]
-    fn regexp_stack_model_distinguishes_repeated_groups_from_atom_runs() {
+    fn regexp_stack_model_covers_all_unbounded_atoms() {
         for pattern in [
-            r"^[ab]*$",
-            r"^([ab]*)$",
-            r"^(?:ab)*$",
-            r"^\([ab]*\)$",
-            r"^[()*+?|]*$",
-            r"^[ab]*?$",
-            r"^(?:ab)*?$",
-            r"^\u{100000}*$",
+            r"^\*\+$",
+            r"^[()*+?|]{1,12}$",
+            r"^\u{100000}$",
+            r"^\p{L}{1,12}$",
             r"^(?:a|b){2}$",
             r"^(?:a|b)?$",
         ] {
@@ -3937,6 +3913,17 @@ mod tests {
             ("^[ab]{1,40000000}$", 1),
             ("^(?:ab){1,20000000}$", 1),
             ("^(😀|😁)*$", 1),
+            ("^.*$", 1),
+            ("^[^<>]*$", 1),
+            ("^[a😀]*$", 1),
+            ("^[^x]*$", 1),
+            (r"^\p{Any}*$", 1),
+            (r"^\u{100000}*$", 1),
+            ("^[ab]*?$", 1),
+            ("^(?:ab)*?$", 1),
+            ("^([ab]*)$", 1),
+            ("^[ab]+$", 1),
+            ("^[ab]{2,}$", 1),
         ] {
             assert_eq!(regexp_stack_weight(pattern), weight, "{pattern}");
             let last = MAX_REGEXP_STACK_UNITS / weight;
@@ -3958,21 +3945,21 @@ mod tests {
         assert_eq!(
             validate(
                 &schema,
-                &JsValue::String(JsString::from("😀".repeat(32768)))
+                &JsValue::String(JsString::from("😀".repeat(MAX_REGEXP_STACK_UNITS / 2)))
             ),
             Ok(None)
         );
         assert_eq!(
             validate(
                 &schema,
-                &JsValue::String(JsString::from("😀".repeat(32769)))
+                &JsValue::String(JsString::from("😀".repeat(MAX_REGEXP_STACK_UNITS / 2 + 1)))
             ),
             Err(ValidationError::Threw)
         );
         assert_eq!(
             regex_matches(
                 &JsString::from("^[ab]*$"),
-                &JsString::from("ab".repeat(1_000_000))
+                &JsString::from("ab".repeat(MAX_REGEXP_STACK_UNITS / 2))
             ),
             Ok(true)
         );
@@ -4021,7 +4008,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 670);
+        assert_eq!(cases.len(), 771);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
@@ -4137,6 +4124,20 @@ mod tests {
                 }
                 continue;
             }
+            if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
+                // Schema compile must accept it (Ajv does), and using it must
+                // fail explicitly, never compile into a permissive validator
+                // or silently pass data.
+                assert!(
+                    check_schema(schema).is_ok(),
+                    "{id}: valid schema was rejected by check_schema"
+                );
+                assert!(
+                    matches!(validate(schema, data), Err(ValidationError::Unsupported(_))),
+                    "{id}"
+                );
+                continue;
+            }
             if let Some(sdk) = case.get("sdkError") {
                 let error =
                     super::super::client::validate_structured_content(schema, data).unwrap_err();
@@ -4153,20 +4154,6 @@ mod tests {
                         .as_string()
                         .unwrap()
                         .equals_str(error.message()),
-                    "{id}"
-                );
-                continue;
-            }
-            if case.get("portUnsupported").and_then(JsValue::as_bool) == Some(true) {
-                // Schema compile must accept it (Ajv does), and using it must
-                // fail explicitly, never compile into a permissive validator
-                // or silently pass data.
-                assert!(
-                    check_schema(schema).is_ok(),
-                    "{id}: valid schema was rejected by check_schema"
-                );
-                assert!(
-                    matches!(validate(schema, data), Err(ValidationError::Unsupported(_))),
                     "{id}"
                 );
                 continue;

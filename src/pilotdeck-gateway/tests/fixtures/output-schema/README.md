@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **670** cases. Each case is either:
+count of **771** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -164,39 +164,56 @@ exercised both as a value pattern and as a property-name pattern.
 | classes with nested `[`, `&&` / `~~` / `--`, or empty classes | accepted at compile time; using the pattern returns `ValidationError::Unsupported` (the real Ajv result is preserved in the oracle) |
 | `patternProperties` whose children are all always-valid and whose sibling `additionalProperties` is absent/always-valid | Ajv's `patternProperties` codegen early-returns without compiling the keys; both `check_schema` and validation skip them (`alwaysValid` early-exit, r4 GLM P1) |
 
-## Long RegExp subjects (repair round 8)
+## Long RegExp subjects (repair round 9, human plan A)
 
 `string-data.mjs` runs one cold, default-stack real SDK `Client.callTool` per
 process using linked in-memory transports. `stringData` records only `prefix`,
 `unit`, `suffix`, `repeats`, UTF-16 `length`, and a `value`/`key` target. Replay
-inflates the subject in memory. No multi-megabyte repeated subjects enter JSON.
+inflates the subject in memory; repeated multi-megabyte subjects are not stored.
 
-The 72 new cases cover repeated alternatives, captures, nested captures,
-lookahead, optional atoms, large counted repetitions (including a character
-class without any group), astral subjects, active/skipped `patternProperties`,
-`additionalProperties` pattern reuse, and nine full formats: email, uri,
-uri-reference, uri-template, url, json-pointer, json-pointer-uri-fragment,
-relative-json-pointer, and byte. Each growing class has the last supported
-recipe, its next repetition, and a dynamically found SDK overflow. The bounded
-doubling search fails if it cannot observe the exact SDK error; no V8-specific
-breakpoint is hard-coded. Six large valid controls retain ordinary replay,
-including greedy/lazy atom runs, simple noncapturing runs, a single capture,
-and Ajv's skipped always-valid patternProperties branch.
+All unbounded repetitions (`*`, `+`, `{n,}`) and large upper bounds receive a
+weight of at least 1, independent of atom type or V8 optimizations. The weight
+is the total number of groups in the pattern, with a minimum of 1. A bounded
+repeat is large when its upper bound times that weight exceeds 1,048,576.
+Escaped punctuation, class contents and Unicode/property escape braces are
+not quantifiers. Small bounded repeats alone do not cap subject length.
+The single shared matcher applies the same rule to active `patternProperties`
+keys, including `additionalProperties` reuse. Ajv-skipped keys remain skipped.
 
-The port conservatively limits UTF-16 subject units times group count to
-65536 for compound repeated groups and large counted atom/group repetitions.
-Small bounded repetitions and simple noncapturing atom runs are exempt. The
-fixed baseline's nine growing formats use weight 1. The check precedes both
-Rust matching and an unsupported-syntax response, and all call sites share
-`ValidationError::Threw` with the existing RPC projection. It does not emulate
-V8's optimizer or its runtime-dependent backtracking-stack allocation limit.
-Unvisited patterns, Ajv-skipped patterns, and unrelated formats are unaffected.
+**Approved limitation (human decision, 2026-10-21):** when an active regex with
+unbounded/large repetition exceeds **1,048,576 (weight × UTF-16 length)**, the
+port returns the SDK stack-overflow error even though the SDK may accept it.
+**Output validation above 1 MB is outside this PR's acceptance requirements.**
+The budget measures UTF-16 units, not bytes; group weights can reject shorter
+strings (e.g. weight 3 supports at most 349,525 units). There is no uniform
+one-megabyte wire-payload cap. Ordinary validation errors may also be replaced
+by the overflow error above this budget.
+
+Full formats with unbounded regexes use weight 1: email, uri, uri-reference,
+uri-template, url, json-pointer, json-pointer-uri-fragment, relative-json-pointer,
+byte, time, date-time, iso-time, iso-date-time, duration, hostname. This includes
+helper expressions and hostname's length-gated expression. Bounded date,
+ipv4/ipv6/uuid patterns, regex construction, password/binary and unknown formats
+retain their existing behavior.
+
+The 173 string cases include both sides of the budget for 51 recipes; dot,
+negated classes, astral classes, Unicode properties, groups and counted repeats
+use both BMP-only and mixed `a😀` subjects. The four Grok r9 patterns are covered.
+Each mixed recipe has a dynamically found SDK overflow with the exact SDK error;
+nonmixed optimized runs that do not overflow within the bounded search retain
+an explicit valid observation and conservative-gap label. No machine-specific
+breakpoint is hard-coded. Eighteen short invalid subjects are data negative
+controls. Six long valid controls (five unbounded patterns at the budget, one
+Ajv-skipped key above it) and two literal/bounded controls prevent a blanket
+length cap. Six additional format classes retain SDK observations on both sides
+without claiming that their atom-only or length-gated expressions overflow.
 
 `portRegexpLimit` requires precisely code -32602 and
 `MCP error -32602: Failed to validate structured content: Maximum call stack size exceeded`.
-`knownDifference: conservative-regexp-stack-budget` preserves SDK success where
-the port rejects earlier. These are explicit conservative differences, never
-parity passes. Below the limit, lookahead and enormous counted expressions
-retain `portUnsupported` because Rust cannot evaluate them; their real SDK
-results stay unchanged. Exact measurements and per-class difference intervals
-are in `_tmp/20261020-a65-pr10b/RESULT.md`, round 8.
+`knownDifference: conservative-regexp-stack-budget` labels an SDK success or a
+different ordinary error where the port returns overflow; these observations
+are never parity passes. Below the budget, unsupported regex syntax still has
+`portUnsupported`. Source guards, SDK hashes and cold/default-stack probes are
+unchanged. Measurements and difference intervals are recorded in
+`_tmp/20261020-a65-pr10b/RESULT.md`, round 9. The separate depth budget remains
+unapproved and unchanged; see that round's depth-impact section.
