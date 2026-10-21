@@ -55,3 +55,8 @@
 - **B 的内容**（`_tmp/20261021-issue-386/decision-brief.md`、`unsafe-exception-draft.md`）：只有 `pilotdeck-gateway` 一个 crate 从 `forbid(unsafe_code)` 改为 `deny(unsafe_code)`，只给一个共享函数 `install_child_signal_reset(&mut Command)` 加 `#[allow(unsafe_code)]`；函数内只用 `pre_exec` 注册，并在 fork 之后、exec 之前调用 async-signal-safe 的 `sigemptyset` / `sigaction(SIG_DFL)` / `sigprocmask(SIG_SETMASK, 空集)`；其余 workspace crate 继续 forbid。五处 spawn 在 `.spawn()` 前调用它，cwd、管道、错误上报、kill_on_drop、回收都沿用 std / Tokio。
 - **审查条件**：两家非作者专审 unsafe 合法性与 fork 后 async-signal-safety（附实际工具链 std / Tokio 的调用顺序与平台 libc 声明）；信号集合以 Node / libuv 实测为准（第一轮 Node 464 例）；父进程注入 INT 忽略 + TERM 屏蔽后，`background_tasks` 的 exit-statuses 与 TS 一致，并用原生报告器 / Linux `/proc` 断言处置与掩码；去掉调用后两条回归都必须失败；macOS 本机 + Linux CI 都跑。
 - **原则**：unsafe 例外按「一个函数、一份清单、一套专审」批；超出清单的任何 unsafe 都要重新请批。
+
+## 人定 · 2026-10-21 14:25 · A6.5-pr10b 深度预算取 2048
+- **原话**：「pr10b depth budget 按照你的推荐选用2048。」
+- **依据**：修复轮 9 影响范围实测（`_tmp/20261021-a65-pr10b-r9/depth-impact.md`）——1024 会提前拒绝 84 列×3 层查询、54 边目录树；2048 支持到 168 列、106 边，原 12 种窄形状最后支持点 48/48 SDK valid，最坏栈估计约 480 KiB（默认可用约 864 KiB）。
+- **执行**：codex 修复轮 10 把 `MAX_VALIDATION_BUDGET` 改为 2048，按新值重算各形状向严区间并补 oracle 两侧样本；协调者据实测区间追加 accepted-diffs 深度条目，状态「已批：郑达奇 · 2026-10-21」。仍会拒绝的残余（如 169 列以上、107 边以上）在 README 与条目中写明。
