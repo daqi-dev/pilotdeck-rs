@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 16:18 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 16:25 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - A6.5-pr10b | review | ready | PR #391 已入合并队列（16:16，head 8847d43）；r11 两家无 P0/P1，gate12 0/0/0，正文已贴结果块与 check_frozen 原始输出
-- #396 | review | ready | PR #403 修复轮 5 推送 98d762a，沙箱外 1700/0/42；确认轮 r6 两家在跑
-- #386 | review | ready | PR #407 修复轮 2 推送 c61232d（护栏剥离注释与字面量、全 crate 扫描）；确认轮 r3 两家在跑
+- #396 | review | ready | PR #403 r6：GLM 0/0/0/0；Grok r6 + 全量 gate4 在跑
+- #386 | review | ready | PR #407 r3：Grok 0/0/1/3（前两条 P2 已修；新绕过 #[path=非.rs] / include! / crate 外文件，确认轮新 P2 拆 #413）；GLM r3 + 全量 gate1 在跑
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr2 | review | ready | PR #412（draft）head 524e5b5，沙箱外 1691/0/43；GLM r1 + Grok r1 在跑
+- A7.1-pr2 | review | ready | PR #412：Grok r1 P1（shutdown 排空无测试支撑：去掉等待 28 测仍全过；5 个变异只抓住 1 个）+ P2×3（stop_new cutoff、idle 跳过进行中、close 排队顺序均无覆盖）；GLM r1 在跑，收齐后一批修
 - A6.5-pr9b | review | ready | PR #406 已改 Ready（gate2 0/0/1 并入 #409，正文已贴结果块与 check_frozen 输出）；与 #391 同改 gateway 账本与 FROZEN.md，等 #391 合入后 rebase 合并两条条目、重算哈希再入队
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
