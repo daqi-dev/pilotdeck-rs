@@ -85,9 +85,23 @@ scenarios.push({name:'permission-decide-null-and-missing-params',steps:[message(
   request('permission_decide',null,'null-params'),
   message({type:'request',id:'missing-params',method:'permission_decide'}),
   request('permission_decide',{},'object-params')]});
+// Runtime inputs deliberately cross the declared TS string type.
+for (const sessionKey of [5, true, 0, false, null, '']) scenarios.push({
+  name:`session-key-${JSON.stringify(sessionKey)}`, permissionEvent:true, steps:[message(hello('sdk')),
+    {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey,projectKey:'p'}}},
+    request('reconnect_interaction',{sessionKey}),
+    request('permission_decide',{sessionKey,requestId:'control'}),
+    {op:'close'}, {op:'finish'}]});
+for (const submitMode of ['throw', 'completed-then-throw', 'empty', 'permission']) scenarios.push({
+  name:`submit-${submitMode}`, submitMode, steps:[message(hello()), request('submit_turn',{sessionKey:'s',projectKey:'p'})]});
+scenarios.push({name:'disconnect-failure-stops-close',failDisconnect:true,steps:[message(hello()),
+  request('reconnect_interaction',{sessionKey:'s1'}),
+  {op:'start',frame:{type:'request',id:'running',method:'submit_turn',params:{sessionKey:'s2'}}},
+  {op:'close_error'}, {op:'close_error'}, {op:'finish'}]});
+scenarios.push({name:'request-after-close',steps:[message(hello()),{op:'close'},request('permission_decide',{sessionKey:'s',requestId:'after-close'}),request('submit_turn',{sessionKey:'new-after-close'}),{op:'close'}]});
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
-  const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [];
+  const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];
   const port = createNativeInteractionReconnectPort();
   const coordinator = new GatewayInteractionCoordinator({reconnectPort:port});
   const registrations: any[] = [];
@@ -106,18 +120,22 @@ for (const scenario of scenarios) {
     permissionDecide: async (params: any) => {calls.push({method:'permission_decide',params});return {accepted:true};},
     respondElicitation: async (params: any) => {calls.push({method:'elicitation_respond',params});return {accepted:true};},
     reconnectInteraction: (params: any) => {calls.push({method:'reconnect_interaction',params});return coordinator.reconnect(params);},
-    disconnectInteraction: async (params: any) => {calls.push({method:'disconnect',params});return coordinator.disconnect(params);},
+    disconnectInteraction: async (params: any) => {calls.push({method:'disconnect',params});if(scenario.failDisconnect) throw new Error('fixture disconnect failed');return coordinator.disconnect(params);},
     abortTurn: async (params: any) => {calls.push({method:'abort',params});},
     async *submitTurn(params: any) {
       calls.push({method:'submit_turn',params});
       coordinator.reconnectForTurn(params.sessionKey,params.interactionBinding);
       if (scenario.preserve) registrations.push(coordinator.getPermissionBus().register(params.sessionKey,
         {requestId:'fixture-pending',toolCallId:'fixture-tool',toolName:'fixture',resolve() {},reject() {}}));
+      if (scenario.permissionEvent || scenario.submitMode === 'permission') yield {type:'permission_request',requestId:'fixture-permission'};
+      if (scenario.submitMode === 'throw') throw new Error('fixture submit failed');
+      if (scenario.submitMode === 'empty') return;
       if (startingSlot !== undefined) {
         const gate = submits.get(startingSlot)!;
         gate.ready(); await gate.wait;
       }
       yield {type:'turn_completed',runId:'fixture-run'};
+      if (scenario.submitMode === 'completed-then-throw') throw new Error('fixture submit failed');
     },
   };
   const connection = new GatewayWsConnection(text, {gateway,token:'fixture-token',serverVersion:'test'});
@@ -146,13 +164,14 @@ for (const scenario of scenarios) {
       messageHandler(JSON.stringify(step.frame)); gate.operation=operation!; await entered;
       startingSlot=undefined;
     } else if (step.op === 'close') {closeHandler(); await operation!;}
+    else if (step.op === 'close_error') {closeHandler(); try {await operation!; assert.fail('expected close rejection');} catch(error) {closeErrors.push((error as Error).message);}}
     else if (step.op === 'finish') {
       const slot = step.slot ?? 'default'; const gate = submits.get(slot)!;
       gate.release(); await gate.operation; submits.delete(slot);
     }
     else throw new Error(step.op);
     scenario.results.push(snapshot({frames,closes,calls,finalInFlight,
-      inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions]}));
+      inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions],...(scenario.failDisconnect ? {closeErrors} : {})}));
   }
   assert.equal(submits.size,0);
   for (const registration of registrations) registration.dispose();

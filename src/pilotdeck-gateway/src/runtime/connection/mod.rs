@@ -4,7 +4,7 @@ pub mod binding;
 mod context;
 
 use binding::WsBinding;
-use context::State;
+use context::{SessionKey, State, truthy};
 use pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::{
@@ -50,7 +50,7 @@ pub trait ConnectionGateway: Send + Sync {
     ) -> Call<'a, Result<(), RequestError>>;
     fn disconnect(
         &self,
-        session: String,
+        session: Value,
         binding: WsBinding,
     ) -> Call<'_, Result<bool, RequestError>>;
     fn abort_on_close(&self, params: Value) -> Call<'_, Result<(), RequestError>>;
@@ -96,11 +96,12 @@ impl GatewayConnection {
         self.text.send_text(frame.to_string());
     }
     pub fn notify(&self, name: &str, payload: Option<Value>) {
-        // Sending is inside the same lock as auth/close publication.
+        // Snapshot authorization before invoking a potentially reentrant sink.
         let state = self.state.lock().unwrap();
         if !state.authed {
             return;
         }
+        drop(state);
         let mut frame = json!({"type":"notification", "name":name});
         if let Some(payload) = payload {
             frame["payload"] = payload;
@@ -110,12 +111,14 @@ impl GatewayConnection {
     /// The synchronous prefix reserves context before returning the future,
     /// like TS before its first await. SDK classification and binding capture
     /// share that lock. No async gateway call holds the context lock.
+    /// Drive the returned future to completion: dropping it cancels the request,
+    /// unlike a TS Promise. In particular, adapters must not put it in a losing
+    /// select! branch on socket close. Spawn/retain request tasks and drain them
+    /// while calling closed(); no synthetic terminal event is sent on cancellation.
     pub fn receive<'a>(&'a self, message: &str) -> Call<'a, Result<(), RequestError>> {
         let mut state = self.state.lock().unwrap();
-        if state.closed {
-            return Box::pin(async { Ok(()) });
-        }
         let Ok(frame) = serde_json::from_str::<Value>(message) else {
+            drop(state);
             self.text.close(4002, "invalid_json");
             return Box::pin(async { Ok(()) });
         };
@@ -125,14 +128,17 @@ impl GatewayConnection {
                     .iter()
                     .all(|key| frame[*key].is_string())
             {
+                drop(state);
                 self.text.close(4001, "hello_required");
                 return Box::pin(async { Ok(()) });
             }
             if frame["protocolVersion"] != GATEWAY_PROTOCOL_VERSION {
+                drop(state);
                 self.text.close(4001, "protocol_mismatch");
                 return Box::pin(async { Ok(()) });
             }
             if frame["token"] != self.token {
+                drop(state);
                 self.text.close(4003, "auth_failed");
                 return Box::pin(async { Ok(()) });
             }
@@ -150,16 +156,15 @@ impl GatewayConnection {
             });
         }
         if frame["type"] != "request" || !frame["id"].is_string() || !frame["method"].is_string() {
+            drop(state);
             self.text.close(4002, "invalid_frame");
             return Box::pin(async { Ok(()) });
         }
         let id = frame["id"].clone();
         let method = frame["method"].as_str().unwrap().to_owned();
         let input = frame.get("params").cloned().unwrap_or(Value::Null);
-        let session = input["sessionKey"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned);
+        let session =
+            truthy(&input["sessionKey"]).then(|| SessionKey::new(input["sessionKey"].clone()));
         let is_submit = method == "submit_turn";
         if is_submit && let Some(session) = session.as_ref() {
             state.track_interaction(session);
@@ -239,9 +244,7 @@ impl GatewayConnection {
             if event["type"] == "error" {
                 stream.2 = Some(event.clone());
             }
-            if event["type"] == "permission_request"
-                && params["sessionKey"].as_str().is_some_and(|s| !s.is_empty())
-            {
+            if event["type"] == "permission_request" && truthy(&params["sessionKey"]) {
                 let mut payload = json!({"type":"requested", "sessionKey":params["sessionKey"]});
                 for key in ["projectKey", "requestId"] {
                     if let Some(value) = if key == "requestId" {
@@ -271,27 +274,22 @@ impl GatewayConnection {
         self.send(json!({"type":"event", "id":id, "seq":seq, "final":true, "event":terminal}));
         Ok(())
     }
+    // TS propagates disconnect rejection immediately; it neither aborts that
+    // session nor processes later sessions. Do not invent best-effort cleanup.
     pub fn closed(&self) -> Call<'_, Result<(), RequestError>> {
-        let sessions = {
-            let mut state = self.state.lock().unwrap();
-            if state.closed {
-                return Box::pin(async { Ok(()) });
-            }
-            state.closed = true;
-            state.sessions()
-        };
+        let sessions = { self.state.lock().unwrap().sessions() };
         Box::pin(async move {
             for session in sessions {
                 let preserve_turn = self
                     .gateway
-                    .disconnect(session.clone(), self.binding.clone())
+                    .disconnect(session.value().clone(), self.binding.clone())
                     .await?;
                 let in_flight = self.state.lock().unwrap().in_flight.contains(&session);
                 if in_flight && !preserve_turn {
                     // A5 explicitly requires a session-wide abort, without runId.
                     let _ = self
                         .gateway
-                        .abort_on_close(json!({"sessionKey":session}))
+                        .abort_on_close(json!({"sessionKey":session.value()}))
                         .await;
                 }
             }
@@ -304,7 +302,7 @@ impl GatewayConnection {
 }
 struct SubmitCleanup<'a> {
     connection: &'a GatewayConnection,
-    session: Option<String>,
+    session: Option<SessionKey>,
 }
 impl Drop for SubmitCleanup<'_> {
     fn drop(&mut self) {

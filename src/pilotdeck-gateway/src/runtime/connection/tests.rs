@@ -8,7 +8,7 @@ const ORACLE: &str = include_str!("../../../tests/fixtures/connection-context/or
 struct MemoryText {
     frames: Mutex<Vec<Value>>,
     closes: Mutex<Vec<Value>>,
-    final_in_flight: Mutex<Vec<Vec<String>>>,
+    final_in_flight: Mutex<Vec<Vec<Value>>>,
     owner: Mutex<Option<std::sync::Weak<GatewayConnection>>>,
 }
 impl GatewayTextConnection for MemoryText {
@@ -22,7 +22,7 @@ impl GatewayTextConnection for MemoryText {
                 .as_ref()
                 .and_then(std::sync::Weak::upgrade)
         {
-            let sessions = owner.state.lock().unwrap().in_flight.clone();
+            let sessions = session_values(&owner.state.lock().unwrap().in_flight);
             self.final_in_flight.lock().unwrap().push(sessions);
         }
         self.frames.lock().unwrap().push(frame);
@@ -34,10 +34,17 @@ impl GatewayTextConnection for MemoryText {
             .push(json!({"code":code,"reason":reason}));
     }
 }
+fn session_values(sessions: &[SessionKey]) -> Vec<Value> {
+    sessions.iter().map(|key| key.value().clone()).collect()
+}
 struct Gateway {
     calls: Mutex<Vec<Value>>,
     bindings: BindingOwners,
     preserve: bool,
+    permission_event: bool,
+    submit_mode: String,
+    fail_disconnect: bool,
+    replay_bindings: bool,
     hold: std::sync::atomic::AtomicBool,
     hold_describe: std::sync::atomic::AtomicBool,
     started: Semaphore,
@@ -50,6 +57,10 @@ impl Gateway {
             calls: Mutex::new(vec![]),
             bindings: BindingOwners::default(),
             preserve,
+            permission_event: false,
+            submit_mode: String::new(),
+            fail_disconnect: false,
+            replay_bindings: false,
             hold: std::sync::atomic::AtomicBool::new(false),
             hold_describe: std::sync::atomic::AtomicBool::new(false),
             started: Semaphore::new(0),
@@ -92,7 +103,7 @@ impl ConnectionGateway for Gateway {
                         .get("previousBinding")
                         .map(|v| WsBinding::from_json(v).unwrap());
                     Ok(self.bindings.reconnect(
-                        params["sessionKey"].as_str().unwrap(),
+                        &params["sessionKey"].to_string(),
                         next,
                         previous.as_ref(),
                     ))
@@ -130,7 +141,25 @@ impl ConnectionGateway for Gateway {
         emit: &'a (dyn Fn(Value) + Send + Sync),
     ) -> Call<'a, Result<(), RequestError>> {
         Box::pin(async move {
-            self.record("submit_turn", params);
+            self.record("submit_turn", params.clone());
+            // Provider behavior belongs to TS replay. Barrier tests exercise
+            // connection cleanup independently, including malformed mutants.
+            if self.replay_bindings {
+                self.bindings.reconnect(
+                    &params["sessionKey"].to_string(),
+                    WsBinding::from_json(&params["interactionBinding"]).unwrap(),
+                    None,
+                );
+            }
+            if self.permission_event || self.submit_mode == "permission" {
+                emit(json!({"type":"permission_request","requestId":"fixture-permission"}));
+            }
+            if self.submit_mode == "throw" {
+                return Err(RequestError::new("fixture submit failed"));
+            }
+            if self.submit_mode == "empty" {
+                return Ok(());
+            }
             if self.hold.load(std::sync::atomic::Ordering::SeqCst) {
                 let release = Arc::new(Semaphore::new(0));
                 self.submit_gates.lock().unwrap().push(release.clone());
@@ -138,12 +167,15 @@ impl ConnectionGateway for Gateway {
                 release.acquire().await.unwrap().forget();
             }
             emit(json!({"type":"turn_completed","runId":"fixture-run"}));
+            if self.submit_mode == "completed-then-throw" {
+                return Err(RequestError::new("fixture submit failed"));
+            }
             Ok(())
         })
     }
     fn disconnect(
         &self,
-        session: String,
+        session: Value,
         binding: WsBinding,
     ) -> Call<'_, Result<bool, RequestError>> {
         Box::pin(async move {
@@ -151,7 +183,10 @@ impl ConnectionGateway for Gateway {
                 "disconnect",
                 json!({"sessionKey":session,"binding":binding.to_json()}),
             );
-            self.bindings.disconnect(&session, &binding);
+            if self.fail_disconnect {
+                return Err(RequestError::new("fixture disconnect failed"));
+            }
+            self.bindings.disconnect(&session.to_string(), &binding);
             Ok(self.preserve)
         })
     }
@@ -176,14 +211,20 @@ async fn replay() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 10);
-    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 18);
+    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 30);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     for (index, scenario) in oracle["scenarios"].as_array().unwrap().iter().enumerate() {
         let text = Arc::new(MemoryText::default());
-        let gateway = Arc::new(Gateway::new(
-            scenario["preserve"].as_bool().unwrap_or(false),
-        ));
+        let mut gateway = Gateway::new(scenario["preserve"].as_bool().unwrap_or(false));
+        gateway.permission_event = scenario["permissionEvent"].as_bool().unwrap_or(false);
+        gateway.submit_mode = scenario["submitMode"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        gateway.fail_disconnect = scenario["failDisconnect"].as_bool().unwrap_or(false);
+        gateway.replay_bindings = true;
+        let gateway = Arc::new(gateway);
         let connection = GatewayConnection::with_binding(
             text.clone(),
             gateway.clone(),
@@ -199,6 +240,7 @@ async fn replay() {
         *text.owner.lock().unwrap() = Some(Arc::downgrade(&connection));
         let mut held = None;
         let mut submissions = BTreeMap::new();
+        let mut close_errors = Vec::new();
         for (step_index, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
             match step["op"].as_str().unwrap() {
                 "message" => connection
@@ -234,6 +276,7 @@ async fn replay() {
                     assert!(submissions.insert(slot, (release, task)).is_none());
                 }
                 "close" => connection.closed().await.unwrap(),
+                "close_error" => close_errors.push(connection.closed().await.unwrap_err().message),
                 "finish" => {
                     let slot = step["slot"].as_str().unwrap_or("default");
                     let (release, task) = submissions.remove(slot).unwrap();
@@ -244,14 +287,18 @@ async fn replay() {
             }
             let (in_flight, interactions) = {
                 let state = connection.state.lock().unwrap();
-                (state.in_flight.clone(), state.interactions.clone())
+                (
+                    session_values(&state.in_flight),
+                    session_values(&state.interactions),
+                )
             };
-            let actual = mask(
-                json!({"frames":*text.frames.lock().unwrap(), "closes":*text.closes.lock().unwrap(),
+            let mut actual = json!({"frames":*text.frames.lock().unwrap(), "closes":*text.closes.lock().unwrap(),
                 "calls":*gateway.calls.lock().unwrap(), "finalInFlight":*text.final_in_flight.lock().unwrap(),
-                "inFlight":in_flight,"interactions":interactions}),
-                &ids,
-            );
+                "inFlight":in_flight,"interactions":interactions});
+            if gateway.fail_disconnect {
+                actual["closeErrors"] = json!(close_errors);
+            }
+            let actual = mask(actual, &ids);
             assert_eq!(
                 actual, scenario["results"][step_index],
                 "{} step {}",
@@ -383,8 +430,122 @@ fn old_submit_cleanup_clears_session_across_threads() {
         worker.join().unwrap();
         // TS finally deletes by session even while the newer submit is pending.
         assert!(connection.state.lock().unwrap().in_flight.is_empty());
-        assert_eq!(connection.state.lock().unwrap().interactions, ["s"]);
+        assert_eq!(
+            session_values(&connection.state.lock().unwrap().interactions),
+            [json!("s")]
+        );
         drop(new);
         assert!(connection.state.lock().unwrap().in_flight.is_empty());
     });
+}
+
+// Fail fast on a held lock before exercising real synchronous reentry, so a
+// regression produces a diagnostic instead of hanging the test process.
+#[derive(Default)]
+struct ReentrantText {
+    owner: Mutex<Option<std::sync::Weak<GatewayConnection>>>,
+    callbacks: std::sync::atomic::AtomicUsize,
+}
+impl ReentrantText {
+    fn reenter(&self) {
+        let owner = self
+            .owner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let authed = owner
+            .state
+            .try_lock()
+            .expect("sink called with state lock held")
+            .authed;
+        if authed {
+            drop(owner.receive(r#"{"type":"request","id":"reentrant","method":"unknown_method"}"#));
+        } else {
+            let hello = json!({"type":"hello","protocolVersion":GATEWAY_PROTOCOL_VERSION,"clientName":"ui","clientVersion":"test","token":"fixture-token"});
+            drop(owner.receive(&hello.to_string()));
+        }
+        drop(owner.closed());
+        self.callbacks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+impl GatewayTextConnection for ReentrantText {
+    fn send_text(&self, _: String) {
+        self.reenter();
+    }
+    fn close(&self, _: u16, _: &str) {
+        self.reenter();
+    }
+}
+#[tokio::test]
+async fn text_callbacks_can_synchronously_reenter_connection() {
+    for invalid in [
+        "{",
+        "{}",
+        r#"{"type":"hello","protocolVersion":"wrong","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
+        r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"wrong"}"#,
+    ] {
+        let text = Arc::new(ReentrantText::default());
+        let connection = Arc::new(GatewayConnection::new(
+            text.clone(),
+            Arc::new(Gateway::new(false)),
+            "fixture-token".into(),
+            "test".into(),
+        ));
+        *text.owner.lock().unwrap() = Some(Arc::downgrade(&connection));
+        connection.receive(invalid).await.unwrap();
+        assert_eq!(text.callbacks.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+    let text = Arc::new(ReentrantText::default());
+    let connection = Arc::new(GatewayConnection::new(
+        text.clone(),
+        Arc::new(Gateway::new(false)),
+        "fixture-token".into(),
+        "test".into(),
+    ));
+    *text.owner.lock().unwrap() = Some(Arc::downgrade(&connection));
+    let hello = json!({"type":"hello","protocolVersion":GATEWAY_PROTOCOL_VERSION,"clientName":"ui","clientVersion":"test","token":"fixture-token"});
+    connection.receive(&hello.to_string()).await.unwrap();
+    connection.notify("fixture", None);
+    connection.receive("{}").await.unwrap();
+    connection.receive(r#"{"type":"request","id":"running","method":"submit_turn","params":{"sessionKey":"s"}}"#).await.unwrap();
+    assert_eq!(text.callbacks.load(std::sync::atomic::Ordering::SeqCst), 5);
+}
+#[test]
+fn cancelled_receive_sends_no_invented_terminal() {
+    let gateway = Arc::new(Gateway::new(false));
+    gateway
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let text = Arc::new(MemoryText::default());
+    let connection =
+        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
+    connection.state.lock().unwrap().authed = true;
+    let mut request = connection.receive(
+        r#"{"type":"request","id":"running","method":"submit_turn","params":{"sessionKey":"s"}}"#,
+    );
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(request.as_mut().poll(&mut cx).is_pending());
+    drop(request);
+    assert!(text.frames.lock().unwrap().is_empty());
+    assert!(connection.state.lock().unwrap().in_flight.is_empty());
+}
+
+#[test]
+fn session_sets_use_js_scalar_equality_and_object_identity() {
+    let mut state = State::default();
+    let number = SessionKey::new(json!(5));
+    state.track_in_flight(&number);
+    state.track_in_flight(&SessionKey::new(json!(5.0)));
+    state.track_in_flight(&SessionKey::new(json!(true)));
+    let object = SessionKey::new(json!({}));
+    state.track_interaction(&object);
+    state.track_interaction(&object.clone());
+    state.track_interaction(&SessionKey::new(json!({})));
+    assert_eq!(session_values(&state.in_flight), [json!(5), json!(true)]);
+    assert_eq!(state.interactions.len(), 2);
+    assert_eq!(state.sessions().len(), 4);
 }
