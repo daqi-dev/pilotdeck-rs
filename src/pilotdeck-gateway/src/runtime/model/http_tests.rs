@@ -64,6 +64,25 @@ async fn provider_idle_timeout_uses_node_timer_delay() {
     }
 }
 
+/// Default idle and undici bodyTimeout are both 600000 ms. The body timer
+/// was armed first, so the visible error must match Node's `terminated`.
+#[tokio::test(start_paused = true)]
+async fn provider_default_body_timeout_wins_idle_tie() {
+    let options = StreamOptions::default();
+    let idle = idle_timeout_ms(&JsValue::Object(JsObject::new()), &options);
+    assert_eq!(idle, 600_000.0);
+    assert_eq!(options.body_timeout_ms, idle);
+    let mut body = PendingBody.boxed();
+    let mut read = Box::pin(read_frame(&mut body, idle, &options));
+    poll_pending(read.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(599_999)).await;
+    poll_pending(read.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let error = poll_ready(read.as_mut()).await.unwrap_err();
+    assert_eq!(error.name(), JsString::from("TypeError"));
+    assert_eq!(error.message_text(), "terminated");
+}
+
 #[tokio::test(start_paused = true)]
 async fn provider_finite_idle_and_shorter_body_are_negative_controls() {
     let options = StreamOptions::default();
