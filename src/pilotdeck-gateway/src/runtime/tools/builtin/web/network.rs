@@ -122,7 +122,7 @@ async fn read_body_inner(
         .await
         {
             Exchange::Aborted => return Err(BodyError::Aborted),
-            Exchange::Timeout | Exchange::Response(Some(Err(_)), _) => {
+            Exchange::Timeout { .. } | Exchange::Response(Some(Err(_)), _) => {
                 return Err(BodyError::Terminated);
             }
             Exchange::Response(None, _) => return Ok(out),
@@ -320,7 +320,7 @@ async fn retry_wait(
     {
         Exchange::Response((), before_abort) => Ok(before_abort),
         Exchange::Aborted => Err(abort_error("Network retry aborted.")),
-        Exchange::Timeout => {
+        Exchange::Timeout { .. } => {
             let outer =
                 outer_deadline.expect("only a surrounding deadline can time out a retry wait");
             Err(if outer.parent {
@@ -452,7 +452,7 @@ async fn network_fetch_inner(
                         Exchange::Aborted => {
                             Err(abort_error("Network request aborted by parent signal."))
                         }
-                        Exchange::Timeout => {
+                        Exchange::Timeout { .. } => {
                             continuation_before_abort =
                                 options.parent.is_some_and(ToolRunContext::is_aborted);
                             if let Some(outer) = outer_deadline

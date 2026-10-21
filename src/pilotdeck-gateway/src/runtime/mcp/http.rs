@@ -384,7 +384,7 @@ async fn network_fetch_continuing_with<B: Send + 'static>(
                 continuation_before_abort = before_abort;
                 outcome
             }
-            Exchange::Timeout => {
+            Exchange::Timeout { .. } => {
                 continuation_before_abort = aborted.is_cancelled();
                 Err(network_error(
                     "network_timeout",
@@ -435,7 +435,9 @@ async fn network_fetch_continuing_with<B: Send + 'static>(
                     "Network retry aborted.".into(),
                 ));
             }
-            Exchange::Timeout => unreachable!("MCP retry waits have no surrounding deadline"),
+            Exchange::Timeout { .. } => {
+                unreachable!("MCP retry waits have no surrounding deadline")
+            }
         };
     }
     unreachable!("the last attempt returns")
@@ -694,7 +696,7 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
         .await
         {
             Exchange::Response(frame, _) => frame,
-            Exchange::Aborted | Exchange::Timeout => return false,
+            Exchange::Aborted | Exchange::Timeout { .. } => return false,
         };
         match frame {
             None => return true,
@@ -1084,7 +1086,7 @@ async fn reconnect_wait(duration: Duration, aborted: &ToolCancellation) -> Optio
     {
         Exchange::Response((), before_abort) => Some(before_abort),
         Exchange::Aborted => None,
-        Exchange::Timeout => unreachable!("SSE reconnect has no surrounding deadline"),
+        Exchange::Timeout { .. } => unreachable!("SSE reconnect has no surrounding deadline"),
     }
 }
 

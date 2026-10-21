@@ -458,7 +458,9 @@ pub(super) async fn delay(ms: f64, options: &StreamOptions) -> Result<bool, Mode
     {
         Exchange::Response((), before_abort) => Ok(before_abort),
         Exchange::Aborted => Err(ModelStreamError::abort()),
-        Exchange::Timeout => unreachable!("provider retry waits have no surrounding deadline"),
+        Exchange::Timeout { .. } => {
+            unreachable!("provider retry waits have no surrounding deadline")
+        }
     }
 }
 
@@ -771,7 +773,6 @@ async fn provider_exchange(
 ) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
     use crate::runtime::network::{Exchange, exchange_with_prearmed_parent};
     let send = transport.send(request);
-    let scheduled_at = send.scheduled_at();
     match exchange_with_prearmed_parent(
         send,
         wait_abort(&options.abort),
@@ -786,32 +787,16 @@ async fn provider_exchange(
                 // TS :749 (Google :502) observes same-stack abort even for a
                 // rejected Promise. A later timer cannot interrupt the error
                 // callback's microtasks, including when both timers are overdue.
-                let error_before_abort = before_abort
-                    && options
-                        .abort
-                        .as_ref()
-                        .and_then(AbortFlag::abort_event_at)
-                        .is_some_and(|at| scheduled_at.is_none_or(|error_at| error_at < at));
-                let error = if !error_before_abort && aborted(options) {
+                let error = if !before_abort && aborted(options) {
                     ModelStreamError::abort()
                 } else {
                     failure(error)
                 };
                 // Google rechecks cancellation after SDK normalization too.
-                (error, error_before_abort)
+                (error, before_abort)
             }),
         Exchange::Aborted => Err((ModelStreamError::abort(), false)),
-        Exchange::Timeout => {
-            // The watchdog's rejection microtasks finish before a later parent
-            // timer, even if the executor observes both events in one poll.
-            // Preserve that order through Google's outer abort recheck too.
-            let before_abort = options
-                .abort
-                .as_ref()
-                .and_then(AbortFlag::abort_event_at)
-                .is_some_and(|at| deadline < at);
-            Err((timeout(), before_abort))
-        }
+        Exchange::Timeout { before_abort } => Err((timeout(), before_abort)),
     }
 }
 
@@ -900,8 +885,8 @@ async fn response_text(
 ) -> Result<String, ModelStreamError> {
     // TS reads this body after the request timer was cleared and the abort
     // listener detached; only undici's `bodyTimeout` bounds a stalled body
-    // (node probe: `TypeError: terminated`, cause UND_ERR_BODY_TIMEOUT). The
-    // caller's abort is still honoured here (safer than TS, which hangs on).
+    // (node probe: `TypeError: terminated`, cause UND_ERR_BODY_TIMEOUT).
+    // Google wraps this body read in its still-pending SDK promise below.
     let mut decoder = sse::Utf8Decoder::default();
     let mut text = String::new();
     let mut units = 0usize;
@@ -910,13 +895,13 @@ async fn response_text(
         match body_frame(
             body,
             Some(duration(options.body_timeout_ms)),
-            options.abort.as_ref(),
+            None,
             &mut continuation,
         )
         .await
         {
             Exchange::Aborted => return Err(ModelStreamError::abort()),
-            Exchange::Timeout | Exchange::Response(Some(Err(_)), _) => {
+            Exchange::Timeout { .. } | Exchange::Response(Some(Err(_)), _) => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
             Exchange::Response(None, _) => break,
@@ -1035,8 +1020,8 @@ async fn read_frame(
         idle_ms
     };
     loop {
-        use crate::runtime::network::{Exchange, body_frame};
-        match body_frame(
+        use crate::runtime::network::{Exchange, body_frame_with_prearmed_parent};
+        match body_frame_with_prearmed_parent(
             body,
             Some(duration(wait)),
             options.abort.as_ref(),
@@ -1045,10 +1030,10 @@ async fn read_frame(
         .await
         {
             Exchange::Aborted => return Err(ModelStreamError::abort()),
-            Exchange::Timeout if body_first => {
+            Exchange::Timeout { .. } if body_first => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
-            Exchange::Timeout => {
+            Exchange::Timeout { .. } => {
                 return Err(ModelStreamError::thrown(
                     "StreamIdleTimeoutError",
                     format!(
@@ -1262,6 +1247,7 @@ async fn google_attempt(
     // Error normalization is also a queued continuation: a later parent timer
     // must not replace an already-read SDK error with AbortError.
     let mut body_before_abort = false;
+    let sdk_deadline = tokio::time::Instant::now() + duration(idle_timeout_ms(provider, options));
     let outcome = async {
         let response = send_google_request(transport, provider, model, body, options)
             .await
@@ -1277,7 +1263,39 @@ async fn google_attempt(
             return Err(ModelStreamError::thrown("Error", "Response body is empty"));
         }
         if !(200..300).contains(&status) {
-            return Err(google_response_error(response, options, provider).await?);
+            use crate::runtime::network::{Exchange, exchange_prearmed_continuing};
+            let idle_ms = idle_timeout_ms(provider, options);
+            let provider = provider.clone();
+            let read_options = options.clone();
+            let read = crate::runtime::network::ExchangeFuture::io(async move {
+                google_response_error(response, &read_options, &provider).await
+            });
+            // Preserve the SDK error-body promise's catch continuation.
+            return match exchange_prearmed_continuing(
+                read,
+                wait_abort(&options.abort),
+                || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
+                Some(sdk_deadline),
+                body_before_abort,
+            )
+            .await
+            {
+                Exchange::Response(result, before_abort) => {
+                    body_before_abort = before_abort;
+                    Err(result?)
+                }
+                Exchange::Aborted => Err(ModelStreamError::abort()),
+                Exchange::Timeout { before_abort } => {
+                    body_before_abort = before_abort;
+                    Err(ModelStreamError::thrown(
+                        "StreamIdleTimeoutError",
+                        format!(
+                            "Stream idle timeout: no data received for {}ms",
+                            crate::js_value::number_string(idle_ms)
+                        ),
+                    ))
+                }
+            };
         }
         let (mut body, _) = response.into_body();
         let mut state = providers::google::StreamState::default();
@@ -1715,3 +1733,7 @@ pub async fn stream_model(
 #[cfg(test)]
 #[path = "http_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "http_timing_tests.rs"]
+mod timing_tests;
