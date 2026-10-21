@@ -252,7 +252,7 @@ fn abort_reason_cleanup_is_exact() {
     let turns = SessionTurns::default();
     let key = JsString::from("a");
     let run = JsString::from("run");
-    turns.admission.begin_turn(&key, &run);
+    let _reservation = turns.admission.begin_turn(&key, &run).unwrap();
     // The synchronous prefix and sink run when invoked, even before polling.
     let operation = turns.abort_turn(&key, Some(&run), Some(&"".into()), |target, reason| {
         assert_eq!(target.as_ref(), Some(&run));
