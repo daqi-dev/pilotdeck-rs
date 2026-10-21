@@ -79,13 +79,17 @@ fn health_steps_and_generation_port_match_real_ts() {
     for case in cases {
         replay_health_case(case).unwrap();
     }
+    let actions = items(get(&oracle, "portActions"));
+    assert_eq!(actions.len(), 17);
+    replay_port_actions(actions).unwrap();
+}
+
+fn replay_port_actions(actions: &[JsValue]) -> Result<(), String> {
     let now = Arc::new(AtomicU64::new(0));
     let time = now.clone();
     let port =
         NativeRouterProviderHealth::new(Arc::new(move || time.load(Ordering::SeqCst) as f64));
-    let actions = items(get(&oracle, "portActions"));
-    assert_eq!(actions.len(), 17);
-    for action in actions {
+    for (index, action) in actions.iter().enumerate() {
         let input = get(action, "input");
         let health = ProviderHealthInput {
             session_id: get(input, "sessionId")
@@ -101,18 +105,40 @@ fn health_steps_and_generation_port_match_real_ts() {
         match text(get(action, "action")).as_str() {
             "failure" => port.record_failure(&health),
             "success" => port.record_success(&health),
-            "skip" => assert_eq!(
-                port.should_skip(&health),
-                get(action, "skip").as_bool().unwrap()
-            ),
+            "skip" => compare_bytes(
+                &JsValue::Bool(port.should_skip(&health)),
+                get(action, "skip"),
+                &format!("port action {index}"),
+            )?,
             "time" => now.store(
                 get(action, "now").as_number().unwrap() as u64,
                 Ordering::SeqCst,
             ),
             "dispose" => port.dispose(),
-            other => panic!("{other}"),
+            other => return Err(format!("port action {index}: unexpected {other}")),
         }
     }
+    Ok(())
+}
+
+#[test]
+fn expected_port_action_mutation_is_detected() {
+    let oracle = baseline::oracle(ORACLE);
+    let original: Vec<JsValue> = items(get(&oracle, "portActions")).to_vec();
+    replay_port_actions(&original).unwrap();
+    let mut mutated = original.clone();
+    mutated[5] = merge(
+        &mutated[5],
+        &obj(&[(
+            "skip",
+            JsValue::Bool(!get(&mutated[5], "skip").as_bool().unwrap()),
+        )]),
+    );
+    assert!(
+        replay_port_actions(&mutated)
+            .unwrap_err()
+            .contains("port action 5")
+    );
 }
 fn replay_health_case(case: &JsValue) -> Result<(), String> {
     let now = Arc::new(AtomicU64::new(0));
@@ -338,7 +364,7 @@ impl RouterProviderHealth for TracedHealth {
 async fn execute_port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "executeCases"));
-    assert_eq!(cases.len(), 34);
+    assert_eq!(cases.len(), 46);
     for case in cases {
         replay_execute_case(case).await.unwrap();
     }
