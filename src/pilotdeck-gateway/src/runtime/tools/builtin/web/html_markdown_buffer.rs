@@ -37,6 +37,7 @@ impl Content {
     }
 }
 enum Part {
+    Released,
     Text(String),
     Pair(Content, Content),
     Indent(usize, String),
@@ -48,12 +49,73 @@ struct Node {
 #[derive(Default)]
 pub(super) struct Rope {
     nodes: Vec<Node>,
+    #[cfg(test)]
+    text_bytes: usize,
+    #[cfg(test)]
+    peak_text_bytes: usize,
 }
 impl Rope {
     fn push(&mut self, part: Part, blank: bool) -> usize {
+        #[cfg(test)]
+        {
+            self.text_bytes += Self::part_bytes(&part);
+            self.peak_text_bytes = self.peak_text_bytes.max(self.text_bytes);
+        }
         let id = self.nodes.len();
         self.nodes.push(Node { part, blank });
         id
+    }
+    #[cfg(test)]
+    fn part_bytes(part: &Part) -> usize {
+        match part {
+            Part::Text(text) | Part::Indent(_, text) => text.capacity(),
+            _ => 0,
+        }
+    }
+    #[cfg(test)]
+    pub fn peak_text_bytes(&self) -> usize {
+        self.peak_text_bytes
+    }
+    /// Materialize a subtree that the renderer is about to replace, then drop
+    /// its old strings. The renderer consumes each child output once; aliases
+    /// such as emphasis's repeated marker are confined to this same subtree.
+    /// IDs stay stable, and visiting a shared marker twice is harmless.
+    pub fn flatten_and_release(&mut self, content: Content) -> String {
+        // Inline code commonly replaces one Text node. Move its allocation
+        // into the next replacement instead of copying the whole payload.
+        if content.leading == 0
+            && content.trailing == 0
+            && let Some(id) = content.body
+            && matches!(self.nodes[id].part, Part::Text(_))
+        {
+            let Part::Text(text) = std::mem::replace(&mut self.nodes[id].part, Part::Released)
+            else {
+                unreachable!()
+            };
+            #[cfg(test)]
+            {
+                self.text_bytes -= text.capacity();
+            }
+            return text;
+        }
+        let text = self.flatten(content);
+        let mut work: Vec<_> = content.body.into_iter().collect();
+        while let Some(id) = work.pop() {
+            let part = std::mem::replace(&mut self.nodes[id].part, Part::Released);
+            #[cfg(test)]
+            {
+                self.text_bytes -= Self::part_bytes(&part);
+            }
+            match part {
+                Part::Pair(left, right) => {
+                    work.extend(left.body);
+                    work.extend(right.body);
+                }
+                Part::Indent(child, _) => work.push(child),
+                Part::Text(_) | Part::Released => {}
+            }
+        }
+        text
     }
     pub fn text(&mut self, text: &str) -> Content {
         let leading = text.len() - text.trim_start_matches('\n').len();
@@ -64,6 +126,22 @@ impl Rope {
             body: (!body.is_empty())
                 .then(|| self.push(Part::Text(body.into()), body.chars().all(js_space))),
             trailing: rest.len() - body.len(),
+        }
+    }
+    /// Keep an already materialized replacement's allocation for reuse.
+    pub fn text_owned(&mut self, mut text: String) -> Content {
+        let leading = text.len() - text.trim_start_matches('\n').len();
+        let end = text.trim_end_matches('\n').len().max(leading);
+        let trailing = text.len() - end;
+        text.truncate(end);
+        text.drain(..leading);
+        Content {
+            leading,
+            trailing,
+            body: (!text.is_empty()).then(|| {
+                let blank = text.chars().all(js_space);
+                self.push(Part::Text(text), blank)
+            }),
         }
     }
     pub fn blank(&self, content: Content) -> bool {
@@ -161,6 +239,7 @@ impl Rope {
                     prefixes.pop();
                 }
                 Task::Body(id) => match &self.nodes[id].part {
+                    Part::Released => unreachable!("consumed rope subtree"),
                     Part::Text(text) => {
                         for line in text.split_inclusive('\n') {
                             out.push_str(line);

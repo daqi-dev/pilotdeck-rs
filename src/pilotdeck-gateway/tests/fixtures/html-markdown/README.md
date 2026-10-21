@@ -115,3 +115,14 @@ Rust 宽度压力回归，**不声称完整平铺 10 MiB 已跑过 TS**。
 `spawn_blocking`，没有新增节点数量门槛或转换期 timeout。
 实测、恢复节点上限的负控和完整 workspace 自证见
 `_tmp/20261020-a65-pr9b/RESULT.md` 的「修复轮 2（codex）」。
+
+## 修复轮 3：嵌套内联替换的驻留内存
+
+`generate-depth.mts` 的 `extra` 末尾追加 `nested-code-flanks-250` 与
+`nested-span-flanks-250`，左右文字保留首尾空白；两条都通过真实 TS 入口生成，
+由 `nested_code_and_flanks_match_real_ts_bytes` 逐字节回放。原 40 条保持不变。
+code 必须逐层重新选择不与内容冲突的反引号，flank 必须先 trim；本轮保留这些
+变换，只在整串替换后迭代释放旧 Rope 子树。资源单测统计所有 Rope 字符串的
+峰值 capacity（含已不可达的旧节点），断言 250 层不超过单层三倍。
+这不是整次转换的 CPU 或输出大小上限；blockquote 的输出放大仍属 #409，
+已启动的 `spawn_blocking` worker 也不会因宿主 future 丢弃而停止。

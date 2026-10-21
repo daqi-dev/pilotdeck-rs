@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     js_value::{number_string, string_to_number},
-    metadata::{js_space, js_trim},
+    metadata::js_space,
 };
 use std::ops::Range;
 #[path = "html_markdown_buffer.rs"]
@@ -268,7 +268,12 @@ impl<'a> Render<'a> {
         let (leading, trailing) = self.flanks(id);
         let mut content = content;
         if !leading.is_empty() || !trailing.is_empty() {
-            content = rope.text(js_trim(&rope.flatten(content)));
+            let mut text = rope.flatten_and_release(content);
+            let start = text.len() - text.trim_start_matches(js_space).len();
+            let end = text.trim_end_matches(js_space).len();
+            text.truncate(end.max(start));
+            text.drain(..start);
+            content = rope.text_owned(text);
         }
         let wrap_block = |content: Content| content.wrap_block();
         // Domino's getElementsByTagName("IMG"/"A"/...) folds case only on
@@ -378,7 +383,8 @@ impl<'a> Render<'a> {
                             && node.prev.is_none()
                             && node.next.is_none()) =>
                 {
-                    rope.text(&inline_code(&rope.flatten(content)))
+                    let text = rope.flatten_and_release(content);
+                    rope.text_owned(inline_code(text))
                 }
                 "img" => {
                     let src = self.dom.attr(id, "src").unwrap_or("");
@@ -470,11 +476,13 @@ fn destination(value: &str) -> String {
     }
 }
 
-fn inline_code(content: &str) -> String {
+fn inline_code(mut content: String) -> String {
     if content.is_empty() {
         return String::new();
     }
-    let content = content.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    if content.contains(['\r', '\n']) {
+        content = content.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    }
     let runs: std::collections::HashSet<usize> = content
         .split(|c| c != '`')
         .filter(|s| !s.is_empty())
@@ -489,52 +497,94 @@ fn inline_code(content: &str) -> String {
         || content.ends_with('`')
         || content.starts_with(' ') && content.ends_with(' ') && content.chars().any(|c| c != ' ');
     let pad = if padded { " " } else { "" };
-    format!("{delimiter}{pad}{content}{pad}{delimiter}")
+    content.reserve(2 * (delimiter.len() + pad.len()));
+    content.insert_str(0, pad);
+    content.insert_str(0, &delimiter);
+    content.push_str(pad);
+    content.push_str(&delimiter);
+    content
 }
 
 impl HtmlToMarkdown for Turndown {
     fn convert(&self, html: &str) -> Result<String, String> {
-        if html.is_empty() {
-            return Ok(String::new());
-        }
-        // Match the baseline's document parsing wrapper, including HTML input
-        // that closes it early. Parsing a fragment/body changes malformed input.
-        let mut dom = parse_document(&format!(
-            "<x-turndown id=\"turndown-root\">{html}</x-turndown>"
-        ))?;
-        let root = dom
-            .element_by_id("turndown-root")
-            .ok_or("HTML root missing")?;
-        let names: Vec<_> = (0..dom.nodes.len()).map(|id| dom.node_name(id)).collect();
-        collapse(&mut dom, root, &names);
-        let order: Vec<_> = std::iter::once(root).chain(dom.descendants(root)).collect();
-        let render = Render::new(&dom, &names, &order);
-        let mut rope = Rope::default();
-        let mut output = vec![Content::default(); dom.nodes.len()];
-        for &id in order.iter().rev() {
-            let value = match &dom.nodes[id].kind {
-                Kind::Text(text) if render.summary[id].code => rope.text(text),
-                Kind::Text(text) => rope.text(&escape(text)),
-                Kind::Element { .. } => {
-                    let mut content = Content::default();
-                    for child in dom.children(id) {
-                        content = rope.join(content, output[child]);
-                    }
-                    if id == root {
-                        content
-                    } else {
-                        render.replace(&mut rope, id, content)
-                    }
+        convert(html, &mut Rope::default())
+    }
+}
+
+fn convert(html: &str, rope: &mut Rope) -> Result<String, String> {
+    if html.is_empty() {
+        return Ok(String::new());
+    }
+    // Match the baseline's document parsing wrapper, including HTML input
+    // that closes it early. Parsing a fragment/body changes malformed input.
+    let mut dom = parse_document(&format!(
+        "<x-turndown id=\"turndown-root\">{html}</x-turndown>"
+    ))?;
+    let root = dom
+        .element_by_id("turndown-root")
+        .ok_or("HTML root missing")?;
+    let names: Vec<_> = (0..dom.nodes.len()).map(|id| dom.node_name(id)).collect();
+    collapse(&mut dom, root, &names);
+    let order: Vec<_> = std::iter::once(root).chain(dom.descendants(root)).collect();
+    let render = Render::new(&dom, &names, &order);
+    let mut output = vec![Content::default(); dom.nodes.len()];
+    for &id in order.iter().rev() {
+        let value = match &dom.nodes[id].kind {
+            Kind::Text(text) if render.summary[id].code => rope.text(text),
+            Kind::Text(text) => rope.text(&escape(text)),
+            Kind::Element { .. } => {
+                let mut content = Content::default();
+                for child in dom.children(id) {
+                    content = rope.join(content, output[child]);
                 }
-                _ => Content::default(),
+                if id == root {
+                    content
+                } else {
+                    render.replace(rope, id, content)
+                }
+            }
+            _ => Content::default(),
+        };
+        output[id] = value;
+    }
+    let mut output = rope.flatten(output[root]);
+    let start = output.len() - output.trim_start_matches(['\t', '\r', '\n']).len();
+    let end = output.trim_end_matches(js_space).len();
+    output.truncate(end.max(start));
+    output.drain(..start);
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_inline_replacements_bound_retained_text() {
+        let payload = "x".repeat(256 * 1024);
+        let mut failures = Vec::new();
+        for tag in ["code", "span"] {
+            let render = |depth| {
+                let html = format!(
+                    "<p>left{}{payload}{}right</p>",
+                    format!("<{tag}> ").repeat(depth),
+                    format!(" </{tag}>").repeat(depth)
+                );
+                let mut rope = Rope::default();
+                let output = convert(&html, &mut rope).unwrap();
+                assert!(output.contains(&payload));
+                (rope.peak_text_bytes(), output.len())
             };
-            output[id] = value;
+            let (single, _) = render(1);
+            let (nested, output_bytes) = render(250);
+            eprintln!("{tag}: single={single}, nested={nested}, output_bytes={output_bytes}");
+            // Counts capacity of every retained Text/Indent string, including
+            // old nodes no longer reachable from the final output. No RSS or
+            // allocator/platform assumptions; restored flatten must fail.
+            if nested > single * 3 {
+                failures.push(format!("{tag}: {nested} > 3 * {single}"));
+            }
         }
-        let mut output = rope.flatten(output[root]);
-        let start = output.len() - output.trim_start_matches(['\t', '\r', '\n']).len();
-        let end = output.trim_end_matches(js_space).len();
-        output.truncate(end.max(start));
-        output.drain(..start);
-        Ok(output)
+        assert!(failures.is_empty(), "{}", failures.join("; "));
     }
 }

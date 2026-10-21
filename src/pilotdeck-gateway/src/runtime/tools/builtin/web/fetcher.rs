@@ -400,8 +400,10 @@ impl UrlFetcher {
             // TS runs turndown synchronously after the body and ignores an
             // abort delivered during conversion (including raw-mode success).
             // Preserve that result ordering, but keep CPU work off Tokio.
-            // The default converter bounds parsing/rendering; dropping this
-            // future (e.g. the host deadline) does not wait for the worker.
+            // The default converter limits DOM depth and releases replaced
+            // inline subtrees. This is not a total CPU/output-memory bound:
+            // nested blockquotes can still amplify output (#409). Dropping
+            // this future (e.g. the host deadline) does not stop the worker.
             let content = tokio::task::spawn_blocking(move || converter.convert(&html))
                 .await
                 .map_err(|error| other(&error.to_string()))?
