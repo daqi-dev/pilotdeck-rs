@@ -14,6 +14,7 @@ pub(crate) mod thinking;
 use super::count_body::{array, field, is, present, truthy};
 use super::http::ModelStreamError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::sync::LazyLock;
 
 fn units(value: &JsValue) -> Vec<u16> {
     crate::js_value::to_string_units(value).unwrap_or_default()
@@ -484,6 +485,10 @@ fn path_segments(base: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+static VERSIONED_SEGMENT: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[vV][0-9]+(?:[bB][eE][tT][aA][0-9]*)?$").expect("static regex")
+});
+
 /// `buildEndpointCandidates(baseUrl, defaultVersion, endpointPath)`.
 fn endpoint_candidates(base: &str, version: &str, endpoint: &str) -> Vec<String> {
     let normalized = crate::metadata::js_trim(base).trim_end_matches('/');
@@ -506,9 +511,7 @@ fn endpoint_candidates(base: &str, version: &str, endpoint: &str) -> Vec<String>
         )
     };
     let unversioned = join(endpoint);
-    let versioned_segment =
-        regex::Regex::new(r"^[vV][0-9]+(?:[bB][eE][tT][aA][0-9]*)?$").expect("static regex");
-    if segments.iter().any(|s| versioned_segment.is_match(s)) {
+    if segments.iter().any(|s| VERSIONED_SEGMENT.is_match(s)) {
         return vec![unversioned];
     }
     let versioned = join(&format!("{version}/{endpoint}"));

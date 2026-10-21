@@ -73,6 +73,16 @@ fn google_openai_compatible(provider: &JsValue) -> bool {
     if is(field(provider, "id"), "google") {
         return true;
     }
+    // TS would throw a TypeError for a non-string url (`provider.url.trim()`,
+    // src/model/providers/openai/request.ts:370), but runtime providers are
+    // normalized to a string before this builder: a non-string falls back to
+    // the catalog default (src/model/config/parseModelConfig.ts:91), mirrored
+    // by pilotdeck-gateway/src/config/snapshot.rs:644-671 (`as_string` +
+    // catalog default). Rust's `text` is `String(url)` coercion, not an
+    // empty-string fallback. Node probe (2026-10-22): url 123/{}/null ->
+    // "https://api.openai.com/v1"; a custom provider without a default ->
+    // `invalid_config_value` "requires a url". Direct builder calls bypassing
+    // config do throw `TypeError: provider.url.trim is not a function`.
     let raw = text(field(provider, "url"));
     let lowered = raw.to_lowercase();
     match url::Url::parse(crate::metadata::js_trim(&lowered)) {

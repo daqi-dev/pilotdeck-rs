@@ -4,8 +4,12 @@
 use super::super::count_body::{field, is, present, text};
 use crate::runtime::model::http::ModelStreamError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::sync::LazyLock;
 
 const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+static GEMINI_3: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new("gemini-?3").expect("static regex"));
 
 /// The fields of `ThinkingPlan` the ported request builders consume.
 #[derive(Debug, Default)]
@@ -197,10 +201,7 @@ pub(crate) fn resolve(
             );
             return Ok(plan);
         }
-        if !regex::Regex::new("gemini-?3")
-            .expect("static regex")
-            .is_match(&text(field(model, "id")))
-        {
+        if !GEMINI_3.is_match(&text(field(model, "id"))) {
             if effort.is_some() {
                 unsupported(
                     &mut plan,
