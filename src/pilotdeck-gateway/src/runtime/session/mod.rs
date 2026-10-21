@@ -45,9 +45,14 @@ impl SessionTurns {
     }
 
     /// The synchronous prefix matches the TS method's execution before its
-    /// first await. The sink must synchronously target the live handle (and may
-    /// return an async drain). Owner publication/cleanup must use the same owner
-    /// serialization when this is integrated with live sessions in pr2.
+    /// first await. The sink receives the requested runId (including an explicit
+    /// empty ID) and the reason. Under the live owner's serialization it MUST
+    /// compare that ID with the current run before selecting its handle. A stale
+    /// target is a no-op. Only None permits a session-wide abort. Selection and
+    /// publication/cleanup must use the same owner lock; checking here alone
+    /// cannot protect a sink invoked after a concurrent replacement.
+    ///
+    /// The sink runs outside all component locks and may return an async drain.
     ///
     /// An absent runId retains the baseline's unfenced socket-close behavior; this
     /// method intentionally does not infer a runId from connection history.
@@ -59,7 +64,7 @@ impl SessionTurns {
         abort: F,
     ) -> impl Future<Output = ()> + Send + 'a + use<'a, F, Fut>
     where
-        F: FnOnce(JsString) -> Fut,
+        F: FnOnce(Option<JsString>, JsString) -> Fut,
         Fut: Future<Output = ()> + Send + 'a,
     {
         let reason = reason.cloned().unwrap_or_else(|| match run_id {
@@ -70,22 +75,23 @@ impl SessionTurns {
             }
             _ => "aborted".into(),
         });
-        if let Some(active) = self.admission.active_turn_run_id(session_key)
+        // One admission snapshot supplies both the reason key and fallback
+        // predicate. The getter selects/clones it under the admission lock.
+        let active = self.admission.active_turn_run_id(session_key);
+        if let Some(active) = active.as_ref()
             && !active.is_empty()
-            && run_id.is_none_or(|id| id.is_empty() || id == &active)
+            && run_id.is_none_or(|id| id.is_empty() || id == active)
         {
             self.aborted_reasons
                 .lock()
                 .unwrap()
-                .insert(turn_key(session_key, &active), reason.clone());
+                .insert(turn_key(session_key, active), reason.clone());
         }
         let cancelled = self.completion.cancel(session_key, Some(&reason), run_id);
-        let allowed = run_id.is_none()
-            || cancelled
-            || self.admission.active_turn_run_id(session_key).as_ref() == run_id;
+        let allowed = run_id.is_none() || cancelled || active.as_ref() == run_id;
         // Invoke the sink now, then select the wait after the sink's drain (as
         // TS does after `await router.abort`). Never hold locks across either.
-        let operation = allowed.then(|| abort(reason));
+        let operation = allowed.then(|| abort(run_id.cloned(), reason));
         let session_key = session_key.clone();
         async move {
             if let Some(operation) = operation {

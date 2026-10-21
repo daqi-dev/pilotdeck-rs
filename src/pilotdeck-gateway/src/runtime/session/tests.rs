@@ -82,11 +82,17 @@ async fn real_ts_admission_completion_and_gateway_abort() {
                 }
                 "abort_start" => {
                     let aborts = aborts.clone();
-                    let future =
-                        turns.abort_turn(&key, run.as_ref(), reason.as_ref(), move |reason| {
+                    let expected_target = run.clone();
+                    let future = turns.abort_turn(
+                        &key,
+                        run.as_ref(),
+                        reason.as_ref(),
+                        move |target, reason| {
+                            assert_eq!(target, expected_target);
                             aborts.lock().unwrap().push(string(&reason));
                             std::future::ready(())
-                        });
+                        },
+                    );
                     settled.insert(id.to_owned(), false);
                     pending.push((id.to_owned(), Box::pin(future)));
                 }
@@ -239,7 +245,10 @@ fn abort_reason_cleanup_is_exact() {
     let run = JsString::from("run");
     turns.admission.begin_turn(&key, &run);
     // The synchronous prefix and sink run when invoked, even before polling.
-    let operation = turns.abort_turn(&key, Some(&run), Some(&"".into()), |_| {
+    let operation = turns.abort_turn(&key, Some(&run), Some(&"".into()), |target, reason| {
+        assert_eq!(target.as_ref(), Some(&run));
+        assert_eq!(reason, JsString::from(""));
+        assert_eq!(turns.admission.active_turn_run_id(&key), Some(run.clone()));
         std::future::ready(())
     });
     assert_eq!(turns.aborted_reason(&key, &run), Some("".into()));
@@ -248,4 +257,76 @@ fn abort_reason_cleanup_is_exact() {
     turns.clear_aborted_reason(&key, &run);
     assert_eq!(turns.aborted_reason(&key, &run), None);
     drop(operation);
+}
+
+/// Pause the actual sink between the abort decision and owner-handle selection.
+/// Every iteration forces end(old) + begin(new) into that window; no sleep or
+/// scheduler luck is involved. Odd rounds have no completion handle, exercising
+/// the admitted-before-fence fallback as well as cancellation's success branch.
+#[test]
+fn old_abort_never_targets_replacement_across_threads() {
+    use std::sync::Barrier;
+
+    const ROUNDS: usize = 2_000;
+    let turns = SessionTurns::default();
+    let key = JsString::from("session");
+    let old = JsString::from("old");
+    let new = JsString::from("new");
+    let owner = Mutex::new(old.clone());
+    let start = Barrier::new(2);
+    let selected = Barrier::new(2);
+    let replaced = Barrier::new(2);
+    let finished = Barrier::new(2);
+
+    let new_hits = std::thread::scope(|scope| {
+        let aborter = scope.spawn(|| {
+            let mut new_hits = 0;
+            for _ in 0..ROUNDS {
+                start.wait();
+                let operation = turns.abort_turn(&key, Some(&old), None, |target, _reason| {
+                    // Reentrant component reads also check that no component
+                    // lock is held while calling the sink.
+                    assert_eq!(turns.admission.active_turn_run_id(&key), Some(old.clone()));
+                    selected.wait();
+                    replaced.wait();
+                    // This is the live owner's required atomic filter + handle
+                    // selection, under the same lock used to publish new below.
+                    let current = owner.lock().unwrap();
+                    if target.as_ref().is_none_or(|id| id == &*current) && *current == new {
+                        new_hits += 1;
+                    }
+                    std::future::ready(())
+                });
+                // This test exercises synchronous selection, not async drain.
+                drop(operation);
+                finished.wait();
+            }
+            new_hits
+        });
+        for round in 0..ROUNDS {
+            assert!(turns.admission.begin_turn(&key, &old));
+            *owner.lock().unwrap() = old.clone();
+            let old_handle = (round % 2 == 0).then(|| turns.completion.begin(&key, &old));
+            start.wait();
+            selected.wait();
+            turns.admission.end_turn(&key, Some(&old));
+            if let Some(handle) = old_handle {
+                assert!(handle.is_cancelled());
+                turns.completion.complete(&key, &handle);
+            }
+            assert!(turns.admission.begin_turn(&key, &new));
+            let new_handle = turns.completion.begin(&key, &new);
+            *owner.lock().unwrap() = new.clone();
+            replaced.wait();
+            finished.wait();
+            assert!(!new_handle.is_cancelled());
+            assert_eq!(turns.aborted_reason(&key, &new), None);
+            turns.completion.complete(&key, &new_handle);
+            turns.admission.end_turn(&key, Some(&new));
+            turns.clear_aborted_reason(&key, &old);
+        }
+        aborter.join().unwrap()
+    });
+    println!("replacement hits: {new_hits}/{ROUNDS}");
+    assert_eq!(new_hits, 0, "an old abort reached the replacement owner");
 }
