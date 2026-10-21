@@ -1,4 +1,11 @@
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    fs,
+    path::Path,
+    process::Command,
+};
+
+use serde_json::Value;
 
 fn section<'a>(manifest: &'a str, name: &str) -> Vec<&'a str> {
     manifest
@@ -20,19 +27,493 @@ fn entries(path: &Path) -> Vec<String> {
     entries
 }
 
+// This guard deliberately accepts only explicit, quoted workspace paths. A new
+// manifest shape must extend the guard rather than silently skip a member.
+fn workspace_paths(manifest: &str, key: &str) -> Vec<String> {
+    let workspace = section(manifest, "[workspace]");
+    let prefix = format!("{key} = [");
+    let start = workspace
+        .iter()
+        .position(|line| line.starts_with(&prefix))
+        .expect("explicit workspace path list");
+    let members = workspace[start..].join("\n");
+    let members = members.strip_prefix(&prefix).unwrap();
+    let (members, _) = members.split_once(']').expect("closed members list");
+    let members: Vec<_> = members
+        .split(',')
+        .map(str::trim)
+        .filter(|member| !member.is_empty())
+        .map(|member| {
+            let member = member
+                .strip_prefix('"')
+                .and_then(|member| member.strip_suffix('"'))
+                .expect("quoted workspace member");
+            assert!(
+                member
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || "-_/".contains(ch)),
+                "unsupported workspace member: {member}"
+            );
+            assert!(!member.is_empty() && !member.starts_with('/'));
+            member.to_owned()
+        })
+        .collect();
+    assert!(!members.is_empty());
+    members
+}
+
+const VENDORED_PACKAGES: [&str; 2] = ["vendor/tiktoken-rs", "data/icu_collator_data"];
+
+fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
+    let output = Command::new(std::env::var_os("CARGO").expect("Cargo executable from CARGO"))
+        .args(["metadata", "--format-version", "1", "--offline"])
+        .current_dir(workspace)
+        .output()
+        .expect("run cargo metadata offline");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: Value = serde_json::from_slice(&output.stdout).expect("Cargo metadata JSON");
+    let packages: HashMap<_, _> = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| (package["id"].as_str().unwrap(), package))
+        .collect();
+    let package_directory = |package: &Value| {
+        Path::new(package["manifest_path"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+    };
+    let member_ids: HashSet<_> = metadata["workspace_members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    let resolved_members: BTreeSet<_> = member_ids
+        .iter()
+        .map(|id| package_directory(packages[id]))
+        .collect();
+    let checked_members: BTreeSet<_> = members
+        .iter()
+        .map(|member| workspace.join(member).canonicalize().unwrap())
+        .collect();
+    assert_eq!(checked_members.len(), members.len(), "duplicate members");
+    assert_eq!(
+        resolved_members, checked_members,
+        "Cargo workspace members must match the lint-checked manifest members"
+    );
+
+    let vendored: BTreeSet<_> = VENDORED_PACKAGES
+        .iter()
+        .map(|relative| workspace.join(relative).canonicalize().unwrap())
+        .collect();
+    let nodes: HashMap<_, _> = metadata["resolve"]["nodes"]
+        .as_array()
+        .expect("resolved dependency graph")
+        .iter()
+        .map(|node| (node["id"].as_str().unwrap(), node))
+        .collect();
+    let gateway_directory = workspace.join("pilotdeck-gateway").canonicalize().unwrap();
+    let gateway = *member_ids
+        .iter()
+        .find(|id| package_directory(packages[*id]) == gateway_directory)
+        .expect("gateway workspace member");
+    let mut pending = vec![gateway];
+    let mut visited = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let package = packages[id];
+        if package.get("source").expect("package source").is_null() {
+            let directory = package_directory(package);
+            assert!(
+                (member_ids.contains(id) && checked_members.contains(&directory))
+                    || vendored.contains(&directory),
+                "unknown local package in gateway resolved dependency closure: {id} ({})",
+                directory.display()
+            );
+        }
+        // Cargo's dependencies list includes every resolved edge, without
+        // filtering dep_kinds: normal, build and dev dependencies all count.
+        pending.extend(
+            nodes[id]["dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|dependency| dependency.as_str().unwrap()),
+        );
+    }
+}
+
+// Skip nested comments and ordinary/raw strings before counting Rust tokens.
+// Character literals are skipped too; lifetimes remain ordinary tokens.
+fn rust_tokens(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    let mut tokens = Vec::new();
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"//") {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i..].starts_with(b"/*") {
+            i += 2;
+            let mut depth = 1;
+            while depth != 0 {
+                assert!(i < bytes.len(), "unclosed comment");
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if bytes[i] == b'r'
+            && bytes[i + 1..].iter().copied().find(|&b| b != b'#') == Some(b'"')
+        {
+            let hashes = bytes[i + 1..].iter().take_while(|&&b| b == b'#').count();
+            i += hashes + 2;
+            loop {
+                assert!(i < bytes.len(), "unclosed raw string");
+                if bytes[i] == b'"'
+                    && bytes
+                        .get(i + 1..i + 1 + hashes)
+                        .is_some_and(|suffix| suffix.iter().all(|&b| b == b'#'))
+                {
+                    i += hashes + 1;
+                    break;
+                }
+                i += 1;
+            }
+        } else if bytes[i] == b'"' {
+            i += 1;
+            loop {
+                assert!(i < bytes.len(), "unclosed string");
+                match bytes[i] {
+                    b'\\' => i += 2,
+                    b'"' => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+        } else if bytes[i] == b'\''
+            && (bytes.get(i + 2) == Some(&b'\'')
+                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
+        {
+            i += if bytes[i + 1] == b'\\' { 4 } else { 3 };
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            tokens.push(source[start..i].to_owned());
+        } else {
+            if !bytes[i].is_ascii_whitespace() {
+                tokens.push(char::from(bytes[i]).to_string());
+            }
+            i += 1;
+        }
+    }
+    tokens
+}
+
+fn child_source_boundary(source: &str) {
+    let tokens = rust_tokens(source);
+    let mut lint_attributes = Vec::new();
+    for (start, token) in tokens.iter().enumerate() {
+        if token != "#" {
+            continue;
+        }
+        let mut open = start + 1;
+        if tokens.get(open).map(String::as_str) == Some("!") {
+            open += 1;
+        }
+        if tokens.get(open).map(String::as_str) != Some("[") {
+            continue;
+        }
+        let mut depth = 1;
+        let mut end = open + 1;
+        while depth != 0 {
+            match tokens
+                .get(end)
+                .map(String::as_str)
+                .expect("closed attribute")
+            {
+                "[" => depth += 1,
+                "]" => depth -= 1,
+                _ => {}
+            }
+            end += 1;
+        }
+        if tokens[start..end]
+            .iter()
+            .any(|token| token == "unsafe_code")
+        {
+            lint_attributes.push((start, end));
+        }
+    }
+    assert_eq!(
+        lint_attributes.len(),
+        1,
+        "exactly one unsafe_code lint attribute"
+    );
+    let (start, end) = lint_attributes[0];
+    assert_eq!(
+        &tokens[start..end],
+        ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
+    );
+    assert_eq!(
+        &tokens[end..end + 4],
+        ["pub", "fn", "install_child_signal_reset", "("]
+    );
+    assert_eq!(
+        tokens.iter().filter(|token| *token == "unsafe").count(),
+        1,
+        "exactly one unsafe keyword"
+    );
+    let start = tokens.iter().position(|token| token == "unsafe").unwrap() + 1;
+    assert_eq!(tokens[start], "{");
+    let mut depth = 1;
+    let mut end = start + 1;
+    while depth != 0 {
+        match tokens
+            .get(end)
+            .map(String::as_str)
+            .expect("closed unsafe block")
+        {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            _ => {}
+        }
+        end += 1;
+    }
+    // 改动闭包须同步更新此处并经评审。Pin the entire approved unsafe
+    // block, including the pre_exec call, rather than just counting keywords.
+    let expected = rust_tokens(
+        r#"
+        command.pre_exec(|| {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = libc::SIG_DFL;
+            if libc::sigemptyset(&mut action.sa_mask) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            for signal in CHILD_SIGNALS {
+                if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            if libc::sigprocmask(libc::SIG_SETMASK, &action.sa_mask, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+        "#,
+    );
+    assert_eq!(
+        tokens[start + 1..end - 1],
+        expected,
+        "approved pre_exec unsafe block token sequence changed"
+    );
+    assert!(source.contains("#![cfg(unix)]"));
+    for forbidden in ["macro_rules", "macro", "include", "mod"] {
+        assert!(
+            !tokens.iter().any(|token| token == forbidden),
+            "child crate contains {forbidden}"
+        );
+    }
+    for (index, token) in tokens.iter().enumerate() {
+        if token == "!"
+            && index > 0
+            && tokens
+                .get(index + 1)
+                .is_some_and(|next| ["(", "[", "{"].contains(&next.as_str()))
+        {
+            assert!(
+                !tokens[index - 1].starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_'),
+                "child crate must not invoke macros"
+            );
+        }
+    }
+}
+
+// No repository Cargo config, toolchain, build script, or build entrypoint may
+// inject compiler lint flags/wrappers. Check new files too, before they are staged.
+fn build_configuration_boundary(directory: &Path) {
+    for name in entries(directory) {
+        if name.starts_with(".env")
+            || [
+                ".git",
+                "_build",
+                "_tmp",
+                "_archive",
+                "target",
+                "node_modules",
+                "resources",
+                "vault",
+                "notes",
+            ]
+            .contains(&name.as_str())
+        {
+            continue;
+        }
+        let path = directory.join(&name);
+        let kind = fs::symlink_metadata(&path).unwrap().file_type();
+        if name == ".cargo" {
+            assert!(!kind.is_symlink(), ".cargo must not be a symlink");
+        }
+        let cargo_config = directory.file_name().is_some_and(|name| name == ".cargo")
+            && name.starts_with("config");
+        let configuration = cargo_config
+            || name.starts_with("rust-toolchain")
+            || name == "build.rs"
+            || name.ends_with(".sh")
+            || name.ends_with(".yml")
+            || name.ends_with(".yaml");
+        if configuration {
+            assert!(
+                !kind.is_symlink(),
+                "build configuration must not be a symlink: {}",
+                path.display()
+            );
+            if kind.is_file() {
+                let text = fs::read_to_string(&path).unwrap().to_ascii_lowercase();
+                for forbidden in [
+                    "rustflags",
+                    "rustc-flags",
+                    "cap-lints",
+                    "unsafe_code",
+                    "unsafe-code",
+                    "rustc-wrapper",
+                    "rustc-workspace-wrapper",
+                ] {
+                    assert!(
+                        !text.contains(forbidden),
+                        "lint override {forbidden} in {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        if kind.is_dir() {
+            build_configuration_boundary(&path);
+        }
+    }
+}
+
 #[test]
 fn compiler_enforces_gateway_boundary() {
     let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = gateway.parent().unwrap();
-    let manifest = fs::read_to_string(gateway.join("Cargo.toml")).unwrap();
     let workspace_manifest = fs::read_to_string(workspace.join("Cargo.toml")).unwrap();
-    assert_eq!(section(&manifest, "[lints]"), ["workspace = true"]);
     assert_eq!(
         section(&workspace_manifest, "[workspace.lints.rust]"),
         ["unsafe_code = \"forbid\""]
     );
+    let members = workspace_paths(&workspace_manifest, "members");
+    assert_eq!(
+        members
+            .iter()
+            .filter(|member| *member == "pilotdeck-child-signals")
+            .count(),
+        1
+    );
+    for member in &members {
+        let manifest = fs::read_to_string(workspace.join(member).join("Cargo.toml")).unwrap();
+        assert!(
+            !section(&manifest, "[package]")
+                .iter()
+                .any(|line| line.starts_with("build")),
+            "custom build scripts require extending the lint guard: {member}"
+        );
+        let lint_tables: Vec<_> = manifest
+            .lines()
+            .map(|line| line.split('#').next().unwrap().trim())
+            .filter(|line| line.starts_with("[lints"))
+            .collect();
+        if member == "pilotdeck-child-signals" {
+            let tables: Vec<_> = manifest
+                .lines()
+                .map(|line| line.split('#').next().unwrap().trim())
+                .filter(|line| line.starts_with('['))
+                .collect();
+            assert_eq!(
+                tables,
+                [
+                    "[package]",
+                    "[lints.rust]",
+                    "[lints.clippy]",
+                    "[dependencies]"
+                ],
+                "child manifest table whitelist"
+            );
+            assert_eq!(
+                section(&manifest, "[package]"),
+                [
+                    "name = \"pilotdeck-child-signals\"",
+                    "version.workspace = true",
+                    "edition.workspace = true",
+                    "rust-version.workspace = true",
+                    "license.workspace = true",
+                    "publish.workspace = true",
+                ],
+                "child package whitelist (the existing seven lines including [package])"
+            );
+            assert_eq!(lint_tables, ["[lints.rust]", "[lints.clippy]"], "{member}");
+            assert_eq!(
+                section(&manifest, "[lints.rust]"),
+                ["unsafe_code = \"deny\""],
+                "{member}"
+            );
+            assert_eq!(
+                section(&manifest, "[lints.clippy]"),
+                section(&workspace_manifest, "[workspace.lints.clippy]"),
+                "{member}"
+            );
+            assert_eq!(
+                section(&manifest, "[dependencies]"),
+                ["libc = \"=0.2.190\""]
+            );
+        } else {
+            assert_eq!(
+                lint_tables,
+                ["[lints]"],
+                "{member} must inherit workspace lints"
+            );
+            assert_eq!(
+                section(&manifest, "[lints]"),
+                ["workspace = true"],
+                "{member}"
+            );
+        }
+    }
+    resolved_dependency_boundary(workspace, &members);
+    let mut excludes = workspace_paths(&workspace_manifest, "exclude");
+    excludes.sort();
+    let mut expected_excludes = VENDORED_PACKAGES;
+    expected_excludes.sort();
+    assert_eq!(excludes, expected_excludes, "workspace exclude whitelist");
+    for (name, value) in std::env::vars_os() {
+        if name.to_string_lossy().ends_with("RUSTFLAGS") {
+            assert!(
+                value.is_empty(),
+                "compiler flags must not override lint policy: {name:?}"
+            );
+        }
+    }
+    build_configuration_boundary(workspace.parent().unwrap());
 
-    // Only this small crate may override the workspace's Rust lint level.
     let child = workspace.join("pilotdeck-child-signals");
     assert_eq!(entries(&child), ["Cargo.toml", "src"]);
     assert_eq!(entries(&child.join("src")), ["lib.rs"]);
@@ -44,27 +525,5 @@ fn compiler_enforces_gateway_boundary() {
         assert_eq!(kind.is_dir(), is_dir, "{relative}");
         assert_eq!(kind.is_file(), !is_dir, "{relative}");
     }
-    let manifest = fs::read_to_string(child.join("Cargo.toml")).unwrap();
-    assert_eq!(
-        section(&manifest, "[lints.rust]"),
-        ["unsafe_code = \"deny\""]
-    );
-    assert_eq!(
-        section(&manifest, "[lints.clippy]"),
-        section(&workspace_manifest, "[workspace.lints.clippy]")
-    );
-    assert_eq!(
-        section(&manifest, "[dependencies]"),
-        ["libc = \"=0.2.190\""]
-    );
-    let source = fs::read_to_string(child.join("src/lib.rs")).unwrap();
-    assert_eq!(source.matches("#[allow(unsafe_code)]").count(), 1);
-    assert_eq!(source.matches("allow(unsafe_code)").count(), 1);
-    assert!(source.contains("#![cfg(unix)]"));
-    for forbidden in ["macro_rules", "include", "#[path", "mod "] {
-        assert!(
-            !source.contains(forbidden),
-            "child crate contains {forbidden}"
-        );
-    }
+    child_source_boundary(&fs::read_to_string(child.join("src/lib.rs")).unwrap());
 }
