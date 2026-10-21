@@ -590,3 +590,10 @@ fn thrown(error: &ModelStreamError) -> JsValue {
         ),
     ])
 }
+
+/// Re-record the real TS RouterRuntime/health corpus and compare its bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules) and PDRS_GIT"]
+fn router_execute_fixtures_regenerate_identically_from_ts() {
+    baseline::regenerates_identically("router-execute");
+}

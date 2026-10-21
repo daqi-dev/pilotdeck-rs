@@ -462,6 +462,11 @@ fn append_anthropic_beta(headers: &mut JsObject, beta: &str) {
 
 /// `buildProviderChatEndpointCandidates` for the ported protocols.
 pub(crate) fn chat_endpoint_candidates(provider: &JsValue) -> Vec<String> {
+    // TS model/providerEndpoint.ts:54 calls baseUrl.trim() for every ported
+    // protocol. Node 22.22.0: direct calls with 123 / {} / null throw TypeError.
+    // Rust keeps String(url) coercion here. Runtime config excludes those
+    // values: model/config/parseModelConfig.ts:91 uses a string/catalog default,
+    // mirrored by config/snapshot.rs:644-671 (as_string + catalog default).
     let base = String::from_utf16_lossy(&units(field(provider, "url")));
     let protocol = field(provider, "protocol");
     if is(protocol, "anthropic") {
@@ -579,6 +584,30 @@ impl StreamState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_non_string_url_preserves_direct_call_coercion() {
+        for (source, coerced) in [("123", "123"), ("{}", "[object Object]"), ("null", "null")] {
+            for (protocol, endpoint) in [
+                ("anthropic", "messages"),
+                ("openai-responses", "responses"),
+                ("openai", "chat/completions"),
+            ] {
+                let provider = pilotdeck_protocol::parse_json(&format!(
+                    r#"{{"protocol":"{protocol}","url":{source}}}"#
+                ))
+                .unwrap();
+                assert_eq!(
+                    chat_endpoint_candidates(&provider),
+                    [
+                        format!("{coerced}/v1/{endpoint}"),
+                        format!("{coerced}/{endpoint}")
+                    ],
+                    "{protocol} url={source}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn anthropic_endpoint_candidates_follow_version_segments() {

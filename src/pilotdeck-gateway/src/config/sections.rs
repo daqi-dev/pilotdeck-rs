@@ -685,8 +685,10 @@ pub(super) fn valid_timezone(s: &str) -> bool {
     if s.is_ascii() && zones.binary_search(&s.to_lowercase()).is_ok() {
         return true;
     }
-    let re = regex::Regex::new(r"^[+-]([0-9]{2})(?::?([0-9]{2}))?$").unwrap();
-    re.captures(s).is_some_and(|c| {
+    static OFFSET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^[+-]([0-9]{2})(?::?([0-9]{2}))?$").expect("static UTC offset regex")
+    });
+    OFFSET.captures(s).is_some_and(|c| {
         c[1].parse::<u32>().unwrap() < 24
             && c.get(2)
                 .is_none_or(|m| m.as_str().parse::<u32>().unwrap() < 60)

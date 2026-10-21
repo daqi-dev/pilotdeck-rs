@@ -137,6 +137,14 @@ pub(super) fn count_request(
         }
     };
     let anthropic = is(field(provider, "protocol"), "anthropic");
+    // TS TokenAccountingRuntime.ts:210-278 uses provider.url directly:
+    // Anthropic joinUrl calls .endsWith() (:456); other protocols normalize
+    // with raw.trim() (model/normalizeProviderBaseUrl.ts:5). Non-strings throw
+    // TypeError (Node 22.22.0 probe: 123 / {} / null). Direct Rust calls keep
+    // String(url) coercion: Anthropic builds a count URL, Responses returns
+    // None at the official-URL gate. Config-normalized runtime providers cannot
+    // reach this difference: parseModelConfig.ts:91 selects a string/catalog
+    // default, mirrored by config/snapshot.rs:644-671 (as_string + default).
     let base = text(field(provider, "url"));
     let url = if anthropic {
         format!(
@@ -793,6 +801,39 @@ fn literal_type(value: &JsValue) -> Option<&'static str> {
 mod tests {
     use super::*;
     use pilotdeck_protocol::parse_json;
+
+    /// Bypassing config normalization preserves the direct-call coercion;
+    /// the real TS countWithProvider instead throws TypeError (see above).
+    #[test]
+    fn count_non_string_url_coerces_only_anthropic() {
+        let request = parse_json(r#"{"provider":"custom","model":"m","messages":[]}"#).unwrap();
+        for (source, coerced) in [("123", "123"), ("{}", "[object Object]"), ("null", "null")] {
+            for protocol in ["anthropic", "openai-responses", "openai"] {
+                let config = parse_json(&format!(
+                    r#"{{"providers":{{"custom":{{"id":"custom","protocol":"{protocol}","url":{source},"apiKey":"test","models":{{"m":{{"id":"m","capabilities":{{}}}}}}}}}}}}"#
+                )).unwrap();
+                let result =
+                    count_request(config.as_object().unwrap(), request.as_object().unwrap())
+                        .unwrap();
+                if protocol == "anthropic" {
+                    assert_eq!(
+                        result.unwrap().url,
+                        format!("{coerced}/v1/messages/count_tokens")
+                    );
+                } else {
+                    assert!(result.is_none(), "{protocol} url={source}");
+                }
+            }
+        }
+        let config = parse_json(r#"{"providers":{"custom":{"id":"custom","protocol":"openai-responses","url":"https://api.openai.com/v1","apiKey":"test","models":{"m":{"id":"m","capabilities":{}}}}}}"#).unwrap();
+        assert_eq!(
+            count_request(config.as_object().unwrap(), request.as_object().unwrap())
+                .unwrap()
+                .unwrap()
+                .url,
+            "https://api.openai.com/v1/responses/input_tokens"
+        );
+    }
 
     /// node probe (pr7 `r2/probe-r2.out.txt`, `buildOpenAIResponsesRequest`):
     /// the Responses count keeps `reasoning` only for the OpenAI reasoning
