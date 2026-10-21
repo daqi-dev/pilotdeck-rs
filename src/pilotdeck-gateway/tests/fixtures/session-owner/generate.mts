@@ -122,6 +122,17 @@ async function record(name: string, run: (h: ReturnType<typeof harness>) => Prom
   // Clean up outside the observation; every allocated handle is drained.
   await h.router.shutdown().catch(() => {});
 }
+await record('dirty_mark_during_recreation_is_cleared', async h => {
+  const old = await h.router.getOrCreate(context('a'));
+  h.router.markAllDirty();
+  const gate = deferred(); h.creates.set('a', gate);
+  const replacing = h.router.getOrCreate(context('a'));
+  await until(() => h.events.includes('create:a:2'));
+  const marked = h.router.markAllDirty();
+  gate.resolve(); const fresh = await replacing;
+  const next = await h.router.getOrCreate(context('a'));
+  return { marked, replaced: old !== fresh, nextIsFresh: next === fresh };
+});
 await record('dirty_identity_and_publication', async h => {
   const old = await h.router.getOrCreate(context('a'));
   const drain = deferred(); h.disposals.set(1, drain);

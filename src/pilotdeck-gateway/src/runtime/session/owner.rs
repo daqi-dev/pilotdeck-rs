@@ -95,6 +95,7 @@ impl SessionOwnerOptions {
                     .unwrap_or_default()
                     .as_millis() as i64
             }),
+            // TS SessionRouter.ts:74-75: 30 min idle timeout, 60 s sweep interval.
             idle_timeout_ms: 30 * 60 * 1000,
             idle_sweep_interval_ms: 60 * 1000,
             on_evict: None,
@@ -283,6 +284,7 @@ impl SessionOwner {
                         handle: handle.clone(),
                         context: context.clone(),
                         last_used: (self.0.options.now_ms)(),
+                        // TS SessionRouter.ts:144-166 clears dirty after replace, including marks during recreation.
                         dirty: false,
                     },
                 );

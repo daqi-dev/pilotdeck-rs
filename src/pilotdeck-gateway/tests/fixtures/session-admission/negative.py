@@ -29,6 +29,9 @@ def main():
             .get(session_key)
             .is_some_and(|current| Arc::ptr_eq(&current.0, &handle.0))"""
     mutants = [
+        ("end-turn-ignores-reservation-identity", "admission.rs",
+         ".is_some_and(|current| Arc::ptr_eq(current, &reservation.0))",
+         ".is_some_and(|current| { let _ = (current, reservation); true })"),
         ("skip-busy", "admission.rs", "            || state.turns.contains_key(session_key)\n", ""),
         ("global-key", "admission.rs",
          "pub fn begin_turn(&self, session_key: &JsString, run_id: &JsString) -> Option<TurnReservation> {",
@@ -84,11 +87,11 @@ def main():
     if not os.environ.get("PDRS_BASELINE"):
         parser.error("PDRS_BASELINE must be set to verify the tampered source hash against the fixed baseline")
     env = dict(os.environ, CARGO_NET_OFFLINE="true",
-               CARGO_HOME=os.environ["CARGO_HOME"],
-               CARGO_TARGET_DIR=str(rust / "target"))
+               CARGO_HOME=os.environ["CARGO_HOME"])
     summary = []
     with tempfile.TemporaryDirectory(prefix="pdrs-a71-negative-", dir="/tmp") as directory:
         scratch = Path(directory)
+        env["CARGO_TARGET_DIR"] = str(scratch / "src/target")
         shutil.copytree(rust, scratch / "src", ignore=shutil.ignore_patterns(
             "target", ".git", "node_modules", ".env*"))
         shutil.copytree(rust.parent / "specs", scratch / "specs")
@@ -108,11 +111,13 @@ def main():
                 capture_output=True, text=True, check=True)
             test = ("runtime::session::tests::old_abort_never_targets_replacement_across_threads"
                     if name == "restore-original-abort" else
+                    "runtime::session::tests::exact_end_requires_original_admission_identity_but_empty_end_is_unfenced"
+                    if name == "end-turn-ignores-reservation-identity" else
                     "runtime::session::tests::" if name == "baseline" else
                     "runtime::session::tests::real_ts_admission_completion_and_gateway_abort")
             command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "src/Cargo.toml"),
                        "-p", "pilotdeck-gateway", "--lib", test, "--", "--nocapture"]
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=600 if name == "baseline" else 120)
             raw = result.stdout + result.stderr
             (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
             passed = result.returncode == 0 if name == "baseline" else (
@@ -122,6 +127,8 @@ def main():
                 passed = passed and hits is not None and int(hits[1]) == int(hits[2]) == 2_000
             if name == "tampered-source-hash":
                 passed = passed and "oracle hash for src/gateway/SessionRouter.ts does not match" in raw
+            if name == "end-turn-ignores-reservation-identity":
+                passed = passed and "stale exact end released new identity" in raw
             if name == "maintenance-ignores-active-turn":
                 passed = passed and '"active-turn-rejects-maintenance" step 1' in raw
             summary.append({"replacement_hits": int(hits[1]) if hits else None,
