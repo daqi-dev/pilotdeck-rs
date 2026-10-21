@@ -1,12 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 13:20 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+updated: 2026-10-21 13:30 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
 - A6.5-pr10b | impl | ready | 人定 13:10：选 A，正则预算差异与 #4 #5 已批，深度预算暂不批（先补正常工具受影响范围），>1 MB 不作本 PR 硬验收但须写明限制；codex 修复轮 9 在跑（`_tmp/20261020-a65-pr10b/fix9.status`）
-- #396 | review | ready | PR #403 已改 base 为 main，head 399a6f3（rebase 时 model/http.rs 与 A6.4-pr8 冲突，协调者逐块合并，署 Codex+Claude）；沙箱外 1676/0/42；Grok r2（只审冲突合并）+ 全量 gate2 在跑；收敛后改 Ready、入队
+- #396 | impl | ready | PR #403 head 399a6f3：Grok r2（冲突合并）0/0/1；全量 gate2 sibling P1（google provider 路径未迁到共享 exchange）+ Grok 同源 P2（google 重试未接续传），两家撞上；另 P2×4（provider 帧读取、MCP streamable/SSE 正文无 bodyTimeout、两套逐帧读取）；concurrency 角色超时需重跑；codex 修复轮 2 在跑（`_tmp/20261021-issue-396/fix2.status`）
 - #386 | impl | ready | 人定 13:15：允许安全 API 依赖（候选 nix 0.31.3，源码已入 cargo-home），保留 unsafe 禁令；codex 在 wt-a65-pr2（codex/sig-reset-nix）先做七项可行性再实现（`_tmp/20261021-issue-386/task2.status`）；Linux 实测走 CI
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | review | ready | PR #405（draft）head 76c76ec，沙箱外 1669/0/42；GLM r1 + Grok r1 在跑
+- A7.1-pr1 | review | ready | PR #405：Grok r1 0/0/1/1——7 项语义与 TS 一致、夹具真、负控有效；P2 多线程下旧 abort 判定与 sink 调用之间有窗口（实测 20000 轮 41 次打到新 run），对应计划 122 行完成条件，等 GLM r1 后一批修
 - A6.5-pr9b | review | ready | PR #406（draft）head 661c919（两提交压成一个，署 Codex+Claude），沙箱外 1667/0/44；.gitleaks.toml 新增的精确哈希放行已复算属实；GLM r1 + Grok r1 在跑
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
@@ -16,7 +16,7 @@ updated: 2026-10-21 13:20 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
-- accepted-diffs-4-5 | coord | ready | 人批 13:10；PR #404 改状态列为已批，check_frozen 通过，待入队
+- accepted-diffs-4-5 | coord | ready | PR #404 已入合并队列（13:26）
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
 
