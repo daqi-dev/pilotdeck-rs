@@ -591,10 +591,13 @@ async fn replay_fetch(
     let fetcher = UrlFetcher {
         transport: h.transport.clone(),
         cache,
-        html: mutation
-            .html
-            .clone()
-            .unwrap_or_else(|| Arc::new(MissingTurndown)),
+        html: mutation.html.clone().unwrap_or_else(|| {
+            if matches!(get(spec, "turndownMissing"), JsValue::Bool(true)) {
+                Arc::new(MissingTurndown)
+            } else {
+                UrlFetcher::new(h.transport.clone()).html
+            }
+        }),
         random: random(),
     };
     let tool = WebFetchTool::new(WebFetchToolOptions {
@@ -1025,6 +1028,76 @@ fn scenario<'a>(h: &'a Harness, name: &str) -> &'a JsValue {
         .iter()
         .find(|s| text(get(s, "name")) == name)
         .unwrap()
+}
+
+/// Exercise the default converter through web_fetch, including byte metadata,
+/// request headers and the second call's cache hit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_fetch_html_default_and_cache_match_real_ts() {
+    struct HtmlTransport {
+        html: String,
+        requests: Mutex<Vec<JsValue>>,
+    }
+    impl ModelHttpTransport for HtmlTransport {
+        fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+            self.requests.lock().unwrap().push(object(vec![
+                ("url", JsValue::from(request.uri().to_string().as_str())),
+                (
+                    "headers",
+                    object(vec![
+                        (
+                            "Accept",
+                            request.headers()["accept"].to_str().unwrap().into(),
+                        ),
+                        (
+                            "User-Agent",
+                            request.headers()["user-agent"].to_str().unwrap().into(),
+                        ),
+                    ]),
+                ),
+            ]));
+            let response = hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/html; charset=utf-8")
+                .body(
+                    Full::new(Bytes::from(self.html.clone()))
+                        .map_err(|never| match never {})
+                        .boxed(),
+                )
+                .unwrap();
+            TransportFuture::ready(Ok(response))
+        }
+    }
+    let oracle = baseline::oracle(include_str!("fixtures/html-markdown/oracle.json"));
+    let fixture = get(&oracle, "fetch");
+    let transport = Arc::new(HtmlTransport {
+        html: text(get(fixture, "html")),
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut fetcher = UrlFetcher::new(transport.clone());
+    fetcher.cache = Arc::new(UrlCache::new(None));
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    });
+    let ctx = context(None, JsValue::Object(JsObject::new()), None);
+    let mut results = Vec::new();
+    for _ in 0..2 {
+        results.push(run(&tool, get(fixture, "input").clone(), ctx.clone()).await);
+    }
+    assert_eq!(
+        json(&JsValue::Array(results)).as_bytes(),
+        expect(fixture, "results").as_bytes()
+    );
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "second call must use cache");
+    assert_eq!(
+        json(&JsValue::Array(requests.clone())).as_bytes(),
+        expect(fixture, "requests").as_bytes()
+    );
 }
 
 /// Negative control: a working HTML converter (what turndown would do) must
