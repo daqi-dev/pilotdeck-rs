@@ -4,14 +4,12 @@
 //! caller), the egress-proxy refusal, the 10 MB body cap, error bodies as a
 //! whitespace-collapsed preview, and the content conversion by type.
 //!
-//! HTML→markdown is the npm `turndown` package in the baseline, which parses
-//! HTML with the full WHATWG parser `@mixmark-io/domino`. Neither is ported
-//! yet: conversion goes through [`HtmlToMarkdown`], and the default
-//! [`MissingTurndown`] fails exactly as the baseline does when `turndown`
-//! cannot be loaded. A real converter plugs in through the same trait, so
-//! callers do not change.
+//! HTML→markdown uses the baseline's default Turndown rules through
+//! [`HtmlToMarkdown`]. [`MissingTurndown`] remains an injectable failure for
+//! replaying installations where the baseline cannot load the npm package.
 use super::{
     cache::{FetchedEntry, UrlCache},
+    html_markdown::Turndown,
     network::{
         BodyError, FetchOptions, HttpRequest, Random, WEB_RETRY,
         network_fetch_with_parent_deadline, node_timer_duration,
@@ -232,7 +230,7 @@ impl UrlFetcher {
         Self {
             transport,
             cache: shared_cache(),
-            html: Arc::new(MissingTurndown),
+            html: Arc::new(Turndown),
             random: super::network::default_random(),
         }
     }

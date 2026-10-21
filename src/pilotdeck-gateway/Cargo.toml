@@ -36,6 +36,9 @@ bytes = "=1.10.1"
 # ring backend (no cmake/aws-lc), webpki-roots = Mozilla bundle like Node.
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
 hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "tls12", "ring", "webpki-tokio"] }
+# A6.5-pr9b (human-approved 2026-10-20, decisions-20261020 选 A): WHATWG HTML
+# tree builder for web_fetch HTML→markdown (baseline: turndown + domino).
+html5ever = { version = "=0.40.1", default-features = false }
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }
