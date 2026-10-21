@@ -1,11 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 00:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.5-pr9b | impl | doing | PR #406 @578add90，codex 修复轮 7（gate9 concurrency P1，_tmp/20261021-a65-pr9b/fix7.md），wt-a6-x0
-- #400 | impl | doing | DeepSeek 在 wt-a64-pr11（codex/issue-400），任务书 _tmp/20261022-issue-400/impl.md
-- #401 | impl | doing | codex 在 wt-a65-pr10b（codex/issue-401），任务书 _tmp/20261022-issue-401/impl.md；任务书漏了 gate8 concurrency P2（dispose 无栅栏），交付后补派；Grok r8 重跑未做
-- #386 | gate | doing | PR #407 @8c49fa4a，闸门链补 boundary/concurrency（_tmp/20261021-loop/gate-chain-2400.sh）
+updated: 2026-10-22 00:36 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr9b | gate | ready | PR #406 @9e5d3316：修复轮 7 已推（8 MiB 误嵌套 32.03→0.88 s，负控 31.93 s 触发预算），待重跑 gate concurrency 并重写结果块
+- #401 | impl | doing | PR #429（Draft）@b381291c 延迟换算已推；codex 第二单 dispose 栅栏在跑（_tmp/20261022-issue-401/impl2.md），wt-a65-pr10b
+- #386 | impl | doing | PR #407 @8c49fa4a：gate6b boundary P1（unsafe 守卫闭包只从 gateway 出发）codex 修复轮 9 在跑（_tmp/20261022-issue-386-gate6b/fix9.md）；gate6c concurrency 0/0/0
 - A7.1-pr3 | gate | doing | PR #421 @e8c952d0，闸门链跑四角色（同上脚本）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
@@ -17,6 +16,12 @@ updated: 2026-10-22 00:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 00:36 · /loop 协调轮
+> **合入准备**：#406 修复轮 7 提交 9e5d3316（署名 Codex）已推。#401 第一单提交 b381291c 开 Draft PR #429（wire.rs 取消码一条按 TS 实测不改：TS 同样回 -32001 并回收共享连接）；第二单 dispose 栅栏派 codex 同树接着做。
+> **关单**：#400 关闭——DeepSeek 实测五条已由 f25ce132（#396+#400 1–3）等落在 main，负控 4 组转红、全量 1001/0；协调者在 origin/main 复核 1–3。
+> **闸门**：#407 gate6c concurrency 0/0/0；gate6b boundary P1 派 codex 修复轮 9。#421 gate3 sibling 0/0/1；boundary P0=0/P1=1（非字符串真值 sessionKey 与 TS 真值检查不一致，`connection/mod.rs:352` 等），等 concurrency/simplify 跑完合成一张修复单。
+> **READY**：移出 #400（已关）；A6.5-pr9b 改 gate/ready；#386 改 impl/doing。
 > ## 2026-10-22 00:35 · /loop 协调轮
 > **做了**：worktree 回收仍待人放行，改为**复用已合入的树、新分支派单**（不删任何东西）：wt-a64-pr11 → `codex/issue-400`（DeepSeek 实现 #400），wt-a65-pr10b → `codex/issue-401`（codex 实现 #401），均基于 origin/main 479c58c4。脱困一处：`fix-launch.sh` 的 dsh 分支仍指向失效的 `deepseek-official` patch，已改用 `scripts/dsh-headless-llm-center.patch.yml`。
 > **机制**：READY 原本没有「已派出」状态，在途单只能写成 ready，接续者会重派。`next-task.sh` 与 `specs/README.md` 加 `doing`（summary 写持有人/worktree/任务书）；READY 删掉已合入的 pr9、pr10b 两条，补 #406/#407/#421 三条在途单。#396 与 #400 同碰 model/http.rs，改 blocked 等 #400。
