@@ -45,13 +45,24 @@ cargo test -p pilotdeck-gateway --lib runtime::session::
 
 `negative.py <evidence-dir>` 在独占 `/tmp/pdrs-a71-negative-*` 下复制这四个产品源文件
 与 oracle，以现有 protocol/tokio/serde_json 依赖构建临时测试 crate，结束即删除。
-不改工作区产品文件，不写基线或 node_modules。先跑原实现基线，再串行注入 15 个
+不改工作区产品文件，不写基线或 node_modules。先跑原实现基线（含多线程回归），再串行注入 16 个
 变异：跳过 busy、全局键、忽略 end 的 runId、跳过 shutdown、跳过 maintenance、
 用 runId 当 handle 身份、旧 complete 删除新 handle、忽略 cancel 的 runId、
 空 cancel 当无 ID、覆盖首个取消原因、丢失 completion、丢弃 resolver 冒充完成、不等待 drain、无条件 abort、
-丢失 Router-before-fence abort 分支。每项必须编译成功、oracle 测试以断言失败退出；
+丢失 Router-before-fence abort 分支，以及恢复原 abort 前缀（两次 active 读取、sink 不带 runId）。
+前 15 项必须编译成功、oracle 测试以断言失败退出；最后一项运行屏障控制的
+`old_abort_never_targets_replacement_across_threads`，要求 2000/2000 轮新 run 被命中，
+从而证明竞态回归确实拒绝旧写法；修复实现必须为 0/2000。
 编译错误/超时不算抓到负控。原始日志与含完整变异表达式的 JSON 汇总写入指定目录。
-资源环境沿本任务固定的 CARGO_HOME/CARGO_TARGET_DIR，编译前执行 cargo-slots。
+`CARGO_HOME` 必须由环境提供，缺省立即报错；`CARGO_TARGET_DIR` 为当前树的
+`src/target`，编译前执行 cargo-slots。
+
+abort sink 签名为 `(Option<JsString>, JsString)`，分别传入请求 runId 与 reason。
+显式空 runId 仍是 `Some(空串)`，只有 `None` 才允许按当前会话 abort。
+接线时 sink 必须在 live owner 的发布锁内按 runId 筛选并选中 handle，再释放锁；
+组件不会在锁内调用 sink 或 await。回归测试的两个线程在 sink 选 handle 前通过
+屏障强制完成 `end_turn(old)` + `begin_turn(new)`，交替覆盖有/无 completion handle，
+无需概率或 sleep。
 
 范围仅为 A7.1-pr1 的内存组件。真实 session 创建/退役和 abort sink 由 pr2 接线，
 WS binding、auth/clientName、错误与无 runId socket close 由 pr3 验收；hello/describe
