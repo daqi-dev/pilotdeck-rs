@@ -5,7 +5,9 @@
 逐角色块各自缺角色会判 FAIL。本脚本只做机械合并，不改任何角色结论：
   - 每个目录必须有 status.json、summary.md（内含 pr-gate:v1 块）与 diff.patch；
   - 各目录的 head / runner / model / scope / paths / diff_lines 必须一致，diff.patch 逐字节相同；
-  - 角色不得重复；合并后的状态、计数直接取各目录 status.json。
+  - 源块逐键恰好一次、readonly=tools，块里的 roles/p0/p1/diff_lines 须与 status.json、diff.patch 复算一致
+    （合并不得把源块的错误洗成一份新的合法声明——#432 codex 评审 P0×2）；
+  - 角色不得重复、不得为空；合并后的状态、计数直接取各目录 status.json。
 用法：
   python3 scripts/merge-review-roles.py --out _tmp/X-gate1 _tmp/X-gate1-sibling _tmp/X-gate1-boundary ...
 退出码：0 全部 PASS · 1 有非 PASS · 2 输入不一致或缺件
@@ -56,7 +58,22 @@ def main() -> int:
         blocks = BLOCK.findall(summary)
         if len(blocks) != 1:
             return fail(f"{d}/summary.md 应恰有 1 个 pr-gate 块，实有 {len(blocks)}")
-        kv = dict(p.split("=", 1) for p in blocks[0].split() if "=" in p)
+        if not isinstance(status, dict) or not status or not all(isinstance(r, dict) for r in status.values()):
+            return fail(f"{d}/status.json 应为非空的 角色→结果 对象")
+        pairs = [p.split("=", 1) for p in blocks[0].split() if "=" in p]
+        keys = [k for k, _ in pairs]
+        dup = sorted({k for k in keys if keys.count(k) > 1})
+        if dup:
+            return fail(f"{d} 源块键重复 {dup}")
+        kv = dict(pairs)
+        if kv.get("readonly") != "tools":
+            return fail(f"{d} 源块 readonly={kv.get('readonly')}，只接受 tools")
+        want_roles = ",".join(f"{r}:{v.get('status')}" for r, v in status.items())
+        want_p = {k: sum((v.get("counts") or {}).get(k, 0) for v in status.values()) for k in ("P0", "P1")}
+        diff_lines = (d / "diff.patch").read_text(encoding="utf-8", errors="replace").count("\n")
+        if (kv.get("roles") != want_roles or kv.get("p0") != str(want_p["P0"]) or kv.get("p1") != str(want_p["P1"])
+                or kv.get("diff_lines") != str(diff_lines)):
+            return fail(f"{d} 源块 roles/p0/p1/diff_lines 与 status.json、diff.patch 复算不一致")
         meta = {k: kv.get(k, "") for k in SAME_KEYS}
         if ref is None:
             ref, diff_sha = meta, sha
