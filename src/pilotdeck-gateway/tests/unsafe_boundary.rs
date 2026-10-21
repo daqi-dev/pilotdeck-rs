@@ -1,5 +1,6 @@
 //! 守卫边界：检查 workspace 成员源码的 lint 继承与 manifest、child crate
-//! 内容、gateway 的解析后依赖闭包、仓内 Cargo 配置与 toolchain 文件、
+//! 内容、全部 workspace 成员的解析后依赖闭包及其所有声明的 path 依赖
+//! （含 dev/build/target 与未启用的可选依赖）、仓内 Cargo 配置与 toolchain 文件、
 //! manifest 目录到文件系统根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
 //! config*，以及测试进程可见的编译相关环境变量。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
@@ -136,12 +137,7 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
         .iter()
         .map(|node| (node["id"].as_str().unwrap(), node))
         .collect();
-    let gateway_directory = workspace.join("pilotdeck-gateway").canonicalize().unwrap();
-    let gateway = *member_ids
-        .iter()
-        .find(|id| package_directory(packages[*id]) == gateway_directory)
-        .expect("gateway workspace member");
-    let mut pending = vec![gateway];
+    let mut pending: Vec<_> = member_ids.iter().copied().collect();
     let mut visited = HashSet::new();
     while let Some(id) = pending.pop() {
         if !visited.insert(id) {
@@ -153,9 +149,27 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
             assert!(
                 (member_ids.contains(id) && checked_members.contains(&directory))
                     || vendored.contains(&directory),
-                "unknown local package in gateway resolved dependency closure: {id} ({})",
+                "unknown local package in workspace resolved dependency closure: {id} ({})",
                 directory.display()
             );
+        }
+        if member_ids.contains(id) {
+            // Package declarations include optional and target-specific edges
+            // even when they are absent from the active resolve graph. Cargo
+            // normalizes inline/table/workspace-inherited dependency syntax.
+            for dependency in package["dependencies"].as_array().unwrap() {
+                if let Some(path) = dependency.get("path") {
+                    let directory = Path::new(path.as_str().expect("dependency path"))
+                        .canonicalize()
+                        .expect("existing dependency directory");
+                    assert!(
+                        checked_members.contains(&directory) || vendored.contains(&directory),
+                        "unknown declared path dependency of workspace member {id}: {} ({})",
+                        dependency["name"].as_str().unwrap(),
+                        directory.display()
+                    );
+                }
+            }
         }
         // Cargo's dependencies list includes every resolved edge, without
         // filtering dep_kinds: normal, build and dev dependencies all count.
