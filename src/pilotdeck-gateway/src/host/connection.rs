@@ -56,6 +56,7 @@ impl Connection {
         // #191: Unix descendants belong to this client, including on Drop.
         #[cfg(unix)]
         command.process_group(0);
+        #[cfg(unix)]
         crate::process_spawn::install_child_signal_reset(command.as_std_mut());
         let mut child = command
             .stdin(Stdio::piped())
@@ -425,15 +426,18 @@ fn best_effort_log(message: std::fmt::Arguments<'_>) {
 mod tests {
     use super::*;
     use crate::host::HostClient;
+    #[cfg(unix)]
     use crate::process_spawn::{child_signals, test_support};
     use std::time::Duration;
 
+    #[cfg(unix)]
     #[test]
     fn host_resets_inherited_signals() {
         child_signals::ChildSignalProbe::new()
             .launch("host::connection::tests::host_signal_worker", false);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     #[ignore = "isolated worker launched with inherited ignored/blocked signals"]
     async fn host_signal_worker() {

@@ -15,6 +15,7 @@ mod native_archive;
 mod node_io;
 mod pairing;
 mod process_group;
+#[cfg(unix)]
 mod process_spawn;
 mod project_files;
 pub mod runtime;
