@@ -376,7 +376,7 @@ impl Default for StreamOptions {
     }
 }
 
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = 600_000.0;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = UNDICI_BODY_TIMEOUT_MS;
 /// `UNDICI_TRANSPORT_TIMEOUT_MS` (`cli/proxy.ts`, = LITELLM_COMPLETION_HTTP_FALLBACK_MS).
 pub use crate::runtime::network::UNDICI_BODY_TIMEOUT_MS;
 const REPEATED_CHUNK_LIMIT: f64 = 100.0;
@@ -754,6 +754,30 @@ fn build_http_request(
     Ok((parsed, map))
 }
 
+/// Preserve each redirect hop's completion source for both provider transports.
+async fn provider_exchange(
+    transport: &dyn ModelHttpTransport,
+    request: Request<Full<Bytes>>,
+    options: &StreamOptions,
+    deadline: tokio::time::Instant,
+    failure: impl FnOnce(TransportFailure) -> ModelStreamError,
+    timeout: impl FnOnce() -> ModelStreamError,
+) -> Result<Response<ModelBody>, ModelStreamError> {
+    use crate::runtime::network::{Exchange, exchange};
+    match exchange(
+        transport.send(request),
+        wait_abort(&options.abort),
+        || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
+        Some(deadline),
+    )
+    .await
+    {
+        Exchange::Response(result, _) => result.map_err(failure),
+        Exchange::Aborted => Err(ModelStreamError::abort()),
+        Exchange::Timeout => Err(timeout()),
+    }
+}
+
 /// `sendProviderRequest` + `sendWithEndpointFallback` + `networkFetch`.
 async fn send_provider_request(
     transport: &dyn ModelHttpTransport,
@@ -780,7 +804,6 @@ async fn send_provider_request(
             None,
         ))
     };
-    use crate::runtime::network::{Exchange, exchange};
     // This timer surrounds every endpoint and redirect. Race each observable
     // transport exchange before follow() can erase its scheduled_at() source.
     let deadline = tokio::time::Instant::now() + duration(timeout_ms);
@@ -794,30 +817,29 @@ async fn send_provider_request(
             encoded.clone(),
             || to_provider(NetworkFetchError::classify("fetch failed", None)),
             |request| async {
-                match exchange(
-                    transport.send(request),
-                    wait_abort(&options.abort),
-                    || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
-                    Some(deadline),
-                )
-                .await
-                {
-                    Exchange::Response(result, _) => result.map_err(|failure| {
+                provider_exchange(
+                    transport,
+                    request,
+                    options,
+                    deadline,
+                    |failure| {
                         to_provider(NetworkFetchError::classify(
                             &failure.message,
                             failure.cause_code,
                         ))
-                    }),
-                    Exchange::Aborted => Err(ModelStreamError::abort()),
-                    Exchange::Timeout => Err(to_provider(NetworkFetchError::new(
-                        "network_timeout",
-                        format!(
-                            "Stream idle timeout: no data received for {}ms",
-                            crate::js_value::number_string(timeout_ms)
-                        ),
-                        JsValue::Undefined,
-                    ))),
-                }
+                    },
+                    || {
+                        to_provider(NetworkFetchError::new(
+                            "network_timeout",
+                            format!(
+                                "Stream idle timeout: no data received for {}ms",
+                                crate::js_value::number_string(timeout_ms)
+                            ),
+                            JsValue::Undefined,
+                        ))
+                    },
+                )
+                .await
             },
         )
         .await?;
@@ -844,17 +866,23 @@ async fn response_text(
     let mut decoder = sse::Utf8Decoder::default();
     let mut text = String::new();
     let mut units = 0usize;
+    let mut continuation = false;
     loop {
-        let frame = tokio::select! {
-            frame = tokio::time::timeout(duration(options.body_timeout_ms), body.frame()) => frame,
-            _ = wait_abort(&options.abort) => return Err(ModelStreamError::abort()),
-        };
-        match frame {
-            Err(_) | Ok(Some(Err(_))) => {
+        use crate::runtime::network::{Exchange, body_frame};
+        match body_frame(
+            body,
+            Some(duration(options.body_timeout_ms)),
+            options.abort.as_ref(),
+            &mut continuation,
+        )
+        .await
+        {
+            Exchange::Aborted => return Err(ModelStreamError::abort()),
+            Exchange::Timeout | Exchange::Response(Some(Err(_)), _) => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
-            Ok(None) => break,
-            Ok(Some(Ok(frame))) => {
+            Exchange::Response(None, _) => break,
+            Exchange::Response(Some(Ok(frame)), _) => {
                 if let Some(data) = frame.data_ref() {
                     let start = text.len();
                     decoder.decode(data, &mut text);
@@ -962,16 +990,22 @@ async fn read_frame(
     } else {
         idle_ms
     };
+    let mut continuation = false;
     loop {
-        let frame = tokio::select! {
-            frame = tokio::time::timeout(duration(wait), body.frame()) => frame,
-            _ = wait_abort(&options.abort) => return Err(ModelStreamError::abort()),
-        };
-        match frame {
-            Err(_) if body_first => {
+        use crate::runtime::network::{Exchange, body_frame};
+        match body_frame(
+            body,
+            Some(duration(wait)),
+            options.abort.as_ref(),
+            &mut continuation,
+        )
+        .await
+        {
+            Exchange::Aborted => return Err(ModelStreamError::abort()),
+            Exchange::Timeout if body_first => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
             }
-            Err(_) => {
+            Exchange::Timeout => {
                 return Err(ModelStreamError::thrown(
                     "StreamIdleTimeoutError",
                     format!(
@@ -980,9 +1014,11 @@ async fn read_frame(
                     ),
                 ));
             }
-            Ok(None) => return Ok(None),
-            Ok(Some(Err(_))) => return Err(ModelStreamError::thrown("TypeError", "terminated")),
-            Ok(Some(Ok(frame))) => {
+            Exchange::Response(None, _) => return Ok(None),
+            Exchange::Response(Some(Err(_)), _) => {
+                return Err(ModelStreamError::thrown("TypeError", "terminated"));
+            }
+            Exchange::Response(Some(Ok(frame)), _) => {
                 if let Ok(data) = frame.into_data() {
                     return Ok(Some(data));
                 }
@@ -1084,32 +1120,34 @@ async fn send_google_request(
     let endpoint = providers::google::endpoint(provider, model)?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| ModelStreamError::thrown("TypeError", error.message))?;
-    let exchange = crate::fetch_redirect::follow(
+    let deadline = tokio::time::Instant::now() + duration(timeout_ms);
+    crate::fetch_redirect::follow(
         url,
         hyper::Method::POST,
         header_map,
         Bytes::from(encoded),
         || ModelStreamError::thrown("TypeError", "fetch failed"),
         |request| async move {
-            transport
-                .send(request)
-                .await
-                .map_err(|failure| ModelStreamError::thrown("TypeError", failure.message))
+            provider_exchange(
+                transport,
+                request,
+                options,
+                deadline,
+                |failure| ModelStreamError::thrown("TypeError", failure.message),
+                || {
+                    ModelStreamError::thrown(
+                        "StreamIdleTimeoutError",
+                        format!(
+                            "Stream idle timeout: no data received for {}ms",
+                            crate::js_value::number_string(timeout_ms)
+                        ),
+                    )
+                },
+            )
+            .await
         },
-    );
-    tokio::select! {
-        result = tokio::time::timeout(duration(timeout_ms), exchange) => match result {
-            Ok(result) => result,
-            Err(_) => Err(ModelStreamError::thrown(
-                "StreamIdleTimeoutError",
-                format!(
-                    "Stream idle timeout: no data received for {}ms",
-                    crate::js_value::number_string(timeout_ms)
-                ),
-            )),
-        },
-        _ = wait_abort(&options.abort) => Err(ModelStreamError::abort()),
-    }
+    )
+    .await
 }
 
 /// `throwErrorIfNotOK` + `toProviderError` for the SDK. A JSON content type is
@@ -1278,8 +1316,11 @@ async fn stream_google_model(
     let (max_retries, _) = retry_decide(provider, 0.0, None, 0.0);
     let mut checkpoint = Checkpoint::default();
     let mut attempt = 0.0;
+    let mut continuation_before_abort = false;
     while attempt <= max_retries {
-        throw_if_aborted(options)?;
+        if !std::mem::take(&mut continuation_before_abort) {
+            throw_if_aborted(options)?;
+        }
         sink(StreamOutput::Event(request_started_event(
             provider, &current,
         )?));
@@ -1340,7 +1381,7 @@ async fn stream_google_model(
             current = continuation_request(&current, &checkpoint.partial_text);
             let (_, delay_ms) = retry_decide(provider, attempt, None, (options.random)());
             progress(sink, "continuation", delay_ms);
-            delay(delay_ms, options).await?;
+            continuation_before_abort = delay(delay_ms, options).await?;
             attempt += 1.0;
             continue;
         }
@@ -1351,7 +1392,7 @@ async fn stream_google_model(
         if attempt < max_retries && retryable && empty {
             let (_, delay_ms) = retry_decide(provider, attempt, None, (options.random)());
             progress(sink, "network_error", delay_ms);
-            delay(delay_ms, options).await?;
+            continuation_before_abort = delay(delay_ms, options).await?;
             attempt += 1.0;
             continue;
         }

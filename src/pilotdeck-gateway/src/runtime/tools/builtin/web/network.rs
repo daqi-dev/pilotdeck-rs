@@ -15,9 +15,9 @@ use crate::runtime::{
     tools::ToolRunContext,
 };
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use pilotdeck_protocol::{JsObject, JsValue};
-use std::{future::Future, sync::Arc, task::Poll, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 /// The global dispatcher's undici `bodyTimeout` (`cli/proxy.ts` installs
@@ -112,30 +112,26 @@ async fn read_body_inner(
 ) -> Result<Vec<u8>, BodyError> {
     let mut out = Vec::new();
     loop {
-        let mut frame = Box::pin(tokio::time::timeout(BODY_TIMEOUT, body.frame()));
-        let mut abort = Box::pin(parent_aborted(parent));
-        let next = std::future::poll_fn(|cx| {
-            if body_before_abort {
-                if let Poll::Ready(next) = frame.as_mut().poll(cx) {
-                    return Poll::Ready(Ok(next));
-                }
-                body_before_abort = false;
+        match crate::runtime::network::body_frame_with_abort(
+            body,
+            Some(BODY_TIMEOUT),
+            parent_aborted(parent),
+            || parent.and_then(ToolRunContext::abort_event_at),
+            &mut body_before_abort,
+        )
+        .await
+        {
+            Exchange::Aborted => return Err(BodyError::Aborted),
+            Exchange::Timeout | Exchange::Response(Some(Err(_)), _) => {
+                return Err(BodyError::Terminated);
             }
-            if abort.as_mut().poll(cx).is_ready() {
-                return Poll::Ready(Err(BodyError::Aborted));
-            }
-            frame.as_mut().poll(cx).map(Ok)
-        })
-        .await?;
-        match next {
-            Err(_) | Ok(Some(Err(_))) => return Err(BodyError::Terminated),
-            Ok(None) => return Ok(out),
-            Ok(Some(Ok(frame))) => {
+            Exchange::Response(None, _) => return Ok(out),
+            Exchange::Response(Some(Ok(frame)), _) => {
                 if let Ok(data) = frame.into_data() {
-                    out.extend_from_slice(&data);
-                    if out.len() > cap {
+                    if out.len().saturating_add(data.len()) > cap {
                         return Err(BodyError::TooLarge);
                     }
+                    out.extend_from_slice(&data);
                 }
             }
         }

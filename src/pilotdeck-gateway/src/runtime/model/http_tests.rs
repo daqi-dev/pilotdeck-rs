@@ -842,3 +842,202 @@ async fn provider_overdue_retry_continuation_starts_next_attempt_before_later_ab
         "retry's continuation must issue attempt two"
     );
 }
+
+/// Google uses bare SDK fetch but must preserve the same transport event
+/// sources as the generic provider, including every redirected hop.
+#[tokio::test(start_paused = true)]
+async fn google_exchange_orders_response_timeout_and_parent() {
+    for (response_ms, parent_ms, sync, expected) in [
+        (60, 80, false, "response"),
+        (100, 120, false, "timeout"),
+        (110, 90, false, "abort"),
+        (60, 80, true, "abort"),
+        (60, 60, false, "response"),
+    ] {
+        let provider = parse_json(r#"{"id":"p","protocol":"google","url":"http://example.test","apiKey":"k","headers":{}}"#).unwrap();
+        let abort = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(abort.clone()),
+            stream_timeout_ms: Some(100.0),
+            ..StreamOptions::default()
+        };
+        let started = tokio::time::Instant::now();
+        let transport = TimedHeaders(Duration::from_millis(response_ms));
+        let model = JsValue::from("m");
+        let body = JsValue::Null;
+        let mut pending = Box::pin(send_google_request(
+            &transport, &provider, &model, &body, &options,
+        ));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(130)).await;
+        if sync {
+            abort.abort();
+        } else {
+            abort.cancel_at(started + Duration::from_millis(parent_ms));
+        }
+        let result = poll_ready(pending.as_mut()).await;
+        match expected {
+            "response" => assert!(result.is_ok(), "{result:?}"),
+            "abort" => assert!(result.unwrap_err().name().equals_str("AbortError")),
+            "timeout" => assert!(
+                result
+                    .unwrap_err()
+                    .name()
+                    .equals_str("StreamIdleTimeoutError")
+            ),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn google_overdue_retry_continuation_starts_next_attempt_before_later_abort() {
+    for partial in [true, false] {
+        for (parent_ms, sync, calls) in [(60, false, 2), (49, false, 1), (60, true, 1)] {
+            let (request, mut config) = stream_config();
+            let mut provider = field(field(&config, "providers"), "p").clone();
+            put(&mut provider, "protocol", "google".into());
+            put(
+                &mut provider,
+                "retry",
+                parse_json(r#"{"baseDelayMs":50,"maxDelayMs":50,"jitter":0}"#).unwrap(),
+            );
+            let mut providers = JsObject::new();
+            providers.insert("p".into(), provider);
+            put(&mut config, "providers", JsValue::Object(providers));
+            let transport = Scripted(std::sync::Mutex::new(vec![
+                (
+                    if partial { 200 } else { 429 },
+                    if partial {
+                        vec![Some(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}]}\n\n".as_slice())]
+                    } else {
+                        vec![Some(b"{}".as_slice())]
+                    },
+                ),
+                (204, Vec::new()),
+            ]));
+            let abort = AbortFlag::new();
+            let options = StreamOptions {
+                abort: Some(abort.clone()),
+                ..StreamOptions::default()
+            };
+            let started = tokio::time::Instant::now();
+            let mut sink = |_| {};
+            let mut pending = Box::pin(stream_model(
+                &transport, &request, &config, &options, &mut sink,
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(70)).await;
+            if sync {
+                abort.abort();
+            } else {
+                abort.cancel_at(started + Duration::from_millis(parent_ms));
+            }
+            assert!(
+                poll_ready(pending.as_mut())
+                    .await
+                    .unwrap_err()
+                    .name()
+                    .equals_str("AbortError")
+            );
+            assert_eq!(2 - transport.0.lock().unwrap().len(), calls);
+        }
+    }
+}
+
+/// Both provider error text and SSE frame reads preserve the idle timer's
+/// deadline when a later parent event is delivered before the next poll.
+async fn assert_provider_body_ordering(text: bool) {
+    for sync in [true, false] {
+        let abort = AbortFlag::new();
+        let options = StreamOptions {
+            abort: Some(abort.clone()),
+            body_timeout_ms: 600_000.0,
+            ..StreamOptions::default()
+        };
+        let mut body = PendingBody.boxed();
+        let mut pending = Box::pin(async {
+            if text {
+                response_text(&mut body, &options).await.map(|_| ())
+            } else {
+                read_frame(&mut body, 700_000.0, &options).await.map(|_| ())
+            }
+        });
+        let started = tokio::time::Instant::now();
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(599_999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(2)).await;
+        if sync {
+            abort.abort();
+        } else {
+            abort.cancel_at(started + Duration::from_millis(600_001));
+        }
+        let error = poll_ready(pending.as_mut()).await.unwrap_err();
+        assert_eq!(
+            error.message_text(),
+            if sync {
+                "This operation was aborted"
+            } else {
+                "terminated"
+            }
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn provider_body_text_orders_idle_timeout_and_abort() {
+    assert_provider_body_ordering(true).await;
+}
+#[tokio::test(start_paused = true)]
+async fn provider_body_frame_orders_idle_timeout_and_abort() {
+    assert_provider_body_ordering(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn google_redirect_retains_absolute_deadline_and_second_hop_source() {
+    struct Redirect(std::sync::atomic::AtomicUsize);
+    impl ModelHttpTransport for Redirect {
+        fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+            let first = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+            TransportFuture::after(
+                Duration::from_millis(if first { 60 } else { 50 }),
+                Ok(Response::builder()
+                    .status(if first { 307 } else { 200 })
+                    .header("location", "/second")
+                    .body(
+                        Full::new(Bytes::new())
+                            .map_err(|never| match never {})
+                            .boxed(),
+                    )
+                    .unwrap()),
+            )
+        }
+    }
+    let provider = parse_json(
+        r#"{"id":"p","protocol":"google","url":"http://example.test","apiKey":"k","headers":{}}"#,
+    )
+    .unwrap();
+    let options = StreamOptions {
+        stream_timeout_ms: Some(100.0),
+        ..StreamOptions::default()
+    };
+    let transport = Redirect(std::sync::atomic::AtomicUsize::new(0));
+    let model = JsValue::from("m");
+    let body = JsValue::Null;
+    let mut pending = Box::pin(send_google_request(
+        &transport, &provider, &model, &body, &options,
+    ));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(60)).await;
+    poll_pending(pending.as_mut()).await;
+    assert_eq!(transport.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    tokio::time::advance(Duration::from_millis(60)).await;
+    assert!(
+        poll_ready(pending.as_mut())
+            .await
+            .unwrap_err()
+            .name()
+            .equals_str("StreamIdleTimeoutError")
+    );
+}

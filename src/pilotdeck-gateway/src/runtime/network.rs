@@ -1,4 +1,5 @@
 //! Node timer normalization and fetch event ordering shared by web, MCP and providers.
+use http_body_util::BodyExt;
 use std::{future::Future, pin::Pin, task::Poll, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
@@ -127,7 +128,6 @@ pub struct ExchangeFuture<T> {
     future: Pin<Box<dyn Future<Output = T> + Send>>,
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
     microtask: bool,
-    continuation_before_abort: bool,
 }
 
 impl<T: Send + 'static> ExchangeFuture<T> {
@@ -137,7 +137,6 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(future),
             timer: None,
             microtask: false,
-            continuation_before_abort: false,
         }
     }
 
@@ -153,7 +152,6 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(future),
             timer: None,
             microtask: true,
-            continuation_before_abort: false,
         }
     }
 
@@ -164,16 +162,7 @@ impl<T: Send + 'static> ExchangeFuture<T> {
             future: Box::pin(std::future::ready(result)),
             timer: Some(Box::pin(tokio::time::sleep(delay))),
             microtask: false,
-            continuation_before_abort: false,
         }
-    }
-
-    /// Continue an earlier winning event's queued work before a later abort.
-    /// Unlike a fulfilled promise, this gets just one poll: if that work needs
-    /// more I/O or a timer, it must observe cancellation normally.
-    pub(crate) fn continuing(mut self, before_abort: bool) -> Self {
-        self.continuation_before_abort = before_abort;
-        self
     }
 
     pub fn scheduled_at(&self) -> Option<tokio::time::Instant> {
@@ -254,11 +243,82 @@ pub(crate) async fn delay(
 /// transports must distinguish it from a queued continuation.
 /// `ExchangeFuture::after` makes a delayed response's deadline observable.
 pub(crate) async fn exchange<T: Send + 'static>(
-    mut send: ExchangeFuture<T>,
+    send: ExchangeFuture<T>,
     abort: impl Future<Output = ()>,
     parent_event_at: impl Fn() -> Option<Instant>,
     deadline: Option<Instant>,
 ) -> Exchange<T> {
+    let scheduled_at = send.scheduled_at();
+    let microtask = send.is_microtask();
+    dispatch(
+        send,
+        abort,
+        parent_event_at,
+        deadline,
+        scheduled_at,
+        microtask,
+        false,
+    )
+    .await
+}
+
+/// A borrowed frame uses the same event dispatcher as headers. The continuation
+/// gets one poll before a later abort; pending I/O relinquishes that privilege.
+/// Every call arms a fresh idle deadline, rather than a total body deadline.
+pub(crate) async fn body_frame<B: hyper::body::Body + Unpin>(
+    body: &mut B,
+    idle: Option<Duration>,
+    signal: Option<&Cancellation>,
+    continuation: &mut bool,
+) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    body_frame_with_abort(
+        body,
+        idle,
+        async {
+            match signal {
+                Some(signal) => signal.cancelled().await,
+                None => std::future::pending().await,
+            }
+        },
+        || signal.and_then(Cancellation::abort_event_at),
+        continuation,
+    )
+    .await
+}
+
+pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
+    body: &mut B,
+    idle: Option<Duration>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    continuation: &mut bool,
+) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    let next = dispatch(
+        body.frame(),
+        abort,
+        parent_event_at,
+        idle.map(|idle| Instant::now() + idle),
+        None,
+        false,
+        std::mem::take(continuation),
+    )
+    .await;
+    if let Exchange::Response(_, before_abort) = &next {
+        *continuation = *before_abort;
+    }
+    next
+}
+
+async fn dispatch<T>(
+    send: impl Future<Output = T>,
+    abort: impl Future<Output = ()>,
+    parent_event_at: impl Fn() -> Option<Instant>,
+    deadline: Option<Instant>,
+    scheduled_at: Option<Instant>,
+    microtask: bool,
+    mut continuation_before_abort: bool,
+) -> Exchange<T> {
+    let mut send = std::pin::pin!(send);
     let mut abort = Box::pin(abort);
     let mut timer = deadline.map(|at| Box::pin(tokio::time::sleep_until(at)));
     let mut initial = true;
@@ -266,15 +326,15 @@ pub(crate) async fn exchange<T: Send + 'static>(
         // A fulfilled promise's queued continuation cannot be rejected by a
         // later abort, even a synchronous one. `microtask` must not hide an
         // undispatched socket/timer: those still lose to synchronous abort.
-        if send.is_microtask() {
-            let result = std::task::ready!(Pin::new(&mut send).poll(cx));
+        if microtask {
+            let result = std::task::ready!(send.as_mut().poll(cx));
             return Poll::Ready(Exchange::Response(
                 result,
                 abort.as_mut().poll(cx).is_ready(),
             ));
         }
-        if std::mem::take(&mut send.continuation_before_abort)
-            && let Poll::Ready(result) = Pin::new(&mut send).poll(cx)
+        if std::mem::take(&mut continuation_before_abort)
+            && let Poll::Ready(result) = send.as_mut().poll(cx)
         {
             return Poll::Ready(Exchange::Response(
                 result,
@@ -286,18 +346,17 @@ pub(crate) async fn exchange<T: Send + 'static>(
         if aborted && parent_at.is_none() {
             return Poll::Ready(Exchange::Aborted);
         }
-        let response_before_timeout = match (send.scheduled_at(), deadline) {
+        let response_before_timeout = match (scheduled_at, deadline) {
             (Some(response_at), Some(abort_at)) => response_at < abort_at,
-            (None, Some(_)) => initial || send.is_microtask(),
+            (None, Some(_)) => initial || microtask,
             (_, None) => true,
         };
         let response_before_parent = parent_at.is_none_or(|at| {
-            send.scheduled_at()
-                .map_or_else(|| send.is_microtask(), |response_at| response_at <= at)
+            scheduled_at.map_or_else(|| microtask, |response_at| response_at <= at)
         });
         let response_first = response_before_timeout && response_before_parent;
         initial = false;
-        if response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+        if response_first && let Poll::Ready(result) = send.as_mut().poll(cx) {
             return Poll::Ready(Exchange::Response(result, aborted));
         }
         if parent_at.is_none_or(|at| deadline.is_some_and(|deadline| deadline <= at))
@@ -309,7 +368,7 @@ pub(crate) async fn exchange<T: Send + 'static>(
         if aborted {
             return Poll::Ready(Exchange::Aborted);
         }
-        if !response_first && let Poll::Ready(result) = Pin::new(&mut send).poll(cx) {
+        if !response_first && let Poll::Ready(result) = send.as_mut().poll(cx) {
             return Poll::Ready(Exchange::Response(result, false));
         }
         Poll::Pending

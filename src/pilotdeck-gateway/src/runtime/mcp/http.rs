@@ -29,7 +29,7 @@ use crate::runtime::{
 };
 use crate::{fetch_redirect, js_value};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::{Method, Request, StatusCode, body::Incoming, header};
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
@@ -423,6 +423,7 @@ pub(super) struct SseParser {
     id: Option<String>,
     data: String,
     data_lines: usize,
+    data_units: usize,
     event: Option<String>,
 }
 
@@ -437,7 +438,20 @@ pub(super) enum SseItem {
 }
 
 impl SseParser {
+    #[cfg(test)]
     pub(super) fn feed(&mut self, chunk: &str, out: &mut Vec<SseItem>) {
+        assert!(self.feed_limited(chunk, out, fetch_redirect::MAX_STRING_LENGTH));
+    }
+    fn feed_limited(&mut self, chunk: &str, out: &mut Vec<SseItem>, limit: usize) -> bool {
+        if self
+            .pending
+            .encode_utf16()
+            .count()
+            .saturating_add(chunk.encode_utf16().count())
+            > limit
+        {
+            return false;
+        }
         self.pending.push_str(chunk);
         let input = std::mem::take(&mut self.pending);
         let bytes = input.as_bytes();
@@ -447,6 +461,9 @@ impl SseParser {
             match bytes[index] {
                 b'\n' => {
                     self.line(&input[start..index], out);
+                    if self.data_units > limit {
+                        return false;
+                    }
                     index += 1;
                     start = index;
                 }
@@ -456,6 +473,9 @@ impl SseParser {
                         break;
                     }
                     self.line(&input[start..index], out);
+                    if self.data_units > limit {
+                        return false;
+                    }
                     index += 1;
                     if bytes.get(index) == Some(&b'\n') {
                         index += 1;
@@ -466,6 +486,7 @@ impl SseParser {
             }
         }
         self.pending = input[start..].to_owned();
+        true
     }
 
     fn line(&mut self, line: &str, out: &mut Vec<SseItem>) {
@@ -481,6 +502,7 @@ impl SseParser {
             self.event = None;
             self.data.clear();
             self.data_lines = 0;
+            self.data_units = 0;
             return;
         }
         if line.starts_with(':') {
@@ -498,8 +520,10 @@ impl SseParser {
             "data" => {
                 if self.data_lines > 0 {
                     self.data.push('\n');
+                    self.data_units = self.data_units.saturating_add(1);
                 }
                 self.data.push_str(value);
+                self.data_units = self.data_units.saturating_add(value.encode_utf16().count());
                 self.data_lines += 1;
             }
             "id" => self.id = (!value.contains('\0')).then(|| value.to_owned()),
@@ -555,6 +579,59 @@ impl Utf8Stream {
     }
 }
 
+/// Both streamable response.text() and response.json() use undici's body
+/// idle timer and V8 string bound. Their callers retain the SDK's distinct
+/// failure projection (error POST substitutes null; JSON propagates failure).
+async fn streamable_text<B>(
+    body: B,
+    aborted: &ToolCancellation,
+    limit: usize,
+) -> Result<String, McpClientError>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    fetch_redirect::read_body_with_signal(
+        body,
+        limit,
+        Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
+        Some(aborted),
+        false,
+    )
+    .await
+    .map(|bytes| decode_text(&bytes))
+    .map_err(|error| match error {
+        fetch_redirect::BodyError::TooLong => {
+            McpClientError::plain("RangeError", fetch_redirect::STRING_TOO_LONG)
+        }
+        fetch_redirect::BodyError::Terminated | fetch_redirect::BodyError::Aborted => {
+            network_error("network_connection_reset", "terminated".into())
+        }
+    })
+}
+
+async fn streamable_error_response<B>(
+    response: hyper::Response<B>,
+    aborted: &ToolCancellation,
+) -> McpClientError
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    let status = response.status();
+    let text = streamable_text(
+        response.into_body(),
+        aborted,
+        fetch_redirect::MAX_STRING_LENGTH,
+    )
+    .await
+    .unwrap_or_else(|_| "null".into());
+    http_error(
+        f64::from(status.as_u16()),
+        format!("Error POSTing to endpoint: {text}"),
+    )
+}
+
 /// Reads an event stream to its end (or until the transport aborts).
 /// Returns `false` when it ended because of an abort or a read error.
 async fn read_events<B: hyper::body::Body<Data = Bytes>>(
@@ -565,11 +642,18 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
     let mut body = std::pin::pin!(body);
     let mut decoder = Utf8Stream::default();
     let mut parser = SseParser::default();
+    let mut continuation = false;
     loop {
-        let frame = tokio::select! {
-            biased;
-            _ = aborted.cancelled() => return false,
-            frame = body.frame() => frame,
+        let frame = match crate::runtime::network::body_frame(
+            &mut body,
+            Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
+            Some(aborted),
+            &mut continuation,
+        )
+        .await
+        {
+            Exchange::Response(frame, _) => frame,
+            Exchange::Aborted | Exchange::Timeout => return false,
         };
         match frame {
             None => return true,
@@ -577,7 +661,13 @@ async fn read_events<B: hyper::body::Body<Data = Bytes>>(
             Some(Ok(frame)) => {
                 if let Ok(data) = frame.into_data() {
                     let mut items = Vec::new();
-                    parser.feed(&decoder.push(&data), &mut items);
+                    if !parser.feed_limited(
+                        &decoder.push(&data),
+                        &mut items,
+                        fetch_redirect::MAX_STRING_LENGTH,
+                    ) {
+                        return false;
+                    }
                     for item in items {
                         on_item(item);
                         if aborted.is_cancelled() {
@@ -715,16 +805,7 @@ impl HttpLink {
         }
         let status = response.status();
         if !status.is_success() {
-            let text = response
-                .into_body()
-                .collect()
-                .await
-                .map(|body| decode_text(&body.to_bytes()))
-                .unwrap_or_else(|_| "null".into());
-            return Err(http_error(
-                f64::from(status.as_u16()),
-                format!("Error POSTing to endpoint: {text}"),
-            ));
+            return Err(streamable_error_response(response, &self.aborted).await);
         }
         if status == StatusCode::ACCEPTED {
             drop(response);
@@ -754,12 +835,12 @@ impl HttpLink {
             return Ok(());
         }
         if content.contains("application/json") {
-            let body = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|_| network_error("network_connection_reset", "terminated".into()))?;
-            let text = decode_text(&body.to_bytes());
+            let text = streamable_text(
+                response.into_body(),
+                &self.aborted,
+                fetch_redirect::MAX_STRING_LENGTH,
+            )
+            .await?;
             if let Some(message) = json_syntax::parse_error(&text) {
                 return Err(McpClientError::plain("SyntaxError", message));
             }
@@ -1093,6 +1174,7 @@ async fn legacy_stream<B: hyper::body::Body<Data = Bytes>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
 
     async fn poll_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
         std::future::poll_fn(|cx| {
@@ -1139,6 +1221,168 @@ mod tests {
             poll_ready(pending.as_mut()).await.unwrap_err().to_string(),
             "Error POSTing to endpoint (HTTP 400): null"
         );
+    }
+
+    async fn assert_streamable_body_stall(error_body: bool) {
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(async {
+            if error_body {
+                streamable_error_response(
+                    hyper::Response::builder()
+                        .status(400)
+                        .body(StalledBody)
+                        .unwrap(),
+                    &signal,
+                )
+                .await
+            } else {
+                streamable_text(StalledBody, &signal, fetch_redirect::MAX_STRING_LENGTH)
+                    .await
+                    .unwrap_err()
+            }
+        });
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(599_999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(
+            poll_ready(pending.as_mut()).await.to_string(),
+            if error_body {
+                "Streamable HTTP error: Error POSTing to endpoint: null"
+            } else {
+                "terminated"
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn streamable_error_body_stall_uses_global_body_timeout() {
+        assert_streamable_body_stall(true).await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn streamable_json_body_stall_uses_global_body_timeout() {
+        assert_streamable_body_stall(false).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn streamable_json_body_orders_timeout_and_parent() {
+        for sync in [true, false] {
+            let signal = ToolCancellation::default();
+            let started = tokio::time::Instant::now();
+            let mut pending = Box::pin(streamable_text(
+                StalledBody,
+                &signal,
+                fetch_redirect::MAX_STRING_LENGTH,
+            ));
+            poll_pending(pending.as_mut()).await;
+            tokio::time::advance(Duration::from_millis(600_001)).await;
+            if sync {
+                signal.cancel_synchronously();
+            } else {
+                signal.cancel_at(started + Duration::from_millis(600_001));
+            }
+            // Both errors are projected as terminated, but neither may hang.
+            assert_eq!(
+                poll_ready(pending.as_mut()).await.unwrap_err().to_string(),
+                "terminated"
+            );
+        }
+        let signal = ToolCancellation::default();
+        let error = streamable_text(Full::new(Bytes::from_static(b"12345")), &signal, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
+        assert_eq!(
+            streamable_text(Full::new(Bytes::from_static(b"1234")), &signal, 4)
+                .await
+                .unwrap(),
+            "1234"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sse_stall_uses_global_body_timeout() {
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(read_events(StalledBody, &signal, |_| panic!("no data")));
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(599_999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(!poll_ready(pending.as_mut()).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sse_body_abort_is_immediate_and_live_strings_are_bounded() {
+        let signal = ToolCancellation::default();
+        let mut pending = Box::pin(read_events(StalledBody, &signal, |_| panic!("no data")));
+        poll_pending(pending.as_mut()).await;
+        signal.cancel_synchronously();
+        assert!(!poll_ready(pending.as_mut()).await);
+        let mut parser = SseParser::default();
+        let mut out = Vec::new();
+        assert!(parser.feed_limited("1234", &mut out, 4));
+        assert!(!parser.feed_limited("5", &mut out, 4));
+        let mut parser = SseParser::default();
+        for _ in 0..4 {
+            assert!(parser.feed_limited("data:a\n", &mut out, 8));
+        }
+        assert!(!parser.feed_limited("data:a\n", &mut out, 8));
+        let mut parser = SseParser::default();
+        for _ in 0..3 {
+            assert!(parser.feed_limited("data:😀\n", &mut out, 8));
+        }
+        assert!(!parser.feed_limited("data:😀\n", &mut out, 8));
+        let mut parser = SseParser::default();
+        for _ in 0..20 {
+            assert!(parser.feed_limited("data:a\n", &mut out, 8));
+            assert!(parser.feed_limited("\n", &mut out, 8));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sse_idle_deadline_resets_after_each_frame() {
+        struct Drip {
+            timer: std::pin::Pin<Box<tokio::time::Sleep>>,
+            remaining: usize,
+        }
+        impl hyper::body::Body for Drip {
+            type Data = Bytes;
+            type Error = std::convert::Infallible;
+            fn poll_frame(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>>
+            {
+                if self.remaining == 0 {
+                    return std::task::Poll::Pending;
+                }
+                std::task::ready!(self.timer.as_mut().poll(cx));
+                self.remaining -= 1;
+                self.timer
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + Duration::from_millis(300_000));
+                std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(Bytes::from_static(
+                    b"data: x\n\n",
+                )))))
+            }
+        }
+        let signal = ToolCancellation::default();
+        let count = std::cell::Cell::new(0);
+        let body = Drip {
+            timer: Box::pin(tokio::time::sleep(Duration::from_millis(300_000))),
+            remaining: 2,
+        };
+        let mut pending = Box::pin(read_events(body, &signal, |_| count.set(count.get() + 1)));
+        poll_pending(pending.as_mut()).await;
+        for expected in 1..=2 {
+            tokio::time::advance(Duration::from_millis(300_000)).await;
+            poll_pending(pending.as_mut()).await;
+            assert_eq!(count.get(), expected);
+        }
+        tokio::time::advance(Duration::from_millis(599_999)).await;
+        poll_pending(pending.as_mut()).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(!poll_ready(pending.as_mut()).await);
     }
 
     fn retry_outcome(status_retry: bool) -> Result<hyper::Response<()>, McpClientError> {

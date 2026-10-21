@@ -7,7 +7,7 @@
 //! (undici `headersTimeout`) belongs inside `send`, an abort signal around the
 //! returned future.
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::Full;
 use hyper::{HeaderMap, Method, Request, Response, body::Body};
 use std::{future::Future, time::Duration};
 use url::Url;
@@ -59,34 +59,13 @@ where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
 {
-    use crate::runtime::network::{Cancellation, Exchange, ExchangeFuture, exchange};
+    use crate::runtime::network::{Exchange, body_frame};
     let mut body = Box::pin(body);
     let mut buffer = Vec::new();
     loop {
-        let deadline = idle.map(|idle| tokio::time::Instant::now() + idle);
-        let next = ExchangeFuture::io(async move {
-            let frame = body.as_mut().frame().await;
-            (body, frame)
-        })
-        .continuing(continuation_before_abort);
-        let frame = match exchange(
-            next,
-            async {
-                match signal {
-                    Some(signal) => signal.cancelled().await,
-                    None => std::future::pending().await,
-                }
-            },
-            || signal.and_then(Cancellation::abort_event_at),
-            deadline,
-        )
-        .await
+        let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
         {
-            Exchange::Response((returned_body, frame), before_abort) => {
-                body = returned_body;
-                continuation_before_abort = before_abort;
-                frame
-            }
+            Exchange::Response(frame, _) => frame,
             Exchange::Timeout => return Err(BodyError::Terminated),
             Exchange::Aborted => return Err(BodyError::Aborted),
         };
