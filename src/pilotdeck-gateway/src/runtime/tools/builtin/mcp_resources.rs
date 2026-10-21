@@ -6,7 +6,7 @@
 use super::{object, string, tool_error};
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
+    runtime::{mcp::bridge::MCP_TOOL_MAX_RESULT_BYTES, tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext}},
 };
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -86,7 +86,7 @@ pub fn create_read_mcp_resource_tool(
                     r#"{"type":"object","required":["serverId","uri"],"additionalProperties":false,"properties":{"serverId":{"type":"string","description":"MCP server identifier that hosts the resource."},"uri":{"type":"string","description":"Resource URI to read (as listed by list_mcp_resources)."}}}"#,
                 )),
             ),
-            ("maxResultBytes", JsValue::Number(200_000.0)),
+            ("maxResultBytes", JsValue::Number(MCP_TOOL_MAX_RESULT_BYTES)),
         ]),
         kind: Kind::Read,
         adapter,
