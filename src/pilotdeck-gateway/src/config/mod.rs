@@ -140,15 +140,10 @@ pub fn load_snapshot(
     .expect("snapshot loader always records a snapshot"))
 }
 /// `cwd` stands in for the baseline's `process.cwd()`, which is always
-/// absolute; `path.resolve` anchors a relative argument the same way.
+/// absolute; `path.resolve` anchors a relative argument the same way,
+/// normalizing dot segments.
 pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
-    if cwd.is_absolute() {
-        cwd.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|dir| dir.join(cwd))
-            .unwrap_or_else(|_| cwd.to_path_buf())
-    }
+    crate::metadata::resolve_process_path(std::path::Path::new(""), cwd)
 }
 
 /// `resolvePilotConfigPath` for an explicit PilotHome: a trimmed

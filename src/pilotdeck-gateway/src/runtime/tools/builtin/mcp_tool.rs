@@ -5,7 +5,7 @@
 use super::{object, string, tool_error};
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
+    runtime::{mcp::bridge::MCP_TOOL_MAX_RESULT_BYTES, tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext}},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -92,7 +92,7 @@ pub fn create_mcp_tool(options: CreateMcpToolOptions) -> Result<McpTool, ToolErr
             ("description", JsValue::String(description)),
             ("kind", string("mcp")),
             ("inputSchema", input_schema),
-            ("maxResultBytes", JsValue::Number(200_000.0)),
+            ("maxResultBytes", JsValue::Number(MCP_TOOL_MAX_RESULT_BYTES)),
         ]),
         server_id: options.server_id,
         tool_name: options.tool_name,
