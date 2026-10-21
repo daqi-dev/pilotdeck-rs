@@ -1,13 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-21 14:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
-- A6.5-pr10b | impl | ready | 修复轮 9 提交（9749e18，方案 A），追加 accepted-diffs #6（已批）；沙箱外 rebase 前 1638/0（单独重跑，首跑 host resume 超时属并发负载）；已 rebase 到 main（wire.rs、accepted-diffs 冲突逐块合并，定时器截断只留 network 一份，0597fda），全量重跑中，过后推送、派 r10 + gate；深度预算待人在 1024/2048/4096 中定
-- #396 | review | ready | PR #403 修复轮 2 已推送 a855bd3（google 路径、MCP streamable/SSE bodyTimeout、逐帧读取下沉一处），沙箱外 1687/0/42；GLM r3 + Grok r3 在跑
+updated: 2026-10-21 14:28 · by 协调者(Claude Code 交互·opus-5.5·/loop，会话 pilotdeck-rs-d8)
+- A6.5-pr10b | impl | ready | 人定 14:25 深度预算取 2048；rebase 后全量 1712/0（sequences_replay 在 nohup 下失败属 #386 环境，前台单跑 8/0）；codex 修复轮 10 改常数并重算区间（`_tmp/20261020-a65-pr10b/fix10.status`），回来后协调者登记 accepted-diffs 深度条目、推送、派 r10 + 全量 gate
+- #396 | review | ready | PR #403 r3 Grok 0/0/1/2（P2：MCP MAX_STRING_LENGTH 接线无测试，便宜），GLM r3 在跑；收齐后一批修
 - #386 | impl | ready | 人定 14:20 选 B：gateway 改 deny(unsafe_code)，只允许 install_child_signal_reset 一个函数；codex 在 wt-a65-pr2 实现（`_tmp/20261021-issue-386/task3.md`）
 - #401 | impl | blocked | pr10b gate7 剩余 P2 + gate8 concurrency P2（dispose 无栅栏，close 后 start 仍可装新连接）；随 pr10b 一起等人定
-- A7.1-pr1 | review | ready | PR #405 修复轮 1 已推送 3130630（abort 竞态 0/2000，负控 2000/2000），沙箱外 1670/0/42；GLM r2 + Grok r2 在跑
-- A6.5-pr9b | review | ready | PR #406 修复轮 1 提交 606408c（深度 256 / 节点 100,000 预算、列表前缀线性化、spawn_blocking；release 最坏 275 ms），沙箱外全量在跑；GLM r2 + Grok r2 在跑；节点预算无 TS 对应断点、可能误拒大页，codex 只测不改补影响范围（`_tmp/20261021-a65-pr9b/measure1.md`），数据回来再定是否报人
+- A7.1-pr1 | review | ready | PR #405 r2 两家无 P0/P1/P2（GLM 0/0/0/2、Grok 0/0/0/2）；全量 gate1 在跑，过后改 Ready、入队
+- A6.5-pr9b | review | ready | PR #406 修复轮 1（606408c）全量 1672/0（sequences_replay 同属 #386 环境，前台 8/0）；GLM r2 + Grok r2 + codex 预算影响测量在跑
 - A6.4-pr9a | impl | blocked | 候选已存 WIP e054ae1（wt-a66-pr3，codex/a64-pr9，未推送）；与 #396 同改 model/http.rs、router.rs，#396 合入后再续（缺溯源守卫与 HTTP 金样）
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
@@ -18,6 +18,11 @@ updated: 2026-10-21 14:15 · by 协调者(Claude Code 交互·opus-5.5·/loop，
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-21 14:28 · /loop
+> **人定**：#386 选 B（gateway 局部 unsafe 例外，仅一个函数），codex 已开工；pr10b 深度预算取 2048，codex 修复轮 10 在跑。
+> **测试环境教训**：协调者用 `nohup … &` 起的全量测试里，父进程忽略 SIGINT，`background_tasks::sequences_replay` 的 exit-statuses 第 3 步必然失败——这正是 #386 本身；前台单跑通过。在 #386 合入前，后台全量测试的这一条按环境失败处理，并前台单跑确认。
+> **收敛**：#405 两家 r2 无 P0/P1/P2，跑全量 gate。
 
 > ## 2026-10-21 13:48 · /loop
 > **磁盘**：`_build+_tmp` 一度约 112 GiB 超 100 GiB 上限（codex 发现后暂停写入）。删掉两个空闲 worktree 的编译缓存（wt-a64-pr11 pr9 已合 19 G、wt-a66-pr3 pr9a 已存 WIP 20.5 G），回到 73.7 GiB。
