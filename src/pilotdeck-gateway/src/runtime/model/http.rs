@@ -983,9 +983,11 @@ async fn read_frame(
     options: &StreamOptions,
 ) -> Result<Option<Bytes>, ModelStreamError> {
     // undici's bodyTimeout races the idle watchdog; the shorter one wins.
-    // Equal durations favor undici: it arms on the last socket data, before
-    // the per-read watchdog in TS's `withIdleTimeout`.
-    let body_first = duration(options.body_timeout_ms) <= duration(idle_ms);
+    // Equal durations favor the watchdog: undici timers above 1 s run on its
+    // coarse fast-timer tick and fire late, while `withIdleTimeout` uses a
+    // native setTimeout (real TS over TCP: 5000/5000 tie -> idle 5/5; default
+    // 600000 tie -> "Stream idle timeout", _tmp/20261021-issue-396/arb/).
+    let body_first = duration(options.body_timeout_ms) < duration(idle_ms);
     let wait = if body_first {
         options.body_timeout_ms
     } else {
