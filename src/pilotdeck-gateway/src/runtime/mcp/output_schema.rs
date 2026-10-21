@@ -1422,11 +1422,15 @@ impl JsPatternParser {
             }
             Some('{') => {
                 if !quantifiable {
-                    // Annex B only treats a complete `{n,m}` after a
-                    // lookbehind as an invalid quantifier; `{,3}` and
-                    // `{2x}` are literal braces there.
-                    if self.unicode || self.try_quantifier()?.is_some() {
+                    // A complete `{n}` / `{n,}` / `{n,m}` after an assertion is an
+                    // invalid quantifier in both grammars. An incomplete brace
+                    // (`{2x}`, `{,3}`, `{`) is a literal under Annex B, but under
+                    // `/u` V8 reports it as an incomplete quantifier (Node 22.22.0).
+                    if self.try_quantifier()?.is_some() {
                         return Err(JsPatternSyntaxError("Invalid quantifier"));
+                    }
+                    if self.unicode {
+                        return Err(JsPatternSyntaxError("Incomplete quantifier"));
                     }
                     return Ok(());
                 }
@@ -3686,6 +3690,16 @@ mod tests {
             ("}", "Lone quantifier brackets"),
             ("a**", "Nothing to repeat"),
             (r"\<a", "Invalid escape"),
+            // #443: braces after an assertion, V8 `/u` messages from Node 22.22.0.
+            ("(?<=a){2}", "Invalid quantifier"),
+            ("(?<=a){2,}", "Invalid quantifier"),
+            ("(?<=a){2,3}", "Invalid quantifier"),
+            ("(?=a){2}", "Invalid quantifier"),
+            ("(?<=a){2x}", "Incomplete quantifier"),
+            ("(?<=a){,3}", "Incomplete quantifier"),
+            ("(?<=a){", "Incomplete quantifier"),
+            ("(?<=a){2", "Incomplete quantifier"),
+            ("(?=a){2x}", "Incomplete quantifier"),
         ];
         for (pattern, detail) in cases {
             let mut object = JsObject::new();
@@ -3885,6 +3899,12 @@ mod tests {
             ("regex", "a*{x}", Some(true)),
             ("regex", "a*{2}", Some(false)),
             ("regex", "(?<=a)*", Some(false)),
+            // #443: Annex B (non-`u`) braces after an assertion, Node 22.22.0.
+            ("regex", "(?<=a){2}", Some(false)),
+            ("regex", "(?<=a){2,3}", Some(false)),
+            ("regex", "(?<=a){2x}", Some(true)),
+            ("regex", "(?<=a){,3}", Some(true)),
+            ("regex", "(?=a){2x}", Some(true)),
             ("regex", "(?=a)*", Some(true)),
             ("password", "anything", Some(true)),
             ("binary", "anything", Some(true)),
