@@ -1,5 +1,5 @@
-//! Router decision runtime. Ported from PilotDeck `cc7c4e65`:
-//! `src/router/RouterRuntime.ts` (decision half), `router/scenario/*`,
+//! Router decision and execution runtime. Ported from PilotDeck `cc7c4e65`:
+//! `src/router/RouterRuntime.ts`, `router/scenario/*`,
 //! `router/tokenSaver/classifyAndRoute.ts`, `router/policy/*` and
 //! `router/session/SessionRouterStore.ts`.
 //!
@@ -23,6 +23,7 @@ use std::{
 
 mod classify;
 mod config;
+mod execute;
 mod policy;
 mod scenario;
 mod session;
@@ -32,6 +33,7 @@ pub use config::{
     LITELLM_INITIAL_RETRY_DELAY_MS, LITELLM_MAX_RETRY_DELAY_MS, LITELLM_RETRY_JITTER, RouterConfig,
     RouterModelRef, StatsConfig, SubagentPolicy, TierConfig, TokenSaverConfig,
 };
+pub use execute::{RouterExecuteContext, RouterExecuteError};
 pub use policy::{RetryDecision, retry_decide};
 pub use scenario::{ScenarioResolution, SubagentDetection, detect_subagent};
 pub use session::SessionRoutingState;
@@ -123,6 +125,23 @@ pub trait RouterModelInvocation: Send + Sync {
     -> Result<JsValue, ModuleError>;
     fn get_provider_generation(&self, _provider: &JsString) -> JsValue {
         JsValue::Undefined
+    }
+    fn get_provider_protocol(&self, _provider: &JsString) -> JsString {
+        "openai".into()
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a JsValue,
+        _options: &'a super::http::StreamOptions,
+        _sink: &'a mut (dyn FnMut(super::http::StreamOutput) + Send),
+    ) -> super::fallback::RouterStreamFuture<'a> {
+        Box::pin(async {
+            Err(super::http::ModelStreamError::Request {
+                code: "stream_invoker_missing".into(),
+                message: "Router model invocation provider does not implement stream().".into(),
+                details: None,
+            })
+        })
     }
     /// Whether [`complete`](Self::complete) is implemented.
     fn supports_complete(&self) -> bool {
@@ -257,6 +276,7 @@ pub struct RouterRuntime {
     is_model_allowed: Arc<dyn Fn(&RouterModelRef) -> bool + Send + Sync>,
     store: session::SessionRouterStore,
     usage: Mutex<Vec<(JsString, JsValue)>>,
+    health: Arc<dyn super::health::RouterProviderHealth>,
 }
 
 impl RouterRuntime {
@@ -291,9 +311,20 @@ impl RouterRuntime {
             events: deps.events,
             clock: clock.clone(),
             is_model_allowed: deps.is_model_allowed,
+            health: Arc::new(super::health::NativeRouterProviderHealth::new(
+                clock.clone(),
+            )),
             store: session::SessionRouterStore::new(clock),
             usage: Mutex::new(Vec::new()),
         })
+    }
+
+    pub fn with_provider_health(
+        mut self,
+        health: Arc<dyn super::health::RouterProviderHealth>,
+    ) -> Self {
+        self.health = health;
+        self
     }
 
     pub fn config(&self) -> &RouterConfig {
@@ -820,6 +851,10 @@ impl RouterRuntime {
         let Some(usage) = usage.filter(|usage| !usage.is_undefined()) else {
             return;
         };
+        self.cache_session_usage(session_id, usage);
+    }
+
+    fn cache_session_usage(&self, session_id: &JsString, usage: &JsValue) {
         let mut cache = self.usage.lock().expect("router usage cache");
         if let Some(index) = cache.iter().position(|(key, _)| key == session_id) {
             cache.remove(index);

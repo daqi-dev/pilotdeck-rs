@@ -309,6 +309,7 @@ pub(crate) fn throw_if_unsupported(plan: &ThinkingPlan) -> Result<(), ModelStrea
         Some(reason) => Err(ModelStreamError::Request {
             code: "unsupported_thinking".into(),
             message: reason.clone(),
+            details: None,
         }),
         None => Ok(()),
     }
