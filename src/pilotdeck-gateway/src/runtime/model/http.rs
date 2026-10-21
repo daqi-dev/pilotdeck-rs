@@ -759,6 +759,8 @@ fn build_http_request(
 }
 
 /// Preserve each redirect hop's completion source for both provider transports.
+/// Errors retain whether their continuation precedes a later parent timer, so
+/// Google's outer catch can use the same ordering as a successful response.
 async fn provider_exchange(
     transport: &dyn ModelHttpTransport,
     request: Request<Full<Bytes>>,
@@ -766,10 +768,12 @@ async fn provider_exchange(
     deadline: tokio::time::Instant,
     failure: impl FnOnce(TransportFailure) -> ModelStreamError,
     timeout: impl FnOnce() -> ModelStreamError,
-) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
+) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
     use crate::runtime::network::{Exchange, exchange};
+    let send = transport.send(request);
+    let scheduled_at = send.scheduled_at();
     match exchange(
-        transport.send(request),
+        send,
         wait_abort(&options.abort),
         || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
         Some(deadline),
@@ -779,17 +783,25 @@ async fn provider_exchange(
         Exchange::Response(result, before_abort) => result
             .map(|response| response.map(|body| (body, before_abort)))
             .map_err(|error| {
-                // TS sendProviderRequest's catch (streamModel.ts:749) rechecks
-                // the parent even for an already rejected Promise. Unlike a
-                // successful response, its error does not retain before_abort.
-                if aborted(options) {
+                // TS :749 (Google :502) observes same-stack abort even for a
+                // rejected Promise. A later timer cannot interrupt the error
+                // callback's microtasks, including when both timers are overdue.
+                let error_before_abort = before_abort
+                    && options
+                        .abort
+                        .as_ref()
+                        .and_then(AbortFlag::abort_event_at)
+                        .is_some_and(|at| scheduled_at.is_none_or(|error_at| error_at <= at));
+                let error = if !error_before_abort && aborted(options) {
                     ModelStreamError::abort()
                 } else {
                     failure(error)
-                }
+                };
+                // Google rechecks cancellation after SDK normalization too.
+                (error, error_before_abort)
             }),
-        Exchange::Aborted => Err(ModelStreamError::abort()),
-        Exchange::Timeout => Err(timeout()),
+        Exchange::Aborted => Err((ModelStreamError::abort(), false)),
+        Exchange::Timeout => Err((timeout(), false)),
     }
 }
 
@@ -855,6 +867,7 @@ async fn send_provider_request(
                     },
                 )
                 .await
+                .map_err(|(error, _)| error)
             },
         )
         .await?;
@@ -1126,25 +1139,28 @@ async fn send_google_request(
     model: &JsValue,
     body: &JsValue,
     options: &StreamOptions,
-) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
+) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
     let timeout_ms = idle_timeout_ms(provider, options);
     let final_body = providers::google::final_body(body, provider);
-    let headers = providers::google::headers(provider)?;
+    let headers = providers::google::headers(provider).map_err(|error| (error, false))?;
     let encoded = crate::js_value::json_stringify(&final_body)
         .map_err(|_| {
-            ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
+            (
+                ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE),
+                false,
+            )
         })?
         .unwrap_or_default();
-    let endpoint = providers::google::endpoint(provider, model)?;
+    let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
-        .map_err(|error| ModelStreamError::thrown("TypeError", error.message))?;
+        .map_err(|error| (ModelStreamError::thrown("TypeError", error.message), false))?;
     let deadline = tokio::time::Instant::now() + duration(timeout_ms);
     crate::fetch_redirect::follow(
         url,
         hyper::Method::POST,
         header_map,
         Bytes::from(encoded),
-        || ModelStreamError::thrown("TypeError", "fetch failed"),
+        || (ModelStreamError::thrown("TypeError", "fetch failed"), false),
         |request| async move {
             provider_exchange(
                 transport,
@@ -1235,7 +1251,12 @@ async fn google_attempt(
     // must not replace an already-read SDK error with AbortError.
     let mut body_before_abort = false;
     let outcome = async {
-        let response = send_google_request(transport, provider, model, body, options).await?;
+        let response = send_google_request(transport, provider, model, body, options)
+            .await
+            .map_err(|(error, before_abort)| {
+                body_before_abort = before_abort;
+                error
+            })?;
         body_before_abort = response.body().1;
         let status = response.status().as_u16();
         if matches!(status, 204 | 205) {
