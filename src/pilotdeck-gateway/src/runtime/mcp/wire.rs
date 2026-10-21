@@ -254,6 +254,7 @@ impl Wire {
         if let Some(cwd) = cwd {
             process.current_dir(cwd);
         }
+        #[cfg(unix)]
         crate::process_spawn::install_child_signal_reset(process.as_std_mut());
         let mut child = process.spawn().map_err(|error| {
             let code = super::protocol::errno_text(&error).0;
@@ -640,14 +641,17 @@ async fn write_queue(stdin: Option<ChildStdin>, mut queue: mpsc::UnboundedReceiv
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::process_spawn::{child_signals, test_support};
 
+    #[cfg(unix)]
     #[test]
     fn mcp_resets_inherited_signals() {
         child_signals::ChildSignalProbe::new()
             .launch("runtime::mcp::wire::tests::mcp_signal_worker", false);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     #[ignore = "isolated worker launched with inherited ignored/blocked signals"]
     async fn mcp_signal_worker() {

@@ -4,7 +4,6 @@ use super::*;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/upload/oracle.json");
-const LEDGER: &str = include_str!("../../../../specs/gateway-coverage/ledger.json");
 const SOURCE: &str = include_str!("mod.rs");
 const EPOCH: i64 = 1_792_281_600_000;
 const DAY: i64 = 86_400_000;
@@ -230,7 +229,14 @@ fn upload_oracle_replay_matches_ts_results() {
 
 /// (code, TS line) for every ledger row anchored in UploadStore.ts.
 fn ledger_rows() -> Vec<(String, usize)> {
-    let ledger: serde_json::Value = serde_json::from_str(LEDGER).unwrap();
+    let ledger: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../specs/gateway-coverage/ledger.json"),
+        )
+        .expect("read gateway coverage ledger"),
+    )
+    .unwrap();
     let mut rows = vec![];
     fn walk(v: &serde_json::Value, rows: &mut Vec<(String, usize)>) {
         match v {

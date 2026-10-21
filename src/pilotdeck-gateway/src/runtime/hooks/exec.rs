@@ -604,6 +604,7 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     }
     #[cfg(unix)]
     command.process_group(0);
+    #[cfg(unix)]
     crate::process_spawn::install_child_signal_reset(command.as_std_mut());
     let mut child = command
         .spawn()
@@ -1753,6 +1754,8 @@ mod replace_tests {
 #[path = "exec_http_tests.rs"]
 mod http_tests;
 
+
+#[cfg(all(test, unix))]
 mod signal_tests {
     use super::*;
     use crate::process_spawn::{child_signals, test_support};
