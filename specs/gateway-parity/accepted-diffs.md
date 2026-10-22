@@ -77,3 +77,25 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 修复轮 8 追加说明：上表第三条是 domino 搬移宽子树时触发 V8 数组上限的运行时行为，与前两条解析器版本差异不同，也与 A6.5-WEBFETCH-DEPTH-001 的深度批准无关。上文「以下两条」仅指原有两条解析器差异；上文「除两条解析器版本差异外，深度 ≤ 256 两侧逐字节一致」须同时排除本条已知未对齐，不能据此声称该深度内全部一致。真实 Node 22.22.0 / V8 12.4.254.21-node.33 本轮重新实测 2 MiB 成功、4 MiB 抛上述错误，二分所得首错尺寸区间为 (3,407,872, 3,670,016] 字节（3.25–3.5 MiB，区间宽 256 KiB；限本输入形状与运行时，不作为通用阈值）。Rust 本轮 2 / 4 / 8 MiB 均成功，2 MiB 与 TS 逐字节一致。TS / Rust 原值、无损输出表达与 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。第三条同样未批准、非已接受差异，不新增豁免、不改判分语义；要改为接受差异须另走人批程序。
 
 修复轮 9 追加说明：当前上表已披露 **4 条已知未对齐**：3 类解析器差异（原 select/hr、search，以及本轮 select 内标签家族）和 1 类宽子树运行时差异。原文「两条解析器差异」及「以下两条」仅描述修复轮 5 的原始样例，不代表当前总数或排除清单。`parserGaps` 现有 11 个真实 TS 样例（原 2 个 + 本轮 9 个），仍由 ignored 测试保留未对齐状态；**select 家族未穷举**，`span` 与纯文本两例实测一致，不据此推断其他标签一致。上述 4 条均不由深度批准覆盖，也不能据深度 ≤ 256 声称全部逐字节一致。第三条宽子树的 2 MiB 完整 TS 输出已无损录入 `large-oracle.json`，由 `large_shallow_pages_match_real_ts_bytes_and_stay_fast` 展开后逐字节断言，4 MiB 由 `reparented_wide_four_mib_succeeds` 仅断言 Rust 成功；4 / 8 MiB 与 TS 的运行时差异仍未批准，不新增豁免、不改判分语义。两侧原值及复现命令见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 9」。
+
+## 已知未对齐（未接受，待人批）· A6.4 stats
+
+以下两条为 A6.4-pr9b（PR #476）行为差异的透明披露，**未批准，非已接受差异**；不新增豁免、不改判分语义，待人批。补登依据：gate3 sibling P1（retention 差异此前只在代码注释与 fixtures README 自我披露，账本无条目）与 sibling P2（未知 `stats.baselineModel` ref 的 fatal 诊断未实现且未登记）。
+
+### A6.4-STATS-RETENTION-001 · stats 账目保留只解析 `toISOString` 规范形（有意 · 向保留）
+
+- **类别**：有意的向保留偏离（决策卡「A6.4-pr9b」选项 B：会删数据的路径宁可多留、不可误删）。
+- **基线依据**（cc7c4e6 `src/` + Node 22.22.0 实测）：`src/router/stats/TokenStatsCollector.ts:297-302` 的 `isRetained` 用 `Date.parse(record.endedAt)`，只有 `NaN` 才保留；V8 还接受 date-only、无毫秒、数字偏移、RFC 2822、日历翻转（`2026-02-30`）、`24:00`、四位小数秒与非规范扩展年（`+000000`）。固定 `Date.now = 2026-03-03T00:00:00.000Z`、`retentionMs = 1000` 时，真实 collector 把这 8 类行**全部删除**，只保留 `Date.parse` 为 `NaN` 的 `-000000-…` 与 `010000-…`。探针与原始输出：`/tmp/probe-stats-retention.mts`，结果见 `_tmp/20261022-a64-pr9b/RESULT.md`「修复轮 3」。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/model/stats.rs` 的 `parse_date_ms` 只接受 24 字节 `YYYY-MM-DDTHH:mm:ss.sssZ` 与 27 字节 `±YYYYYY-MM-DDTHH:mm:ss.sssZ`（后者限 `Date` 有效范围 ±8.64e15 ms）；其余返回 `None`，`is_retained_record` 按「无法解析 → 保留」处理。因此上述 8 类行 Rust 保留、TS 删除。
+- **范围**：仅 stats JSONL 的 retention 判定与 compaction 重写结果（含重开重建）及其派生聚合/快照。collector 自己写入的 `endedAt` 恒为规范形，正常路径无差异；差异只在手写/历史/损坏 journal 行上出现，方向是多保留账目行，不会少留。
+- **机器判据**：`stats_tests.rs::retention_keeps_non_canonical_rows_the_baseline_deletes`（同一组 8 行 + 1 行规范过期控制行，断言 Rust 保留 8 行、删除控制行）；`parses_the_canonical_to_iso_string_shapes` 钉住两种规范形与拒绝集；`token_stats` 的 `retention-expanded-years` 金样由真实 TS 生成，钉住规范扩展年与越界行两侧一致的部分。
+- **批准记录**：无。决策卡 `state/decisions-20261022.md`「A6.4-pr9b」为「自决 · 待复核（AI 代批）」并选定 B；本条目按 gate3 P1 补登，`未批准，非已接受差异`。
+
+### A6.4-STATS-BASELINEMODEL-001 · `stats.baselineModel` 未知 ref 不报 fatal（未实现，待后续单）
+
+- **类别**：未实现（Rust 侧缺 `modelConfig` 输入），非有意语义豁免。
+- **基线依据**（cc7c4e6 + Node 22.22.0 实测）：`parseRouterConfig.ts:791-811` 的 `optionalBaselineModel` 把 ref 交给 `consumeRef(..., modelConfig, diagnostics)`；未知 provider 时输出 `ROUTER_REF_PROVIDER_NOT_FOUND`（`severity: "fatal"`、`path: "router.stats.baselineModel"`）并从 `config.stats` 丢弃 `baselineModel`。探针原始输出见 `_tmp/20261022-a64-pr9b/RESULT.md`「修复轮 3」。
+- **Rust 行为**：`runtime/model/router/config.rs:461` 的 `parse_baseline_model` 只校验形状（对象 trim 后非空 / `provider/model` 字符串），没有 `modelConfig` 输入，未知 ref 被原样接受并用于 baseline 成本。
+- **范围**：仅 `router.stats.baselineModel` 指向未配置 provider/model 时——TS 以 fatal 诊断丢弃该字段，Rust 接受并可能算出不同的 `baselineCost` / `totalSavedCost`。已配置 ref 的正常路径两侧一致（`token_stats` 的 `configCases` 钉住）。
+- **机器判据**：`runtime::model::router::tests::unknown_baseline_model_is_accepted_like_the_recorded_gap`（钉住现状，实现 fatal 诊断后会转红，提醒同步更新本条）。
+- **批准记录**：无。`未批准，非已接受差异`；前置于 stats 配置接入 `modelConfig` 的后续单，届时补真实 TS 金样与 fatal 路径回放。
