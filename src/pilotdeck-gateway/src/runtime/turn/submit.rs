@@ -4,7 +4,16 @@
 //! registry appends and terminal draining. The embedding host supplies policy,
 //! attachment preparation and SDK services, while the LiveSession adapter owns
 //! durable input admission. No WS sequence or host-module sequence is allocated.
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use pilotdeck_protocol::{JsString, JsValue};
 use tokio::sync::{mpsc, oneshot};
@@ -20,9 +29,14 @@ use crate::{
     metadata::object,
     runtime::{
         refresh::RefreshRouter,
-        session::{SessionContext, SessionOwner, TurnCompletionHandle, TurnReservation},
+        session::{
+            LiveSessionHandle, SessionContext, SessionOwner, TurnCompletionHandle, TurnReservation,
+        },
     },
-    storage::{RunAcceptInput, RunRef},
+    storage::{
+        ContentAddressedWorkspaceSnapshotRecorder, RunAcceptInput, RunRef, SnapshotState,
+        WorkspaceSnapshotInput, WorkspaceSnapshotResult,
+    },
 };
 
 pub type SubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -54,6 +68,82 @@ pub struct PreparedTurn {
     pub options: JsValue,
 }
 
+/// Workspace identity and optional snapshot service are resolved by the host,
+/// never inferred from client-controlled input. A configured but unavailable
+/// recorder is rejected before SDK mutation, rather than silently disabled.
+pub struct SubmitWorkspace {
+    pub id: Option<JsString>,
+    pub snapshots_required: bool,
+    pub recorder: Option<Arc<dyn SubmitSnapshots>>,
+}
+pub trait SubmitSnapshots: Send + Sync {
+    fn capture<'a>(
+        &'a self,
+        input: WorkspaceSnapshotInput,
+        pre_user: bool,
+    ) -> SubmitFuture<'a, Result<WorkspaceSnapshotResult, SubmitError>>;
+}
+pub struct NativeSubmitSnapshots(pub Arc<ContentAddressedWorkspaceSnapshotRecorder>);
+impl SubmitSnapshots for NativeSubmitSnapshots {
+    fn capture<'a>(
+        &'a self,
+        input: WorkspaceSnapshotInput,
+        pre_user: bool,
+    ) -> SubmitFuture<'a, Result<WorkspaceSnapshotResult, SubmitError>> {
+        let recorder = self.0.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                if pre_user {
+                    recorder.capture_pre_user(&input)
+                } else {
+                    recorder.capture_post_agent(&input)
+                }
+            })
+            .await
+            .map_err(|e| SubmitError::new("gateway_submit_failed", e.to_string()))?
+            .map_err(|e| SubmitError::new("gateway_submit_failed", e.to_string()))
+        })
+    }
+}
+#[derive(Default)]
+pub struct WorkspaceAdmissions(Mutex<HashMap<JsString, (JsString, JsString)>>);
+impl WorkspaceAdmissions {
+    pub fn reserve(&self, workspace: &JsString, run: &RunRef) -> bool {
+        let mut owners = self.0.lock().unwrap();
+        let key = (run.session_key.clone(), run.run_id.clone());
+        if owners.get(workspace).is_some_and(|owner| owner != &key) {
+            return false;
+        }
+        owners.insert(workspace.clone(), key);
+        true
+    }
+    fn release(&self, workspace: &JsString, run: &RunRef) {
+        let mut owners = self.0.lock().unwrap();
+        if owners.get(workspace) == Some(&(run.session_key.clone(), run.run_id.clone())) {
+            owners.remove(workspace);
+        }
+    }
+}
+#[derive(Default)]
+struct SnapshotProgress {
+    input: Option<WorkspaceSnapshotInput>,
+    committed: bool,
+    succeeded: bool,
+    failure: Option<(String, String)>,
+}
+
+struct PumpContext<'a> {
+    input: &'a JsValue,
+    run: &'a RunRef,
+    completion: &'a TurnCompletionHandle,
+    publisher: &'a TurnPublisher,
+    progress: &'a Mutex<SnapshotProgress>,
+    timed_out: &'a AtomicBool,
+    ready: oneshot::Sender<(tokio::time::Instant, LiveSessionHandle)>,
+    workspace_id: Option<JsString>,
+    recorder: Option<Arc<dyn SubmitSnapshots>>,
+}
+
 /// Host-dependent services are explicit ports, not another session or writer.
 /// normalize applies session-model normalization/interaction reconnect;
 /// route_input handles commands and trusted-context authorization after input
@@ -64,6 +154,15 @@ pub struct PreparedTurn {
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host/WS adapter is assembled by pr5/pr6.
 pub trait SubmitHost: Send + Sync {
+    fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
+    /// FailureGuard runtime is not ported. Enabled policies MUST be reported;
+    /// submit explicitly refuses them until A7.2-pr4b implements the guard.
+    fn failure_guard_enabled(&self) -> bool;
+    /// Host registration is mandatory even when the host has no cwd service:
+    /// return CAPABILITY_UNAVAILABLE for a requested cwd in that case.
+    fn set_session_cwd(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError>;
+    fn now_ms(&self) -> f64;
+    fn abort_turn_timeout_ms(&self) -> u64;
     fn normalize<'a>(
         &'a self,
         input: &'a mut JsValue,
@@ -126,6 +225,7 @@ pub struct TurnSubmitter {
     pub projector: Arc<GatewayAgentEventProjector>,
     pub registry: Option<Arc<dyn TurnRunRegistry>>,
     pub host: Arc<dyn SubmitHost>,
+    pub workspace_admissions: WorkspaceAdmissions,
 }
 
 enum Message {
@@ -134,6 +234,9 @@ enum Message {
 }
 /// One consumer. Dropping it releases the consumer barrier; the owned pump
 /// still drains before completion so close/abort cannot strand a writer.
+/// A host MUST drain next() through End or drop the submission; retaining an
+/// unpolled submission also retains the TS consumer-finally completion fence.
+/// A7.2-pr5/pr6 must uphold this transport cancellation contract.
 pub struct TurnSubmission {
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
@@ -176,7 +279,7 @@ impl TurnSubmitter {
     }
 
     async fn run(
-        &self,
+        self: &Arc<Self>,
         mut input: JsValue,
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
@@ -237,6 +340,7 @@ impl TurnSubmitter {
             reservation: None,
             completion: None,
             released: false,
+            workspace: None,
         };
         let preflight = self.host.preflight(&input).await;
         let early = match preflight {
@@ -316,6 +420,58 @@ impl TurnSubmitter {
             self.preflight_events(send, &run, vec![event]).await;
             return Ok(());
         }
+        let workspace = self.host.workspace(&input);
+        let workspace = match workspace {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                cleanup.release();
+                self.preflight_events(
+                    send,
+                    &run,
+                    vec![error_event(&run, &error.code, &error.message, true)],
+                )
+                .await;
+                return Ok(());
+            }
+        };
+        if let Some(id) = workspace.id.as_ref().filter(|id| !id.is_empty()) {
+            if !self.workspace_admissions.reserve(id, &run) {
+                cleanup.release();
+                let mut units = "Workspace ".encode_utf16().collect::<Vec<_>>();
+                units.extend_from_slice(id.units());
+                units.extend(" already has an active turn.".encode_utf16());
+                let mut event = error_event(&run, "workspace_busy", "", true);
+                set(
+                    &mut event,
+                    "message",
+                    JsValue::String(JsString::from_utf16(units)),
+                );
+                set(
+                    &mut event,
+                    "userHint",
+                    "Wait for the active workspace turn to finish before retrying.".into(),
+                );
+                self.preflight_events(send, &run, vec![event]).await;
+                return Ok(());
+            }
+            cleanup.workspace = Some(id.clone());
+        }
+        if workspace.snapshots_required && (workspace.recorder.is_none() || workspace.id.is_none())
+        {
+            cleanup.release();
+            self.preflight_events(
+                send,
+                &run,
+                vec![error_event(
+                    &run,
+                    "CAPABILITY_UNAVAILABLE",
+                    "Workspace snapshot host capability is unavailable.",
+                    true,
+                )],
+            )
+            .await;
+            return Ok(());
+        }
         let completion = self.owner.begin_completion(&run.session_key, &run.run_id);
         cleanup.completion = Some(completion.clone());
         if sdk {
@@ -351,48 +507,129 @@ impl TurnSubmitter {
             self.preflight_events(send, &run, early).await;
             return Ok(());
         }
+        if let Some(cwd) = field(&input, "workspaceCwd")
+            .as_string()
+            .filter(|cwd| !cwd.is_empty())
+            && let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)
+        {
+            cleanup.release();
+            self.preflight_events(
+                send,
+                &run,
+                vec![error_event(&run, &error.code, &error.message, true)],
+            )
+            .await;
+            return Ok(());
+        }
         let publisher = Arc::new(TurnPublisher::start(
             run.clone(),
             self.registry.clone(),
             self.coordinator.clone(),
         ));
-        let pump = async {
-            let outcome = self.pump(&input, &run, &completion, &publisher).await;
-            if let Err(error) = outcome
-                && self
+        let progress = Arc::new(Mutex::new(SnapshotProgress::default()));
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let (ready, timer_ready) = oneshot::channel();
+        let (timeout_settled, timeout_settlement) = oneshot::channel();
+        // The worker owns all dependencies: after a hard timeout it may finish
+        // a misbehaving host future without holding admission or the fence.
+        let submitter = self.clone();
+        let worker_run = run.clone();
+        let worker_input = input.clone();
+        let worker_completion = completion.clone();
+        let worker_publisher = publisher.clone();
+        let worker_progress = progress.clone();
+        let worker_timeout = timed_out.clone();
+        let recorder = workspace.recorder.clone();
+        let workspace_id = workspace.id.clone();
+        let mut worker = tokio::spawn(async move {
+            let outcome = submitter
+                .pump(PumpContext {
+                    input: &worker_input,
+                    run: &worker_run,
+                    completion: &worker_completion,
+                    publisher: &worker_publisher,
+                    progress: &worker_progress,
+                    timed_out: &worker_timeout,
+                    ready,
+                    workspace_id,
+                    recorder,
+                })
+                .await;
+            if let Err(error) = outcome {
+                {
+                    let mut progress = worker_progress.lock().unwrap();
+                    progress.succeeded = false;
+                    if progress.failure.is_none() {
+                        progress.failure = Some(("gateway_error".into(), error.message.clone()));
+                    }
+                }
+                if submitter
                     .owner
-                    .is_current_completion(&run.session_key, &completion)
-            {
-                let managed = error.code == "SDK_MANAGED_MODEL_DENIED"
-                    || error.code.starts_with("GATEWAY_ORGANIZATION_");
-                let code = if managed {
-                    &error.code
-                } else {
-                    "gateway_submit_failed"
-                };
-                let hint = if code == "SDK_MANAGED_MODEL_DENIED" {
-                    "Adjust the SDK session configuration or model selection, then retry."
-                } else if managed {
-                    "The Gateway host policy denied this configuration. Select an allowed model or contact the Gateway administrator."
-                } else {
-                    "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
-                };
-                let failure = status(code, &error.message, hint, "turn");
-                // Recording gateway status is best effort in TS.
-                let record = object([
-                    ("event", code.into()),
-                    ("kind", "error".into()),
-                    ("text", JsValue::String(error.message.clone().into())),
-                    ("detail", field(&failure, "detail").clone()),
-                ]);
-                let _ = self.host.record_failure(&run, &record).await;
-                publisher.gateway_event(with_run(failure, &run));
-                let mut event = error_event(&run, code, &error.message, false);
-                set(&mut event, "userHint", hint.into());
-                publisher.gateway_event(event);
+                    .is_current_completion(&worker_run.session_key, &worker_completion)
+                {
+                    submitter
+                        .publish_failure(&worker_run, &worker_publisher, &error)
+                        .await;
+                }
             }
-            let _ = self.host.finish_pump(&run).await;
-            publisher.finish().await;
+            let _ = submitter.host.finish_pump(&worker_run).await;
+            if worker_timeout.load(Ordering::SeqCst) {
+                let _ = timeout_settlement.await;
+            }
+            worker_publisher.finish().await;
+        });
+        let timeout = field(&input, "timeoutMs")
+            .as_number()
+            .filter(|value| value.is_finite() && *value > 0.0);
+        let timer = async {
+            let Ok((started, handle)) = timer_ready.await else {
+                return std::future::pending().await;
+            };
+            let Some(ms) = timeout else {
+                return std::future::pending().await;
+            };
+            // Node clamps invalid setTimeout delays to 1ms (including overflow).
+            let delay = if (1.0..=2_147_483_647.0).contains(&ms) {
+                ms.trunc() as u64
+            } else {
+                1
+            };
+            tokio::time::sleep_until(started + Duration::from_millis(delay)).await;
+            handle
+        };
+        let manage = async {
+            tokio::pin!(timer);
+            tokio::select! {
+                biased;
+                result = &mut worker => {
+                    if let Err(error) = result {
+                        self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
+                        publisher.finish().await;
+                    }
+                },
+                handle = &mut timer => {
+                    timed_out.store(true, Ordering::SeqCst);
+                    let ms = timeout.expect("timer only fires with a timeout");
+                    let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
+                    let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
+                    let _ = self.host.reject_pending(&run.session_key, "turn_timeout");
+                    let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
+                    let mut failure = status("turn_timeout", &message, hint, "turn");
+                    let mut detail = field(&failure, "detail").clone();
+                    set(&mut detail, "timeoutMs", JsValue::Number(ms));
+                    set(&mut failure, "detail", detail);
+                    let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
+                        ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
+                    if self.host.record_failure(&run, &record).await.is_ok() {
+                        publisher.gateway_event(with_run(failure, &run));
+                    }
+                    let mut event = error_event(&run, "turn_timeout", &message, false);
+                    set(&mut event, "userHint", hint.into());
+                    publisher.gateway_event(event);
+                    publisher.close_live();
+                    let _ = timeout_settled.send(());
+                }
+            }
         };
         let consume = async {
             while let Some(event) = publisher.next().await {
@@ -401,13 +638,120 @@ impl TurnSubmitter {
             let _ = send.send(Message::End);
             let _ = barrier.await;
         };
-        tokio::join!(pump, consume);
-        // Complete the fence after admission cleanup, before afterTurnCompleted.
-        // Even a finally callback failure cannot strand abort waiters.
+        tokio::join!(manage, consume);
         let rejected = self.host.reject_pending(&run.session_key, "turn_ended");
+        // TS releases admission before post_agent and the timeout close; fence
+        // completion remains after both. Keep workspace ownership until then.
+        cleanup.end_admission();
+        let timed_out = timed_out.load(Ordering::SeqCst);
+        let stable = if timed_out && progress.lock().unwrap().committed {
+            tokio::time::timeout(
+                Duration::from_millis(self.host.abort_turn_timeout_ms()),
+                &mut worker,
+            )
+            .await
+            .is_ok()
+        } else {
+            true
+        };
+        self.capture_post(&workspace, &progress, &run, timed_out, stable)
+            .await;
+        if timed_out {
+            let close = self.owner.close(&run.session_key);
+            tokio::spawn(async move {
+                let _ = close.await;
+            });
+        }
         cleanup.release();
         rejected?;
         self.host.after_turn(&run)
+    }
+
+    async fn publish_failure(&self, run: &RunRef, publisher: &TurnPublisher, error: &SubmitError) {
+        let managed = error.code == "SDK_MANAGED_MODEL_DENIED"
+            || error.code.starts_with("GATEWAY_ORGANIZATION_")
+            || error.code == "CAPABILITY_UNAVAILABLE";
+        let code = if managed {
+            &error.code
+        } else {
+            "gateway_submit_failed"
+        };
+        let hint = if code == "SDK_MANAGED_MODEL_DENIED" {
+            "Adjust the SDK session configuration or model selection, then retry."
+        } else if error.code.starts_with("GATEWAY_ORGANIZATION_") {
+            "The Gateway host policy denied this configuration. Select an allowed model or contact the Gateway administrator."
+        } else {
+            "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        };
+        let failure = status(code, &error.message, hint, "turn");
+        let record = object([
+            ("event", code.into()),
+            ("kind", "error".into()),
+            ("text", error.message.as_str().into()),
+            ("detail", field(&failure, "detail").clone()),
+        ]);
+        let _ = self.host.record_failure(run, &record).await;
+        publisher.gateway_event(with_run(failure, run));
+        let mut event = error_event(run, code, &error.message, false);
+        set(&mut event, "userHint", hint.into());
+        publisher.gateway_event(event);
+    }
+
+    async fn capture_post(
+        &self,
+        workspace: &SubmitWorkspace,
+        progress: &Mutex<SnapshotProgress>,
+        run: &RunRef,
+        timed_out: bool,
+        stable: bool,
+    ) {
+        let input = {
+            let progress = progress.lock().unwrap();
+            if !progress.committed || (progress.succeeded && !timed_out) {
+                return;
+            }
+            let Some(mut input) = progress.input.clone() else {
+                return;
+            };
+            input.workspace_stable = Some(stable);
+            let abort = self
+                .owner
+                .aborted_turn_reason(&run.session_key, &run.run_id);
+            input.failure_kind = Some(if timed_out {
+                "timeout".into()
+            } else {
+                progress
+                    .failure
+                    .as_ref()
+                    .map(|v| v.0.clone())
+                    .unwrap_or_else(|| {
+                        if abort.is_some() {
+                            "interrupted"
+                        } else {
+                            "unknown"
+                        }
+                        .into()
+                    })
+            });
+            input.failure_reason = Some(if timed_out && !stable {
+                format!(
+                    "timeout; workspace_not_quiescent_after_{}ms",
+                    self.host.abort_turn_timeout_ms()
+                )
+            } else {
+                progress
+                    .failure
+                    .as_ref()
+                    .map(|v| v.1.clone())
+                    .or_else(|| abort.as_ref().map(display))
+                    .unwrap_or_else(|| "turn_failed_or_aborted".into())
+            });
+            input
+        };
+        if let Some(recorder) = &workspace.recorder {
+            // Post-agent snapshot errors are best effort in TS.
+            let _ = recorder.capture(input, false).await;
+        }
     }
 
     async fn preflight_events(
@@ -422,17 +766,28 @@ impl TurnSubmitter {
         }
     }
 
-    async fn pump(
-        &self,
-        input: &JsValue,
-        run: &RunRef,
-        completion: &TurnCompletionHandle,
-        publisher: &TurnPublisher,
-    ) -> Result<(), SubmitError> {
+    async fn pump(&self, context: PumpContext<'_>) -> Result<(), SubmitError> {
+        let PumpContext {
+            input,
+            run,
+            completion,
+            publisher,
+            progress,
+            timed_out,
+            ready,
+            workspace_id,
+            recorder,
+        } = context;
         let _ = self.host.refresh().await; // transient config refresh keeps previous snapshot
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
+        }
+        if self.host.failure_guard_enabled() {
+            return Err(SubmitError::new(
+                "CAPABILITY_UNAVAILABLE",
+                "FailureGuard runtime is unavailable; requires A7.2-pr4b.",
+            ));
         }
         let handle = self
             .owner
@@ -449,7 +804,52 @@ impl TurnSubmitter {
             publisher.gateway_event(aborted(run));
             return Ok(());
         }
-        let prepared = self.host.prepare(input, run).await?;
+        if recorder.is_some()
+            && let Some(workspace) = &workspace_id
+        {
+            let snapshot = handle.snapshot();
+            if let Some(cwd) = field(&snapshot, "cwd")
+                .as_string()
+                .filter(|cwd| !cwd.is_empty())
+            {
+                progress.lock().unwrap().input = Some(WorkspaceSnapshotInput {
+                    workspace_id: display(workspace),
+                    session_id: display(&run.session_key),
+                    turn_id: display(&run.run_id),
+                    run_id: display(&run.run_id),
+                    workspace_dir: display(cwd),
+                    workspace_stable: None,
+                    failure_kind: None,
+                    failure_reason: None,
+                });
+            } else {
+                return Err(SubmitError::new(
+                    "CAPABILITY_UNAVAILABLE",
+                    "Workspace snapshot cwd is unavailable.",
+                ));
+            }
+        }
+        let now = self.host.now_ms();
+        let timeout = field(input, "timeoutMs")
+            .as_number()
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let deadline = timeout
+            .filter(|_| now.is_finite())
+            .map(|ms| {
+                let value = now + ms;
+                if !value.is_finite() || value.abs() > 8_640_000_000_000_000.0 {
+                    return Err(SubmitError::new(
+                        "gateway_submit_failed",
+                        "Invalid time value",
+                    ));
+                }
+                Ok(pilotdeck_transport::system_clock::format_epoch_iso(
+                    value.trunc() as i64,
+                ))
+            })
+            .transpose()?;
+        let _ = ready.send((tokio::time::Instant::now(), handle.clone()));
+        let mut prepared = self.host.prepare(input, run).await?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -468,6 +868,21 @@ impl TurnSubmitter {
                 field(selection, "model").clone(),
             ));
         }
+        if timed_out.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        if let Some(deadline) = deadline {
+            let mut execution = field(&prepared.options, "execution").clone();
+            if !matches!(execution, JsValue::Object(_)) {
+                execution = object([]);
+            }
+            set(
+                &mut execution,
+                "operationDeadline",
+                deadline.as_str().into(),
+            );
+            set(&mut prepared.options, "execution", execution);
+        }
         let mut actual_model = None;
         let mut stream = handle
             .submit(prepared.input, prepared.options)
@@ -477,15 +892,73 @@ impl TurnSubmitter {
             .await
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
         {
-            if !self
-                .owner
-                .is_current_completion(&run.session_key, completion)
+            if timed_out.load(Ordering::SeqCst)
+                || !self
+                    .owner
+                    .is_current_completion(&run.session_key, completion)
             {
                 break;
             }
             self.host.observe_event(input, &event).await?;
             if is(&event, "type", "input_accepted") {
                 self.host.commit_accepted_input(run).await?;
+                let snapshot = progress.lock().unwrap().input.clone();
+                if let (Some(recorder), Some(snapshot)) = (&recorder, snapshot) {
+                    let result = recorder.capture(snapshot, true).await?;
+                    if result.state != SnapshotState::Committed {
+                        let _ = handle.abort(&"workspace_snapshot:pre_user_failed".into());
+                        return Err(SubmitError::new(
+                            "gateway_submit_failed",
+                            format!(
+                                "pre_user workspace snapshot failed: {}",
+                                result
+                                    .error
+                                    .as_ref()
+                                    .map(display)
+                                    .unwrap_or_else(|| "unknown error".into())
+                            ),
+                        ));
+                    }
+                    progress.lock().unwrap().committed = true;
+                }
+            }
+            if is(&event, "type", "turn_completed") {
+                let result = field(&event, "result");
+                let mut progress = progress.lock().unwrap();
+                progress.succeeded =
+                    is(result, "type", "success") && is(result, "stopReason", "completed");
+                if !progress.succeeded && progress.failure.is_none() {
+                    progress.failure = Some((
+                        if is(result, "type", "aborted") {
+                            "interrupted"
+                        } else {
+                            "agent_error"
+                        }
+                        .into(),
+                        format!(
+                            "turn_completed:{}",
+                            display(&string(field(result, "stopReason")))
+                        ),
+                    ));
+                }
+            } else if is(&event, "type", "turn_failed") {
+                progress.lock().unwrap().failure = Some((
+                    "agent_error".into(),
+                    format!(
+                        "{}: {}",
+                        display(&string(field(field(&event, "error"), "code"))),
+                        display(&string(field(field(&event, "error"), "message")))
+                    ),
+                ));
+            }
+            if is(&event, "type", "session_aborted") {
+                progress.lock().unwrap().failure = Some((
+                    "interrupted".into(),
+                    field(&event, "reason")
+                        .as_string()
+                        .map(display)
+                        .unwrap_or_else(|| "session_aborted".into()),
+                ));
             }
             let model = field(&event, "event");
             if is(&event, "type", "model_event") && is(model, "type", "request_started") {
@@ -537,19 +1010,28 @@ struct Cleanup<'a> {
     reservation: Option<TurnReservation>,
     completion: Option<TurnCompletionHandle>,
     released: bool,
+    workspace: Option<JsString>,
 }
 impl Cleanup<'_> {
+    fn end_admission(&mut self) {
+        if let Some(reservation) = self.reservation.take() {
+            self.submitter.owner.end_turn(
+                &self.run.session_key,
+                Some(&self.run.run_id),
+                Some(&reservation),
+            );
+        }
+    }
     fn release(&mut self) {
         if self.released {
             return;
         }
         self.released = true;
-        if let Some(reservation) = &self.reservation {
-            self.submitter.owner.end_turn(
-                &self.run.session_key,
-                Some(&self.run.run_id),
-                Some(reservation),
-            );
+        self.end_admission();
+        if let Some(workspace) = self.workspace.take() {
+            self.submitter
+                .workspace_admissions
+                .release(&workspace, self.run);
         }
         if let Some(completion) = self.completion.take() {
             self.submitter

@@ -358,6 +358,10 @@ impl SessionOwner {
         self.0.turns.completion.is_current(key, handle)
     }
 
+    pub fn aborted_turn_reason(&self, key: &JsString, run: &JsString) -> Option<JsString> {
+        self.0.turns.aborted_reason(key, run)
+    }
+
     pub fn clear_turn_abort_reason(&self, key: &JsString, run: &JsString) {
         self.0.turns.clear_aborted_reason(key, run);
     }

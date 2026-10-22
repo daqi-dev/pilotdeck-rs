@@ -7797,6 +7797,5808 @@
           "runId": "r"
         }
       }
+    },
+    {
+      "name": "workspace-busy-before-sdk",
+      "setup": {
+        "workspace": "w",
+        "workspaceBusy": true,
+        "sdkAvailable": true,
+        "sdkChanged": true,
+        "input": {
+          "sdkSessionConfig": {}
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "workspace_busy",
+              "message": "Workspace w already has an active turn.",
+              "recoverable": true,
+              "userHint": "Wait for the active workspace turn to finish before retrying."
+            }
+          ],
+          "hostCalls": [
+            "release"
+          ],
+          "durableCalls": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sdkSessionConfig\":{},\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "workspace_busy",
+                "message": "Workspace w already has an active turn.",
+                "recoverable": true,
+                "userHint": "Wait for the active workspace turn to finish before retrying."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "workspace_busy",
+            "message": "Workspace w already has an active turn.",
+            "recoverable": true,
+            "userHint": "Wait for the active workspace turn to finish before retrying."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "workspace_busy",
+          "message": "Workspace w already has an active turn.",
+          "recoverable": true,
+          "userHint": "Wait for the active workspace turn to finish before retrying."
+        }
+      }
+    },
+    {
+      "name": "workspace-released-after-turn",
+      "setup": {
+        "workspace": "w"
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal",
+        "end",
+        "second"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        },
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            },
+            {
+              "type": "turn_started",
+              "runId": "r2"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r2"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r2"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r2"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r2"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r2"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r2"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r2"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r2"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r2"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "completed",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "workspace-cwd",
+      "setup": {
+        "cwdAvailable": true,
+        "input": {
+          "workspaceCwd": "/work"
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal",
+        "end"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "cwd",
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"workspaceCwd\":\"/work\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "cwd",
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"workspaceCwd\":\"/work\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "cwd",
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"workspaceCwd\":\"/work\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "cwd",
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"workspaceCwd\":\"/work\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "completed",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "snapshot-success",
+      "setup": {
+        "workspace": "w",
+        "snapshots": true
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal",
+        "end"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "completed",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "snapshot-pre-failed",
+      "setup": {
+        "workspace": "w",
+        "snapshots": true,
+        "snapshotFailure": true
+      },
+      "steps": [
+        "observe",
+        "accept"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "gateway_submit_failed",
+              "detail": {
+                "message": "pre_user workspace snapshot failed: injected snapshot failure",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "gateway_submit_failed",
+              "message": "pre_user workspace snapshot failed: injected snapshot failure",
+              "recoverable": false,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "gateway_submit_failed",
+                "detail": {
+                  "message": "pre_user workspace snapshot failed: injected snapshot failure",
+                  "code": "gateway_submit_failed",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                  "scope": "turn",
+                  "source": "gateway"
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "gateway_submit_failed",
+                "message": "pre_user workspace snapshot failed: injected snapshot failure",
+                "recoverable": false,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "pre_user workspace snapshot failed: injected snapshot failure",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "gateway_submit_failed",
+            "message": "pre_user workspace snapshot failed: injected snapshot failure",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 3,
+        "revision": 4,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "gateway_submit_failed",
+          "message": "pre_user workspace snapshot failed: injected snapshot failure",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        }
+      }
+    },
+    {
+      "name": "snapshot-agent-failed",
+      "setup": {
+        "workspace": "w",
+        "snapshots": true,
+        "pumpFailure": true
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "gateway_submit_failed",
+              "detail": {
+                "message": "injected pump failure",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "gateway_submit_failed",
+              "message": "injected pump failure",
+              "recoverable": false,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre",
+            "reject:turn_ended",
+            "snapshot_post",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            },
+            {
+              "op": "snapshot_post",
+              "input": {
+                "workspaceId": "w",
+                "sessionId": "s",
+                "turnId": "r",
+                "runId": "r",
+                "workspaceDir": "/unused",
+                "workspaceStable": true,
+                "failureKind": "gateway_error",
+                "failureReason": "injected pump failure"
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "gateway_submit_failed",
+                "detail": {
+                  "message": "injected pump failure",
+                  "code": "gateway_submit_failed",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                  "scope": "turn",
+                  "source": "gateway"
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "gateway_submit_failed",
+                "message": "injected pump failure",
+                "recoverable": false,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "injected pump failure",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "gateway_submit_failed",
+            "message": "injected pump failure",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "gateway_submit_failed",
+          "message": "injected pump failure",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        }
+      }
+    },
+    {
+      "name": "snapshot-aborted",
+      "setup": {
+        "workspace": "w",
+        "snapshots": true
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "aborted_streaming",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre",
+            "session_abort",
+            "reject:turn_ended",
+            "snapshot_post",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            },
+            {
+              "op": "snapshot_post",
+              "input": {
+                "workspaceId": "w",
+                "sessionId": "s",
+                "turnId": "r",
+                "runId": "r",
+                "workspaceDir": "/unused",
+                "workspaceStable": true,
+                "failureKind": "interrupted",
+                "failureReason": "turn_completed:aborted_streaming"
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "aborted_streaming",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "aborted_streaming",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "aborted",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "aborted_streaming",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "timeout-active-live",
+      "setup": {
+        "noRegistry": true,
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "turn_timeout",
+              "detail": {
+                "message": "Turn exceeded the 100ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 100
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "turn_timeout",
+              "message": "Turn exceeded the 100ms timeout.",
+              "recoverable": false,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [],
+      "record": null
+    },
+    {
+      "name": "timeout-active",
+      "setup": {
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 100ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 100
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 100ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 100
+            }
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 100ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 100ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-durable-pending",
+      "setup": {
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 100ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 100
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 100ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 100
+            }
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 100ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 3,
+        "revision": 4,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 100ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-prepare-pending",
+      "setup": {
+        "prepareGate": true,
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "timeout",
+        "prepare"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [],
+          "hostCalls": [
+            "refresh",
+            "prepare"
+          ],
+          "durableCalls": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 100ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 100
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        },
+        {
+          "visible": [],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 100ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 100
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 100ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 100
+            }
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 100ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 2,
+        "revision": 3,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 100ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-prepare-no-revival-live-consumer",
+      "setup": {
+        "noRegistry": true,
+        "holdTimeoutConsumer": true,
+        "prepareGate": true,
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "timeout",
+        "prepare",
+        "resume"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [],
+          "hostCalls": [
+            "refresh",
+            "prepare"
+          ],
+          "durableCalls": [],
+          "registryCalls": [],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "turn_timeout",
+              "detail": {
+                "message": "Turn exceeded the 100ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 100
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "turn_timeout",
+              "message": "Turn exceeded the 100ms timeout.",
+              "recoverable": false,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "reject:turn_timeout",
+            "session_abort"
+          ],
+          "durableCalls": [],
+          "registryCalls": [],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "turn_timeout",
+              "detail": {
+                "message": "Turn exceeded the 100ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 100
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "turn_timeout",
+              "message": "Turn exceeded the 100ms timeout.",
+              "recoverable": false,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "reject:turn_timeout",
+            "session_abort"
+          ],
+          "durableCalls": [],
+          "registryCalls": [],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "turn_timeout",
+              "detail": {
+                "message": "Turn exceeded the 100ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 100
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "turn_timeout",
+              "message": "Turn exceeded the 100ms timeout.",
+              "recoverable": false,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [],
+          "registryCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [],
+      "record": null
+    },
+    {
+      "name": "timeout-status-record-failed",
+      "setup": {
+        "statusRecordFailure": true,
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 100ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 3,
+        "revision": 4,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 100ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-snapshot",
+      "setup": {
+        "workspace": "w",
+        "snapshots": true,
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "snapshot_pre",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "snapshot_post",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            },
+            {
+              "op": "snapshot_post",
+              "input": {
+                "workspaceId": "w",
+                "sessionId": "s",
+                "turnId": "r",
+                "runId": "r",
+                "workspaceDir": "/unused",
+                "workspaceStable": true,
+                "failureKind": "timeout",
+                "failureReason": "turn_failed_or_aborted"
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 100ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 100
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 100ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 100ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 100
+            }
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 100ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 100ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-cleared-on-success",
+      "setup": {
+        "input": {
+          "timeoutMs": 100
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal",
+        "end",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.100Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":100}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "completed",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "timeout-disabled",
+      "setup": {
+        "input": {
+          "timeoutMs": 0
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "terminal",
+        "end"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6,
+        "result": {
+          "type": "turn_completed",
+          "usage": {},
+          "finishReason": "completed",
+          "runId": "r"
+        }
+      }
+    },
+    {
+      "name": "timeout-overflow-delay",
+      "setup": {
+        "input": {
+          "timeoutMs": 2147483648
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-25T20:31:23.648Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":2147483648}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-25T20:31:23.648Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":2147483648}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-25T20:31:23.648Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":2147483648}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 2147483648ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 2147483648
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 2147483648ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 2147483648ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 2147483648
+            }
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 2147483648ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 2147483648ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-fractional-delay",
+      "setup": {
+        "input": {
+          "timeoutMs": 0.5
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "timeout"
+      ],
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.000Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0.5}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.000Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0.5}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "active": true,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "turn_started",
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "commit",
+            "reject:turn_timeout",
+            "session_abort",
+            "reject:turn_ended",
+            "release",
+            "after",
+            "session_dispose"
+          ],
+          "durableCalls": [
+            {
+              "op": "execution",
+              "execution": {
+                "runId": "r",
+                "operationId": "r",
+                "operationDeadline": "1970-01-01T00:00:00.000Z"
+              }
+            },
+            {
+              "op": "accept_begin",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "accept_committed"
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":0.5}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_started",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "turn_timeout",
+                "detail": {
+                  "message": "Turn exceeded the 0.5ms timeout.",
+                  "code": "turn_timeout",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                  "scope": "turn",
+                  "source": "gateway",
+                  "timeoutMs": 0.5
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "turn_timeout",
+                "message": "Turn exceeded the 0.5ms timeout.",
+                "recoverable": false,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 0.5ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 0.5
+            }
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 0.5ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 4,
+        "revision": 5,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 0.5ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      }
+    },
+    {
+      "name": "timeout-invalid-deadline",
+      "setup": {
+        "input": {
+          "timeoutMs": 9000000000000000
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "gateway_submit_failed",
+              "detail": {
+                "message": "Invalid time value",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "gateway_submit_failed",
+              "message": "Invalid time value",
+              "recoverable": false,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+            }
+          ],
+          "hostCalls": [
+            "refresh",
+            "reject:turn_ended",
+            "release",
+            "after"
+          ],
+          "durableCalls": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"timeoutMs\":9000000000000000}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "gateway_submit_failed",
+                "detail": {
+                  "message": "Invalid time value",
+                  "code": "gateway_submit_failed",
+                  "severity": "error",
+                  "visible": true,
+                  "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                  "scope": "turn",
+                  "source": "gateway"
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "gateway_submit_failed",
+                "message": "Invalid time value",
+                "recoverable": false,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "Invalid time value",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "gateway_submit_failed",
+            "message": "Invalid time value",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 2,
+        "revision": 3,
+        "result": {
+          "type": "error",
+          "runId": "r",
+          "code": "gateway_submit_failed",
+          "message": "Invalid time value",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        }
+      }
     }
   ],
   "validationProbes": [

@@ -38,6 +38,7 @@ struct Log {
     visible: Mutex<Vec<Value>>,
     ended: AtomicBool,
     thrown: Mutex<Option<String>>,
+    consumer_hold: Mutex<Option<Arc<Gate>>>,
 }
 impl Log {
     fn host(&self, value: &str) {
@@ -60,6 +61,7 @@ impl Gate {
 struct Session {
     setup: Value,
     native: Vec<JsValue>,
+    submits: AtomicUsize,
     log: Arc<Log>,
     coordinator: Arc<TurnEventCoordinator>,
     accepted: Gate,
@@ -68,7 +70,14 @@ struct Session {
 }
 impl LiveSession for Arc<Session> {
     fn snapshot(&self) -> JsValue {
-        object([("messages", JsValue::Array(vec![]))])
+        if self.setup["snapshotCwdUnavailable"] == true {
+            object([])
+        } else {
+            object([
+                ("messages", JsValue::Array(vec![])),
+                ("cwd", "/unused".into()),
+            ])
+        }
     }
     fn abort(&self, _: &JsString) -> RuntimeResult {
         self.log.host("session_abort");
@@ -83,9 +92,32 @@ impl LiveSession for Arc<Session> {
             Ok(())
         })
     }
-    fn submit(&self, input: JsValue, _: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+    fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         self.log.host("submit");
+        if self.setup["input"]["timeoutMs"]
+            .as_f64()
+            .is_some_and(|v| v > 0.0)
+        {
+            self.log
+                .durable
+                .lock()
+                .unwrap()
+                .push(json!({"op":"execution", "execution":json(field(&options,"execution"))}));
+        }
+        let submission = self.submits.fetch_add(1, Ordering::SeqCst);
+        let starts: Vec<_> = self
+            .native
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| is(e, "type", "turn_started").then_some(i))
+            .collect();
+        let start = starts.get(submission).copied().unwrap_or(self.native.len());
+        let end = starts
+            .get(submission + 1)
+            .copied()
+            .unwrap_or(self.native.len());
         Ok(Box::new(Stream {
+            native: self.native[start..end].to_vec(),
             session: self.clone(),
             input,
             index: 0,
@@ -94,6 +126,7 @@ impl LiveSession for Arc<Session> {
     }
 }
 struct Stream {
+    native: Vec<JsValue>,
     session: Arc<Session>,
     input: JsValue,
     index: usize,
@@ -115,7 +148,7 @@ impl LiveTurn for Stream {
                     return Err(RuntimeError::new("injected pump failure"));
                 }
             }
-            if let Some(event) = session.native.get(self.index) {
+            if let Some(event) = self.native.get(self.index) {
                 self.index += 1;
                 return Ok(Some(event.clone()));
             }
@@ -150,6 +183,42 @@ impl SessionFactory for Factory {
         self.recreate.load(Ordering::SeqCst)
     }
 }
+struct TestSnapshots {
+    session: Arc<Session>,
+}
+impl SubmitSnapshots for TestSnapshots {
+    fn capture<'a>(
+        &'a self,
+        input: WorkspaceSnapshotInput,
+        pre: bool,
+    ) -> SubmitFuture<'a, Result<WorkspaceSnapshotResult, SubmitError>> {
+        Box::pin(async move {
+            self.session
+                .log
+                .host(if pre { "snapshot_pre" } else { "snapshot_post" });
+            if !pre {
+                self.session.log.durable.lock().unwrap().push(json!({"op":"snapshot_post", "input": {"workspaceId": input.workspace_id, "sessionId": input.session_id, "turnId":input.turn_id, "runId":input.run_id, "workspaceDir":input.workspace_dir, "workspaceStable":input.workspace_stable, "failureKind":input.failure_kind, "failureReason":input.failure_reason}}));
+            }
+            Ok(WorkspaceSnapshotResult {
+                snapshot_id: "fixture".into(),
+                phase: if pre {
+                    crate::storage::SnapshotPhase::PreUser
+                } else {
+                    crate::storage::SnapshotPhase::PostAgent
+                },
+                state: if pre && self.session.setup["snapshotFailure"] == true {
+                    SnapshotState::Failed
+                } else {
+                    SnapshotState::Committed
+                },
+                error: (pre && self.session.setup["snapshotFailure"] == true)
+                    .then(|| "injected snapshot failure".into()),
+                manifest_path: None,
+                failure_marker_path: None,
+            })
+        })
+    }
+}
 struct Host {
     session: Arc<Session>,
     prepare: Gate,
@@ -157,6 +226,41 @@ struct Host {
     recovery: Gate,
 }
 impl SubmitHost for Host {
+    fn workspace(&self, _: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
+        Ok(SubmitWorkspace {
+            id: self.session.setup["workspace"].as_str().map(Into::into),
+            snapshots_required: self.session.setup["snapshots"] == true,
+            recorder: if self.session.setup["snapshots"] == true
+                && self.session.setup["snapshotsUnavailable"] != true
+            {
+                Some(Arc::new(TestSnapshots {
+                    session: self.session.clone(),
+                }))
+            } else {
+                None
+            },
+        })
+    }
+    fn failure_guard_enabled(&self) -> bool {
+        self.session.setup["failureGuard"] == true
+    }
+    fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
+        if self.session.setup["cwdUnavailable"] == true {
+            return Err(SubmitError::new(
+                "CAPABILITY_UNAVAILABLE",
+                "Session cwd host capability is unavailable.",
+            ));
+        }
+        self.session.log.host("cwd");
+        Ok(())
+    }
+    fn now_ms(&self) -> f64 {
+        0.0
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        20
+    }
+
     fn normalize<'a>(
         &'a self,
         _: &'a mut JsValue,
@@ -293,7 +397,16 @@ impl SubmitHost for Host {
                     ("type", "text".into()),
                     ("text", field(input, "message").clone()),
                 ]),
-                options: object([("turnId", JsValue::String(run.run_id.clone()))]),
+                options: object([
+                    ("turnId", JsValue::String(run.run_id.clone())),
+                    (
+                        "execution",
+                        object([
+                            ("runId", JsValue::String(run.run_id.clone())),
+                            ("operationId", JsValue::String(run.run_id.clone())),
+                        ]),
+                    ),
+                ]),
             })
         })
     }
@@ -315,7 +428,13 @@ impl SubmitHost for Host {
         _: &'a RunRef,
         _: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async {
+            if self.session.setup["statusRecordFailure"] == true {
+                Err(SubmitError::new("RECORD", "injected status record failure"))
+            } else {
+                Ok(())
+            }
+        })
     }
     fn reject_pending(&self, _: &JsString, reason: &str) -> Result<(), SubmitError> {
         self.session.log.host(&format!("reject:{reason}"));
@@ -414,7 +533,19 @@ async fn settle(registry: &Registry) {
 async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     loop {
         match stream.next().await {
-            Ok(Some(event)) => log.visible.lock().unwrap().push(json(&event)),
+            Ok(Some(event)) => {
+                let timeout_error =
+                    is(&event, "type", "error") && is(&event, "code", "turn_timeout");
+                log.visible.lock().unwrap().push(json(&event));
+                let hold = if timeout_error {
+                    log.consumer_hold.lock().unwrap().clone()
+                } else {
+                    None
+                };
+                if let Some(gate) = hold {
+                    gate.wait().await;
+                }
+            }
             Ok(None) => break,
             Err(error) => {
                 *log.thrown.lock().unwrap() = Some(error.message);
@@ -426,14 +557,26 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
 }
 async fn replay_case(case: &Value) {
     let name = case["name"].as_str().unwrap();
+    let controlled_clock = case["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == "timeout");
+    if controlled_clock {
+        tokio::time::pause();
+    }
     let root = std::env::temp_dir().join(format!("pdrs-submit-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     let log = Arc::new(Log::default());
     let setup = &case["setup"];
+    if setup["holdTimeoutConsumer"] == true {
+        *log.consumer_hold.lock().unwrap() = Some(Arc::new(Gate::new()));
+    }
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let session = Arc::new(Session {
         setup: setup.clone(),
         native: case["native"].as_array().unwrap().iter().map(js).collect(),
+        submits: AtomicUsize::new(0),
         log: log.clone(),
         coordinator: coordinator.clone(),
         accepted: Gate::new(),
@@ -468,12 +611,28 @@ async fn replay_case(case: &Value) {
     let submitter = Arc::new(TurnSubmitter {
         owner: owner.clone(),
         coordinator,
-        registry: Some(registry.clone()),
+        registry: if setup["noRegistry"] == true {
+            None
+        } else {
+            Some(registry.clone())
+        },
         host: host.clone(),
+        workspace_admissions: WorkspaceAdmissions::default(),
         projector: Arc::new(GatewayAgentEventProjector::new(
             GatewayAgentEventProjectorOptions::default(),
         )),
     });
+    if setup["workspaceBusy"] == true {
+        let workspace = JsString::from(setup["workspace"].as_str().unwrap());
+        assert!(submitter.workspace_admissions.reserve(
+            &workspace,
+            &RunRef {
+                session_key: "other".into(),
+                project_key: None,
+                run_id: "other".into()
+            }
+        ));
+    }
     let mut input = json!({"sessionKey":"s","projectKey":"p","runId":"r","message":"hello","channelKey":"test"});
     if let Some(fields) = setup["input"].as_object() {
         for (key, value) in fields {
@@ -493,6 +652,10 @@ async fn replay_case(case: &Value) {
             "prepare" => host.prepare.open(),
             "sdk" => host.sdk.open(),
             "recovery" => host.recovery.open(),
+            "resume" => log.consumer_hold.lock().unwrap().as_ref().unwrap().open(),
+            "timeout" => {
+                tokio::time::advance(Duration::from_millis(1000)).await;
+            }
             "abort" => {
                 let owner = owner.clone();
                 abort = Some(tokio::spawn(async move {
@@ -528,7 +691,28 @@ async fn replay_case(case: &Value) {
             .unwrap()
             .retain(|v| v != "sdk_dirty");
         let actual = json!({"visible":*log.visible.lock().unwrap(), "hostCalls":*log.host.lock().unwrap(), "durableCalls":*log.durable.lock().unwrap(), "registryCalls":*log.registry.lock().unwrap(), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().unwrap()});
-        assert_eq!(actual, expected, "{name}: step {index} {step}");
+        if case["capabilityOnly"] == true {
+            assert!(
+                actual["visible"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|e| e["code"] == "CAPABILITY_UNAVAILABLE"),
+                "assertion failed: {name}: explicit capability refusal"
+            );
+            assert_eq!(actual["active"], false, "{name}: admission released");
+            assert_eq!(actual["ended"], true, "{name}: refusal settled");
+            assert!(
+                !actual["hostCalls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c == "submit"),
+                "{name}: no native submit"
+            );
+        } else {
+            assert_eq!(actual, expected, "{name}: step {index} {step}");
+        }
     }
     consumer.await.unwrap();
     if let Some(abort) = abort {
@@ -545,25 +729,36 @@ async fn replay_case(case: &Value) {
         project_key: Some("p".into()),
         run_id: "r".into(),
     };
-    assert_eq!(
-        reopened
-            .events(&run, None, None)
-            .unwrap()
-            .iter()
-            .map(json)
-            .collect::<Vec<_>>(),
-        case["registryEvents"].as_array().unwrap().clone(),
-        "{name}: durable events"
-    );
-    let record = reopened.get(&run).unwrap();
-    let actual_record = record.map(|record| {
+    if case["capabilityOnly"] == true {
+        assert!(
+            reopened
+                .events(&run, None, None)
+                .unwrap()
+                .iter()
+                .any(|e| is(field(e, "event"), "code", "CAPABILITY_UNAVAILABLE")),
+            "{name}: durable capability refusal"
+        );
+    } else {
+        assert_eq!(
+            reopened
+                .events(&run, None, None)
+                .unwrap()
+                .iter()
+                .map(json)
+                .collect::<Vec<_>>(),
+            case["registryEvents"].as_array().unwrap().clone(),
+            "{name}: durable events"
+        );
+        let record = reopened.get(&run).unwrap();
+        let actual_record = record.map(|record| {
         let record = json(record.as_json());
         let mut value = json!({"state":record["state"],"lastSeq":record["lastSeq"],"revision":record["revision"]});
         if let Some(result) = record.get("result") { value["result"] = result.clone(); }
         value
     }).unwrap_or(Value::Null);
-    assert_eq!(actual_record, case["record"], "{name}: persisted run state");
-    if setup["sdkChanged"] == true {
+        assert_eq!(actual_record, case["record"], "{name}: persisted run state");
+    }
+    if setup["sdkChanged"] == true && setup["workspaceBusy"] != true {
         factory.recreate.store(true, Ordering::SeqCst);
         owner.get_or_create(context()).await.unwrap();
         assert_eq!(
@@ -578,6 +773,9 @@ async fn replay_case(case: &Value) {
     drop(registry);
     drop(reopened);
     std::fs::remove_dir_all(root).unwrap();
+    if controlled_clock {
+        tokio::time::resume();
+    }
 }
 
 #[tokio::test]
@@ -603,6 +801,44 @@ async fn real_ts_submit_scenarios() {
     }
     assert!(selected > 0, "PDRS_SUBMIT_CASE matched no scenario");
 }
+#[tokio::test]
+async fn unavailable_capabilities_are_explicitly_refused() {
+    let mut oracle = crate::test_baseline::oracle(ORACLE);
+    set(&mut oracle, "validationProbes", JsValue::Undefined);
+    let oracle = json(&oracle);
+    let base = &oracle["cases"][0];
+    for (name, setup) in [
+        ("failure-guard-unavailable", json!({"failureGuard":true})),
+        (
+            "snapshot-recorder-unavailable",
+            json!({"workspace":"w", "snapshots":true, "snapshotsUnavailable":true}),
+        ),
+        (
+            "snapshot-cwd-unavailable",
+            json!({"workspace":"w", "snapshots":true, "snapshotCwdUnavailable":true}),
+        ),
+        (
+            "cwd-host-unavailable",
+            json!({"cwdUnavailable":true, "input":{"workspaceCwd":"/work"}}),
+        ),
+    ] {
+        if std::env::var("PDRS_SUBMIT_CAPABILITY")
+            .ok()
+            .is_some_and(|v| v != name)
+        {
+            continue;
+        }
+        let mut case = base.clone();
+        case["name"] = name.into();
+        case["setup"] = setup;
+        case["steps"] = json!(["observe"]);
+        case["capabilityOnly"] = true.into();
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap();
+    }
+}
+
 #[test]
 #[ignore = "requires real fixed TS baseline and Node 22"]
 fn real_ts_turn_submit_regenerates_identically() {
@@ -622,7 +858,11 @@ fn real_ts_utf16_preflight() {
         };
         if field(input, "busy") == &JsValue::Bool(true) {
             let message = busy_message(&string(field(input, "sessionKey")));
-            assert_eq!(&message, field(field(&events[0], "detail"), "message"));
+            assert_eq!(
+                &message,
+                field(field(&events[0], "detail"), "message"),
+                "UTF-16 busy status message"
+            );
             assert_eq!(&message, field(&events[1], "message"));
         } else {
             let event = validate(input).expect("TS rejected invalid permission mode");
