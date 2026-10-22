@@ -12,7 +12,7 @@ struct MemoryText {
     // serde_json::Value cannot represent.
     frames: Mutex<Vec<String>>,
     closes: Mutex<Vec<Value>>,
-    final_in_flight: Mutex<Vec<Vec<Value>>>,
+    final_in_flight: Mutex<Vec<Vec<JsValue>>>,
     owner: Mutex<Option<std::sync::Weak<GatewayConnection>>>,
 }
 impl GatewayTextConnection for MemoryText {
@@ -38,11 +38,20 @@ impl GatewayTextConnection for MemoryText {
             .push(json!({"code":code,"reason":reason}));
     }
 }
-fn session_values(sessions: &[SessionKey]) -> Vec<Value> {
-    sessions
-        .iter()
-        .map(|key| serde_json::from_str(&stringify_json(key.value()).unwrap().unwrap()).unwrap())
-        .collect()
+/// Session sets may contain lone UTF-16 surrogates. Returning JsValue keeps
+/// every code unit; going through serde_json::Value would panic on them.
+fn session_values(sessions: &[SessionKey]) -> Vec<JsValue> {
+    sessions.iter().map(|key| key.value().clone()).collect()
+}
+/// Copy an object without one key, preserving insertion order.
+fn without_key(source: &JsObject, skip: &str) -> JsObject {
+    let mut object = JsObject::new();
+    for (key, value) in source.entries() {
+        if !key.equals_str(skip) {
+            object.insert(key.clone(), value.clone());
+        }
+    }
+    object
 }
 /// Outbound frames may carry lone surrogates; serde_json rejects those, so the
 /// semantic replay parses with the same JS-semantics codec as production.
@@ -131,7 +140,8 @@ impl ConnectionGateway for Gateway {
                     Ok(json_text(r#"{"accepted":true}"#))
                 }
                 Some("abort_turn") => {
-                    self.record("abort_turn", params);
+                    // TS fixture records this gateway call as `abort`.
+                    self.record("abort", params);
                     Ok(json_text(r#"{"ok":true}"#))
                 }
                 Some("reconnect_interaction") => {
@@ -146,11 +156,20 @@ impl ConnectionGateway for Gateway {
                         .map(WsBinding::from_json)
                         .transpose()
                         .map_err(RequestError::new)?;
-                    Ok(js(&self.bindings.reconnect(
+                    // TS InteractionReconnect serializes outcome, binding,
+                    // requests in that order; serde_json::Value sorts keys.
+                    let result: Value = self.bindings.reconnect(
                         &property_text(&params, "sessionKey"),
                         next,
                         previous.as_ref(),
-                    )))
+                    );
+                    let mut ordered = JsObject::new();
+                    ordered.insert("outcome".into(), js(&result["outcome"]));
+                    if let Some(binding) = result.get("binding") {
+                        ordered.insert("binding".into(), js(binding));
+                    }
+                    ordered.insert("requests".into(), js(&result["requests"]));
+                    Ok(JsValue::Object(ordered))
                 }
                 Some("steer_turn") => Err(RequestError::new("plain fixture error")),
                 Some("cancel_steer") => Err(RequestError {
@@ -163,8 +182,8 @@ impl ConnectionGateway for Gateway {
                     code: "validation_failed".into(),
                     message: "Validation failed.".into(),
                     details: None,
-                    validation: Some(Box::new(js(
-                        &json!({"valid":false,"issues":[{"code":"fixture","message":"fixture validation"}]}),
+                    validation: Some(Box::new(json_text(
+                        r#"{"valid":false,"issues":[{"code":"fixture","message":"fixture validation"}]}"#,
                     ))),
                 }),
                 Some("skill_read") => Err(RequestError {
@@ -213,13 +232,38 @@ impl ConnectionGateway for Gateway {
             if self.submit_mode == "empty" {
                 return Ok(());
             }
+            let completed =
+                || parse_json(r#"{"type":"turn_completed","runId":"fixture-run"}"#).unwrap();
+            let failed = || {
+                parse_json(
+                    r#"{"type":"error","code":"fixture_error","message":"fixture stream failed","recoverable":true}"#,
+                )
+                .unwrap()
+            };
+            // Provider-yielded error events: TS keeps lastError and lastCompleted
+            // and sends lastError as the terminal event (GatewayWsConnection.ts:
+            // 138-171). Omitted from the original recording, now replayed from TS.
+            if self.submit_mode == "error" {
+                emit(failed());
+                return Ok(());
+            }
+            if self.submit_mode == "error-then-completed" {
+                emit(failed());
+                emit(completed());
+                return Ok(());
+            }
+            if self.submit_mode == "completed-then-error" {
+                emit(completed());
+                emit(failed());
+                return Ok(());
+            }
             if self.hold.load(std::sync::atomic::Ordering::SeqCst) {
                 let release = Arc::new(Semaphore::new(0));
                 self.submit_gates.lock().unwrap().push(release.clone());
                 self.started.add_permits(1);
                 release.acquire().await.unwrap().forget();
             }
-            emit(parse_json(r#"{"type":"turn_completed","runId":"fixture-run"}"#).unwrap());
+            emit(completed());
             if self.submit_mode == "completed-then-throw" {
                 return Err(RequestError::new("fixture submit failed"));
             }
@@ -312,6 +356,15 @@ fn normalized(value: &JsValue, ids: &BTreeMap<String, String>) -> JsValue {
         _ => value.clone(),
     }
 }
+/// A regression that rejects the frame must fail instead of parking forever on
+/// a gate the request never reaches.
+async fn wait_started(gateway: &Gateway, what: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), gateway.started.acquire())
+        .await
+        .unwrap_or_else(|_| panic!("{what} did not start"))
+        .unwrap()
+        .forget();
+}
 async fn replay(only: Option<&str>) {
     let oracle = crate::test_baseline::oracle(ORACLE);
     assert_eq!(
@@ -323,35 +376,49 @@ async fn replay(only: Option<&str>) {
             .len(),
         10
     );
-    assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 81);
+    assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 86);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     let mut replayed = 0;
     for (index, recorded) in array(oracle.get("scenarios").unwrap()).iter().enumerate() {
-        // Control metadata has ordinary strings; observations may contain lone
-        // surrogate code units and must never go through serde_json::Value.
-        let mut control = JsObject::new();
-        for (key, value) in recorded.as_object().unwrap().entries() {
-            if !key.equals_str("results") {
-                control.insert(key.clone(), value.clone());
-            }
-        }
-        let scenario: Value =
-            serde_json::from_str(&stringify_json(&JsValue::Object(control)).unwrap().unwrap())
-                .unwrap();
+        // Steps and observations stay JsValue for the whole replay: a recorded
+        // submit may carry a lone surrogate in its frame, which serde rejects.
+        let control = without_key(recorded.as_object().unwrap(), "results");
+        let name = control
+            .get("name")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap();
+        // Issue the binding before filtering so a subset keeps the same
+        // generation sequence as the full replay (TS increments per connection).
         let binding = WsBinding::issue(&sequence);
-        if only.is_some_and(|suffix| !scenario["name"].as_str().unwrap().ends_with(suffix)) {
+        if only.is_some_and(|suffix| !name.ends_with(suffix)) {
             continue;
         }
         replayed += 1;
         let text = Arc::new(MemoryText::default());
-        let mut gateway = Gateway::new(scenario["preserve"].as_bool().unwrap_or(false));
-        gateway.permission_event = scenario["permissionEvent"].as_bool().unwrap_or(false);
-        gateway.submit_mode = scenario["submitMode"]
-            .as_str()
+        let mut gateway = Gateway::new(
+            control
+                .get("preserve")
+                .and_then(JsValue::as_bool)
+                .unwrap_or(false),
+        );
+        gateway.permission_event = control
+            .get("permissionEvent")
+            .and_then(JsValue::as_bool)
+            .unwrap_or(false);
+        gateway.submit_mode = control
+            .get("submitMode")
+            .and_then(JsValue::as_string)
+            .and_then(|mode| mode.to_utf8().ok())
             .unwrap_or_default()
             .to_owned();
-        gateway.fail_disconnect = scenario["failDisconnect"].as_bool().unwrap_or(false);
+        gateway.fail_disconnect = control
+            .get("failDisconnect")
+            .and_then(JsValue::as_bool)
+            .unwrap_or(false);
         gateway.replay_bindings = true;
         let gateway = Arc::new(gateway);
         let connection = GatewayConnection::with_binding(
@@ -370,23 +437,36 @@ async fn replay(only: Option<&str>) {
         let mut held = None;
         let mut submissions = BTreeMap::new();
         let mut close_errors = Vec::new();
-        for (step_index, step) in scenario["steps"].as_array().unwrap().iter().enumerate() {
-            match step["op"].as_str().unwrap() {
-                "message" => connection
-                    .receive(step["raw"].as_str().unwrap())
-                    .await
-                    .unwrap(),
+        for (step_index, step) in array(control.get("steps").unwrap()).iter().enumerate() {
+            let op = step
+                .get("op")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap();
+            match op.as_str() {
+                "message" => {
+                    let raw = step
+                        .get("raw")
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap();
+                    connection.receive(&raw).await.unwrap();
+                }
                 "notify" => connection.notify("fixture", Some(js(&json!({"value":1})))),
                 "start_hello" => {
                     gateway
                         .hold_describe
                         .store(true, std::sync::atomic::Ordering::SeqCst);
                     let conn = connection.clone();
-                    let raw = step["frame"].to_string();
+                    let raw = stringify_json(step.get("frame").unwrap()).unwrap().unwrap();
                     held = Some(tokio::spawn(
                         async move { conn.receive(&raw).await.unwrap() },
                     ));
-                    gateway.started.acquire().await.unwrap().forget();
+                    wait_started(&gateway, "hello describe").await;
                 }
                 "finish_hello" => {
                     gateway.release.add_permits(1);
@@ -397,11 +477,15 @@ async fn replay(only: Option<&str>) {
                         .hold
                         .store(true, std::sync::atomic::Ordering::SeqCst);
                     let conn = connection.clone();
-                    let raw = step["frame"].to_string();
+                    let raw = stringify_json(step.get("frame").unwrap()).unwrap().unwrap();
                     let task = tokio::spawn(async move { conn.receive(&raw).await.unwrap() });
-                    gateway.started.acquire().await.unwrap().forget();
+                    wait_started(&gateway, "submit").await;
                     let release = gateway.submit_gates.lock().unwrap().last().unwrap().clone();
-                    let slot = step["slot"].as_str().unwrap_or("default");
+                    let slot = step
+                        .get("slot")
+                        .and_then(JsValue::as_string)
+                        .and_then(|slot| slot.to_utf8().ok())
+                        .unwrap_or_else(|| "default".into());
                     assert!(submissions.insert(slot, (release, task)).is_none());
                 }
                 "close" => connection.closed().await.unwrap(),
@@ -415,8 +499,12 @@ async fn replay(only: Option<&str>) {
                         .unwrap(),
                 ),
                 "finish" => {
-                    let slot = step["slot"].as_str().unwrap_or("default");
-                    let (release, task) = submissions.remove(slot).unwrap();
+                    let slot = step
+                        .get("slot")
+                        .and_then(JsValue::as_string)
+                        .and_then(|slot| slot.to_utf8().ok())
+                        .unwrap_or_else(|| "default".into());
+                    let (release, task) = submissions.remove(&slot).unwrap();
                     release.add_permits(1);
                     task.await.unwrap();
                 }
@@ -430,62 +518,67 @@ async fn replay(only: Option<&str>) {
                 )
             };
             let raw_frames = text.frames.lock().unwrap().clone();
-            let mut actual = json!({"closes":*text.closes.lock().unwrap(),
-                "finalInFlight":*text.final_in_flight.lock().unwrap(),
-                "inFlight":in_flight,"interactions":interactions});
+            let mut actual = JsObject::new();
+            actual.insert(
+                "closes".into(),
+                js(&Value::Array(text.closes.lock().unwrap().clone())),
+            );
+            actual.insert(
+                "finalInFlight".into(),
+                JsValue::Array(
+                    text.final_in_flight
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|sessions| JsValue::Array(sessions.clone()))
+                        .collect(),
+                ),
+            );
+            actual.insert("inFlight".into(), JsValue::Array(in_flight));
+            actual.insert("interactions".into(), JsValue::Array(interactions));
             if gateway.fail_disconnect {
-                actual["closeErrors"] = json!(close_errors);
+                actual.insert("closeErrors".into(), js(&json!(close_errors)));
             }
-            let mut actual = js(&actual).as_object().unwrap().clone();
             actual.insert("frames".into(), JsValue::Array(frame_values(&raw_frames)));
             actual.insert(
                 "calls".into(),
                 JsValue::Array(gateway.calls.lock().unwrap().clone()),
             );
             let actual = normalized(&JsValue::Object(actual), &ids);
-            // framesText is asserted separately as raw text; keep it out of the
-            // semantic (key-order-insensitive) comparison.
+            // Every step records the exact outbound text; only it is compared
+            // semantically after removing framesText (key order is not part of
+            // the parsed-object comparison).
             let expected_source = array(recorded.get("results").unwrap())[step_index]
                 .as_object()
                 .unwrap();
-            let frames_text = expected_source.get("framesText").cloned();
-            let mut expected_object = JsObject::new();
-            for (key, value) in expected_source.entries() {
-                if !key.equals_str("framesText") {
-                    expected_object.insert(key.clone(), value.clone());
-                }
-            }
-            let expected = normalized(&JsValue::Object(expected_object), &BTreeMap::new());
-            assert_eq!(actual, expected, "{} step {}", scenario["name"], step_index);
-            // Byte-level comparison for the scenarios that record the exact
-            // outbound text: insertion order, surrogate escaping and number
-            // formatting all have to match TS JSON.stringify byte for byte.
-            if let Some(expected_text) = frames_text {
-                let expected_text = array(&expected_text)
-                    .iter()
-                    .map(|item| item.as_string().unwrap().to_utf8().unwrap())
-                    .collect::<Vec<_>>();
-                let actual_text = raw_frames
-                    .iter()
-                    .map(|raw| {
-                        ids.iter().fold(raw.clone(), |text, (id, marker)| {
-                            text.replace(id.as_str(), marker)
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    actual_text, expected_text,
-                    "{} step {} raw frames",
-                    scenario["name"], step_index
-                );
-            }
+            let expected = normalized(
+                &JsValue::Object(without_key(expected_source, "framesText")),
+                &BTreeMap::new(),
+            );
+            assert_eq!(actual, expected, "{name:?} step {step_index}");
+            // Byte-level comparison: insertion order, surrogate escaping and
+            // number formatting all have to match TS JSON.stringify byte for
+            // byte. Only this connection's masked UUID can occur in its frames.
+            let expected_text = array(expected_source.get("framesText").unwrap())
+                .iter()
+                .map(|item| item.as_string().unwrap().to_utf8().unwrap())
+                .collect::<Vec<_>>();
+            let marker = format!("@connection-{}", index + 1);
+            let actual_text = raw_frames
+                .iter()
+                .map(|raw| raw.replace(&connection.binding.connection_id, &marker))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actual_text, expected_text,
+                "{name:?} step {step_index} raw frames"
+            );
         }
         assert!(submissions.is_empty());
     }
     assert_eq!(
         replayed,
         match only {
-            None => 81,
+            None => 86,
             Some("-string-params") => 16,
             Some("-array-params") => 8,
             _ => panic!("unknown replay subset"),
@@ -629,7 +722,7 @@ fn old_submit_cleanup_clears_session_across_threads() {
         assert!(connection.state.lock().unwrap().in_flight.is_empty());
         assert_eq!(
             session_values(&connection.state.lock().unwrap().interactions),
-            [json!("s")]
+            [js(&json!("s"))]
         );
         drop(new);
         assert!(connection.state.lock().unwrap().in_flight.is_empty());
@@ -742,7 +835,10 @@ fn session_sets_use_js_scalar_equality_and_object_identity() {
     state.track_interaction(&object);
     state.track_interaction(&object.clone());
     state.track_interaction(&SessionKey::new(js(&json!({}))));
-    assert_eq!(session_values(&state.in_flight), [json!(5), json!(true)]);
+    assert_eq!(
+        session_values(&state.in_flight),
+        [js(&json!(5)), js(&json!(true))]
+    );
     assert_eq!(state.interactions.len(), 2);
     assert_eq!(state.sessions().len(), 4);
 }
@@ -754,10 +850,16 @@ fn sessions_preserve_in_flight_then_interaction_insertion_order() {
     let b = SessionKey::new(js(&json!("b")));
     state.track_in_flight(&b);
     state.track_interaction(&SessionKey::new(js(&json!("a"))));
-    assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
+    assert_eq!(
+        session_values(&state.sessions()),
+        [js(&json!("b")), js(&json!("a"))]
+    );
     // Real submit also puts b in interactions (TS:126-127); union deduplicates it.
     state.track_interaction(&b);
-    assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
+    assert_eq!(
+        session_values(&state.sessions()),
+        [js(&json!("b")), js(&json!("a"))]
+    );
 }
 
 // The frames below are the verbatim `sent` strings replayed against the real
@@ -785,8 +887,7 @@ fn assert_sent(text: &MemoryText, connection: &GatewayConnection, expected: &[&s
 fn string_units(value: &JsValue) -> Vec<u16> {
     value.as_string().unwrap().units().to_vec()
 }
-/// Compare tracked sessions at UTF-16 code-unit level: the replay helper
-/// `session_values` goes through serde_json and would panic on lone surrogates.
+/// Compare tracked sessions at UTF-16 code-unit level.
 fn session_units(sessions: &[SessionKey]) -> Vec<Vec<u16>> {
     sessions
         .iter()
@@ -794,8 +895,15 @@ fn session_units(sessions: &[SessionKey]) -> Vec<Vec<u16>> {
         .collect()
 }
 async fn authed_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
+    authed_with_mode("").await
+}
+async fn authed_with_mode(
+    submit_mode: &str,
+) -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
     let text = Arc::new(MemoryText::default());
-    let gateway = Arc::new(Gateway::new(false));
+    let mut gateway = Gateway::new(false);
+    gateway.submit_mode = submit_mode.to_owned();
+    let gateway = Arc::new(gateway);
     let connection = Arc::new(GatewayConnection::new(
         text.clone(),
         gateway.clone(),
@@ -918,11 +1026,7 @@ async fn lone_surrogate_submit_session_is_tracked_and_forwarded_on_close() {
     });
     // Bound the wait: a regression that rejects the frame must fail this test
     // instead of leaving it parked forever on a gate the submit never reaches.
-    tokio::time::timeout(std::time::Duration::from_secs(5), gateway.started.acquire())
-        .await
-        .expect("submit did not start")
-        .unwrap()
-        .forget();
+    wait_started(&gateway, "submit").await;
     {
         let state = connection.state.lock().unwrap();
         assert_eq!(session_units(&state.in_flight), vec![vec![0xD83D]]);
@@ -954,6 +1058,54 @@ async fn lone_surrogate_submit_session_is_tracked_and_forwarded_on_close() {
         assert_eq!(string_units(session), [0xD83D], "call {index}");
     }
     assert!(text.closes.lock().unwrap().is_empty());
+}
+
+/// The provider may yield a real `error` event instead of throwing. TS keeps
+/// the last error and last completion and sends lastError as the terminal event
+/// (GatewayWsConnection.ts:138-171). These frames are the exact golden bytes
+/// recorded by the real TS `submit-{error,error-then-completed,
+/// completed-then-error}` scenarios; only the connection UUID/generation are
+/// placeholder-substituted.
+#[tokio::test]
+async fn submit_error_event_wins_terminal_frame_like_ts() {
+    const TS_ERROR: &str = r#"{"type":"error","code":"fixture_error","message":"fixture stream failed","recoverable":true}"#;
+    const TS_COMPLETED: &str = r#"{"type":"turn_completed","runId":"fixture-run"}"#;
+    fn event_frame(seq: usize, is_final: bool, event: &str) -> String {
+        format!(
+            r#"{{"type":"event","id":"submit_turn","seq":{seq},"final":{is_final},"event":{event}}}"#
+        )
+    }
+    let cases: [(&str, Vec<(&str, usize)>); 3] = [
+        ("error", vec![("error", 0)]),
+        ("error-then-completed", vec![("error", 0), ("completed", 1)]),
+        ("completed-then-error", vec![("completed", 0), ("error", 1)]),
+    ];
+    for (mode, stream) in cases {
+        let (text, _gateway, connection) = authed_with_mode(mode).await;
+        connection
+            .receive(
+                r#"{"type":"request","id":"submit_turn","method":"submit_turn","params":{"sessionKey":"s","projectKey":"p"}}"#,
+            )
+            .await
+            .unwrap();
+        let mut expected = vec![TS_HELLO_OK.to_owned()];
+        for (kind, seq) in &stream {
+            expected.push(event_frame(
+                *seq,
+                false,
+                if *kind == "error" {
+                    TS_ERROR
+                } else {
+                    TS_COMPLETED
+                },
+            ));
+        }
+        // lastError always wins, and no duplicate terminal completion is sent.
+        expected.push(event_frame(stream.len(), true, TS_ERROR));
+        let expected = expected.iter().map(String::as_str).collect::<Vec<_>>();
+        assert_sent(&text, &connection, &expected);
+        assert!(text.closes.lock().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]
@@ -988,16 +1140,7 @@ const TS_DEEP_RESPONSE: &str = r#"{"type":"response","id":"deep-{depth}","ok":tr
 /// `ts-depth-probe.json`); `parse_json` takes the same iterative path.
 #[tokio::test]
 async fn deeply_nested_valid_frames_are_dispatched_like_node_json_parse() {
-    let text = Arc::new(MemoryText::default());
-    let gateway = Arc::new(Gateway::new(false));
-    let connection =
-        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
-    connection
-        .receive(
-            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
-        )
-        .await
-        .unwrap();
+    let (text, _gateway, connection) = authed_connection().await;
     let depths = [200usize, 1_000, 30_000];
     for depth in depths {
         let raw = [
@@ -1025,16 +1168,7 @@ async fn deeply_nested_valid_frames_are_dispatched_like_node_json_parse() {
 /// 4002 invalid_json, exactly like the TS catch around `JSON.parse`.
 #[tokio::test]
 async fn deeply_nested_malformed_frame_closes_invalid_json_like_ts() {
-    let text = Arc::new(MemoryText::default());
-    let gateway = Arc::new(Gateway::new(false));
-    let connection =
-        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
-    connection
-        .receive(
-            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
-        )
-        .await
-        .unwrap();
+    let (text, _gateway, connection) = authed_connection().await;
     let raw = [
         "{\"type\":\"request\",\"id\":\"bad\",\"method\":\"describe_server\",\"params\":{\"value\":",
         &"[".repeat(1_000),

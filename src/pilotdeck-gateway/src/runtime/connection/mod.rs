@@ -283,8 +283,9 @@ impl GatewayConnection {
                             "sessionKey".into(),
                             input.get("sessionKey").cloned().unwrap(),
                         );
-                        payload
-                            .insert("requestId".into(), input.get("requestId").cloned().unwrap());
+                        // TS builds this object as type, sessionKey,
+                        // ...(projectKey?), requestId (GatewayWsConnection.ts:
+                        // 176-185); keep the conditional key in that position.
                         if input
                             .get("projectKey")
                             .and_then(JsValue::as_string)
@@ -295,6 +296,8 @@ impl GatewayConnection {
                                 input.get("projectKey").cloned().unwrap(),
                             );
                         }
+                        payload
+                            .insert("requestId".into(), input.get("requestId").cloned().unwrap());
                         self.notify("permission_changed", Some(JsValue::Object(payload)));
                     }
                     let mut out = JsObject::new();

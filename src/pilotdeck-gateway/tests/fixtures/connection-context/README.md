@@ -20,8 +20,8 @@ WS 的 Skill barrel 仅接入实际 SkillManager 模块；未用 imports 由 fai
 窄 gateway 仅记录参数、提供 describe/业务结果或真实错误类实例，并提供可释放的 submit/describe 等待闸门；reconnect/submit binding/disconnect 调用真实 coordinator/native binding provider。preserveTurn=true 来自真实 permission bus 的显式 pending 注册；不是手写 disconnect 判断。
 它不是 session owner/abort adapter 实现。
 
-81 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；27 个真实 provider 操作记录完整返回值/异常消息。
-本轮补录（#474 后续）：`lone-surrogate-{id,method,client-name,session-key,params}` 五个场景与 `ascii-describe-pins-top-level-order` 由真实 TS 录制器生成；这些场景及 submit / close-preserve / request-after-close 另记录 `framesText`（真实 `sendText` 原文，仅把实际 `randomUUID` 换成已记录标记）。Rust 回放逐字节比较该原文，对象键序、`\ud800` 转义和数字格式都必须与 TS `JSON.stringify` 一致；未记录 `framesText` 的场景仍按「对象键序不计」的解析后比较。
+86 个连接场景记录每一步完整 frames、closes、calls，每步的 in-flight/interaction session 集合，以及最终帧发送瞬间的 in-flight 集合；27 个真实 provider 操作记录完整返回值/异常消息。每个场景的每一步都记录真实 `sendText` 原文 `framesText`。
+本轮补录（#474 后续）：`lone-surrogate-{id,method,client-name,session-key,params}` 五个场景、`lone-surrogate-abort-session-key`（abort_turn 原样转发孤立代理、不登记 session）、`lone-surrogate-submit-session`（submit 登记孤立代理，close 依次转发 disconnect 与 abort）与 `ascii-describe-pins-top-level-order` 均由真实 TS 录制器生成。**所有**场景的每一步都记录 `framesText`（真实 `sendText` 原文，仅把实际 `randomUUID` 换成已记录标记），不再按场景名白名单圈定，避免新增含 submit/event 帧的场景静默退回语义比较。Rust 回放对每一步逐字节比较该原文，对象键序、`\ud800` 转义和数字格式都必须与 TS `JSON.stringify` 一致；`framesText` 只是从语义比较中剔除，不再有未覆盖场景。
 深嵌套不由 128 层截断：Node 22 `JSON.parse` 实测到 1,000,000 层仍接受；`parse_json` 的 `RawValue` 语法预检走迭代 `ignore_value`，同样接受到 1,000,000 层（protocol 测试另有 30,000 层构造/克隆/丢弃）。连接层 `deeply_nested_*` 测试固定 200/1,000/30,000 层合法帧正常 dispatch、非法深层帧仍 close 4002 `invalid_json`；证据见 `_tmp/20261022-a72-pr0-connection/ts-depth-probe.json`。
 覆盖 JSON、hello 缺字段/类型、协议先于 token、未知/空 clientName、认证后非法 frame、错误层级（含 validation/details）、SDK run/control、服务端 binding 覆盖、close preserveTurn 两分支和 close 的集合顺序。
 同 session 双 submit 用两个独立闸门保证先后入场、先释放第一个、再 close、最后释放第二个。TS 的 Set.add 去重，任一 finally 都按 session 无条件 delete；所以第一个完成后 close 不 abort。Rust 保留这一行为，不能按 ticket 延长在途状态。interactionSessions 同样按 session 去重，但 submit 完成不删除；场景中 SDK permission_decide 仍注入 run binding，close 仍 disconnect 一次。
@@ -30,7 +30,8 @@ WS 的 Skill barrel 仅接入实际 SkillManager 模块；未用 imports 由 fai
 close 场景复用 `scripts/a5-19/fixtures-b.mts:71` 和 `production-close-b.mts:117` 的 in-flight/pending close 次序，在连接边界重采真实 TS；不重新宣称新 run 的生产次序可达性。close 场景保留原请求的旧 runId，但 abort 调用只有 sessionKey，沿 A5；没有给旧 socket 添加 run 栅栏。
 
 仅替换真实 crypto.randomUUID 创建、并由生成器记录的 UUID 为按创建顺序的标记；不匹配 UUID 正则、不屏蔽用户提供的标识。
-generation 保留实际数值、类型和进程内顺序。Rust 回放用同一产品 issuer 和独立 AtomicU64 模拟一个新 TS 进程，按相同顺序创建连接；不修改观察结果中的 generation。
+generation 保留实际数值、类型和进程内顺序。Rust 回放用同一产品 issuer 和独立 AtomicU64 模拟一个新 TS 进程，按相同顺序创建连接；子集回放也在过滤场景前创建连接，保持与全量一致的 generation。不修改观察结果中的 generation。
+回放的场景控制数据、step（含 `start.frame`）与 session 集合全程使用 JsValue，绝不经过 serde_json::Value：`lone-surrogate-submit-session` 的 frame 本身含孤立代理，serde 会拒绝；读取 session 集合也不会 panic。
 比较使用解析后的完整 JSON（对象键顺序不计）；两次生成器输出额外逐字节比较。
 
 `BindingOwners` 是无 pending 状态的连接绑定子组件，只能用于此范围；它不提供 pending producer/consumer、断线保留与 replay/answer 的完整端口，A7.3 必须实现后再装配。
@@ -46,7 +47,7 @@ generation 保留实际数值、类型和进程内顺序。Rust 回放用同一�
 `connection_context_fixtures_regenerate_identically_from_ts` 为默认忽略的真实 TS 再生成测试，复用 `tests/common/baseline.rs` 的逐字节检查；具备完整基线环境后可用 `cargo test -p pilotdeck-gateway connection_context_fixtures_regenerate_identically_from_ts -- --ignored` 运行。
 
 本轮追加 sessionKey 为 5 / true / 0 / false / null / 空字符串的真实 TS 场景，原值保留至 reconnect/disconnect/abort；submit 登记和 requested 通知使用 JS 真值判断。SDK permission_decide 仍按 TS 独立要求字符串，不能用通用真值替换。non-string-session-as-empty 负控恢复字符串筛选，须精确失败于 session-key-5 step 1。
-submit 的直接抛错、先 completed 后抛错、无终态、permission_request 均采真实 TS。result_unknown 就是基线的无终态 fallback；抛错回 ok:false response，不额外发 final 事件。
+submit 的直接抛错、先 completed 后抛错、无终态、permission_request、provider 真实 yield `error`（单独、error→completed、completed→error）均采真实 TS。TS 以 `lastError ?? lastCompleted` 选终态（GatewayWsConnection.ts:157-171），因此三种 error 场景的 final 事件都是 error；抛错仍回 ok:false response，不额外发 final 事件。
 真实 TS disconnect 抛错会中止循环并保留集合；金样记录两次 close rejection 和后续 session 未处理，不擅自改为聚合错误。close 后消息和随后再次 close 也从真实文本适配器回调采集；本层无永久 closed 标记，实际 WS 适配器的投递可达性留 pr2 接线验证。
 receive 返回 future 必须由传输适配器保留并驱动至完成，不能放入会因 socket close 落败而丢弃的 select! 分支。调用 closed() 的同时继续驱动已有请求任务，按 TS Promise 生命周期等待完成。本层没有任务宿主，drop 会取消请求，只清理 in-flight；没有伪造 final/error。cancelled_receive_sends_no_invented_terminal 固定该取消边界，pr2 必须补真实 owner/任务 drain 验证。
 text_callbacks_can_synchronously_reenter_connection 在 sink 回调中先 try_lock 以失败代替挂死，再真实同步进入 receive/closed；覆盖通知、hello、事件和全部 close 错误分支。
