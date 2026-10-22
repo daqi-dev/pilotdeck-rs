@@ -79,6 +79,8 @@ impl Harness {
             .get("reenter")
             .and_then(JsValue::as_bool)
             .unwrap_or(false);
+        let reenter_steps = step.get("reenterSteps").cloned();
+        let reentered = AtomicBool::new(false);
         let weak = Arc::downgrade(self);
         let callback = Arc::new(move |event: &str, value: JsValue| {
             let harness = weak.upgrade().unwrap();
@@ -122,6 +124,18 @@ impl Harness {
                         ("id", "reentered".into()),
                     ]))
                     .unwrap();
+            }
+            if let Some(actions) = &reenter_steps
+                && !reentered.swap(true, Ordering::SeqCst)
+            {
+                for action in array(actions) {
+                    let result = harness.run(action).unwrap();
+                    harness
+                        .events
+                        .lock()
+                        .unwrap()
+                        .push(object([("event", "reentry".into()), ("result", result)]));
+                }
             }
         });
         let resolve = callback.clone();
@@ -171,7 +185,14 @@ impl Harness {
         } else {
             step.get("payload").cloned()
         };
-        let registration = if is_permission {
+        let peer = step.get("peer").and_then(JsValue::as_bool) == Some(true);
+        let registration = if peer && is_permission {
+            GatewayPermissionBus::new(self.coordinator.reconnect_port().clone())
+                .register(&session, entry, payload)
+        } else if peer {
+            GatewayElicitationBus::new(self.coordinator.reconnect_port().clone())
+                .register(&session, entry, payload)
+        } else if is_permission {
             self.coordinator
                 .permission_bus()
                 .register(&session, entry, payload)
@@ -458,13 +479,13 @@ fn interaction_real_ts_stepwise_oracle() {
         "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
     );
     let scenarios = array(oracle.get("scenarios").unwrap());
-    assert_eq!(scenarios.len(), 35, "recorded TS scenario cardinality");
+    assert_eq!(scenarios.len(), 46, "recorded TS scenario cardinality");
     assert_eq!(
         scenarios
             .iter()
             .map(|s| array(s.get("steps").unwrap()).len())
             .sum::<usize>(),
-        227,
+        268,
         "recorded TS step cardinality"
     );
     for scenario in scenarios {
@@ -553,4 +574,143 @@ fn interaction_concurrent_response_timeout_has_one_winner() {
 fn interaction_regenerate_twice_identically() {
     baseline::regenerates_identically("interaction-bus");
     baseline::regenerates_identically("interaction-bus");
+}
+
+#[test]
+fn interaction_reject_cross_thread_response_and_bulk_have_one_winner() {
+    use std::sync::{atomic::AtomicUsize, mpsc};
+    for p in [false, true] {
+        for challenger in ["response", "reject", "close"] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let delivered = Arc::new(AtomicUsize::new(0));
+            let observed = delivered.clone();
+            let coordinator = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
+                on_elicitation_delivered: Some(Arc::new(move |_, _| {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                })),
+                ..Default::default()
+            }));
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (resume_tx, resume_rx) = mpsc::channel();
+            let resume_rx = Arc::new(Mutex::new(resume_rx));
+            let mut registrations = Vec::new();
+            let paused = Arc::new(AtomicBool::new(false));
+            for id in ["first", "last"] {
+                let resolved = events.clone();
+                let rejected = events.clone();
+                let entered_tx = entered_tx.clone();
+                let resume_rx = resume_rx.clone();
+                let paused = paused.clone();
+                let entry = PendingEntry {
+                    request_id: id.into(),
+                    tool_call_id: id.into(),
+                    tool_name: "fixture".into(),
+                    resolve: Arc::new(move |_| resolved.lock().unwrap().push((id, "resolve"))),
+                    reject: Arc::new(move |_| {
+                        rejected.lock().unwrap().push((id, "reject"));
+                        // Response case reproduces Grok exactly: first has been
+                        // rejected and remains in the Map while last is paused.
+                        // Bulk cases pause first so the other thread can also
+                        // try to claim an as-yet unvisited entry.
+                        let pause = if challenger == "response" {
+                            "last"
+                        } else {
+                            "first"
+                        };
+                        if id == pause && !paused.swap(true, Ordering::SeqCst) {
+                            entered_tx.send(()).unwrap();
+                            resume_rx.lock().unwrap().recv().unwrap();
+                        }
+                    }),
+                };
+                registrations.push(
+                    if p {
+                        coordinator
+                            .permission_bus()
+                            .register(&"s".into(), entry, None)
+                    } else {
+                        coordinator
+                            .elicitation_bus()
+                            .register(&"s".into(), entry, None)
+                    }
+                    .unwrap(),
+                );
+            }
+            let rejecting = coordinator.clone();
+            let worker = std::thread::spawn(move || {
+                if p {
+                    rejecting
+                        .permission_bus()
+                        .reject_session(&"s".into(), &"closed".into());
+                } else {
+                    rejecting
+                        .elicitation_bus()
+                        .reject_session(&"s".into(), &"closed".into());
+                }
+            });
+            entered_rx.recv().unwrap();
+            let delivered_response = match challenger {
+                "response" => {
+                    if p {
+                        coordinator.decide_permission(
+                            &"s".into(),
+                            PermissionDecision {
+                                request_id: "first".into(),
+                                decision: "allow".into(),
+                                remember: None,
+                                reason: None,
+                            },
+                            None,
+                        )
+                    } else {
+                        coordinator.respond_elicitation(
+                            &"s".into(),
+                            &"first".into(),
+                            "answer".into(),
+                            None,
+                        )
+                    }
+                }
+                "reject" => {
+                    if p {
+                        coordinator
+                            .permission_bus()
+                            .reject_session(&"s".into(), &"other".into());
+                    } else {
+                        coordinator
+                            .elicitation_bus()
+                            .reject_session(&"s".into(), &"other".into());
+                    }
+                    false
+                }
+                "close" => {
+                    coordinator.close_session(&"s".into(), &"other".into());
+                    false
+                }
+                _ => unreachable!(),
+            };
+            resume_tx.send(()).unwrap();
+            worker.join().unwrap();
+            assert!(!delivered_response, "late response: p={p}, {challenger}");
+            assert_eq!(delivered.load(Ordering::SeqCst), 0);
+            let events = events.lock().unwrap();
+            for id in ["first", "last"] {
+                assert_eq!(
+                    events.iter().filter(|(key, _)| *key == id).count(),
+                    1,
+                    "one settlement for {id}: p={p}, {challenger}, {events:?}"
+                );
+            }
+            assert_eq!(events.len(), 2);
+            assert!(registrations.iter().all(|r| !r.active()));
+            assert!(
+                coordinator
+                    .reconnect_port()
+                    .snapshot(&"s".into())
+                    .is_empty()
+            );
+            assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+            assert_eq!(coordinator.elicitation_bus().pending_count(&"s".into()), 0);
+        }
+    }
 }

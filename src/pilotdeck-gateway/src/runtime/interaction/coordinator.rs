@@ -8,6 +8,8 @@ pub struct InteractionOptions {
     pub reconnect_port: Option<InteractionReconnectPort>,
     pub elicitation_bus: Option<GatewayElicitationBus>,
     pub permission_bus: Option<GatewayPermissionBus>,
+    /// Lifecycle ownership is transferred to this coordinator: dispose clears
+    /// the entire registry, like TS. Do not share it between independent owners.
     pub permission_grants: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub on_elicitation_delivered: Option<DeliveredObserver>,
 }

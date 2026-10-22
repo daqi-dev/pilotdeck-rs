@@ -409,3 +409,12 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅当前支持集合外的 turn/step/inbox 等域事件和恢复投影；模块当前未接线到 gateway 默认路由，不能表述为所有线上用户写入均失败，也不能将存储切片的正常测试外推为完整 session 支持。整项 fork-copy/事务等未来 API 建设不由本条豁免。
 - **机器判据**：`storage::transcript_adapter::tests::unported_domain_entries_fail_closed_before_the_store` 与 `real_ts_scenarios_match_outcomes_calls_and_bytes` 的 Declared gap 分支，要求首次不等明确拒绝而非写入错误数据；未来实现时须改成真实 TS 的完整结果/存储调用相等断言。
 - **批准记录**：无；既有测试的 Declared gap 注释不是批准；**已知未对齐（未批准）**。
+
+## A7.3-INTERACTION-BOUNDARY-001 · pending 输入类型域与线程映射（边界登记，非豁免）
+
+- **类别**：producer 输入适配尚未实现；不是已批准的行为差异。
+- **TS 依据**（cc7c4e6）：`src/interaction/InteractionReplay.ts:9-30` 接纳 unknown，Date 转 ISO、BigInt 转字符串，函数等值按 replay 规则处理；`GatewayPermissionBus.ts:118-150`、`GatewayElicitationBus.ts:127-137` 的同步回调可以重入 live Map。
+- **Rust 范围**：本 PR 的 pending 总线仅接纳 `JsValue`，可表示 undefined、非有限数字、UTF-16 字符串、对象和数组，不能直接表达 Date、BigInt、函数或循环宿主对象。producer 接入前须按 TS 规则转换，不可把不支持值静默丢弃。该适配前置于 A7.3 host/turn 接线验收，本 PR 不宣称已完成。
+- **线程映射**：TS 没有跨线程重叠的 bus 调用。Rust 在共享 mutex 内记录 bulk 结算线程，其他线程不得 consume 或重复 bulk 结算已领取条目；同线程同步回调重入保留 TS 已拒条目可再次取出的结果。这是同步语义的实现约束，不是放宽行为验收。
+- **机器判据**：`runtime::interaction::tests::interaction_real_ts_stepwise_oracle`（46 场景、268 步，含两种 kind 的同步嵌套 reject 与 consume）；`interaction_reject_cross_thread_response_and_bulk_have_one_winner`（channel 固定交错，含 delivered observer）；`tests/fixtures/interaction-bus/README.md` 为复现与类型边界。
+- **批准状态**：无行为豁免授权；类型域外的 producer 适配待后续接线补齐。本记录不允许忽略 Date/BigInt 等适用输入，也不允许把跨线程双结算登记为接受。

@@ -72,6 +72,26 @@ for (const kind of ['permission','question']) {
     answer(kind,'z','s',{binding:b('b',2)}),{op:'disconnect',session:'s',binding:b('b',2)},
     {op:'reconnect',session:'s',next:b('new',0)}]});
 }
+for (const kind of ['permission','question']) {
+  scenarios.push({name:`${kind}-dispose-preserves-other-pending`,steps:[reg(kind,'first'),reg(kind,'last'),
+    {op:'registration_dispose',tag:'first'},answer(kind,'last')]});
+  scenarios.push({name:`${kind}-shared-port-duplicate`,steps:[reg(kind),reg(kind,'r','s',{peer:true}),answer(kind)]});
+  scenarios.push({name:`${kind}-nested-reject-original-map`,steps:[
+    reg(kind,'first','s',{reenterSteps:[{op:'reject',kind,reason:'inner'}]}),reg(kind,'last'),
+    {op:'reject',kind,session:'s',reason:'outer'}]});
+  scenarios.push({name:`${kind}-reject-consume-self`,steps:[
+    reg(kind,'first','s',{reenterSteps:[answer(kind,'first')]}),reg(kind,'last'),
+    {op:'reject',kind,session:'s',reason:'outer'}]});
+}
+scenarios.push({name:'close-clears-last-before-new-pending',steps:[{op:'reconnect',session:'s',next:b()},
+  reg('question'),{op:'close',session:'s',reason:'closed'},
+  reg('question','new'),{op:'reconnect',session:'s',next:b('fresh',0)}]});
+scenarios.push({name:'deny-dispose-detached-entry-still-settles',steps:[
+  reg('permission','first','s',{reenterSteps:[{op:'registration_dispose',tag:'last'}]}),reg('permission','last'),
+  {op:'deny',session:'s',reason:'denied'}]});
+scenarios.push({name:'reject-deny-register-original-map',steps:[
+  reg('permission','first','s',{reenterSteps:[{op:'deny',session:'s',reason:'inner'},reg('permission','new')]}),
+  reg('permission','last'),{op:'reject',kind:'permission',session:'s',reason:'outer'},answer('permission','new')]});
 scenarios.push({name:'permission-deny-session',steps:[reg('permission','z'),reg('permission','a'),reg('permission','other','z'),
   {op:'deny',session:'s',reason:'turn_aborted'}, {op:'deny',session:'s',reason:'again'},answer('permission','z'),
   {op:'bus_dispose',kind:'permission'}]});
@@ -103,7 +123,7 @@ for (const next of [{connectionId:'',generation:0},{connectionId:'x',generation:
     {op:'disconnect',session:'s',binding:next}]});
 }
 scenarios.push({name:'grants-normalization-dedup-close',steps:[
-  ...['',' \ufeff ','Read','Read','Bash( git:* )','bash:git:*','Bash( )','Bash(x\ny)',
+  ...['',' \ufeff ','Read','Read','Bash( git:* )','bash:git:*','Bash( )','Bash(x\ny)','Bash(x\ry)','Bash(x\u2028y)','Bash(x\u2029y)',
     'Read:*.rs',':pattern','x:a:b','\ufeffWrite\u2029','\ud800: \udfff ',
     ...['Edit','NotebookEdit','MultiEdit','Glob','Grep','Bash','Task','TodoWrite','WebFetch','WebSearch']]
     .map(entry=>({op:'grant',session:'s',entry})),{op:'close',session:'s',reason:'close'}]});
@@ -132,13 +152,19 @@ for (const scenario of scenarios) {
   const bus = (kind: string) => kind==='permission'?p:q;
   const register = (step: any) => {
     const {kind,id,session} = step;
+    let reentered = false;
     const callback = (event: string,value: any) => {
       events.push({event,kind,session,id,value,p:p.pendingCount(session),q:q.pendingCount(session),replay:activePort.snapshot(session).length});
       if(step.reenter)register(reg(kind,'reentered',session));
+      if(step.reenterSteps && !reentered) {
+        reentered = true;
+        for (const action of step.reenterSteps) events.push({event:'reentry',result:run(action)});
+      }
     };
     const entry = {requestId:id,toolCallId:step.toolCallId??`tc-${id}`,toolName:step.toolName??'fixture',
       resolve(value: any) {callback('resolve',value);},reject(e: Error) {callback('reject',e.message);}};
-    registrations.set(step.tag??id,bus(kind).register(session,entry,
+    const targetBus = step.peer ? (kind==='permission' ? new permission.GatewayPermissionBus(activePort) : new elicitation.GatewayElicitationBus(activePort)) : bus(kind);
+    registrations.set(step.tag??id,targetBus.register(session,entry,
       step.specialPayload?{payload:{keep:'text',omit:undefined,nan:NaN,inf:Infinity,arr:[undefined,NaN],nested:JSON.parse('{\"__proto__\":{\"hidden\":1},\"visible\":2}')}}:'payload' in step?{payload:step.payload}:{}));
     return {registered:true};
   };
