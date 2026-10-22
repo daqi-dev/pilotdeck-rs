@@ -115,6 +115,16 @@ scenarios.push({name:'reconnect-null-and-missing-previous-binding',steps:[messag
   request('reconnect_interaction',{sessionKey:'s',previousBinding:null},'null-current'),
   request('reconnect_interaction',{sessionKey:'s'},'missing-current'),
   request('reconnect_interaction',{sessionKey:'fresh'},'missing-initial')]});
+// Boundary audit round 6: exercise JS object spread through the real handlers.
+// UTF-16 splitting must preserve surrogate halves, not Unicode scalar values.
+for (const method of ['submit_turn', 'elicitation_respond', 'permission_decide', 'reconnect_interaction']) {
+  for (const client of ['ui', 'sdk']) {
+    for (const [kind, params] of [['string', 'str'], ['array', [1, 2]], ['number', 5], ['boolean', true],
+      ['utf16-string', 'A😀中']] as const) scenarios.push({
+      name:`${method.replaceAll('_', '-')}-${client}-${kind}-params`,
+      steps:[message(hello(client)), request(method, params), {op:'close'}]});
+  }
+}
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 for (const scenario of scenarios) {
   const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];

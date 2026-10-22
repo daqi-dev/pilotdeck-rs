@@ -1,5 +1,6 @@
 use super::binding::BindingOwners;
 use super::*;
+use pilotdeck_protocol::{JsObject, parse_json, stringify_json};
 use std::collections::BTreeMap;
 use tokio::sync::Semaphore;
 
@@ -38,7 +39,7 @@ fn session_values(sessions: &[SessionKey]) -> Vec<Value> {
     sessions.iter().map(|key| key.value().clone()).collect()
 }
 struct Gateway {
-    calls: Mutex<Vec<Value>>,
+    calls: Mutex<Vec<JsValue>>,
     bindings: BindingOwners,
     preserve: bool,
     permission_event: bool,
@@ -68,11 +69,11 @@ impl Gateway {
             submit_gates: Mutex::new(vec![]),
         }
     }
-    fn record(&self, method: &str, params: Value) {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(json!({"method":method,"params":params}));
+    fn record(&self, method: &str, params: JsValue) {
+        let mut call = JsObject::new();
+        call.insert("method".into(), JsValue::from(method));
+        call.insert("params".into(), params);
+        self.calls.lock().unwrap().push(JsValue::Object(call));
     }
 }
 impl ConnectionGateway for Gateway {
@@ -81,7 +82,7 @@ impl ConnectionGateway for Gateway {
             self.calls
                 .lock()
                 .unwrap()
-                .push(json!({"method":"describe_server"}));
+                .push(js(&json!({"method":"describe_server"})));
             if self.hold_describe.load(std::sync::atomic::Ordering::SeqCst) {
                 self.started.add_permits(1);
                 self.release.acquire().await.unwrap().forget();
@@ -89,7 +90,7 @@ impl ConnectionGateway for Gateway {
             Ok(json!({"name":"fixture-server","capabilities":["fixture"]}))
         })
     }
-    fn request(&self, method: String, params: Value) -> Call<'_, Result<Value, RequestError>> {
+    fn request(&self, method: String, params: JsValue) -> Call<'_, Result<Value, RequestError>> {
         Box::pin(async move {
             match method.as_str() {
                 "permission_decide" | "elicitation_respond" => {
@@ -98,17 +99,18 @@ impl ConnectionGateway for Gateway {
                 }
                 "reconnect_interaction" => {
                     self.record(&method, params.clone());
-                    let next = WsBinding::from_json(&params["nextBinding"]).unwrap();
+                    let next =
+                        WsBinding::from_json(&property_json(&params, "nextBinding")).unwrap();
                     // The real TS provider treats a falsy previous as absent;
                     // the connection still forwards explicit null unchanged.
-                    let previous = params
-                        .get("previousBinding")
+                    let previous_json = property_json(&params, "previousBinding");
+                    let previous = Some(&previous_json)
                         .filter(|value| truthy(value))
                         .map(WsBinding::from_json)
                         .transpose()
                         .map_err(RequestError::new)?;
                     Ok(self.bindings.reconnect(
-                        &params["sessionKey"].to_string(),
+                        &property_json(&params, "sessionKey").to_string(),
                         next,
                         previous.as_ref(),
                     ))
@@ -142,7 +144,7 @@ impl ConnectionGateway for Gateway {
     }
     fn submit<'a>(
         &'a self,
-        params: Value,
+        params: JsValue,
         emit: &'a (dyn Fn(Value) + Send + Sync),
     ) -> Call<'a, Result<(), RequestError>> {
         Box::pin(async move {
@@ -151,8 +153,8 @@ impl ConnectionGateway for Gateway {
             // connection cleanup independently, including malformed mutants.
             if self.replay_bindings {
                 self.bindings.reconnect(
-                    &params["sessionKey"].to_string(),
-                    WsBinding::from_json(&params["interactionBinding"]).unwrap(),
+                    &property_json(&params, "sessionKey").to_string(),
+                    WsBinding::from_json(&property_json(&params, "interactionBinding")).unwrap(),
                     None,
                 );
             }
@@ -186,7 +188,7 @@ impl ConnectionGateway for Gateway {
         Box::pin(async move {
             self.record(
                 "disconnect",
-                json!({"sessionKey":session,"binding":binding.to_json()}),
+                js(&json!({"sessionKey":session,"binding":binding.to_json()})),
             );
             if self.fail_disconnect {
                 return Err(RequestError::new("fixture disconnect failed"));
@@ -197,29 +199,87 @@ impl ConnectionGateway for Gateway {
     }
     fn abort_on_close(&self, params: Value) -> Call<'_, Result<(), RequestError>> {
         Box::pin(async move {
-            self.record("abort", params);
+            self.record("abort", js(&params));
             Ok(())
         })
     }
 }
-fn mask(value: Value, ids: &BTreeMap<String, String>) -> Value {
+fn js(value: &Value) -> JsValue {
+    parse_json(&value.to_string()).unwrap()
+}
+// Only the provider's known session/binding fields need serde JSON. Spread
+// index values never cross this conversion and remain lossless UTF-16.
+fn property_json(value: &JsValue, key: &str) -> Value {
+    value
+        .get(key)
+        .and_then(|value| stringify_json(value).unwrap())
+        .map(|text| serde_json::from_str(&text).unwrap())
+        .unwrap_or(Value::Null)
+}
+fn array(value: &JsValue) -> &[JsValue] {
+    let JsValue::Array(items) = value else {
+        panic!("expected array")
+    };
+    items
+}
+// Compare complete JSON values without object key-order sensitivity, matching
+// the pre-existing serde replay. String code units and every array item remain.
+fn normalized(value: &JsValue, ids: &BTreeMap<String, String>) -> JsValue {
     match value {
-        Value::String(s) => ids.get(&s).map(|s| json!(s)).unwrap_or(Value::String(s)),
-        Value::Array(items) => Value::Array(items.into_iter().map(|v| mask(v, ids)).collect()),
-        Value::Object(items) => {
-            Value::Object(items.into_iter().map(|(k, v)| (k, mask(v, ids))).collect())
+        JsValue::String(s) => s
+            .to_utf8()
+            .ok()
+            .and_then(|s| ids.get(&s))
+            .map(|s| JsValue::from(s.as_str()))
+            .unwrap_or_else(|| value.clone()),
+        JsValue::Array(items) => JsValue::Array(items.iter().map(|v| normalized(v, ids)).collect()),
+        JsValue::Object(items) => {
+            let sorted: BTreeMap<_, _> = items
+                .entries()
+                .iter()
+                .map(|(k, v)| (k.clone(), normalized(v, ids)))
+                .collect();
+            let mut object = JsObject::new();
+            for (key, value) in sorted {
+                object.insert(key, value);
+            }
+            JsValue::Object(object)
         }
-        value => value,
+        _ => value.clone(),
     }
 }
-async fn replay() {
-    crate::test_baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 10);
-    assert_eq!(oracle["scenarios"].as_array().unwrap().len(), 35);
+async fn replay(only: Option<&str>) {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    assert_eq!(
+        oracle
+            .get("sourceSha256")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        10
+    );
+    assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 75);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
-    for (index, scenario) in oracle["scenarios"].as_array().unwrap().iter().enumerate() {
+    let mut replayed = 0;
+    for (index, recorded) in array(oracle.get("scenarios").unwrap()).iter().enumerate() {
+        // Control metadata has ordinary strings; observations may contain lone
+        // surrogate code units and must never go through serde_json::Value.
+        let mut control = JsObject::new();
+        for (key, value) in recorded.as_object().unwrap().entries() {
+            if !key.equals_str("results") {
+                control.insert(key.clone(), value.clone());
+            }
+        }
+        let scenario: Value =
+            serde_json::from_str(&stringify_json(&JsValue::Object(control)).unwrap().unwrap())
+                .unwrap();
+        let binding = WsBinding::issue(&sequence);
+        if only.is_some_and(|suffix| !scenario["name"].as_str().unwrap().ends_with(suffix)) {
+            continue;
+        }
+        replayed += 1;
         let text = Arc::new(MemoryText::default());
         let mut gateway = Gateway::new(scenario["preserve"].as_bool().unwrap_or(false));
         gateway.permission_event = scenario["permissionEvent"].as_bool().unwrap_or(false);
@@ -235,7 +295,7 @@ async fn replay() {
             gateway.clone(),
             "fixture-token".into(),
             "test".into(),
-            WsBinding::issue(&sequence),
+            binding,
         );
         ids.insert(
             connection.binding.connection_id.clone(),
@@ -298,20 +358,34 @@ async fn replay() {
                 )
             };
             let mut actual = json!({"frames":*text.frames.lock().unwrap(), "closes":*text.closes.lock().unwrap(),
-                "calls":*gateway.calls.lock().unwrap(), "finalInFlight":*text.final_in_flight.lock().unwrap(),
+                "finalInFlight":*text.final_in_flight.lock().unwrap(),
                 "inFlight":in_flight,"interactions":interactions});
             if gateway.fail_disconnect {
                 actual["closeErrors"] = json!(close_errors);
             }
-            let actual = mask(actual, &ids);
-            assert_eq!(
-                actual, scenario["results"][step_index],
-                "{} step {}",
-                scenario["name"], step_index
+            let mut actual = js(&actual).as_object().unwrap().clone();
+            actual.insert(
+                "calls".into(),
+                JsValue::Array(gateway.calls.lock().unwrap().clone()),
             );
+            let actual = normalized(&JsValue::Object(actual), &ids);
+            let expected = normalized(
+                &array(recorded.get("results").unwrap())[step_index],
+                &BTreeMap::new(),
+            );
+            assert_eq!(actual, expected, "{} step {}", scenario["name"], step_index);
         }
         assert!(submissions.is_empty());
     }
+    assert_eq!(
+        replayed,
+        match only {
+            None => 75,
+            Some("-string-params") => 16,
+            Some("-array-params") => 8,
+            _ => panic!("unknown replay subset"),
+        }
+    );
 }
 #[test]
 #[ignore = "requires PDRS_BASELINE and its installed TypeScript dependencies"]
@@ -320,16 +394,25 @@ fn connection_context_fixtures_regenerate_identically_from_ts() {
 }
 #[tokio::test]
 async fn connection_state_frames_match_ts() {
-    replay().await;
+    replay(None).await;
 }
 #[tokio::test]
 async fn socket_close_matches_a5_trace() {
-    replay().await;
+    replay(None).await;
+}
+#[tokio::test]
+async fn non_object_string_params_match_ts() {
+    replay(Some("-string-params")).await;
+}
+#[tokio::test]
+async fn non_object_array_params_match_ts() {
+    replay(Some("-array-params")).await;
 }
 #[test]
 fn real_ts_binding_provider() {
-    crate::test_baseline::oracle(ORACLE);
-    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let recorded = crate::test_baseline::oracle(ORACLE);
+    let oracle = json!({"bindingSteps":property_json(&recorded,"bindingSteps"),
+                        "bindingResults":property_json(&recorded,"bindingResults")});
     assert_eq!(oracle["bindingSteps"].as_array().unwrap().len(), 27);
     assert_eq!(oracle["bindingResults"].as_array().unwrap().len(), 27);
     let bindings = BindingOwners::default();

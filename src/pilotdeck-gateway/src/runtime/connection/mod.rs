@@ -5,7 +5,7 @@ mod context;
 
 use binding::WsBinding;
 use context::{SessionKey, State, truthy};
-use pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION;
+use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsValue};
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -37,15 +37,16 @@ impl RequestError {
     }
 }
 /// Session lifecycle injection point. The pr2 owner adapter is deliberately not
-/// implemented here. disconnect must select/remove under its owner lock using
-/// the supplied binding. abort receives exactly {sessionKey}, with no runId,
-/// preserving A5's unfenced socket-close behavior (including old sockets).
+/// implemented here. Request/submit params use JsValue so JS string spread can
+/// pass lone UTF-16 surrogate code units without replacement. disconnect must
+/// select/remove under its owner lock using the supplied binding. abort receives
+/// exactly {sessionKey}, with no runId, preserving A5's unfenced socket-close behavior (including old sockets).
 pub trait ConnectionGateway: Send + Sync {
     fn describe_server(&self) -> Call<'_, Result<Value, RequestError>>;
-    fn request(&self, method: String, params: Value) -> Call<'_, Result<Value, RequestError>>;
+    fn request(&self, method: String, params: JsValue) -> Call<'_, Result<Value, RequestError>>;
     fn submit<'a>(
         &'a self,
-        params: Value,
+        params: JsValue,
         emit: &'a (dyn Fn(Value) + Send + Sync),
     ) -> Call<'a, Result<(), RequestError>>;
     fn disconnect(
@@ -178,7 +179,9 @@ impl GatewayConnection {
         });
         Box::pin(async move {
             let result = if is_submit {
-                self.submit(&id, params, cleanup).await.map(|()| None)
+                self.submit(&id, params, &input, cleanup)
+                    .await
+                    .map(|()| None)
             } else {
                 self.gateway
                     .request(method.clone(), params)
@@ -232,7 +235,8 @@ impl GatewayConnection {
     async fn submit(
         &self,
         id: &Value,
-        params: Value,
+        params: JsValue,
+        input: &Value,
         cleanup: Option<SubmitCleanup<'_>>,
     ) -> Result<(), RequestError> {
         let stream = Mutex::new((0u64, None, None));
@@ -244,13 +248,13 @@ impl GatewayConnection {
             if event["type"] == "error" {
                 stream.2 = Some(event.clone());
             }
-            if event["type"] == "permission_request" && truthy(&params["sessionKey"]) {
-                let mut payload = json!({"type":"requested", "sessionKey":params["sessionKey"]});
+            if event["type"] == "permission_request" && truthy(&input["sessionKey"]) {
+                let mut payload = json!({"type":"requested", "sessionKey":input["sessionKey"]});
                 for key in ["projectKey", "requestId"] {
                     if let Some(value) = if key == "requestId" {
                         event.get(key)
                     } else {
-                        params.get(key)
+                        input.get(key)
                     } {
                         payload[key] = value.clone();
                     }

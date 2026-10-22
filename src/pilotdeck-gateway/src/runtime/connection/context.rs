@@ -1,6 +1,11 @@
 use super::binding::WsBinding;
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use serde_json::Value;
 use std::sync::Arc;
+
+fn js_value(value: &Value) -> JsValue {
+    parse_json(&value.to_string()).expect("serde JSON is valid JS JSON")
+}
 
 // JSON scalars use JS SameValueZero; arrays/objects retain request identity.
 // Cloning a key for cleanup/close must preserve that identity.
@@ -52,27 +57,47 @@ impl State {
             self.interactions.push(session.clone());
         }
     }
-    pub fn inject(&mut self, method: &str, mut params: Value, binding: &WsBinding) -> Value {
+    pub fn inject(&mut self, method: &str, params: Value, binding: &WsBinding) -> JsValue {
         if !matches!(
             method,
             "submit_turn" | "elicitation_respond" | "permission_decide" | "reconnect_interaction"
         ) {
-            return params;
-        }
-        if !params.is_object() {
-            params = serde_json::json!({});
+            return js_value(&params);
         }
         let session = SessionKey::new(params["sessionKey"].clone());
+        // JS object spread enumerates UTF-16 code units, including surrogate
+        // halves. Keep those in JsValue all the way to the gateway dispatch.
+        let mut fields = match &params {
+            Value::Object(_) => js_value(&params).as_object().unwrap().clone(),
+            Value::String(text) => {
+                let mut fields = JsObject::new();
+                for (index, unit) in text.encode_utf16().enumerate() {
+                    fields.insert(
+                        index.to_string().into(),
+                        JsValue::String(JsString::from_utf16(vec![unit])),
+                    );
+                }
+                fields
+            }
+            Value::Array(items) => {
+                let mut fields = JsObject::new();
+                for (index, item) in items.iter().enumerate() {
+                    fields.insert(index.to_string().into(), js_value(item));
+                }
+                fields
+            }
+            _ => JsObject::new(),
+        };
         match method {
             "submit_turn" | "elicitation_respond" => {
-                params["interactionBinding"] = binding.to_json();
+                fields.insert("interactionBinding".into(), js_value(&binding.to_json()));
             }
             "permission_decide" => {
                 let sdk_control = self.client_name.as_deref() == Some("sdk")
                     && (session.value().as_str().is_none_or(str::is_empty)
                         || !self.interactions.contains(&session));
                 if !sdk_control {
-                    params["interactionBinding"] = binding.to_json();
+                    fields.insert("interactionBinding".into(), js_value(&binding.to_json()));
                 }
             }
             "reconnect_interaction" => {
@@ -87,11 +112,11 @@ impl State {
                 if let Some(previous) = params.get("previousBinding") {
                     next["previousBinding"] = previous.clone();
                 }
-                params = next;
+                return js_value(&next);
             }
             _ => {}
         }
-        params
+        JsValue::Object(fields)
     }
     pub fn sessions(&self) -> Vec<SessionKey> {
         let mut sessions = self.in_flight.clone();
