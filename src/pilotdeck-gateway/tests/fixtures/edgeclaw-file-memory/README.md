@@ -57,3 +57,8 @@ PDRS_BASELINE=/abs/PilotDeck cargo test -p pilotdeck-gateway \
 `FileMemoryStore` 是文件层；`EdgeClawFileStores` 组合 pr10a 的公开 SQLite API 与
 workspace/global 文件 Store。MemoryRepository 的目录扫描、外部工作区映射、dream
 快照换根和检索等后续拆单不由本夹具声明完成。
+
+修复轮 1：旧回放中的两个越界 id 改为普通缺失 id（`a/missing`、`Project/missing`），
+并由未改动真实 TS 重生成金样两次；所有返回值和磁盘期望不变。越界输入的安全偏离
+集中由 `edgeclaw_entries` 的入口矩阵及 `file_memory` 的直接写入测试验证，期望错误取自
+真实 TS `editEntry(missing)`，避免继续把旧的静默跳过行为当作 Rust 期望。

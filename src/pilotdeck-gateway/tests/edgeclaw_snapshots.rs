@@ -218,9 +218,10 @@ fn disk(root: &Path) -> Value {
     json!(out)
 }
 fn error(e: FileMemoryError) -> Value {
+    let io_code = e.io_code();
     match e {
         FileMemoryError::Io(e) => {
-            json!({"error":match e.raw_os_error(){Some(1)=>"EPERM",Some(2)=>"ENOENT",Some(5)=>"EIO",Some(13)=>"EACCES",Some(17)=>"EEXIST",Some(20)=>"ENOTDIR",Some(21)=>"EISDIR",Some(28)=>"ENOSPC",Some(39|66)=>"ENOTEMPTY",_=>panic!("unmapped IO: {e}")}})
+            json!({"error":io_code.unwrap_or_else(|| panic!("unclassified IO {e:?}"))})
         }
         FileMemoryError::Storage(StorageError::Sqlite(_)) => json!({"error":"ERR_SQLITE_ERROR"}),
         FileMemoryError::Storage(StorageError::Closed) => json!({"error":"ERR_INVALID_STATE"}),

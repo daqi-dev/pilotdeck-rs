@@ -702,7 +702,14 @@ pub(super) fn merge(primary: &JsObject, incoming: &JsObject) -> JsObject {
     c
 }
 pub(super) fn read(path: &Path) -> Result<String> {
-    Ok(String::from_utf8_lossy(&fs::read(path)?).into_owned())
+    Ok(String::from_utf8_lossy(&fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::IsADirectory {
+            crate::node_io::descriptor_error(e, "read")
+        } else {
+            crate::node_io::path_error(e, "open", path)
+        }
+    })?)
+    .into_owned())
 }
 pub(super) fn preview(body: &str) -> JsValue {
     static HEADING: OnceLock<regex::Regex> = OnceLock::new();
@@ -804,4 +811,12 @@ pub(crate) fn sort_manifest_entries(
         }
     });
     Ok(())
+}
+
+pub(super) fn io_mkdir(path: impl AsRef<Path>) -> std::io::Result<()> {
+    crate::node_io::mkdir_recursive(path.as_ref()).map_err(|e| e.into_io())
+}
+pub(super) fn io_write(path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    fs::write(path, content).map_err(|e| crate::node_io::path_error(e, "open", path))
 }

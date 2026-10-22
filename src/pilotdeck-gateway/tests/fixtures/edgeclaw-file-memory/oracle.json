@@ -422,7 +422,7 @@
               "missing",
               "Project/missing.md",
               "./missing",
-              "a/../../missing"
+              "a/missing"
             ]
           }
         },
@@ -4435,7 +4435,7 @@
           "method": "deleteEntries",
           "input": {
             "relativePaths": [
-              "Project/../missing",
+              "Project/missing",
               "Project/crlf-body.md"
             ]
           }

@@ -23,7 +23,7 @@ pub(super) fn rm_sync(path: &Path) -> io::Result<()> {
     let result = if stats.is_some_and(|s| s.is_dir()) {
         rmdir(path, None)
     } else {
-        fs::remove_file(path)
+        fs::remove_file(path).map_err(|e| crate::node_io::path_error(e, "unlink", path))
     };
     match result {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -40,7 +40,7 @@ pub(super) fn rm_sync(path: &Path) -> io::Result<()> {
 
 fn is_eperm(error: &io::Error) -> bool {
     #[cfg(unix)]
-    return error.raw_os_error() == Some(libc::EPERM);
+    return crate::node_io::lookup(error).is_some_and(|(code, _)| code == "EPERM");
     #[cfg(windows)]
     return error.raw_os_error() == Some(5); // libuv maps ERROR_ACCESS_DENIED to EPERM.
     #[cfg(not(any(unix, windows)))]
@@ -48,7 +48,8 @@ fn is_eperm(error: &io::Error) -> bool {
 }
 
 fn rmdir(path: &Path, original: Option<io::Error>) -> io::Result<()> {
-    let error = match fs::remove_dir(path) {
+    let error = match fs::remove_dir(path).map_err(|e| crate::node_io::path_error(e, "rmdir", path))
+    {
         Ok(()) => return Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => e,
@@ -63,14 +64,16 @@ fn rmdir(path: &Path, original: Option<io::Error>) -> io::Result<()> {
     {
         // Node's synchronous readdir uses libuv scandir (strcmp order), not
         // the OS's native readdir order or locale collation. Keep raw names.
-        let mut children = fs::read_dir(path)?
+        let mut children = fs::read_dir(path)
+            .map_err(|e| crate::node_io::path_error(e, "scandir", path))?
             .map(|entry| entry.map(|e| e.file_name()))
             .collect::<io::Result<Vec<_>>>()?;
         children.sort();
         for child in children {
             rm_sync(&path.join(child))?;
         }
-        return match fs::remove_dir(path) {
+        return match fs::remove_dir(path).map_err(|e| crate::node_io::path_error(e, "rmdir", path))
+        {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
         };
@@ -94,7 +97,7 @@ fn fix_win_eperm(path: &Path, original: io::Error) -> io::Result<()> {
     }
     match fs::metadata(path) {
         Ok(s) if s.is_dir() => rmdir(path, Some(original)),
-        Ok(_) => fs::remove_file(path),
+        Ok(_) => fs::remove_file(path).map_err(|e| crate::node_io::path_error(e, "unlink", path)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(original),
     }

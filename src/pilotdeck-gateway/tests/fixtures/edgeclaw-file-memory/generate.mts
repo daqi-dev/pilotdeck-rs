@@ -28,7 +28,7 @@ const scenarios: any[] = [];
 function run(name:string,options:any,operations:any[]) { const root = join(scratch,name); const result = replay(FileMemoryStore,root,options,operations); scenarios.push({name,options,operations,...result}); }
 run('single',{},[
   op('repairManifests'),op('repairManifests'),op('getOverview'),op('getUserSummary'),op('getProjectMeta'),
-  op('getMemoryRecordsByIds',{ids:['missing','Project/missing.md','./missing','a/../../missing']}),
+  op('getMemoryRecordsByIds',{ids:['missing','Project/missing.md','./missing','a/missing']}),
   op('upsertCandidate',project,'project'),op('upsertCandidate',feedback,'feedback'),
   op('upsertUserProfile',candidate('user','用户😀',{profile:'工程师，住北京。喜欢Rust!x',relationships:['团队负责人','工程师']}),'user'),
   op('getUserSummary'),op('upsertCandidate',{...project,name:'Updated Name',summary:'new content'},'updated'),
@@ -97,7 +97,7 @@ run('edge-cases',{manageProjectMeta:false},[
   op('writeRaw',{relativePath:'Project/crlf-body.md',content:raw('project','project','Body','one\r\ntwo\r\nthree')}),
   op('getMemoryRecordsByIds',{ids:['Project/crlf-body.md'],maxLines:2}),
   op('listMemoryEntries',{limit:0,offset:-1}),op('listMemoryEntries',{limit:1.8,offset:0.5}),op('getMemoryRecordsByIds',{ids:['Project/crlf-body.md'],maxLines:0.5}),op('countMemoryEntries',{limit:1,offset:1}),
-  op('deleteEntries',{relativePaths:['Project/../missing','Project/crlf-body.md']}),
+  op('deleteEntries',{relativePaths:['Project/missing','Project/crlf-body.md']}),
 ]);
 run('number-render',{manageProjectMeta:false},[
   op('writeRaw',{relativePath:'Project/number.md',content:raw('project','project','Number','body','dream_attempts: -0tail\n')}),

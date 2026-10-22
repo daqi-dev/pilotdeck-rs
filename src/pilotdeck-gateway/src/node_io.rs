@@ -128,7 +128,7 @@ pub(crate) fn diagnostic(
         return diagnostic(&mkdir.source, "mkdir", Some(&mkdir.path.to_string_lossy()));
     }
     let (code, description) = lookup(error)?;
-    let (syscall, path) = stage(error).map_or((syscall, path), |e| (e.syscall, None));
+    let (syscall, path) = stage(error).map_or((syscall, path), |e| (e.syscall, e.path.as_deref()));
     let suffix = path
         .filter(|p| !p.is_empty())
         .map_or(String::new(), |p| format!(" '{p}'"));
@@ -147,6 +147,7 @@ pub(crate) fn read_file(error: &io::Error, path: &str) -> Option<(&'static str, 
 #[derive(Debug)]
 struct Stage {
     source: io::Error,
+    path: Option<String>,
     syscall: &'static str,
 }
 impl std::fmt::Display for Stage {
@@ -158,8 +159,33 @@ impl std::error::Error for Stage {}
 fn stage(error: &io::Error) -> Option<&Stage> {
     error.get_ref()?.downcast_ref()
 }
+/// Preserve the actual fs boundary, including failures inside recursive removal.
+pub(crate) fn path_error(
+    source: io::Error,
+    syscall: &'static str,
+    path: &std::path::Path,
+) -> io::Error {
+    if stage(&source).is_some() {
+        return source;
+    }
+    io::Error::new(
+        source.kind(),
+        Stage {
+            source,
+            syscall,
+            path: Some(path.to_string_lossy().into_owned()),
+        },
+    )
+}
 pub(crate) fn descriptor_error(source: io::Error, syscall: &'static str) -> io::Error {
-    io::Error::new(source.kind(), Stage { source, syscall })
+    io::Error::new(
+        source.kind(),
+        Stage {
+            source,
+            syscall,
+            path: None,
+        },
+    )
 }
 
 #[cfg(test)]
