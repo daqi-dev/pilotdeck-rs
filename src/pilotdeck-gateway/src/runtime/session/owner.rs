@@ -325,6 +325,11 @@ impl SessionOwner {
             .map(|record| record.handle.clone())
     }
 
+    pub fn active_turn_run_id(&self, key: &JsString) -> Option<JsString> {
+        let _state = self.0.state.lock().unwrap();
+        self.0.turns.admission.active_turn_run_id(key)
+    }
+
     pub fn has_active_turn(&self, key: &JsString) -> bool {
         let _state = self.0.state.lock().unwrap();
         self.0.turns.admission.has_active_turn(key)
@@ -412,14 +417,23 @@ impl SessionOwner {
     }
 
     /// The guard owns only admission. Actual seed/compact consumers are A7.5/6.
-    pub fn begin_maintenance(&self, key: &JsString) -> Option<MaintenanceReservation> {
+    pub fn begin_maintenance(
+        &self,
+        key: &JsString,
+    ) -> Result<Option<MaintenanceReservation>, RuntimeError> {
         let state = self.0.state.lock().unwrap();
-        (!state.stopped && self.0.turns.admission.begin_maintenance(key)).then(|| {
-            MaintenanceReservation {
+        if state.stopped {
+            return Err(RuntimeError::new("Session router is shut down."));
+        }
+        Ok(self
+            .0
+            .turns
+            .admission
+            .begin_maintenance(key)
+            .then(|| MaintenanceReservation {
                 owner: self.clone(),
                 key: key.clone(),
-            }
-        })
+            }))
     }
 
     /// This is the pr1 live abort sink: the requested run is revalidated while

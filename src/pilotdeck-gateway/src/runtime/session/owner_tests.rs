@@ -509,10 +509,10 @@ async fn maintenance_blocks_turn_and_idle_matches_ts() {
     let probe = Probe::default();
     let owner = probe.owner();
     let handle = owner.get_or_create(context("a")).await.unwrap();
-    let reservation = owner.begin_maintenance(&"a".into()).unwrap();
+    let reservation = owner.begin_maintenance(&"a".into()).unwrap().unwrap();
     let activity = handle.begin_maintenance().unwrap();
     probe.event("maintenance:1");
-    assert!(owner.begin_maintenance(&"a".into()).is_none());
+    assert!(owner.begin_maintenance(&"a".into()).unwrap().is_none());
     probe.time(101);
     let during = json!({"same": owner.begin_turn(&"a".into(), &"blocked".into()).is_some(),
         "other": owner.begin_turn(&"b".into(), &"run".into()).is_some(), "cached": sweep_count(&owner)});
@@ -1304,5 +1304,85 @@ async fn empty_project_pause_and_close_matches_ts() {
     events.sort();
     expected.sort();
     assert_eq!(events, expected);
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn maintenance_shutdown_is_distinct_from_busy() {
+    let owner = Probe::default().owner();
+    let reservation = owner.begin_maintenance(&"a".into()).unwrap().unwrap();
+    assert!(owner.begin_maintenance(&"a".into()).unwrap().is_none());
+    owner.shutdown().await.unwrap();
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/replacement/oracle.json"
+    ));
+    let JsValue::Array(maintenance) = oracle.get("maintenance").unwrap() else {
+        panic!("maintenance golden array");
+    };
+    assert_eq!(
+        owner.begin_maintenance(&"a".into()).err().unwrap().message,
+        maintenance[1]
+            .get("message")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+    );
+    drop(reservation);
+}
+
+#[tokio::test]
+async fn replacement_adapter_drains_real_owner_before_storage() {
+    use crate::runtime::replacement::{ReplacementCoordinator, ReplacementStorage, SubmitClaim};
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let handle = owner.get_or_create(context("a")).await.unwrap();
+    let run = JsString::from("old");
+    let reservation = owner.begin_turn(&"a".into(), &run).unwrap();
+    let completion = owner.begin_completion(&"a".into(), &run);
+    let storage_probe = probe.clone();
+    let coordinator = ReplacementCoordinator::new(
+        ReplacementStorage {
+            replace_last_turn: Some(Arc::new(move |_| {
+                storage_probe.event("storage_replace");
+                Box::pin(async { Ok(parse_json(r#"{"transactionId":"tx-a"}"#).unwrap()) })
+            })),
+            finalize_last_turn_replacement: Some(Arc::new(|_| {
+                Box::pin(async { Ok(JsValue::Null) })
+            })),
+            ..Default::default()
+        },
+        Arc::new(owner.clone()),
+        60_000,
+        None,
+    );
+    let replacing = coordinator.replace_last_turn(
+        parse_json(r#"{"sessionKey":"a","expectedTurnId":"old","replacementTurnId":"new"}"#)
+            .unwrap(),
+    );
+    until(|| probe.seen("abort:1:message_replaced")).await;
+    assert!(
+        !probe.seen("storage_replace"),
+        "storage must wait for the completion fence"
+    );
+    owner.complete_turn(&"a".into(), &completion);
+    replacing.await.unwrap();
+    let events = probe.events();
+    assert!(
+        events.iter().position(|e| e == "dispose:1").unwrap()
+            < events.iter().position(|e| e == "storage_replace").unwrap()
+    );
+    assert_eq!(handle.state(), HandleState::Disposed);
+    assert!(owner.current_handle(&"a".into()).is_none());
+    assert_eq!(
+        coordinator.claim_for_submit(&"a".into(), &"new".into()),
+        SubmitClaim::Claimed
+    );
+    coordinator
+        .commit_accepted_input(&"a".into(), &"new".into())
+        .await;
+    coordinator.dispose();
+    owner.end_turn(&"a".into(), Some(&run), Some(&reservation));
     owner.shutdown().await.unwrap();
 }
