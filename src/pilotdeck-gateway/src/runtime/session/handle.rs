@@ -105,24 +105,18 @@ impl LiveSessionHandle {
     }
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
-        let call_session_abort;
         {
             let mut progress = self.0.progress.lock().unwrap();
-            if progress.state == HandleState::Disposed {
+            if progress.state != HandleState::Active {
+                // In Draining the drain task owns session teardown; a concurrent
+                // abort must not race the watcher loop or the lease release.
+                // In Disposed abort is a no-op.
                 return Ok(());
             }
-            // In Draining the drain task owns the session teardown; a concurrent
-            // abort must not race the watcher loop or the lease release.  Record
-            // the cancellation reason but skip the session.abort() call.
-            call_session_abort = progress.state == HandleState::Active;
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
         self.0.changed.send_modify(|version| *version += 1);
-        if call_session_abort {
-            self.0.session.abort(reason)
-        } else {
-            Ok(())
-        }
+        self.0.session.abort(reason)
     }
 
     /// Cross the cutoff synchronously; the spawned drain survives cancellation
@@ -137,10 +131,19 @@ impl LiveSessionHandle {
         if progress.maintenance {
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
+        // Call session.abort() while the lock is held so it happens before the
+        // drain task can start executing (no TOCTOU between state check and
+        // abort call). session.abort() is synchronous and must not re-acquire
+        // the progress lock.
+        let abort_error = if active {
+            progress.cancelled.get_or_insert_with(|| reason.clone());
+            self.0.session.abort(&reason).err()
+        } else {
+            None
+        };
         let (result, completion) = watch::channel(None);
         progress.disposal = Some(completion.clone());
         drop(progress);
-        let abort_error = active.then(|| self.abort(&reason).err()).flatten();
         let handle = self.clone();
         tokio::spawn(async move {
             // Use a guard to guarantee result.send_replace is called even if
@@ -280,31 +283,30 @@ mod tests {
         }
     }
 
-    /// abort() during Draining must set cancellation_reason without calling
-    /// session.abort() again (concurrent drain owns the session teardown).
+    /// dispose() with an active turn calls session.abort() exactly once (inside
+    /// the progress lock, before the drain task starts). A concurrent external
+    /// abort after dispose() has set state=Draining must not call session.abort()
+    /// a second time.
     #[tokio::test]
     async fn abort_during_draining_sets_reason_without_session_abort() {
         let session = MemSession::new();
         let handle = LiveSessionHandle::new(session.clone(), None);
-        // Start a turn so dispose() path marks activity=true
+        // Start a turn so dispose() path marks active=true
         let _activity = handle.begin_activity().unwrap();
-        // dispose() sets state=Draining; because active=true it calls abort()
-        // internally, but our new guard prevents session.abort() since
-        // state is already Draining when abort() is reached.
+        // dispose() calls session.abort() once (inside lock, active=true)
         let dispose_fut = handle.dispose("dispose-reason".into());
         assert_eq!(handle.state(), HandleState::Draining);
-        // A concurrent external abort while draining — must NOT call session.abort()
+        // Concurrent external abort while Draining — must NOT call session.abort() again
         handle.abort(&"concurrent-abort".into()).unwrap();
-        // release drain by dropping activity
         drop(_activity);
         dispose_fut.await.unwrap();
         assert_eq!(handle.state(), HandleState::Disposed);
-        // session.abort() must never be called because state was Draining for
-        // both the dispose-internal call and the external concurrent call
+        // session.abort() was called exactly once by dispose(), never by the external abort
         let aborts = session.aborted.lock().unwrap().clone();
-        assert!(
-            aborts.is_empty(),
-            "session.abort() must not be called while in Draining state: {aborts:?}"
+        assert_eq!(
+            aborts,
+            vec!["dispose-reason"],
+            "session.abort() must be called exactly once by dispose(): {aborts:?}"
         );
     }
 
