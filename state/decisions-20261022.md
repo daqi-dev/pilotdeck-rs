@@ -75,3 +75,32 @@
   - 其余可信调用点（bash 权限、router 分类、compaction 提示词、metadata）里的 pattern 都是普通正则，Rust regex 能准确表达，迁移收益很小。
   - **结论**：整个 regress 接入暂停，等上游发布带 UTF-16 预算的稳定版后，从 outputSchema 接起。codex 用真实 TS 生成的 108 条 JS 正则金样与生成器已保存在分支 `codex/regress-pr1-output-schema` @2c2e4f87（WIP，未开 PR）。依赖暂不引入。
   - **原则**：引入回溯引擎处理不可信输入之前，必须先有可终止的步数预算；仅靠长度上限防不住短串回溯爆炸。
+
+## stats JSONL 跨进程丢账目竞态：保持与 TS 一致，还是偏离修复（暂不执行，待人定）
+- 卡在哪：#476 gate7 P0。锁失败时降级为无锁 append，与 compaction 的 rename 窗口相互覆盖，可丢失刚写入的账目行。TS TokenStatsCollector.ts:258-259 行为相同。
+- 现状：按 #216 先例降为 P2c（https://github.com/daqi-dev/pilotdeck-rs/issues/496），#476 照常合入。
+- 选项：A 保持与 TS 一致（对拍不受影响，丢数据风险与 TS 相同）；B 偏离 TS 修掉（降级 append 写旁路文件，compaction 时合并；或 compaction 写回前核对文件长度，遇到新追加就重做），需在差异账本登记一条「向安全」差异。
+- 建议：B，仅限丢数据窗口，不改其他行为。
+- **人批（2026-10-22，用户本人在协调者会话）**：选 B——Rust 偏离 TS 修掉。降级追加先写旁路文件，压缩时合并回来，只修这个丢数据窗口，其他行为不变；在差异账本登记一条「向安全偏离」的差异。实现单为 #496，待 #476 合入后派 codex。
+
+## A7.2-pr1：重放缓存终态的回收时机（暂不执行，待人定）
+- **卡在哪**：PR #487 第 4、5 两轮，codex 与 Grok 都判 P1。TS `GatewayTurnReplayStore.ts:81-90` 用 `setTimeout` 回收终态，回收只会发生在当前同步段和它的 Promise 微任务都结束之后。codex 用真实 Node timer 实测：保留 0 ms、5 ms，以及默认 30000 ms 的情况下，只要到期时间落在一个长同步段里，同步段内和随后的微任务中都还能看到终态。Rust 的 `ThreadTimer` 在独立线程上到期就删，不区分保留时长，可能在调用方的同步段里删掉。修复轮 4 把它登记为「不可避免」的待批差异，codex 指出：归类依据不足；范围写错了（不只保留 0 时，所有保留时长都有这个问题）；引用的 TS 探针用的是假 timer，证明不了真实边界。
+- **谁受影响**：A7.2 的重放与 coordinator。生产上 gateway 是 tokio 异步服务，没有 JS 那种「同步段」。实际风险是：同一个逻辑步骤里先 `retainTerminal`、再读快照，中间可能被计时器线程删掉；对客户端，就是重连重放时一个本该还在的终态，偶发地已经不在了。
+- **能否撤回**：能。
+- **选项**：
+  - **A**：接受为已知差异，范围改为「所有保留时长：到期回收不等调用方当前步骤结束」，补真实 timer 证据后登记，人批。
+  - **B（建议）**：对齐 TS。计时器到期只把回收任务排进队列，由宿主在当前这一步处理完之后执行（类似 JS 的下一个宏任务）。库层已经留了 `with_timer` 注入口；生产接线要等 A7.2-pr5（生产 ConnectionGateway）才有宿主调度循环，所以拆成两步：本 PR 先把差异条目改成「已知未对齐，前置于 A7.2-pr5」，范围和证据都改准确；pr5 实现宿主串行计时器，并用真实 TS 边界金样对拍，到时再标「差异消除」。
+  - **C**：现在就在 pr1 里实现一个 tokio 版的串行计时器。但 pr1 里没有宿主循环，「当前这一步」的边界无从界定，做出来也只能在测试里验证。
+- **建议**：B。
+- **人批（2026-10-22，用户本人在协调者会话）**：按建议 B 执行。本 PR 以「已知未对齐（人批）」合入 A7.2-REPLAY-RETENTION-TIMER-001，前置于 A7.2-pr5；pr5 接入生产 ConnectionGateway 时实现宿主串行计时器、用真实 TS 边界金样对拍，届时追加「差异消除」。
+
+## CI 上的 grep 对拍需要 rg（暂不执行，待人定）
+- **卡在哪**：`tests/grep_tool.rs` 的 `grep_outputs_match_real_ts` 要调真实 rg，和 TS 一样走 `@vscode/ripgrep` 的定位规则。GitHub ubuntu runner 上没有 rg，CI 里也没有基线的 node_modules。10-22 改成「CI=true 下缺 rg 即失败」后，第一次暴露出来：这条对拍在 CI 上一直静默跳过，却显示通过。现已改成显式 `#[ignore]`，本机复核时用 `--include-ignored` 跑。
+- **谁受影响**：grep 的 CI 回归保护；本机核验不受影响。
+- **能否撤回**：能。
+- **选项**：
+  - A：CI 用 `cargo install ripgrep --locked`（固定版本）从源码编译，再缓存 `~/.cargo/bin`。不下载预编译二进制，首次多花约 1–2 分钟。
+  - B：CI 用 `apt-get install ripgrep`。快，但装的是发行版预编译包，碰「不下载预编译二进制」这条红线（红线原本针对本机，用在 CI 上是否适用，要人定）。
+  - C：维持 ignore，只在本机复核。CI 没有 grep 对拍的回归保护。
+- **建议**：A。
+- **另一个阻碍**：改 `.github/workflows/ci.yml` 需要带 `workflow` 权限的令牌，协调者现在的令牌没有。要么由人执行 `gh auth refresh -s workflow` 授权，要么由人亲自提交这处 ci.yml 改动。
