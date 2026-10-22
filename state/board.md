@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-23 00:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-23 02:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -10,13 +10,44 @@ updated: 2026-10-23 00:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
-- A7.2-pr1 | impl | doing | PR #487 replay；修复轮 7（GLM）；终态回收差异人批 B，前置于 A7.2-pr5
-- A7.2-pr2 | impl | doing | PR #488 projector；修复轮 5（GLM）
-- A6.6-pr10b | impl | doing | EdgeClaw FileMemoryStore；wt-a66-pr10b-file-memory；codex
-- A6.6-pr10d | impl | doing | EdgeClaw L0 会话读取；wt-a66-pr10d-l0-sessions；DeepSeek
-- #502 | impl | doing | 全仓自述差异集中补登；wt-issue-502-diff-backfill；codex
 - #454 | coord | human | web_fetch 宽页节点内存：候选差异 A6.5-WEBFETCH-NODES-001（向严），待人定
+- #508 | coord | human | MCP 工具结果自动读图可越出 cwd、无上限（TS 相同），建议 A 向安全偏离；卡 _tmp/20261023-loop/card-mcp-image-read.md
+- accepted-diffs-502 | coord | human | #505 合入的 32 条「已知未对齐（未批准）」待人逐条批
+- A7.2-pr1 | impl | doing | PR #487 压成单提交并 rebase 到 main，沙箱外 lib 940/0，merge-when-green 等 CI
+- A7.3-pr1 | impl | doing | PR #510 修复轮 1（34d132d3），r2 GLM+Grok、gate2 在跑
+- A6.6-pr10c | impl | doing | PR #512 EdgeClaw close/accessors，r1 GLM+Grok、gate1 在跑
+- D2-pr2 | impl | doing | PR #513 chat search，r1 GLM+Grok、gate1 在跑
+- A7.5-pr1 | impl | doing | PR #514 替换协调器 + #416，r1 GLM+Grok、gate1 排队
+- A7.4-pr1 | impl | doing | user_dialog Journal + Channel；wt-a74-pr1-dialog-channel；DeepSeek
+- p2-sweep-11 | impl | doing | #389 #308 #271 #235 #453 测试假红与负控进程组；wt-p2-sweep-11；codex
+- #485 | impl | doing | abort 契约夹具 P2 三件；wt-p2-485-abort-contract；GLM
+- A6.6-pr10e | impl | blocked | 等 #512（pr10c）合入
+- A7.2-pr3 | impl | blocked | 等 #487（pr1）合入
+- #495 | impl | ready | memory 附件 / prompt cache 评审遗留 P2（前置 A6.9）
+- #484 | impl | ready | 插件 loader 评审遗留 P2（前置 A6.9）
 <!-- READY:END -->
+
+> ## 2026-10-23 00:25 → 02:40 · /loop 协调轮与两小时交接（00:05 交接后的记录原在 _tmp，本段补进库）
+> **00:25**：#503（交接）在合并队列。#488 修复轮 5（9e42dd1b，GLM，lib 868/0），r6 codex+Grok 与 gate6 在跑。A6.6-pr10d → PR #504（DeepSeek，edgeclaw_storage 15/0、lib 857/0），GLM+Grok r1 与 gate1 在跑。
+> **00:40**：#502 → PR #505（codex）：全仓自述差异总表，32 条进账本（未批准，需人逐条批）、5 处对齐；沙箱外 lib 857/0、check_frozen PASS；GLM+Grok r1 与 gate1 在跑。#488 codex r6 0/0，等 Grok r6 与 gate6。#504 Grok r1 0/0，等 GLM r1 与 gate1。
+> **00:55**：#503（交接）合入；#488、#504 在合并队列。**负载异常**：两棵树全量 lib 同时出现 5 个 host 计时失败，查到机器负载 65：13 个孤儿假 rg 脚本（#475 与 p2-sweep-9 压测时测试进程被强杀后留下的忙循环）加一个 10-21 留下、跑了 36 小时的 ReDoS 探针 `node probe.mjs`。已按 pid 全部结束，host:: 单跑 86/0。开 #507（假 rg 脚本要能自行退出、压测按进程组回收）。**之后每轮现场核对加一项：父进程为 1 的 pdrs 测试进程。**
+> #487 修复轮 7（6d3a8987，GLM）：引用循环从设计上消除、with_run_id 按 TS 展开；r8 codex+Grok 与 gate8 在跑。A6.6-pr10b → PR #506（codex，sha1 已在锁文件里、只加直接依赖边，按自决处理，卡 `_tmp/20261023-loop/card-sha1.md`），r1 GLM+Grok 与 gate1 在跑。
+> **01:05**：#504（pr10d）合入，树回收。又清出 4 个 rg-drop 孤儿和它们的子进程（上一轮按名字筛漏掉了），现已无残留，负载回落到 16。#507 派 DeepSeek（新树 wt-507）。#505 GLM r1 0/0，等 Grok。
+> **01:15**：#488（A7.2-pr2）合入，树回收；孤儿清零，负载回落到 4。#487 codex r8 P1×2：①最后一个注册 drop 后 emit 仍接受事件（真 bug，修）；②宿主自建的 Arc 循环原理上消除不了，改为在文档写明所有权约定、补显式注销方法、删掉「从设计上消除」的过度承诺 → 修复轮 8 派 GLM。
+> **01:20**：只读盘点（Explore 子代理）后派 codex 三单：A7.3-pr1（权限/提问 pending 总线，新建 runtime/interaction/）、D2-pr2（CLI chat search，只改 pilotdeck-cli）、p2-sweep-10（#415 #394 #244 #216）。A7.5-pr1（+#416）留作下一批。READY 里 A7.2-pr2、A6.6-pr10d 已合入，下个 board PR 移出。
+> **01:25**：#505 在合并队列。#506 gate1 P1×2（memory 与 global 同根时自死锁；README 宣称的锁负控不存在）+ GLM r1 P2（editProjectMeta 未按 TS 三键白名单）→ 修复轮 1 派 codex。另注意：GLM r1 的问题表里只有 P2/P3，VERDICT 却写 P1=1，前后矛盾。
+> **01:45**：#505 合入（#502 关闭）。p2-sweep-10 → PR #509（Closes #244 #415 #216，Refs #394）：沙箱外 lib 875/0、mcp_runtime 17/0、真实 TS 重生成 1/0。**#394 安全追加问题核实属实**（工具结果自动读图可经 ../ 或符号链接读到 cwd 外，且无上限，TS 相同）→ 另开 #508，决策卡 `_tmp/20261023-loop/card-mcp-image-read.md` 请人定（建议 A：限制在 cwd 内、只读普通文件、设上限，向安全偏离 TS）。#506 修复轮 1（死锁、负控、三键白名单）沙箱外 lib 855/0，r2 与 gate2 在跑。D2-pr2 卡在「只能改 CLI，又必须复用存储读取」→ 自决：允许 gateway 最小抽出接口（只改可见性或加薄包装），修复轮 1 派 codex。**脚本日期前缀**：verify.sh、finalize-reviewed.sh 写死了 `_tmp/20261022-`，跨天后证据目录找不到，一次核验输出因此丢失；改为按 `_tmp/*-<tag>` 取最新。
+> **01:55**：A7.3-pr1 → PR #510（codex，新建 runtime/interaction/，TS 金样 35 场景 / 227 步，负控 27 条），沙箱外 lib 872/0；GLM+Grok r1 与 gate1 在跑，finalize-reviewed 收尾。
+> **02:10**：#507 → PR #511（DeepSeek；沙箱外 lib 858/0，跑后无残留）。D2-pr2：沙箱外 gateway 1234/0、CLI 55/0，但 D0 负控把用例写死成 help-long，chat-search 用例集下崩溃 → 修复轮 2 派 codex（负控从当前用例集选用例，默认集仍选 help-long，不适用时显式 NOT_APPLICABLE）。#492/#506/#509/#510 评审与闸门在跑。
+> **02:20**：#506（EdgeClaw pr10b）合入，树回收。#509 在合并队列。#487 修复轮 8（96e2df43，GLM，lib 901/0），r9 codex+Grok 与 gate9 在跑。#510 Grok r1 P1（关闭会话与跨线程应答交错时，同一 pending 被先拒后收、结算 3 次，已用临时测试复现）→ 等 GLM r1 与 gate1 后派 codex 修复轮 1。新派 codex：EdgeClaw pr10c（close/accessors 等，前置 pr10b 刚合入）、A7.5-pr1 替换协调器（并清 #416）。
+> **02:15–02:40**：#511（#507 孤儿假 rg）合入，wt-507 回收。三项沙箱外核验全过并提交：
+> - #510 修复轮 1：lib 873/0。rebase 到 main 时账本冲突，取 main 全文后接上本单的 A7.3-INTERACTION-BOUNDARY-001（边界登记，非豁免），FROZEN 重登记，check_frozen PASS。r2 任务书要求评审逐条判定作者「实测反证」的两项 gate P1。
+> - pr10c → PR #512（codex）：补跑 `--include-ignored` 后 edgeclaw_accessors 3/0、storage 18/0、file_memory 9/0、memory 10/0。**verify.sh 原先不带 `--include-ignored`，真实 TS 用例会被跳过，已修。**
+> - D2-pr2 → PR #513（codex）：D0 沙箱外 PASS（自比、5 项负控、Rust 比较），宿主负控 PASS；rebase 前 gateway 1234/0，rebase 后 CLI 56/0。
+> **#487 卡住的原因**：PR 与 main 冲突（pr2 已合入，两边都新建了 turn/mod.rs），CI 不跑，merge-when-green 空等了 28 分钟。处理：按 pid 停掉等待进程；9 个提交压成一个后 rebase，逐块合并 mod.rs、账本、FROZEN；本单 src 补丁与评审版逐行一致；lib 940/0；PR 留言说明后重新交 merge-when-green。
+> **A7.5-pr1** → PR #514（codex，Closes #416）：28 场景 TS 金样、26/26 负控；rebase 后 replacement 30/0、session 56/0（含 ignored）。#394 关闭（p2-sweep-10 已处理，安全问题在 #508）。
+> **新派**：A7.4-pr1（DeepSeek）、p2-sweep-11（codex，P2-跟进开着四十多条，按规则集中清，先清测试假红这一组）、#485（GLM）。
+> **交接（持有人：协调者本会话）**：worktree 11/12；磁盘 82.5 GiB / 160；闸门槽 3/3 占满，#514 排队。收尾链：#510、#512、#513、#514 走 finalize-reviewed → finalize-pr → merge-when-green；#487 走 merge-when-green。下一个交接点约 04:40。
 
 > ## 2026-10-22 16:00 · /loop 协调轮
 > **闸门并发**：两闸门同时跑、各四角色并行（GLM 8 路）实测正常（#475 384 s、#476 474 s 出块）；人提议再往上试，现在 #477、#474 两闸门 + 3 路 GLM 评审并发，采样器 `_tmp/20261022-loop/glm-conc.log` 每 30 s 记一次并发数与真实 API 错误（只匹配 `"result":"API Error`，已用 10-20 的 429 原件核过能命中；读到 MEMORY.md 里的「429」字样不算）。
