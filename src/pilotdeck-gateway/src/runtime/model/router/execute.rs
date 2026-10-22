@@ -17,6 +17,8 @@ pub struct RouterExecuteContext {
     pub turn_id: JsString,
     pub fallback_models: Vec<RouterModelRef>,
     pub managed_model_policy: Option<ManagedModelPolicy>,
+    /// `RouterExecuteContext.projectPath`; persisted on stats records.
+    pub project_path: Option<JsString>,
     /// Includes the turn abort signal and provider HTTP timeout options.
     pub stream_options: StreamOptions,
 }
@@ -239,8 +241,10 @@ impl RouterRuntime {
             sink(error_event(error));
             return Ok(());
         }
+        let started_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
         let mut last_error = None;
         let mut last_attempt = None;
+        let mut last_routed: Option<JsObject> = None;
         let mut last_outcome = Outcome::default();
         'attempts: for (index, (attempt, downgrade)) in plans.iter().enumerate() {
             if aborted(ctx) {
@@ -260,6 +264,7 @@ impl RouterRuntime {
             if index > 0 {
                 routed.insert("resolvedFrom".into(), "fallback".into());
             }
+            last_routed = Some(routed.clone());
             let mut attempt_request = self.materialize_request(&JsValue::Object(routed), request);
             if *downgrade {
                 attempt_request =
@@ -396,9 +401,17 @@ impl RouterRuntime {
                 for queued in outcome.pending.drain(..) {
                     sink(queued);
                 }
+                let ended_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
                 let usage = final_usage(&attempt_request, &outcome).await?;
                 self.cache_session_usage(&ctx.session_id, &usage);
-                // Request/group/cost accounting is the following pr9b slice.
+                self.observe_request(
+                    ctx,
+                    decision,
+                    last_routed.as_ref(),
+                    attempt,
+                    &usage,
+                    (&started_at, &ended_at),
+                );
                 return Ok(());
             }
         }
@@ -413,6 +426,16 @@ impl RouterRuntime {
                     ("error", error.clone()),
                 ],
             );
+            let ended_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
+            let fail_usage = final_usage(request, &last_outcome).await?;
+            self.observe_request(
+                ctx,
+                decision,
+                last_routed.as_ref(),
+                &attempt,
+                &fail_usage,
+                (&started_at, &ended_at),
+            );
             if !last_outcome.content {
                 for event in last_outcome.buffered {
                     if !is(field(&event, "type"), "error") {
@@ -426,6 +449,63 @@ impl RouterRuntime {
             sink(error_event(JsValue::Object(error)));
         }
         Ok(())
+    }
+
+    /// `usageObserver.observeRequest`: one completed routed attempt (success or
+    /// terminal failure). Property order matches the TS record literal followed
+    /// by `TokenStatsCollector.observe`'s `cost`, `costSource`, `baselineCost`.
+    fn observe_request(
+        &self,
+        ctx: &RouterExecuteContext,
+        decision: &JsValue,
+        routed: Option<&JsObject>,
+        attempt: &RouterModelRef,
+        usage: &JsValue,
+        timestamps: (&str, &str),
+    ) {
+        let (started_at, ended_at) = timestamps;
+        let mut record = JsObject::new();
+        record.insert("sessionId".into(), JsValue::String(ctx.session_id.clone()));
+        if !ctx.turn_id.is_empty() {
+            record.insert("turnId".into(), JsValue::String(ctx.turn_id.clone()));
+        }
+        if let Some(project_path) = ctx.project_path.as_ref().filter(|value| !value.is_empty()) {
+            record.insert("projectPath".into(), JsValue::String(project_path.clone()));
+        }
+        record.insert(
+            "scenarioType".into(),
+            field(decision, "scenarioType").clone(),
+        );
+        if let Some(resolved_from) = routed.and_then(|routed| routed.get("resolvedFrom")) {
+            record.insert("resolvedFrom".into(), resolved_from.clone());
+        }
+        record.insert("provider".into(), JsValue::String(attempt.provider.clone()));
+        record.insert("model".into(), JsValue::String(attempt.model.clone()));
+        if let Some(tier) = field(decision, "tokenSaverTier")
+            .as_string()
+            .filter(|value| !value.is_empty())
+        {
+            record.insert("tier".into(), JsValue::String(tier.clone()));
+        }
+        record.insert(
+            "role".into(),
+            JsValue::String(
+                if truthy(field(decision, "isSubagent")) {
+                    "subagent"
+                } else {
+                    "main"
+                }
+                .into(),
+            ),
+        );
+        record.insert("usage".into(), usage.clone());
+        record.insert("startedAt".into(), JsValue::String(started_at.into()));
+        record.insert("endedAt".into(), JsValue::String(ended_at.into()));
+        let mut record = JsValue::Object(record);
+        self.stats
+            .lock()
+            .expect("router stats")
+            .observe(&mut record);
     }
 
     async fn stream_attempt(

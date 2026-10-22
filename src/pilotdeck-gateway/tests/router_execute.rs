@@ -460,6 +460,7 @@ async fn replay_execute_case(case: &JsValue) -> Result<(), String> {
             .map(|v| RouterModelRef::from_value(v).unwrap())
             .collect(),
         managed_model_policy: policy,
+        project_path: None,
         stream_options: StreamOptions {
             abort: Some(abort.clone()),
             random: Arc::new(|| 0.5),

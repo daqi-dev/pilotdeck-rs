@@ -12,6 +12,7 @@
 //! already-written `config.snapshot` JSON, projected by `config/snapshot.rs`.
 #![allow(clippy::result_large_err)]
 
+use super::stats::TokenStatsCollector;
 use crate::host::ModuleError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -210,6 +211,9 @@ pub struct RouterDeps {
     pub events: Arc<dyn RouterEventSink>,
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub is_model_allowed: Arc<dyn Fn(&RouterModelRef) -> bool + Send + Sync>,
+    /// Native stats collector (`createNativeRouterUsageObserver`); absent means
+    /// a disabled collector, so snapshot projections still answer empty.
+    pub stats: Option<Arc<Mutex<TokenStatsCollector>>>,
 }
 impl RouterDeps {
     pub fn new(model_invoker: Arc<dyn RouterModelInvocation>) -> Self {
@@ -220,6 +224,7 @@ impl RouterDeps {
             // `RouterRuntime.ts` defaults to `() => new Date()` (wall clock).
             clock: Arc::new(wall_clock),
             is_model_allowed: Arc::new(|_| true),
+            stats: None,
         }
     }
 }
@@ -277,6 +282,7 @@ pub struct RouterRuntime {
     store: session::SessionRouterStore,
     usage: Mutex<Vec<(JsString, JsValue)>>,
     health: Arc<dyn super::health::RouterProviderHealth>,
+    stats: Arc<Mutex<TokenStatsCollector>>,
 }
 
 impl RouterRuntime {
@@ -316,6 +322,9 @@ impl RouterRuntime {
             )),
             store: session::SessionRouterStore::new(clock),
             usage: Mutex::new(Vec::new()),
+            stats: deps
+                .stats
+                .unwrap_or_else(|| Arc::new(Mutex::new(TokenStatsCollector::new(None, None)))),
         })
     }
 
@@ -889,6 +898,22 @@ impl RouterRuntime {
             &model,
             configured,
         ))
+    }
+
+    /// `ProjectRuntimeRegistry.usageSnapshotForSdk` over this router's stats.
+    pub fn usage_snapshot(&self, session_key: Option<&JsString>) -> JsValue {
+        self.stats
+            .lock()
+            .expect("router stats")
+            .usage_snapshot_for_sdk(session_key)
+    }
+
+    /// `ProjectRuntimeRegistry.modelUsageSnapshotForSdk` over this router's stats.
+    pub fn model_usage_snapshot(&self, session_key: Option<&JsString>) -> JsValue {
+        self.stats
+            .lock()
+            .expect("router stats")
+            .model_usage_snapshot_for_sdk(session_key)
     }
 }
 

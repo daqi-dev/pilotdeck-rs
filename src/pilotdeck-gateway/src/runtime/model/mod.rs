@@ -9,6 +9,7 @@ mod json_walk;
 mod jsonrepair;
 pub(crate) mod providers;
 pub mod router;
+pub mod stats;
 pub mod token_accounting;
 
 /// V8's string length limit, shared by every reader that materializes a
