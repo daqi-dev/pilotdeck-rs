@@ -138,6 +138,85 @@ mutants = [
         "journal-remove-fails",
     ),
     (
+        "channel-abort-during-register-leaks",
+        "channel.rs",
+        """        if !state.registered.load(Ordering::SeqCst) {
+            // The request is between the persist gate and `registered = true`.
+            // Only raise the flag: removing the state here would make the
+            // post-registration cancel a no-op and leak the bus entry, owner
+            // lease, journal record and store record. `begin` settles it once
+            // the entry is registered.
+            state
+                .cancelled_before_registration
+                .store(true, Ordering::SeqCst);
+            return;
+        }""",
+        """        if !state.registered.load(Ordering::SeqCst) {
+            state
+                .cancelled_before_registration
+                .store(true, Ordering::SeqCst);
+            if !state.settled.load(Ordering::SeqCst) {
+                self.complete(&state, Ok(DialogAnswer::Cancelled(Some(reason.into()))));
+            }
+            return;
+        }""",
+        "abort-during-register",
+    ),
+    (
+        "channel-shared-signal-clears-siblings",
+        "channel.rs",
+        """            .callbacks
+            .retain(|(id, _)| *id != token);""",
+        """            .callbacks
+            .clear();""",
+        "shared-signal-two-requests",
+    ),
+    (
+        "journal-record-unlocked",
+        "journal.rs",
+        """    pub fn record(&self, event: &JsValue) -> Result<()> {
+        let _guard = self.lock.lock().unwrap();""",
+        """    pub fn record(&self, event: &JsValue) -> Result<()> {""",
+        "concurrent record lost entries",
+    ),
+    (
+        "journal-remove-unlocked",
+        "journal.rs",
+        """    pub fn remove(&self, request_id: &JsString) -> Result<()> {
+        let _guard = self.lock.lock().unwrap();""",
+        """    pub fn remove(&self, request_id: &JsString) -> Result<()> {""",
+        "concurrent remove lost updates",
+    ),
+    (
+        "journal-directory-read-as-missing",
+        "journal.rs",
+        """            let bytes = match fs::read(&self.path) {""",
+        """            if self.path.is_dir() {
+                return Ok(JournalRecord {
+                    dialogs: Vec::new(),
+                });
+            }
+            let bytes = match fs::read(&self.path) {""",
+        "journal directory-at-path",
+    ),
+    (
+        "channel-cancel-drops-empty-reason",
+        "mod.rs",
+        """                if let Some(reason) = reason {
+                    set(&mut value, "reason", JsValue::String(reason.clone()));""",
+        """                if let Some(reason) = reason.as_ref().filter(|reason| !reason.is_empty()) {
+                    set(&mut value, "reason", JsValue::String(reason.clone()));""",
+        "respond-cancel-empty-reason",
+    ),
+    (
+        "channel-cross-gateway-keeps-empty-reason",
+        "channel.rs",
+        """                let reason = reason.clone().filter(|reason| !reason.is_empty());
+                (entry.resolve)(DialogAnswer::Cancelled(reason));""",
+        """                (entry.resolve)(DialogAnswer::Cancelled(reason.clone()));""",
+        "cross-gateway-cancelled-empty-reason",
+    ),
+    (
         "tampered-source-hash",
         "oracle.json",
         json.loads(originals["oracle.json"])["sourceSha256"][
@@ -152,6 +231,13 @@ selected = set(sys.argv[2:])
 assert selected <= {"baseline"} | {name for name, *_ in mutants}, selected
 if selected - {"baseline"}:
     mutants = [mutant for mutant in mutants if mutant[0] in selected]
+
+# Most controls are killed by the oracle replay; the journal lock races are
+# only observable through the deterministic concurrency test.
+targets = {
+    "journal-record-unlocked": "user_dialog::channel_tests::journal_concurrent_record_and_remove_are_serialized",
+    "journal-remove-unlocked": "user_dialog::channel_tests::journal_concurrent_record_and_remove_are_serialized",
+}
 
 manifest = f"""[package]
 name = "pdrs-udc-negative"
@@ -231,7 +317,10 @@ with tempfile.TemporaryDirectory(prefix="pdrs-udc-negative-", dir="/tmp") as tem
             "--manifest-path",
             str(scratch / "Cargo.toml"),
             "--lib",
-            "user_dialog::channel_tests::channel_and_journal_match_real_ts_oracle_step_by_step",
+            targets.get(
+                name,
+                "user_dialog::channel_tests::channel_and_journal_match_real_ts_oracle_step_by_step",
+            ),
             "--",
             "--nocapture",
         ]

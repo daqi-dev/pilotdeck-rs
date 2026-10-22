@@ -92,6 +92,7 @@ type Config = {
   release: 'ok' | 'throw';
   takeMode: 'ok' | 'throw';
   abortOnPut: boolean;
+  abortOnRegister: boolean;
 };
 
 function makeConfig(input: any = {}): Config {
@@ -101,6 +102,7 @@ function makeConfig(input: any = {}): Config {
     storePutFail: false, storeRemoveFail: false,
     emitFail: false, busObserverFail: false,
     claim: 'ok', renew: 'ok', release: 'ok', takeMode: 'ok', abortOnPut: false,
+    abortOnRegister: false,
     ...input,
   };
 }
@@ -119,6 +121,7 @@ async function runChannelCase(name: string, spec: any): Promise<any> {
   const ownerMap = new Map<string, any>();
   const answers = new Map<string, any>();
   let controller: AbortController | undefined;
+  const controllers = new Map<string, AbortController>();
   const slots: any = {};
 
   const actualJournal = new GatewayUserDialogJournal(journalPath, { now: () => new Date(clock.ms) });
@@ -196,6 +199,7 @@ async function runChannelCase(name: string, spec: any): Promise<any> {
     onChange: (event: any) => {
       logs.bus.push(clone(event));
       if (config.busObserverFail) throw new Error('observer offline');
+      if (config.abortOnRegister && event?.type === 'requested') controller?.abort();
     },
   });
   const channel = new GatewayUserDialogChannel({
@@ -215,7 +219,15 @@ async function runChannelCase(name: string, spec: any): Promise<any> {
 
   const idFor = (action: any) => slots[action.slot ?? 'default']?.requestId;
   const begin = (action: any) => {
-    if (action.signal) controller = new AbortController();
+    if (action.signal) {
+      if (action.signalName) {
+        const named = controllers.get(action.signalName) ?? new AbortController();
+        controllers.set(action.signalName, named);
+        controller = named;
+      } else {
+        controller = new AbortController();
+      }
+    }
     const request = buildRequest(action.kind, action.request, action.signal ? controller!.signal : undefined);
     const before = logs.uuid.length;
     const promise = (channel as any)[`request${action.kind[0].toUpperCase()}${action.kind.slice(1)}`](request);
@@ -232,7 +244,7 @@ async function runChannelCase(name: string, spec: any): Promise<any> {
     try {
       switch (action.op) {
         case 'begin': begin(action); break;
-        case 'abort': controller!.abort(); break;
+        case 'abort': (action.signalName ? controllers.get(action.signalName)! : controller!).abort(); break;
         case 'tick': await advance(action.ms); result = clock.ms; break;
         case 'set': Object.assign(config, action.config); break;
         case 'claim': result = bus.claim('session', idFor(action), action.ttl ?? 1000, action.lease); break;
@@ -468,6 +480,56 @@ const channelCases = [
       { op: 'snapshot' },
     ],
   }),
+  await runChannelCase('abort-during-register', {
+    config: { abortOnRegister: true },
+    actions: [
+      { op: 'begin', kind: 'input', request: { prompt: 'abort inside register' }, signal: true },
+      { op: 'snapshot' },
+      { op: 'tick', ms: 500 },
+      { op: 'snapshot' },
+    ],
+  }),
+  await runChannelCase('shared-signal-two-requests', {
+    config: {},
+    actions: [
+      { op: 'begin', kind: 'input', request: {}, signal: true, signalName: 'host', slot: 'first' },
+      { op: 'begin', kind: 'select', request: { choices: [{ value: 'alpha' }, { value: 'beta', label: 'B' }] }, signal: true, signalName: 'host', slot: 'second' },
+      { op: 'snapshot' },
+      { op: 'claim', slot: 'first', ttl: 1000 },
+      { op: 'respond', slot: 'first', lease: 'bus-lease', value: 'first-answer' },
+      { op: 'snapshot' },
+      { op: 'abort', signalName: 'host' },
+      { op: 'snapshot' },
+      { op: 'tick', ms: 500 },
+      { op: 'snapshot' },
+    ],
+  }),
+  await runChannelCase('input-empty-optional', {
+    config: {},
+    actions: [
+      { op: 'begin', kind: 'input', request: { placeholder: '', allowEmpty: false } },
+      { op: 'snapshot' },
+      { op: 'respond', value: 'ok' },
+      { op: 'snapshot' },
+    ],
+  }),
+  await runChannelCase('respond-cancel-empty-reason', {
+    config: {},
+    actions: [
+      { op: 'begin', kind: 'input', request: {} },
+      { op: 'respond', cancel: true, reason: '' },
+      { op: 'snapshot' },
+    ],
+  }),
+  await runChannelCase('cross-gateway-cancelled-empty-reason', {
+    config: {},
+    actions: [
+      { op: 'begin', kind: 'input', request: {} },
+      { op: 'submitAnswer', result: { behavior: 'cancelled', reason: '' } },
+      { op: 'tick', ms: 100 },
+      { op: 'snapshot' },
+    ],
+  }),
   await runChannelCase('claim-false', {
     config: { claim: 'false' },
     actions: [
@@ -688,6 +750,27 @@ const journalSpecs = [
       actions: [{ op: 'recover' }, { op: 'record', event: events.input }],
     })),
   { name: 'missing', actions: [{ op: 'recover' }, { op: 'snapshot' }] },
+  {
+    name: 'directory-at-path',
+    initial: { directory: true },
+    actions: [
+      { op: 'recover' },
+      { op: 'record', event: events.input },
+      { op: 'snapshot' },
+      { op: 'remove', id: 'dialog-1' },
+      { op: 'snapshot' },
+    ],
+  },
+  {
+    name: 'corrupt-journal-to-directory',
+    actions: [
+      { op: 'record', event: events.input },
+      { op: 'snapshot' },
+      { op: 'corruptJournal' },
+      { op: 'recover' },
+      { op: 'snapshot' },
+    ],
+  },
 ];
 
 const journalCaseResults = [];

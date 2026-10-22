@@ -16,7 +16,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
 };
@@ -98,11 +98,18 @@ impl ChannelOptions {
 pub struct AbortSignal {
     inner: Arc<AbortInner>,
 }
-type AbortCallbacks = Vec<Box<dyn Fn() + Send + Sync>>;
+type AbortCallback = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Default)]
+struct AbortState {
+    aborted: bool,
+    next_token: u64,
+    callbacks: Vec<(u64, AbortCallback)>,
+}
 
 #[derive(Default)]
 struct AbortInner {
-    state: Mutex<(bool, AbortCallbacks)>,
+    state: Mutex<AbortState>,
 }
 impl AbortSignal {
     pub fn new() -> Self {
@@ -111,27 +118,41 @@ impl AbortSignal {
     pub fn abort(&self) {
         let callbacks = {
             let mut state = self.inner.state.lock().unwrap();
-            if state.0 {
+            if state.aborted {
                 return;
             }
-            state.0 = true;
-            std::mem::take(&mut state.1)
+            state.aborted = true;
+            std::mem::take(&mut state.callbacks)
         };
-        for callback in callbacks {
+        for (_, callback) in callbacks {
             callback();
         }
     }
     pub fn is_aborted(&self) -> bool {
-        self.inner.state.lock().unwrap().0
+        self.inner.state.lock().unwrap().aborted
     }
-    fn on_abort(&self, callback: Box<dyn Fn() + Send + Sync>) {
+    /// Registers a callback and returns the token needed to remove only this
+    /// registration, mirroring TS `addEventListener`/`removeEventListener`.
+    pub(super) fn on_abort(&self, callback: AbortCallback) -> Option<u64> {
         let mut state = self.inner.state.lock().unwrap();
-        if !state.0 {
-            state.1.push(callback);
+        if state.aborted {
+            return None;
         }
+        state.next_token += 1;
+        let token = state.next_token;
+        state.callbacks.push((token, callback));
+        Some(token)
     }
-    fn clear(&self) {
-        self.inner.state.lock().unwrap().1.clear();
+    pub(super) fn remove_abort(&self, token: u64) {
+        if token == 0 {
+            return;
+        }
+        self.inner
+            .state
+            .lock()
+            .unwrap()
+            .callbacks
+            .retain(|(id, _)| *id != token);
     }
 }
 
@@ -192,6 +213,7 @@ struct RequestState {
     settled: AtomicBool,
     cancelled_before_registration: AtomicBool,
     owner_claimed: AtomicBool,
+    abort_registration: AtomicU64,
     accepts: Accepts,
     abort: Option<AbortSignal>,
     result: mpsc::Sender<std::result::Result<DialogAnswer, String>>,
@@ -428,6 +450,7 @@ impl GatewayUserDialogChannel {
             settled: AtomicBool::new(false),
             cancelled_before_registration: AtomicBool::new(false),
             owner_claimed: AtomicBool::new(false),
+            abort_registration: AtomicU64::new(0),
             accepts,
             abort: abort.clone(),
             result: sender,
@@ -438,12 +461,12 @@ impl GatewayUserDialogChannel {
             .unwrap()
             .insert(request_id.clone(), state.clone());
 
-        if let Some(signal) = &abort
-            && !signal.is_aborted()
-        {
+        if let Some(signal) = &abort {
             let channel = self.clone();
             let id = request_id.clone();
-            signal.on_abort(Box::new(move || channel.cancel(&id, "aborted")));
+            if let Some(token) = signal.on_abort(Arc::new(move || channel.cancel(&id, "aborted"))) {
+                state.abort_registration.store(token, Ordering::SeqCst);
+            }
         }
 
         let stored = StoredDialog {
@@ -451,7 +474,14 @@ impl GatewayUserDialogChannel {
             created_at: format_epoch_iso((self.inner.options.now_ms)()).into(),
         };
         if let Err(error) = self.persist(&state, &request_event, &stored) {
-            self.complete(&state, Err(error.to_string()));
+            // A pre-registration abort resolves the waiter before a persist
+            // failure can surface, matching the TS promise ordering.
+            let answer = if state.cancelled_before_registration.load(Ordering::SeqCst) {
+                Ok(DialogAnswer::Cancelled(Some("aborted".into())))
+            } else {
+                Err(error.to_string())
+            };
+            self.complete(&state, answer);
             return ChannelRequest {
                 request_id,
                 dialog_kind: dialog_kind.into(),
@@ -463,11 +493,8 @@ impl GatewayUserDialogChannel {
         let aborted = state.cancelled_before_registration.load(Ordering::SeqCst)
             || abort.as_ref().is_some_and(AbortSignal::is_aborted);
         if aborted {
-            let settled = state.settled.load(Ordering::SeqCst);
             if let Err(error) = settle(&self.inner, &state) {
-                if !settled {
-                    self.complete(&state, Err(error.to_string()));
-                }
+                self.complete(&state, Err(error.to_string()));
                 return ChannelRequest {
                     request_id,
                     dialog_kind: dialog_kind.into(),
@@ -475,9 +502,7 @@ impl GatewayUserDialogChannel {
                     receiver,
                 };
             }
-            if !state.settled.load(Ordering::SeqCst) {
-                self.complete(&state, Ok(DialogAnswer::Cancelled(Some("aborted".into()))));
-            }
+            self.complete(&state, Ok(DialogAnswer::Cancelled(Some("aborted".into()))));
             return ChannelRequest {
                 request_id,
                 dialog_kind: dialog_kind.into(),
@@ -542,7 +567,18 @@ impl GatewayUserDialogChannel {
             };
         }
 
-        if self.inner.options.take_stored_answer.is_some() {
+        // An abort that landed between the pre-registration check and
+        // `registered = true` (for example from the bus change observer) only
+        // raised the flag; the entry is now consumable, so run the registered
+        // cancellation path. This is the only place that settles such a race.
+        if state.cancelled_before_registration.load(Ordering::SeqCst)
+            || abort.as_ref().is_some_and(AbortSignal::is_aborted)
+        {
+            self.cancel(&request_id, "aborted");
+        }
+
+        if !state.settled.load(Ordering::SeqCst) && self.inner.options.take_stored_answer.is_some()
+        {
             let due = (self.inner.options.now_ms)()
                 .saturating_add(self.inner.options.poll_interval_ms.max(1));
             {
@@ -559,12 +595,6 @@ impl GatewayUserDialogChannel {
                 );
             }
             self.poll_once(&request_id);
-        }
-
-        if let Some(signal) = &abort
-            && signal.is_aborted()
-        {
-            self.cancel(&request_id, "aborted");
         }
 
         ChannelRequest {
@@ -607,7 +637,10 @@ impl GatewayUserDialogChannel {
         }
         stop_polling(&self.inner, &state.request_id);
         if let Some(signal) = &state.abort {
-            signal.clear();
+            let token = state.abort_registration.swap(0, Ordering::SeqCst);
+            if token != 0 {
+                signal.remove_abort(token);
+            }
         }
         let _ = state.result.send(answer);
         self.inner
@@ -630,12 +663,14 @@ impl GatewayUserDialogChannel {
             return;
         }
         if !state.registered.load(Ordering::SeqCst) {
+            // The request is between the persist gate and `registered = true`.
+            // Only raise the flag: removing the state here would make the
+            // post-registration cancel a no-op and leak the bus entry, owner
+            // lease, journal record and store record. `begin` settles it once
+            // the entry is registered.
             state
                 .cancelled_before_registration
                 .store(true, Ordering::SeqCst);
-            if !state.settled.load(Ordering::SeqCst) {
-                self.complete(&state, Ok(DialogAnswer::Cancelled(Some(reason.into()))));
-            }
             return;
         }
         let entry = {
@@ -646,9 +681,6 @@ impl GatewayUserDialogChannel {
             Ok(Some(entry)) => (entry.resolve)(DialogAnswer::Cancelled(Some(reason.into()))),
             Ok(None) => {}
             Err(error) => {
-                if let Some(signal) = &state.abort {
-                    signal.clear();
-                }
                 self.complete(&state, Err(error.to_string()));
                 return;
             }
@@ -662,9 +694,6 @@ impl GatewayUserDialogChannel {
         );
         event.insert("reason".into(), JsValue::String(reason.into()));
         if let Err(error) = (self.inner.options.emit)(JsValue::Object(event)) {
-            if let Some(signal) = &state.abort {
-                signal.clear();
-            }
             self.complete(&state, Err(error.to_string()));
         }
     }
@@ -707,11 +736,11 @@ impl GatewayUserDialogChannel {
         }
         let state = self.inner.requests.lock().unwrap().get(request_id).cloned();
         let Some(state) = state else {
-            finish_poll(&self.inner, request_id);
+            stop_polling(&self.inner, request_id);
             return;
         };
         if state.settled.load(Ordering::SeqCst) || !state.registered.load(Ordering::SeqCst) {
-            finish_poll(&self.inner, request_id);
+            stop_polling(&self.inner, request_id);
             return;
         }
         if state.owner_claimed.load(Ordering::SeqCst)
@@ -744,7 +773,7 @@ impl GatewayUserDialogChannel {
             return;
         };
         if state.settled.load(Ordering::SeqCst) {
-            finish_poll(&self.inner, request_id);
+            stop_polling(&self.inner, request_id);
             return;
         }
         let entry = {
@@ -775,7 +804,10 @@ impl GatewayUserDialogChannel {
                 (entry.resolve)(DialogAnswer::Answered(value.clone()));
             }
             DialogAnswer::Cancelled(reason) => {
-                (entry.resolve)(DialogAnswer::Cancelled(reason.clone()));
+                // TS drops a falsy cross-Gateway reason:
+                // `...(answer.result.reason ? { reason } : {})`.
+                let reason = reason.clone().filter(|reason| !reason.is_empty());
+                (entry.resolve)(DialogAnswer::Cancelled(reason));
             }
         }
         finish_poll(&self.inner, request_id);
