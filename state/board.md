@@ -1,18 +1,31 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 14:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-22 15:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
-- #458 | impl | doing | 入站帧孤立代理与 TS 对齐（A7.2 前置）；wt-a71-pr2-p2；DeepSeek；_tmp/20261022-issue-458/impl.md
-- #414 | impl | doing | PR #471 mark_session_dirty（A7.2 前置）；gate1 0/0；评审 GLM + codex
+- #458 | impl | doing | PR #474；修复轮 1（出站逐字节 + 负控锚点）DeepSeek
+- #414 | impl | doing | PR #471 已入合并队列
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
-- A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
+- A6.6-pr10a | impl | doing | EdgeClaw sqlite 存储层（人批 rusqlite bundled）；wt-a66-pr10a；DeepSeek
+- A6.5-pr4b | impl | doing | PR #475 grep；评审 codex+GLM
+- A6.4-pr9b | impl | doing | PR #476 stats/usage；评审 codex+GLM
+- A6.3-pr7b | impl | doing | PR #477 插件 loader；评审 DeepSeek+GLM
 <!-- READY:END -->
+
+> ## 2026-10-22 15:50 · /loop 协调轮（汇总 14:12 起四轮）
+> **合入**：#472（board）、#473（模型通道核验：real.md、memory model-runners 10-22 段、CLAUDE.md），邮箱 noreply。#471（#414 mark_session_dirty）在合并队列。
+> **#414 修复轮 1**（239e44b6，DeepSeek）：codex 报 P1，空 reason 时 TS 不重建且清脏（附 Node 实测）。三个 mark_*_dirty 都改成 `dirty = !reason.is_empty()`；r2 两家 0/0。
+> **#458 → PR #474**（DeepSeek）：入站帧改用 parse_json，协议字段只走 JsValue；lib 760/0。codex r1 P1：测试用排序比较，证明不了逐字节一致。TS 顶层键序为 `type,id,ok,result`（`GatewayWsConnection.ts:187`），改后与 TS 一致；gate1 sibling P1×2：negative.py 负控锚点失效。合成修复轮 1 派 DeepSeek。
+> **A6 尾包**（子代理盘点后派出）：grep → #475、stats/usage → #476（DeepSeek）、插件 loader → #477（codex）。#477 顺带修既有 PluginRegistry 重复键顺序，与 TS Map.set 一致。三单沙箱外 lib 757~765/0。
+> **人批 EdgeClaw sqlite → A**（rusqlite bundled），卡已并入 decisions-20261022。A6.6-pr10a 派 DeepSeek，先清 #318，再与 TS 双向读写 .db 对拍。
+> **闸门并行实测**（人问）：之前是闸门串成一条链、每个都加 `--serial`，GLM 只有 1 路并发。四角色并行实测 335 s 出块，此前要 16 min；两闸门同时跑（8 路）的实测在跑。前两次实验被协调者自己的 kill 打断，教训落 memory「kill-by-pid」。
+> **自身失误**：一次误杀 EdgeClaw pr10a worker（已续跑，进度保留）；开的 `deepseek/` 分支不在命名白名单（#458 已改回 codex/，#471 合入后随分支消失）；board 草稿里写过估算时间，已改用实际时间。
+> **下一步**：两闸门出块后贴 #475/#476，跑 #477 闸门；GLM 第二家评审在闸门结束后补；#474 修复轮回来后重跑闸门。worktree 8/12。
 
 > ## 2026-10-22 14:55 · /loop 协调轮
 > **#467（#422）合入**（aa63aed6，邮箱 noreply）。gate9 四角色（glm-5.3-mb）P0/P1=0；GLM r9 0/0。DeepSeek r9 报 P1：dispose 返回后、lease.release 期间仍可 abort。协调者读了 TS：`AgentHandle.ts:282-286` 在 await onDispose 之后、finally 里才置 disposed，期间同样可以 abort，和 Rust 的 lease 窗口结构相同，所以降为 P2c 开 #470（前置于 #422 关单，#422 保持 open）。全量 817/0；config_store 报 SIGKILL，按 memory「macos-exec-sigkill」换新 inode 重签后 1/0。
