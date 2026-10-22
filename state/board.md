@@ -1,21 +1,56 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 15:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-22 17:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
-- #458 | impl | doing | PR #474；修复轮 1（出站逐字节 + 负控锚点）DeepSeek
-- #414 | impl | doing | PR #471 已入合并队列
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
-- A6.6-pr10a | impl | doing | EdgeClaw sqlite 存储层（人批 rusqlite bundled）；wt-a66-pr10a；DeepSeek
-- A6.5-pr4b | impl | doing | PR #475 grep；评审 codex+GLM
-- A6.4-pr9b | impl | doing | PR #476 stats/usage；评审 codex+GLM
-- A6.3-pr7b | impl | doing | PR #477 插件 loader；评审 DeepSeek+GLM
+- A6.6-pr10a | impl | doing | PR #480 EdgeClaw sqlite；修复轮 1 续跑（DeepSeek）
+- A6.5-pr4b | impl | doing | PR #475 grep；修复轮 2（DeepSeek）
+- A6.4-pr9b | impl | doing | PR #476 stats；修复轮 2：日期只认规范格式（卡见 decisions-20261022）
+- A6.5-pr9c | impl | doing | PR #486（Closes #409）；修复轮 1 待派（DeepSeek）
+- A7.2-pr0 | impl | doing | PR #482（Closes #479）；修复轮 1 已交付，核验中
+- A7.2-pr1 | impl | doing | PR #487 replay；修复轮 1 待派
+- A7.2-pr2 | impl | doing | PR #488 projector；修复轮 1 待派
+- #408 | impl | doing | 夹具回放统一溯源守卫；wt-408；codex
+- regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
 <!-- READY:END -->
+
+> ## 2026-10-22 16:00 · /loop 协调轮
+> **闸门并发**：两闸门同时跑、各四角色并行（GLM 8 路）实测正常（#475 384 s、#476 474 s 出块）；人提议再往上试，现在 #477、#474 两闸门 + 3 路 GLM 评审并发，采样器 `_tmp/20261022-loop/glm-conc.log` 每 30 s 记一次并发数与真实 API 错误（只匹配 `"result":"API Error`，已用 10-20 的 429 原件核过能命中；读到 MEMORY.md 里的「429」字样不算）。
+> **#475 grep**：codex r1 P0（超时/取消没覆盖 stdout 读取，后代进程持管道会永久挂起）+ P1×6（rg 定位与 TS 不同、mtime 截到毫秒、JS 空白字符集、JS 正则语义、信号名文本、未用子进程信号重置）。**#476 stats**：codex r1 P0（时区偏移不校验，会误删应保留的历史账）+ P1×3。都附 TS 实测，成立；GLM r1 读完后自动派原作者 DeepSeek 修复轮 1（`fix-after-glm.sh`）。两单闸门 P0/P1=0。
+> **#474（#458）修复轮 1**（344c9172）：出站完整原文断言；negative.py 锚点更新后，协调者复跑 14 个变异全部被拒。lib 763/0。剩余两条 P2 开 #479（前置于 A7.2）。gate2 + GLM/codex r2 在跑。
+> **主仓工作区**：人定 real.md 以 main 为准，已还原；board.md 里 Codex 会话写的 13:57 段原样并入 #478（原 diff 存 `_tmp/20261022-loop/main-tree-uncommitted-1600.diff`）；本地 main 快进到 origin。
+> **16:10**：#471 合入（d378c6e3，邮箱 noreply）。它写的是 `Closes #414`，把整个 #414 关了，实际只做了第 2 条；已重开 #414，第 1、3 条前置于 A7.8。
+> **#480 EdgeClaw pr10a**（DeepSeek）：rusqlite =0.39.0 bundled（SQLite 3.51.3，Node 3.51.2），锁文件新增 10 个包，PR 里单列；与真实 TS 双向 .db 交叉对拍通过，#318 三条修完（Closes #318）。沙箱外 edgeclaw_storage 6/0（含 ignored 的 TS 反向用例），memory 10/0，lib 760/0。gate1 与 GLM、codex r1 在跑。
+> **#477 CI 红**：夹具里 `Z`、`z` 两个插件目录，金样在 macOS（大小写不敏感）上生成只有 9 项，Linux CI 上是 10 项。gate1 另有 P1×3。修复轮 2 派 codex，等 GLM r1 读完后自动开工。
+> **#474**：gate2 四角色，sibling P1「submit 事件通道仍走 serde Value」由协调者降为 P2c，记入 #479（A7.2 接线，生产上还没有 submit 路径），PR 描述已收窄；r2 两家 0/0。pr-gate 已 PASS，`merge-when-green.sh` 等 check 绿后入队；#478 同样处理。
+> **并发**：gate-2par 日志里，#477 闸门 701 s、#474 闸门 539 s，期间 GLM 峰值 9 路，采样器无 API 错误。
+> **16:15**：#474、#478 由 merge-when-green 在 CI 绿后入队。新派 A6.5-pr9c（#409 + #454，HTML→Markdown 内存与输出上界）给 DeepSeek，新树 wt-a65-pr9c，任务书要求首选「提前停止、且与 TS 截断后结果逐字节一致」的零差异方案；会产生向严差异的部分只写候选登记交协调者，不碰冻结账本。A7.2 拆单交只读 Plan 子代理起草（计划表 005:123，前置 #470、#479）。worktree 8/12。
+> **A7.2 拆单**（Plan 子代理起草，协调者采纳，AI 代批待人复核）：`_tmp/20261022-a7-2-split/plan.md`，pr0–pr7 共约 17.5 天，pr6 被 A6.9 卡住。第一批：pr0b（#470，codex）已派；pr1 replay、pr2 projector（DeepSeek）由 `disk-gated-launch.sh` 等磁盘降下来再派。原因：派单时 `_build+_tmp` 到了 100 GiB 上限，清掉 #474 空闲树的 target、#480 树的 incremental 后回到 91 GiB。`_build/2026101*` 旧目录约 16 GiB，是 10-16 封存证据，不动。pr0 等 #474 合入后派。worktree 11/12。
+> **16:30**：#474（#458 关闭）、#478 合入，邮箱 noreply；wt-a71-pr2-p2、wt-board-1550 回收（无未提交改动，树内没有 _tmp）。A7.2-pr0（#479 三条）开新树 wt-a72-pr0-connection，派 DeepSeek，由磁盘闸门控制启动。#480 EdgeClaw：codex r1 P1×5（短路条件、busy timeout、NUL 截断、localeCompare、非数组状态被清空）+ GLM 0/0 + gate1 P1×2，合成修复轮 1 派 DeepSeek，要求复用仓内已有的 ICU 排序。#477 修复轮 2（codex）、pr0b（codex）、grep/stats 修复轮 1、pr9c 在跑。磁盘 91 GiB，worktree 10/12。
+> **16:55 磁盘（人定）**：
+> - `_build/20261016-*` 选 A：只删 `debug/deps` 和 `debug/build`，保留可执行文件、`.d` 与 fingerprint。删之前记了 sha256 清单 `_tmp/20261022-loop/build-20261016-manifest.txt`；23 个目录从 16.1 GiB 降到 0.23 GiB。
+> - `_tmp/archive` 按目录压缩：zstd 二进制启动即被系统 SIGKILL（137，同 memory「macos-exec-sigkill」），改用 bsdtar 内置 xz。每个目录做完三项核对（条目数一致、解压后 diff 一致）才删原目录，日志 `_tmp/20261022-loop/archive-compress.log`。今天仍在追加的 worktrees-20261022 暂不压。盘点见 `_tmp/20261022-loop/disk-audit.md`。
+> - 另清 #410 负控留下的临时 target（可再生）。磁盘从 93 降到 81 GiB，压缩还在进行。
+> **交付**：grep 修复轮 1（ff9f49e0）、stats 修复轮 1（e9022780）、插件 loader 修复轮 2（65950200）、A7.2-pr0b → PR #481（Closes #470）。沙箱外 fmt、clippy 全过，各自的集成测试全过；grep 与 loader 的 lib 首跑在两套 lib 并行加 worker 编译的高负载下有 1–2 个失败，单独重跑通过，失败用例名没有留下，以 CI 为准。
+> **12 路并发实测**：三个闸门同时跑（各四角色），GLM 并发 12；GLM 增量评审和 #481 闸门排在后面（after-3gates.sh）。codex、DeepSeek 的增量评审已经并行派出。
+> **17:05**：DeepSeek 单 key 50 RPM：16:54 约 6 个 dsh 同跑，撞 429（code 102503），EdgeClaw 修复轮 1 和 loader r2 评审中途退出。加 `dsh-slot.sh` 全局 ≤3，两个都已续跑或重跑；memory「deepseek-rpm」。
+> **12 路实测**：三个闸门同时跑，GLM 峰值 12，采样器无 API 错误；#476 gate2 有一个角色 PARTIAL（simplify），原因待查。
+> **#476 stats 脱困**：codex r2 又报 P0×3，都出在修复轮 1 手写的 V8 Date.parse 上（切片 panic、非法时间判为过期、夏令时推算）。改为只精确解析 TS 实际写出的 toISOString 格式（`RouterRuntime.ts:936,972`），其余按「无法解析 → 保留」处理，先例是 `http/errors.rs:121`。决策卡 `_tmp/20261022-loop/card-stats-dateparse.md`（AI 代批，待人复核）。修复轮 2 等 GLM r2 读完后自动派。#475 grep：codex r2 P1×3 + gate2 P1×1，同样等 GLM r2 后派修复轮 2。
+> **A7.2-pr0 → PR #482**（Closes #479）：沙箱外 lib 774/0，negative.py 全部被拒；gate1 与 GLM、codex r1 在跑。
+> **17:35**：人批 regress → A。regress-pr1（MCP outputSchema 改用 regress）派 codex，新树 wt-regress-pr1。DeepSeek 在只有 3 个 dsh 同跑时也撞 429，名额回到 3；`dsh-retry.sh` 撞 429 后自动续跑，已实测可用。lib 在高负载下偶发失败已是第三次，`verify.sh` 改为把失败用例名记进 `_tmp/20261022-loop/flaky-lib.log`。#477、#481 两家评审加闸门都无 P0/P1，剩余 P2 开 #484、#485，由 merge-when-green 在 CI 绿后入队。新开 PR：#486（pr9c，Closes #409；#454 留候选差异 A6.5-WEBFETCH-NODES-001）、#487（A7.2-pr1）；闸门与 GLM、codex r1 在跑。A7.2-pr2 交付，核验中。#476、#475 修复轮 2 与 #482 修复轮 1 在跑（DeepSeek，排队占名额），EdgeClaw 续跑重新排队。worktree 12/12。
+> **17:45**：
+> - **regress 暂停**（自决·待复核）：codex 调研发现，0.12.0 稳定版匹配没有回溯预算，outputSchema 的不可信 pattern 会有 ReDoS 风险；可信调用点都是普通正则，迁移收益很小。等上游发版带预算的稳定版再接。108 条 TS 金样保存在 `codex/regress-pr1-output-schema` @2c2e4f87，wt-regress-pr1 已回收。
+> - **flaky 定位**：`host::tests::modules::disposer_timeout_rejection_and_panic_keep_the_terminal` 在高负载下偶发失败，已补充到 #389。
+> - **EdgeClaw 续跑反复 exit=1，根因是协调者自己**：17:15 归档 429 失败产物时，后缀表里带了 md，把任务书 `fix1-resume.md` 也挪走了。已恢复并重派，教训补进 kill-by-pid。
+> - #477、#481 入队；#483 入队。
+> **17:50**：A7.2-pr2 开 PR #488（DeepSeek；与 #487 都会新建 turn/mod.rs，后合入的一方合并那一行）。codex r1：#486 pr9c P1×3、#487 pr1 P1×4。GLM r1 和闸门结束后，由等待脚本自动派 DeepSeek 修复轮 1。#408（夹具回放统一走溯源守卫，前置于 A6、A7.1 收尾）派 codex，新树 wt-408。dsh-retry 已实测：17:36 两单撞 429 后自动续跑。#477、#481、#483 在合并队列。worktree 12/12。
+> **17:55**：#477、#481（#470 关闭）、#483 合入，邮箱 noreply；wt-a63-pr7b、wt-a72-pr0b、wt-board-1720 回收。主仓工作区里由协调者直接写的两份 memory 与 main 冲突，存档后还原，再快进；本地多出的 17:15 段落随本 PR 补进 deepseek-rpm。**以后 state/ 下的文件只在 board 分支上改，不在主仓工作区写。**
 
 > ## 2026-10-22 15:50 · /loop 协调轮（汇总 14:12 起四轮）
 > **合入**：#472（board）、#473（模型通道核验：real.md、memory model-runners 10-22 段、CLAUDE.md），邮箱 noreply。#471（#414 mark_session_dirty）在合并队列。

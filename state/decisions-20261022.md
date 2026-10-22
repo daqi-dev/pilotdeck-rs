@@ -49,3 +49,29 @@
 - **磁盘清理（人定）**：`_build/20261016-*` 选 A，只删 deps/build，保留可执行文件、.d 与 fingerprint，先记 sha256 清单 `_tmp/20261022-loop/build-20261016-manifest.txt`；`_tmp/archive` 按目录压缩为 tar.xz，逐个核对后删原目录（zstd 被系统 SIGKILL，改用 bsdtar 内置 xz）。
 - **原则**：并发上限按实测的真实限制设，GLM 按并发数限、DeepSeek 按每分钟请求数限，两家分开定；被限流的失败自动续跑，不计入「同一失败 3 次」。
 
+## 用上位包整体替代手写的 JS 语义移植（暂不执行，待人定；新外部依赖）
+- **卡在哪**：仓里有大量手写的 JS 语义移植，是返工的主要来源。
+  - 26 个文件用了 Rust 的 `regex`（它不支持 lookaround 和反向引用，`.` 与 `\d` 的语义也和 JS 不同），其中至少 8 处在模拟 JS RegExp（metadata、permission、bash 权限、compaction 提示词、router classify、MCP output_schema）。
+  - `runtime/mcp/output_schema.rs` 自写了 4276 行的 JS 正则解析与匹配，10-20 至 10-21 的 pr10b 在它的栈溢出与长串问题上修了 8 轮以上。
+  - 今天的 grep（JS 正则语义 P1）、stats（V8 Date.parse 的 P0 循环）也是同一类问题。
+- **搜到的上位包**：
+  - **regress**（[docs.rs/regress](https://docs.rs/regress)，0.11/0.12，约 3600 万次下载，被 Boa 引擎采用）：Rust 实现的 ECMAScript 2018 正则引擎，支持 lookbehind、反向引用、`u`/`v` 标志，接口有 UTF-16 方法。grok-build 里它只作为传递依赖出现。
+  - **boa_engine**（[crates.io/crates/boa_engine](https://crates.io/crates/boa_engine)，0.22，test262 通过率 95.6%）：整个 JS 引擎，Date.parse、RegExp（内部就是 regress）、String、JSON 全套都有。
+  - **temporal_rs**（[boa-dev/temporal](https://github.com/boa-dev/temporal)）：实现的是 Temporal 提案，不是旧的 `Date.parse`，帮不上忙。
+  - **htmd + scraper**（grok-build 的 web_fetch 在用）：受 Turndown 启发，但输出与 TS 不会逐字一致。我们的对拍要求逐字节一致，所以不适合直接替换。
+- **谁受影响**：所有模拟 JS 正则的地方（MCP outputSchema pattern、权限规则、bash 权限、router 分类、grep 后处理）；Date.parse 只有 stats 一处，已按规范格式决策卡处理。
+- **能否撤回**：可以，按单一调用点逐步替换，每处都有 TS 金样把关。
+- **动不动尺子**：不动。替换后仍要求与真实 TS 逐字节对拍。regress 与 V8 在边角处可能有差异，由金样发现、登记。
+- **选项**：
+  - **A（建议）**：引入 `regress`（只用这一个包），先替换 MCP outputSchema 的 pattern 匹配和 grep 的 JS 正则后处理这两处最痛的地方，各自单独成 PR、配真实 TS 金样。其余调用点逐步迁移。回溯引擎有 ReDoS 风险，沿用现有的输入长度与步数预算，并在 PR 里实测。
+  - **B**：引入 `boa_engine`，凡是 JS 语义的地方都交给它。覆盖面最大，但依赖极重（整个引擎加 ICU 数据），启动与内存成本高，和 V8 也不是逐一相同；只用到其中几个函数，代价不划算。
+  - **C**：维持现状，继续手写。
+- **建议**：A。B 不建议。
+- **档位**：暂不执行（新外部依赖，需人批）。批之前不改任何 `regex` 调用点。
+- **人批（2026-10-22，用户本人在协调者会话）**：选 A——引入 `regress`。第一单是 MCP outputSchema 的 pattern（A6.5-regress-pr1，codex）；grep 的 JS 正则后处理等 #475 合入后再迁；其余调用点逐个开 PR，每处配真实 TS 金样。依赖在第一单引入，锁文件变更单列。
+- **执行更正（17:45，自决·待复核，AI 代批待人复核）**：regress-pr1 由 codex 调研后暂停。原因：
+  - regress 0.12.0 稳定版的匹配接口没有回溯预算（`classicalbacktrack.rs:65`）。上游 master 已有 `find_from_budgeted`，但还没发版，而且是 UTF-8 接口。
+  - outputSchema 的 pattern 来自不可信的 MCP server，换用无预算的回溯引擎会引入真实的 ReDoS 风险；线程超时后丢弃 JoinHandle 也停不下计算。
+  - 其余可信调用点（bash 权限、router 分类、compaction 提示词、metadata）里的 pattern 都是普通正则，Rust regex 能准确表达，迁移收益很小。
+  - **结论**：整个 regress 接入暂停，等上游发布带 UTF-16 预算的稳定版后，从 outputSchema 接起。codex 用真实 TS 生成的 108 条 JS 正则金样与生成器已保存在分支 `codex/regress-pr1-output-schema` @2c2e4f87（WIP，未开 PR）。依赖暂不引入。
+  - **原则**：引入回溯引擎处理不可信输入之前，必须先有可终止的步数预算；仅靠长度上限防不住短串回溯爆炸。
