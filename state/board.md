@@ -548,3 +548,8 @@ updated: 2026-10-22 12:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **#429 入队**：gate3（--serial，head 4e13bbb1）0/0 贴正文并删掉旧 0fdf24bd 块（双块致 pr-gate 失败，删后 pass）；boundary P2「封顶边界无 TS 出处」仲裁：`agentLoopSidecarServer.ts:253` 为 `Math.min(2_147_483_647, …)` 整数封顶，Node 实测三值均 2147483647，不升 P1。
 > **#441**：gate1（head 6fcf0c9b）0/0，sibling + boundary 独立撞同一 P2（无 release 档防线）→ 974fd6d6 workspace 开 `clippy::debug_assert_with_mut_call`，CI 的 clippy -D warnings 即成机检；负控（恢复原写法）报 output_schema.rs:1456。codex + GLM r2 增量与 gate2 排队。
 > **#421**：GLM 增量 0/0；与 DeepSeek 增量合计两家 0 P0/P1，等 a7-1-gate5。
+
+> ## 2026-10-22 13:35 · 协调轮（人问：分工是否一致）
+> **#467（#422）**：gate3 P1 TOCTOU 修复轮 4（7ef70dba，abort() 移进 progress 锁内调 session.abort()）已推；CI `check` lint 失败（tests 模块经 `use super::*` 已带入 RuntimeError，显式 import 重复）→ 6ef0366e 清除并推送，CI 重跑中，等绿后派两家非作者评审。
+> **分工偏差（人指出，已认）**：#467 从实现到修复轮 4 由协调者（Claude）直接做，属 `decisions-20261017`「模型分工 v2」的例外路径：作者与协调者同体，独立性只剩评审两家非作者一层。判定：≤15 分钟小修/CI 收拾留手边；实现单默认写 task.md 派 worker（codex/DeepSeek，难单 codex/Claude）。内部子 Agent 无登记谱系（署名只有 Codex/DeepSeek/GLM/Claude），不用于实现。
+> **下一步**：check 绿 → GLM + codex 审 head 6ef0366e；默认模式待人在「严格派单 / 现状折中」间拍板后落 decisions。

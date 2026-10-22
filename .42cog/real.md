@@ -29,6 +29,19 @@
 
 **越过就出事的那几条**，不是「最好不要」，是「不可以」。
 
+## 模型通道配置（2026-10-22 登记）
+
+**现状**：模型名、网关 URL、密钥变量散在 8 处（4 个仓库内脚本 + 2 个仓外配置 + 2 份文档），各改各的，没有集中控制点。
+
+**当前会话已走 llm-center**：环境变量 `ANTHROPIC_BASE_URL=https://llm-center.modelbest.co`，GLM、DeepSeek、Claude 通道都经过这个网关。**codex 例外**：虽然 `~/.codex/config.toml` 定义了指向 llm-center 的 provider，但实测 `provider: openai`，`gpt-6.1-sol` 来自 `openai-bundled` marketplace，走的是 OpenAI app 后端，不是 llm-center。
+
+详细清单与行号：`_tmp/20261022-model-channels-inventory/`（不入库）
+- `channels.json`：结构化清单（通道名、模型、基址、密钥变量）
+- `locations.md`：每个配置的文件路径与行号
+- `README.md`：清单用途与维护约定
+
+**集中化方向**：新建 `scripts/model-channels.json`，仓库内 4 个脚本从它读取。仓外配置（codex、opencode）只登记期望值，用验证脚本比对。这属于协作工具改动，按项目规则只在挡住产品开发时才优先做。
+
 - 合规 / 保密 / 隐私：
 - 不可对外说的：
 - 必须保住的最低标准（＝验证红线）：见 `intent.md` 的「作品区」小节
