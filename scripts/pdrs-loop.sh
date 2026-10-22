@@ -152,7 +152,7 @@ EOF
   carry=""
 
   case "$RUNNER" in
-    opencode) cmd=(opencode run -m zai-coding-plan/glm-5.3) ;;
+    opencode) cmd=(opencode run -m llmcenter/glm-5.3-mb) ;;
     # claude -p 无人应答权限提示：以项目 settings 的 allow 列表为准，未列者拒绝（dontAsk）；不用 bypass。
     claude)   cmd=(claude -p --model claude-opus-5-5 --permission-mode dontAsk --output-format stream-json --verbose) ;;
   esac
