@@ -737,3 +737,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：暂无（修复轮 7 的 copy-io 金样只覆盖逐调用包装；cp 风格整体错误未做对拍）。
 - **批准记录**：无；实现方在修复轮 7 RESULT「范围外」披露，Grok r6 要求登记，协调者登记；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
 
+## 已知未对齐（未批准，待人批）· A6.3 插件 loader
+
+### A6.3-PLUGIN-MARKDOWN-CYCLE-001 · markdown 目录遍历跳过指向祖先目录的符号链接回边（向安全偏离）
+
+- **类别**：向安全偏离（基线继承性挂起与资源放大 → 有界遍历）。
+- **TS 依据**（cc7c4e6）：插件 commands / skills / output-styles 的 Markdown 目录遍历跟随符号链接、无防环。PR #484 实现方实测：单条 `commands/link0 -> ..` 由系统 ELOOP 截止，返回 32 个重复路径的命令；两条 `link0 / link1 -> ..` 的分叉回边连续两次在 3000 ms 探针截止时仍未返回（限时观察，不等于已证明无限）。证据：`src/pilotdeck-gateway/tests/fixtures/plugin-loader/regressions.json` 的 cycleCases、`_tmp/20261023-issue-484-plugins/ts-cycle-initial.log`。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs` 记录 DFS 祖先目录，遇指向祖先的符号链接回边时跳过该子树，保留已加载与其他非循环贡献、保留非循环别名各自的贡献。可观察差异：循环路径产生的重复贡献不再返回，分叉回边在有限时间内返回。
+- **范围**：仅符号链接构成祖先回边的目录；无环目录与非循环别名的结果与 TS 一致。
+- **机器判据**：`src/pilotdeck-gateway/tests/plugin_regressions.rs:132` `plugin_markdown_cycle_is_bounded`（子进程运行、带超时）、`:193` `plugin_markdown_acyclic_aliases_are_preserved`；负控见 `tests/fixtures/plugin-loader/negative-controls.py`。
+- **批准记录**：无；依据人批先例 #496（TS 有挂起 / 越权缺陷时 Rust 向安全偏离并登记）由协调者在 #484 任务书中授权实现，**AI 代批，待人复核**；**已知未对齐（未批准）**。同类：#541（skills import tree_files）。
