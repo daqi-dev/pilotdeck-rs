@@ -250,7 +250,7 @@ impl<const P: bool> PendingBus<P> {
             let entry = {
                 let mut state = self.port.state.lock().unwrap();
                 let mut entries = entries.lock().unwrap();
-                entries
+                let entry = entries
                     .iter_mut()
                     .find(|e| e.token > cursor && bulk_available(e))
                     .map(|stored| {
@@ -258,20 +258,28 @@ impl<const P: bool> PendingBus<P> {
                         stored.settled_by = Some(std::thread::current().id());
                         stored.active.store(false, Ordering::SeqCst);
                         stored.entry.clone()
-                    })
-                    .inspect(|_| reconnect::remove(&mut state, cursor, owner))
+                    });
+                if entry.is_some() {
+                    reconnect::remove(&mut state, cursor, owner);
+                } else {
+                    // TS runs the exhausted loop and bySession.delete as
+                    // adjacent statements; a separate lock acquisition would
+                    // reopen a window where a cross-thread register is
+                    // silently deleted without any single-thread TS
+                    // equivalent. Real TS: a register the live Map still
+                    // holds is settled by the loop; one landing after the
+                    // delete keeps a fresh bucket.
+                    state
+                        .buckets
+                        .retain(|b| b.bus != self.id || &b.owner != owner);
+                }
+                entry
             };
             let Some(entry) = entry else {
                 break;
             };
             (entry.reject)(reason.clone());
         }
-        self.port
-            .state
-            .lock()
-            .unwrap()
-            .buckets
-            .retain(|b| b.bus != self.id || &b.owner != owner);
     }
     pub fn dispose(&self, reason: Option<&JsString>) {
         let reason = reason.cloned().unwrap_or_else(|| "gateway_disposed".into());

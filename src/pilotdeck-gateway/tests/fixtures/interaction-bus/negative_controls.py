@@ -33,6 +33,26 @@ mutations = [
      '        state.last.retain(|(key, _)| key != owner);\n    }\n    /// Like TS',
      '        // mutant: keep last binding\n    }\n    /// Like TS'),
     ('peer-duplicate-error', 'bus.rs', '" is already pending for ".into()', '" is pending for ".into()'),
+    ('peer-duplicate-check', 'bus.rs',
+     '&r.owner == owner && r.kind == self.kind() && r.entry.request_id == entry.request_id',
+     'false && &r.owner == owner && r.kind == self.kind() && r.entry.request_id == entry.request_id'),
+    ('reject-window-final-delete-removed', 'bus.rs',
+     '                    state\n                        .buckets\n                        .retain(|b| b.bus != self.id || &b.owner != owner);',
+     '                    // mutant: keep the owner bucket after the exhausted loop'),
+    ('reject-window-delete-before-loop', 'bus.rs',
+     '        let Some(entries) = entries else {\n            return;\n        };\n        let mut cursor = 0;',
+     '        let Some(entries) = entries else {\n            return;\n        };\n'
+     '        self.port\n            .state\n            .lock()\n            .unwrap()\n            .buckets\n            .retain(|b| b.bus != self.id || &b.owner != owner);\n'
+     '        let mut cursor = 0;'),
+    ('injected-port-ignored', 'coordinator.rs',
+     'let reconnect_port = options.reconnect_port.unwrap_or_default();',
+     'let reconnect_port = InteractionReconnectPort::default();'),
+    ('injected-grants-ignored', 'coordinator.rs',
+     'permission_grants: options.permission_grants.unwrap_or_default(),',
+     'permission_grants: Arc::new(GatewaySessionPermissionRuleSetRegistry::default()),'),
+    ('injected-elicitation-ignored', 'coordinator.rs',
+     '            elicitation_bus: options\n                .elicitation_bus\n                .unwrap_or_else(|| GatewayElicitationBus::new(reconnect_port.clone())),',
+     '            elicitation_bus: GatewayElicitationBus::new(reconnect_port.clone()),'),
     ('bash-carriage-return', 'coordinator.rs', '10 | 13 | 0x2028 | 0x2029', '10 | 0x2028 | 0x2029'),
     ('deny-dispose-detached', 'bus.rs',
      '.find(|e| e.token > cursor && bulk_available(e))',
@@ -92,13 +112,22 @@ for name, filename, old, new in mutations:
                 break
             time.sleep(5)
         path.write_text(changed)
-        test = ('interaction_reject_cross_thread_response_and_bulk_have_one_winner' if name in ['late-cross-thread-response', 'cross-thread-bulk'] else 'interaction_real_ts_stepwise_oracle')
+        # Each mutation names the test whose assertion it must turn red.
+        test = {
+            'late-cross-thread-response': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+            'cross-thread-bulk': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+            'reject-window-final-delete-removed': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+            'reject-window-delete-before-loop': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+            'injected-port-ignored': 'interaction_injected_options_share_the_supplied_components',
+            'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
+            'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
+        }.get(name, 'interaction_real_ts_stepwise_oracle')
         result = subprocess.run(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
             f'runtime::interaction::tests::{test}'], cwd=root, env=env, capture_output=True, text=True)
         log = result.stdout + result.stderr
         (out / f'{name}.log').write_text(log)
-        killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed:' in log or 'late response:' in log)
-        failure = next((line.strip() for line in log.splitlines() if 'assertion `left == right` failed:' in line or 'late response:' in line), '')
+        killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed' in log or 'late response:' in log)
+        failure = next((line.strip() for line in log.splitlines() if 'assertion `left == right` failed' in line or 'late response:' in line), '')
         summary.append(dict(name=name, killed=killed, returncode=result.returncode, failure=failure, sourceSha256=before))
         print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
         assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'

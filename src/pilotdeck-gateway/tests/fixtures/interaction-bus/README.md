@@ -52,10 +52,26 @@ python3 src/pilotdeck-gateway/tests/fixtures/interaction-bus/negative_controls.p
 重复、close 清除历史 binding 后重新注册、同步嵌套 reject、reject 回调 consume 自身、
 deny 回调 dispose 后续条目、reject→deny→register，以及 Bash 的 CR/LS/PS 边界。
 
+issue #516 后金样为 48 场景、281 步：新增两条 `injectedOptions` 场景，把共享 port、
+两个 bus 与外部 grants registry 全量注入 coordinator，钉住 `InteractionOptions` 的
+Some 分支；Rust 侧 `Harness::injected()` 按同一标志构造，另以
+`interaction_injected_options_share_the_supplied_components` 从外部句柄断言注入组件
+被真实使用（port snapshot、bus consume、grants 读写与 dispose）。
+
 TS 的两个细节须按实测解释：deny 先摘桶，所以 dispose 后续 registration 不会删除
 迭代器持有的旧 Map 条目，旧条目仍结算；嵌套 reject/deny 删除 bySession 后，外层
 reject 仍遍历原 Map。外层末尾无条件删除 owner，因此回调中新建桶会被删除而 replay
 保留；`reject-deny-register-original-map` 锁定这项基线现状，未作为差异豁免或修复完成宣称。
+
+`reject_session` 末次扫描与末尾删桶在同一临界区完成：TS 的耗尽循环与
+`bySession.delete` 是相邻语句（GatewayElicitationBus.ts:127-138），真实 TS 探针确认
+回调内注册进同一 Map 会被循环结算、注册进循环不持有的替换 Map 则被末尾删除丢弃
+（僵尸条目：回调不触发、registration 保持 active、replay 残留）。合并后，与末次
+扫描竞速的跨线程 register 要么被扫描结算（同桶）、要么在删除后新建桶正常存活；
+落进「另一个 bulk 已删桶、外层循环只持旧桶」的 register 仍按 TS 基线丢弃。
+`interaction_register_racing_reject_window_matches_ts_map_semantics` 用 channel 固定
+两种交错的确定性断言。纯并发时序的「扫描与删除间隙」本身不含任何用户代码、无
+回调暂停点，无法确定性构造，由临界区合并结构性消除（见 issue #516 RESULT）。
 
 `InteractionOptions.permission_grants` 的注入实例由 coordinator 拥有生命周期（dispose
 清空整个 registry，与 TS 相同）；Arc 可供外部观察，不可跨独立 coordinator 共享所有权。

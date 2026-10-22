@@ -137,14 +137,26 @@ scenarios.push({name:'replay-boundary-values',steps:[reg('permission','special',
   {op:'reconnect',session:'s',next:b()},answer('permission','special','s',{binding:b()})]});
 scenarios.push({name:'default-coordinator-ownership',defaultCoordinator:true,steps:[reg('question'),reg('permission'),
   {op:'reconnect_turn',session:'s',next:b()}, {op:'close',session:'s',reason:'default_close'}]});
+// injectedOptions supplies every InteractionOptions component: the shared port,
+// both buses and an external grants registry, pinning the Some() wiring on the
+// Rust side (the replay constructs the coordinator from the supplied parts).
+scenarios.push({name:'injected-options-components',injectedOptions:true,steps:[
+  {op:'grant',session:'s',entry:'Read'}, reg('permission'), reg('question'),
+  {op:'reconnect',session:'s',next:b()}, answer('permission'), answer('question'),
+  {op:'close',session:'s',reason:'injected_close'}, {op:'grant',session:'s',entry:'Write'},
+  {op:'dispose',reason:'injected_dispose'}, {op:'grant',session:'z',entry:'Read'}]});
+scenarios.push({name:'injected-options-shared-port-duplicate',injectedOptions:true,steps:[
+  reg('permission'), reg('permission','r','s',{peer:true}), answer('permission')]});
 
 const clone = (v: any) => JSON.parse(JSON.stringify(v));
 for (const scenario of scenarios) {
   mock.timers.enable({apis:['setTimeout']});
   const port = interaction.createNativeInteractionReconnectPort();
   const suppliedP = new permission.GatewayPermissionBus(port), suppliedQ = new elicitation.GatewayElicitationBus(port);
+  const suppliedGrants = new grants.GatewaySessionPermissionRuleSetRegistry();
   const events: any[] = []; const registrations = new Map<string,any>();
   const coordinator = new GatewayInteractionCoordinator({...(scenario.defaultCoordinator?{}:{reconnectPort:port,permissionBus:suppliedP,elicitationBus:suppliedQ}),
+    ...(scenario.injectedOptions?{permissionGrants:suppliedGrants}:{}),
     onElicitationDelivered(sessionKey: string,requestId: string) {events.push({event:'delivered',session:sessionKey,id:requestId});}});
   const p = coordinator.getPermissionBus(), q = coordinator.getElicitationBus();
   const activePort = coordinator.getReconnectPort();
