@@ -12,6 +12,12 @@ use pilotdeck_gateway::runtime::context::{
     PromptAssembler, PromptContributionRegistry, RuntimeContextContribution, RuntimeContextSurface,
     SectionContribution, TextProvider, VariableProvider,
 };
+use pilotdeck_gateway::runtime::context::{
+    cache::PromptCacheCoordinator,
+    memory::{
+        MemoryDiagnostic, MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+    },
+};
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 use std::{
     os::unix::fs::symlink,
@@ -19,8 +25,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 41;
-const STEPS: usize = 63;
+const CASES: usize = 58;
+const STEPS: usize = 108;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -235,6 +241,76 @@ fn text_provider(spec: &JsValue, abort_mode: &AbortMode) -> TextProvider {
     }))
 }
 
+struct FixtureCompaction(Arc<Mutex<String>>);
+impl pilotdeck_gateway::runtime::context::compaction::engine::port::CompactionRunner
+    for FixtureCompaction
+{
+    fn auto_compact(&self, _input: ContextInput) -> pilotdeck_gateway::host::HostFuture<JsValue> {
+        let result = self.0.lock().unwrap().clone();
+        Box::pin(async move {
+            let mut fields = JsObject::new();
+            fields.insert("type".into(), JsValue::String(result.into()));
+            Ok(JsValue::Object(fields))
+        })
+    }
+}
+
+struct FixtureMemory {
+    spec: JsValue,
+    abort_mode: AbortMode,
+    expected_root: String,
+    parent: Arc<Mutex<Option<Cancellation>>>,
+    child: Arc<Mutex<Option<Cancellation>>>,
+}
+impl MemoryResolver for FixtureMemory {
+    fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
+        assert!(!input.signal.is_cancelled(), "fresh forwarded signal");
+        *self.child.lock().unwrap() = Some(input.signal.clone());
+        assert_eq!(input.session_id, "session");
+        assert_eq!(input.project_root, self.expected_root);
+        if let Some(query) = self.spec.get("expectQuery") {
+            assert_eq!(input.query, text(query));
+        }
+        if let Some(count) = self.spec.get("expectRecentCount") {
+            assert_eq!(input.recent_messages.len(), number(count) as usize);
+        }
+        if field(&self.spec, "abort").as_bool() == Some(true)
+            && matches!(
+                self.abort_mode.lock().unwrap().as_deref(),
+                Some("memory" | "memory-pending")
+            )
+        {
+            // The fixture receives the child signal. The request parent is
+            // aborted below via a separate capability shared with the runner.
+            self.parent.lock().unwrap().as_ref().unwrap().cancel(None);
+        }
+        let pending_abort = self.abort_mode.lock().unwrap().as_deref() == Some("memory-pending");
+        let spec = self.spec.clone();
+        Box::pin(async move {
+            if pending_abort || field(&spec, "pending").as_bool() == Some(true) {
+                std::future::pending::<()>().await;
+            }
+            if let Some(error) = spec.get("error") {
+                return Err(text(error));
+            }
+            Ok(MemoryRetrieveResult {
+                system_context: spec.get("context").map(text),
+                diagnostics: spec
+                    .get("diagnostics")
+                    .map(array)
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|d| MemoryDiagnostic {
+                        code: text(field(d, "code")),
+                        severity: text(field(d, "severity")),
+                        message: text(field(d, "message")),
+                    })
+                    .collect(),
+            })
+        })
+    }
+}
+
 #[tokio::test]
 async fn prepare_for_model_matches_real_ts() {
     let oracle = baseline::oracle(ORACLE);
@@ -357,12 +433,48 @@ async fn prepare_for_model_matches_real_ts() {
                     }
                     registry
                 });
+        let memory_parent = Arc::new(Mutex::new(None));
+        let memory_child = Arc::new(Mutex::new(None));
+        let memory_resolver = setup.get("memory").map(|spec| {
+            Arc::new(FixtureMemory {
+                spec: spec.clone(),
+                abort_mode: abort_mode.clone(),
+                expected_root: spec
+                    .get("expectProjectRoot")
+                    .or_else(|| setup.get("projectRoot"))
+                    .map(text)
+                    .unwrap_or_else(|| {
+                        if name.starts_with("cache-") {
+                            "/pdrs-cache-fixture".into()
+                        } else {
+                            format!("{root_string}/project")
+                        }
+                    }),
+                parent: memory_parent.clone(),
+                child: memory_child.clone(),
+            }) as Arc<dyn MemoryResolver>
+        });
+        let coordinator = Arc::new(PromptCacheCoordinator::new("en-US".parse().unwrap()));
         let clock = Arc::new(Mutex::new(0.0));
         let now = {
             let clock = clock.clone();
             Arc::new(move || *clock.lock().unwrap())
         };
+        let compact_result = Arc::new(Mutex::new("skipped".to_owned()));
         let runtime = DefaultContextRuntime::new(Options {
+            compaction: Some(Arc::new(
+                pilotdeck_gateway::runtime::context::compaction::engine::port::CompactionPort {
+                    auto_compact: Some(Arc::new(FixtureCompaction(compact_result.clone()))),
+                    ..Default::default()
+                },
+            )),
+            memory_resolver,
+            project_root: setup.get("projectRoot").map(text),
+            memory_retrieval_timeout_ms: setup
+                .get("memoryTimeoutMs")
+                .map(number)
+                .unwrap_or(30_000.0),
+            prompt_cache_coordinator: Some(coordinator.clone()),
             extension: Some(Arc::new(extension)),
             include_extensions_with_custom_system_prompt: include_extensions,
             runtime_context_surface: surface,
@@ -391,6 +503,28 @@ async fn prepare_for_model_matches_real_ts() {
                 }
                 signal
             });
+            *memory_parent.lock().unwrap() = abort_signal.clone();
+            *memory_child.lock().unwrap() = None;
+            if let Some(compact) = step.get("compact") {
+                *compact_result.lock().unwrap() = text(compact);
+                runtime
+                    .try_auto_compact(ContextInput {
+                        fields: fields.clone(),
+                        abort_signal: None,
+                        budget_evaluator: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+            if let Some(action) = step.get("cacheAction") {
+                let session = fields.get("sessionId").unwrap().as_string().unwrap();
+                match text(action).as_str() {
+                    "reset" => coordinator.reset(session),
+                    "dispose" => runtime.dispose(),
+                    "release" => runtime.release_session(session),
+                    other => panic!("unknown cache action {other}"),
+                }
+            }
             let result = runtime
                 .prepare_for_model(ContextInput {
                     fields,
@@ -399,6 +533,22 @@ async fn prepare_for_model_matches_real_ts() {
                     budget_evaluator: None,
                 })
                 .await;
+            if let Some(memory) = setup.get("memory") {
+                let child = memory_child.lock().unwrap();
+                if abort.as_deref() == Some("before") {
+                    assert!(child.is_none(), "pre-abort skips provider");
+                } else if let Some(child) = child.as_ref() {
+                    let expected_cancelled = field(memory, "pending").as_bool() == Some(true)
+                        || matches!(abort.as_deref(), Some("memory" | "memory-pending"));
+                    assert_eq!(
+                        child.is_cancelled(),
+                        expected_cancelled,
+                        "{name} child cancellation"
+                    );
+                } else {
+                    panic!("{name}: provider was not called");
+                }
+            }
             if let Some(expected_error) = step.get("error") {
                 match result {
                     Ok(_) => panic!("case {name} step {index}: expected an error"),
