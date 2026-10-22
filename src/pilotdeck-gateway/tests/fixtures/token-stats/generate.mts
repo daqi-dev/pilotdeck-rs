@@ -241,11 +241,14 @@ const MALFORMED_ROW = {
   endedAt: 'not-a-date',
 };
 // Rows the retention decision can reach. V8 parses a wide legacy grammar; the
-// Rust port deliberately interprets only the canonical `toISOString()` shape
-// and keeps everything else (see RESULT.md「修复轮 2」). Rows whose V8 parse is a
-// finite *past* instant are therefore absent here: TS deletes them, Rust keeps
-// them, and that divergence is pinned by Rust unit tests instead. Rows below
-// are either canonical or NaN in V8, so both implementations agree.
+// Rust port deliberately interprets only the canonical `toISOString()` shapes
+// and keeps everything else (disclosed in
+// `specs/gateway-parity/accepted-diffs.md` A6.4-STATS-RETENTION-001). Rows
+// whose V8 parse is a finite *past* instant are therefore absent here: TS
+// deletes them, Rust keeps them, and that divergence is pinned by Rust unit
+// tests instead. Rows below are canonical, NaN in V8, or parse to a future
+// instant (`future-hour-24`), so both implementations agree — do not move such
+// a row into the past without also updating the disclosure.
 const OLD = (sessionId: string, endedAt: string) => ({
   ...RETAINED_ROW,
   sessionId,
@@ -318,6 +321,43 @@ const RETENTION_ROWS = [
     name: 'retention-boundary',
     now,
     config: { enabled: true, retentionMs: 60_000 },
+    initial: { 'stats.jsonl': rows.map(json).join('\n') + '\n' },
+    ops: [{ op: 'files' }, { op: 'snapshot' }, { op: 'reopen' }, { op: 'files' }],
+  });
+}
+
+// ── C3. expanded-year canonical timestamps and the `Date` valid range ───────
+// `toISOString()` writes `±YYYYYY-MM-DDTHH:mm:ss.sssZ` outside 0000-9999.
+// `now` is pinned just past the last valid instant, with zero retention, so
+// every parsed canonical timestamp expires while every NaN (out-of-range or
+// non-canonical) row is kept.
+{
+  const now = 8_640_000_000_000_002;
+  const expanded = (sessionId: string, endedAt: string) => ({
+    ...RETAINED_ROW,
+    sessionId,
+    startedAt: endedAt,
+    endedAt,
+  });
+  const rows = [
+    expanded('negative-year', '-000001-12-31T23:59:59.999Z'),
+    expanded('negative-expanded', '-010000-01-01T00:00:00.000Z'),
+    expanded('positive-expanded', '+010000-01-01T00:00:00.000Z'),
+    expanded('max-date', '+275760-09-13T00:00:00.000Z'),
+    expanded('min-date', '-271821-04-20T00:00:00.000Z'),
+    // Outside the valid `Date` range: V8 `Date.parse` is NaN, so both keep.
+    expanded('above-max', '+275760-09-13T00:00:00.001Z'),
+    expanded('below-min', '-271821-04-19T23:59:59.999Z'),
+    expanded('above-max-year', '+999999-12-31T23:59:59.999Z'),
+    expanded('below-min-year', '-999999-12-31T23:59:59.999Z'),
+    // Not canonical expanded years, and NaN in V8: both keep.
+    expanded('negative-zero', '-000000-01-01T00:00:00.000Z'),
+    expanded('unsigned-expanded', '010000-01-01T00:00:00.000Z'),
+  ];
+  scenarios.push({
+    name: 'retention-expanded-years',
+    now,
+    config: { enabled: true, retentionMs: 0 },
     initial: { 'stats.jsonl': rows.map(json).join('\n') + '\n' },
     ops: [{ op: 'files' }, { op: 'snapshot' }, { op: 'reopen' }, { op: 'files' }],
   });

@@ -1294,48 +1294,86 @@ fn migrate_json_to_jsonl_with(
     }
 }
 
-/// `Date.parse` restricted to the one timestamp shape this collector writes.
+/// `Date.parse` restricted to the timestamp shapes this collector writes.
 ///
 /// `RouterRuntime.ts:936` and `:972` build `endedAt` with
-/// `(deps.now?.() ?? new Date()).toISOString()`; for years 0000-9999 that is
-/// exactly `YYYY-MM-DDTHH:mm:ss.sssZ`. Nothing else is interpreted here:
-/// ECMAScript's date parser also accepts local times, numeric offsets, RFC 2822
-/// and legacy forms that this collector never writes, and approximating those
-/// branches can turn a malformed row into a finite old instant, after which
-/// retention deletes the accounting row. The chosen divergence is therefore
-/// "only the canonical form parses; everything else is kept".
+/// `(deps.now?.() ?? new Date()).toISOString()`. `toISOString()` has exactly two
+/// canonical shapes: `YYYY-MM-DDTHH:mm:ss.sssZ` (24 bytes, years 0000-9999)
+/// and `±YYYYYY-MM-DDTHH:mm:ss.sssZ` (27 bytes, every other year inside the
+/// `Date` range `-271821-04-20T00:00:00.000Z` ..
+/// `+275760-09-13T00:00:00.000Z`). Both are interpreted exactly.
 ///
-/// The canonical shape is validated strictly, including the calendar: a
+/// Nothing else is interpreted here: ECMAScript's date parser also accepts
+/// local times, numeric offsets, RFC 2822, legacy forms and even non-canonical
+/// expanded years (`+000000`, or a variable number of fractional digits), none
+/// of which this collector writes. Approximating those branches can turn a
+/// malformed row into a finite old instant, after which retention deletes the
+/// accounting row. The chosen divergence is therefore "only the two canonical
+/// forms parse; everything else is kept", including values outside the `Date`
+/// range.
+///
+/// The canonical shapes are validated strictly, including the calendar: a
 /// canonical-looking but impossible date (`2023-02-29`) is not accepted.
-/// Years outside 0000-9999 are emitted by `toISOString()` in the expanded
-/// `±YYYYYY` form; that form is treated as unparseable (kept) as well.
 pub(crate) fn parse_date_ms(value: &str) -> Option<f64> {
     let bytes = value.as_bytes();
-    if bytes.len() != 24
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-        || bytes[19] != b'.'
-        || bytes[23] != b'Z'
-    {
-        return None;
-    }
-    let field = |range: std::ops::Range<usize>| -> Option<i64> {
-        let digits = &bytes[range];
-        if !digits.iter().all(|byte| byte.is_ascii_digit()) {
-            return None;
+    let (year, month, day, hour, minute, second, millis) = match bytes.len() {
+        24 => {
+            if bytes[4] != b'-'
+                || bytes[7] != b'-'
+                || bytes[10] != b'T'
+                || bytes[13] != b':'
+                || bytes[16] != b':'
+                || bytes[19] != b'.'
+                || bytes[23] != b'Z'
+            {
+                return None;
+            }
+            (
+                ascii_field(bytes, 0..4)?,
+                ascii_field(bytes, 5..7)?,
+                ascii_field(bytes, 8..10)?,
+                ascii_field(bytes, 11..13)?,
+                ascii_field(bytes, 14..16)?,
+                ascii_field(bytes, 17..19)?,
+                ascii_field(bytes, 20..23)?,
+            )
         }
-        std::str::from_utf8(digits).ok()?.parse().ok()
+        27 => {
+            let negative = match bytes[0] {
+                b'+' => false,
+                b'-' => true,
+                _ => return None,
+            };
+            if bytes[7] != b'-'
+                || bytes[10] != b'-'
+                || bytes[13] != b'T'
+                || bytes[16] != b':'
+                || bytes[19] != b':'
+                || bytes[22] != b'.'
+                || bytes[26] != b'Z'
+            {
+                return None;
+            }
+            let magnitude = ascii_field(bytes, 1..7)?;
+            // `toISOString()` uses the expanded form only outside 0000-9999:
+            // `+` starts at year 10000, `-` means a negative year (`-000000`
+            // is not a canonical year). `+000000` is likewise not canonical.
+            if (!negative && magnitude < 10_000) || (negative && magnitude == 0) {
+                return None;
+            }
+            let year = if negative { -magnitude } else { magnitude };
+            (
+                year,
+                ascii_field(bytes, 8..10)?,
+                ascii_field(bytes, 11..13)?,
+                ascii_field(bytes, 14..16)?,
+                ascii_field(bytes, 17..19)?,
+                ascii_field(bytes, 20..22)?,
+                ascii_field(bytes, 23..26)?,
+            )
+        }
+        _ => return None,
     };
-    let year = field(0..4)?;
-    let month = field(5..7)?;
-    let day = field(8..10)?;
-    let hour = field(11..13)?;
-    let minute = field(14..16)?;
-    let second = field(17..19)?;
-    let millis = field(20..23)?;
     if !(1..=12).contains(&month)
         || day < 1
         || day > days_in_month(year, month)
@@ -1345,7 +1383,21 @@ pub(crate) fn parse_date_ms(value: &str) -> Option<f64> {
     {
         return None;
     }
-    Some(civil_ms(year, month, day, hour, minute, second, millis))
+    let millis_since_epoch = civil_ms(year, month, day, hour, minute, second, millis);
+    // ECMAScript's TimeClip rejects instants outside ±8.64e15 ms. Those are
+    // never written by `toISOString()`, and `Date.parse` returns NaN for them.
+    if !(-8_640_000_000_000_000.0..=8_640_000_000_000_000.0).contains(&millis_since_epoch) {
+        return None;
+    }
+    Some(millis_since_epoch)
+}
+
+fn ascii_field(bytes: &[u8], range: std::ops::Range<usize>) -> Option<i64> {
+    let digits = &bytes[range];
+    if !digits.iter().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    std::str::from_utf8(digits).ok()?.parse().ok()
 }
 
 /// Days in a proleptic-Gregorian month (mirrors the calendar `Date` uses).
