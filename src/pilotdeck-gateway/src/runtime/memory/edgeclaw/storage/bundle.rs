@@ -1,5 +1,8 @@
-//! Memory bundle export/import, staged root swaps and Dream snapshot reads.
-//! Source: fixed baseline `core/storage/sqlite.ts:264-353,422-472,1232-1350,1495-1658`.
+//! Memory bundle export/import and staged root swaps.
+//! Source: fixed baseline `core/storage/sqlite.ts:264-353,422-472,1495-1658`.
+//! The Dream snapshot reads/clears the import depends on live in
+//! [`super::snapshots`] (pr10e): `clear_last_dream_snapshot` /
+//! `get_last_dream_snapshot_overview`.
 //!
 //! Bundle objects are JS-owned values: key insertion order, number formatting
 //! and optional-field presence mirror the TS object literals so a serialized
@@ -7,12 +10,15 @@
 //! [`FileMemoryError::Bundle`] with the TS `MemoryBundleValidationError`
 //! message verbatim; a failed import leaves the live roots untouched because
 //! everything is staged into sibling temp directories first.
+/// `rmSync(dir, { recursive: true, force: true })`: the shared Node-v22 port
+/// in [`node_fs`], reused instead of a local reimplementation.
+use super::super::node_fs::rm_sync;
 use super::{EdgeClawStorage, StorageError};
+use crate::metadata::js_trim;
 use crate::runtime::memory::edgeclaw::file_memory::{
     EdgeClawFileStores, FileMemoryClock, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
 };
-use crate::{metadata::js_trim, project_files::node_compare_utf16};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha1::{Digest, Sha1};
 use std::{
     collections::HashSet,
@@ -26,8 +32,6 @@ pub(crate) const MEMORY_EXPORT_FORMAT_VERSION: &str = "clawxmemory-memory-snapsh
 const GLOBAL_MEMORY_PREFIX: &str = "global/";
 const GLOBAL_USER_PROFILE_RELATIVE_PATH: &str = "UserIdentity/user-profile.md";
 const GLOBAL_USER_NOTES_RELATIVE_DIR: &str = "UserIdentityNotes";
-const LAST_DREAM_SNAPSHOT_DIR: &str = "last_dream";
-const LAST_DREAM_SNAPSHOT_METADATA_FILE: &str = "metadata.json";
 const LAST_INDEXED_AT_STATE_KEY: &str = "lastIndexedAt";
 const LAST_DREAM_AT_STATE_KEY: &str = "lastDreamAt";
 const LAST_DREAM_STATUS_STATE_KEY: &str = "lastDreamStatus";
@@ -168,15 +172,6 @@ fn copy_dir_all(source: &Path, destination: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
-/// `rmSync(dir, { recursive: true, force: true })`: a missing directory is
-/// success, other errors propagate.
-fn remove_dir_force(path: &Path) -> std::io::Result<()> {
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
 /// `robustRenameSync` (`sqlite.ts:434-448`): rename, falling back to a
 /// recursive copy + delete on EPERM/EACCES.
 fn robust_rename(source: &Path, destination: &Path) -> std::io::Result<()> {
@@ -184,7 +179,7 @@ fn robust_rename(source: &Path, destination: &Path) -> std::io::Result<()> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             copy_dir_all(source, destination)?;
-            remove_dir_force(source)
+            rm_sync(source)
         }
         Err(error) => Err(error),
     }
@@ -218,102 +213,25 @@ fn replace_directory_with_staged(
             if moved_live_root && backup_root.exists() {
                 // Best-effort cleanup; the live directory has already been
                 // swapped in.
-                let _ = remove_dir_force(&backup_root);
+                let _ = rm_sync(&backup_root);
             }
             Ok(())
         }
         Err(error) => {
             if staged_root.exists() {
-                let _ = remove_dir_force(staged_root);
+                let _ = rm_sync(staged_root);
             }
             if moved_live_root && backup_root.exists() {
                 // Drop whatever partially landed at the live root before
                 // restoring the pre-import tree.
                 if live_root.exists() {
-                    let _ = remove_dir_force(live_root);
+                    let _ = rm_sync(live_root);
                 }
                 robust_rename(&backup_root, live_root)?;
             }
             Err(error.into())
         }
     }
-}
-
-// -- snapshot file helpers (`sqlite.ts:448-472`) ----------------------------
-
-fn snapshot_collator() -> Result<&'static icu_collator::CollatorBorrowed<'static>> {
-    super::trace_collator().map_err(FileMemoryError::from)
-}
-/// `readSnapshotFiles` (`sqlite.ts:458-472`): walk the directory tree with
-/// entries sorted by `name.localeCompare`, returning `{relativePath, content}`
-/// records.
-fn read_snapshot_files(root_dir: &Path) -> Result<Vec<JsObject>> {
-    let mut files = vec![];
-    if root_dir.exists() {
-        walk_snapshot_dir(root_dir, root_dir, &mut files)?;
-    }
-    Ok(files)
-}
-fn walk_snapshot_dir(root_dir: &Path, dir: &Path, out: &mut Vec<JsObject>) -> Result<()> {
-    let mut entries = vec![];
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        entries.push((
-            entry.file_name().to_string_lossy().into_owned(),
-            entry.file_type()?,
-            entry.path(),
-        ));
-    }
-    if entries.len() >= 2 {
-        let collator = snapshot_collator()?;
-        entries.sort_by(|a, b| {
-            node_compare_utf16(
-                collator,
-                &JsString::from(a.0.as_str()),
-                &JsString::from(b.0.as_str()),
-            )
-        });
-    }
-    for (_name, kind, path) in entries {
-        if kind.is_dir() {
-            walk_snapshot_dir(root_dir, &path, out)?;
-            continue;
-        }
-        if !kind.is_file() {
-            continue;
-        }
-        let relative = relative_from(root_dir, &path).replace('\\', "/");
-        let content = String::from_utf8_lossy(&fs::read(&path)?).into_owned();
-        out.push(obj(&[
-            ("relativePath", s(relative)),
-            ("content", s(content)),
-        ]));
-    }
-    Ok(())
-}
-/// `snapshotVersionFromFiles` (`sqlite.ts:452-456`): sha1[:10] of the JSON
-/// serialization of the snapshot files, `MEMORY.md` excluded and sorted by
-/// relative path.
-fn snapshot_version_from_files(files: &[JsObject]) -> Result<String> {
-    let mut sorted: Vec<&JsObject> = files
-        .iter()
-        .filter(|file| text(file, "relativePath") != "MEMORY.md")
-        .collect();
-    if sorted.len() >= 2 {
-        let collator = snapshot_collator()?;
-        sorted.sort_by(|a, b| {
-            node_compare_utf16(
-                collator,
-                &JsString::from(text(a, "relativePath")),
-                &JsString::from(text(b, "relativePath")),
-            )
-        });
-    }
-    let payload = values(sorted.into_iter().cloned().collect());
-    let json = stringify_json(&payload)
-        .map_err(|error| FileMemoryError::Invalid(format!("{error:?}")))?
-        .unwrap_or_default();
-    Ok(hash(&json))
 }
 
 // -- bundle normalization (`sqlite.ts:264-353`) ----------------------------
@@ -571,15 +489,6 @@ struct StagedImport {
     counts: JsObject,
     ignored_global_file_count: usize,
 }
-/// `loadLastDreamSnapshotRecord`'s result (`sqlite.ts:1311-1325`). The staged
-/// file lists are read because TS reads them (a failed read surfaces) but are
-/// only consumed by the Dream rollback, a pr10e write path.
-#[expect(dead_code, reason = "file lists feed the pr10e Dream rollback")]
-struct DreamSnapshotRecord {
-    metadata: JsObject,
-    workspace_files: Vec<JsObject>,
-    global_files: Vec<JsObject>,
-}
 impl EdgeClawFileStores {
     /// `stageImportBundle` (`sqlite.ts:1533-1575`).
     fn stage_import_bundle(&self, bundle: &JsObject) -> Result<StagedImport> {
@@ -638,8 +547,8 @@ impl EdgeClawFileStores {
             Err(error) => {
                 // Both staged directories are removed before rethrowing, like
                 // the TS catch block; a failing removal replaces the error.
-                let cleanup = remove_dir_force(&staged_workspace_root)
-                    .and_then(|()| remove_dir_force(&staged_global_root));
+                let cleanup =
+                    rm_sync(&staged_workspace_root).and_then(|()| rm_sync(&staged_global_root));
                 match cleanup {
                     Ok(()) => Err(error),
                     Err(cleanup) => Err(cleanup.into()),
@@ -758,6 +667,10 @@ impl EdgeClawFileStores {
                 self.repository.clock(),
             )?;
             self.workspace_memory.repair_manifests()?;
+            // `clearLastDreamSnapshot` (sqlite.ts:1333) — `storage::snapshots`
+            // (pr10e). Its `snapshot_operation` locks are reentrant with the
+            // two `operation_scope` guards held above, so the clear stays
+            // inside this locked window.
             self.clear_last_dream_snapshot()?;
             self.reset_imported_runtime_state(&normalized)?;
             let mut result = JsObject::new();
@@ -802,114 +715,10 @@ impl EdgeClawFileStores {
         })();
         // `finally { rmSync(stagedGlobalRoot) }`: a failing removal masks the
         // body's result exactly like the TS finally block.
-        match remove_dir_force(&staged.staged_global_root) {
+        match rm_sync(&staged.staged_global_root) {
             Ok(()) => outcome,
             Err(error) => Err(error.into()),
         }
-    }
-
-    // -- Dream snapshot reads (`sqlite.ts:1232-1350`) ----------------------
-
-    fn last_dream_snapshot_root(&self) -> PathBuf {
-        self.storage
-            .path()
-            .parent()
-            .map(|parent| parent.join(LAST_DREAM_SNAPSHOT_DIR))
-            .unwrap_or_else(|| PathBuf::from(LAST_DREAM_SNAPSHOT_DIR))
-    }
-    /// `clearLastDreamSnapshot` (`sqlite.ts:1327-1329`).
-    pub fn clear_last_dream_snapshot(&self) -> Result<()> {
-        remove_dir_force(&self.last_dream_snapshot_root())?;
-        Ok(())
-    }
-    /// `captureLiveMemorySnapshot` (`sqlite.ts:1232-1243`); only the version
-    /// halves are observable from the read paths (`counts` and `runtimeState`
-    /// feed the Dream rollback, a pr10e write path).
-    fn capture_live_memory_snapshot(&self) -> Result<(String, String)> {
-        let workspace_files = objects(self.workspace_memory.export_snapshot_files()?);
-        let global_files = objects(self.global_user_memory.export_snapshot_files()?);
-        // `counts: this.buildTransferCounts(...)` (sqlite.ts:1238): the counts
-        // feed the Dream rollback (a pr10e write path), but the call re-runs
-        // `exportSnapshotFiles` on the workspace store, whose manifest repair
-        // ticks the clock and may rewrite `MEMORY.md` — both observable from
-        // the overview — so it is kept even though its result is discarded.
-        let _ = build_transfer_counts(&self.workspace_memory, &self.global_user_memory)?;
-        Ok((
-            snapshot_version_from_files(&workspace_files)?,
-            snapshot_version_from_files(&global_files)?,
-        ))
-    }
-    /// `loadLastDreamSnapshotRecord` (`sqlite.ts:1311-1325`).
-    fn load_last_dream_snapshot_record(&self) -> Result<Option<DreamSnapshotRecord>> {
-        let root = self.last_dream_snapshot_root();
-        let metadata_path = root.join(LAST_DREAM_SNAPSHOT_METADATA_FILE);
-        if !metadata_path.exists() {
-            return Ok(None);
-        }
-        let raw = String::from_utf8_lossy(&fs::read(&metadata_path)?).into_owned();
-        let Some(metadata) = parse_json(&raw)
-            .ok()
-            .and_then(|value| value.as_object().cloned())
-        else {
-            return Ok(None);
-        };
-        if !matches!(metadata.get("version"), Some(JsValue::Number(version)) if *version == 1.0) {
-            return Ok(None);
-        }
-        let workspace_root = root.join("workspace");
-        let global_root = root.join("global");
-        if !workspace_root.exists() || !global_root.exists() {
-            return Ok(None);
-        }
-        Ok(Some(DreamSnapshotRecord {
-            metadata,
-            workspace_files: read_snapshot_files(&workspace_root)?,
-            global_files: read_snapshot_files(&global_root)?,
-        }))
-    }
-    /// `getLastDreamSnapshotOverview` (`sqlite.ts:1331-1350`).
-    pub fn get_last_dream_snapshot_overview(&self) -> Result<Option<JsObject>> {
-        let Some(record) = self.load_last_dream_snapshot_record()? else {
-            return Ok(None);
-        };
-        let (workspace_version, global_version) = self.capture_live_memory_snapshot()?;
-        let metadata = &record.metadata;
-        let after = metadata
-            .get("after")
-            .and_then(JsValue::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let rollback_ready = text(&after, "workspaceVersion") == workspace_version
-            && text(&after, "globalVersion") == global_version;
-        let mut overview = obj(&[
-            ("capturedAt", s(text(metadata, "capturedAt"))),
-            ("sourceAction", s(text(metadata, "sourceAction"))),
-            (
-                "sourceWorkspaceDir",
-                s(text(metadata, "sourceWorkspaceDir")),
-            ),
-        ]);
-        for key in ["trigger", "dreamTraceId", "summary"] {
-            let value = text(metadata, key);
-            if !value.is_empty() {
-                put(&mut overview, key, s(value));
-            }
-        }
-        put(
-            &mut overview,
-            "rollbackReady",
-            JsValue::Bool(rollback_ready),
-        );
-        if !rollback_ready {
-            put(
-                &mut overview,
-                "warning",
-                s(
-                    "Current memory state no longer matches the last Dream snapshot, so rollback is unavailable.",
-                ),
-            );
-        }
-        Ok(Some(overview))
     }
 }
 impl EdgeClawStorage {

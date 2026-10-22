@@ -192,8 +192,11 @@ impl EdgeClawFileStores {
         {
             overview.insert("lastDreamSummary".into(), JsValue::String(value.clone()));
         }
-        if let Some(snapshot) = self.get_last_dream_snapshot_overview()? {
-            overview.insert("lastDreamSnapshot".into(), JsValue::Object(snapshot));
+        // `...(lastDreamSnapshot ? { lastDreamSnapshot } : {})` (sqlite.ts:1704):
+        // the overview is either an object (truthy) or `undefined`.
+        let last_dream_snapshot = self.get_last_dream_snapshot_overview()?;
+        if !matches!(last_dream_snapshot, JsValue::Undefined | JsValue::Null) {
+            overview.insert("lastDreamSnapshot".into(), last_dream_snapshot);
         }
         Ok(JsValue::Object(overview))
     }
