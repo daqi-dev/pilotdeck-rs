@@ -9195,6 +9195,503 @@
           }
         }
       ]
+    },
+    {
+      "name": "grep-content-trailing-bom",
+      "cwd": "s/grep-content-trailing-bom",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-trailing-bom/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-trailing-bom/bom.txt",
+          "content": "foo﻿\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "bom.txt"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "bom.txt:1:foo\n\n[grep pagination] returned=1 total=1 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "content",
+              "files": [
+                "bom.txt"
+              ],
+              "count": 1,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-content-trailing-nel",
+      "cwd": "s/grep-content-trailing-nel",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-trailing-nel/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-trailing-nel/nel.txt",
+          "content": "foo\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "nel.txt"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "nel.txt:1:foo\n\n[grep pagination] returned=1 total=1 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "content",
+              "files": [
+                "nel.txt"
+              ],
+              "count": 1,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-content-inline-cr",
+      "cwd": "s/grep-content-inline-cr",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-inline-cr/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-inline-cr/cr.txt",
+          "content": "foo\rbar\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "cr.txt"
+          },
+          "execute": {
+            "error": {
+              "code": "tool_execution_failed",
+              "message": "Unexpected ripgrep content output: cr.txt:1:foo\rbar"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-content-inline-u2028",
+      "cwd": "s/grep-content-inline-u2028",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-inline-u2028/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-inline-u2028/ls.txt",
+          "content": "foo bar\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "ls.txt"
+          },
+          "execute": {
+            "error": {
+              "code": "tool_execution_failed",
+              "message": "Unexpected ripgrep content output: ls.txt:1:foo bar"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-content-trailing-u2028",
+      "cwd": "s/grep-content-trailing-u2028",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-trailing-u2028/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-trailing-u2028/trail-ls.txt",
+          "content": "foo \n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "trail-ls.txt"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "trail-ls.txt:1:foo\n\n[grep pagination] returned=1 total=1 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "content",
+              "files": [
+                "trail-ls.txt"
+              ],
+              "count": 1,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-content-unicode-digit-name",
+      "cwd": "s/grep-content-unicode-digit-name",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-content-unicode-digit-name/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-content-unicode-digit-name/a:١:note.txt",
+          "content": "foo\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "a:١:note.txt"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "a:١:note.txt:1:foo\n\n[grep pagination] returned=1 total=1 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "content",
+              "files": [
+                "a:١:note.txt"
+              ],
+              "count": 1,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-files-glob-split-bom",
+      "cwd": "s/grep-files-glob-split-bom",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-files-glob-split-bom/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-glob-split-bom/a.md",
+          "content": "foo\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-glob-split-bom/b.ts",
+          "content": "foo\n",
+          "mtime": 1700000001000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "pattern": "foo",
+            "path": ".",
+            "glob": "*.md﻿*.ts"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "b.ts\na.md\n\n[grep pagination] returned=2 total=2 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "files_with_matches",
+              "files": [
+                "b.ts",
+                "a.md"
+              ],
+              "count": 2,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-files-glob-split-nel",
+      "cwd": "s/grep-files-glob-split-nel",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-files-glob-split-nel/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-glob-split-nel/a.md",
+          "content": "foo\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-glob-split-nel/b.ts",
+          "content": "foo\n",
+          "mtime": 1700000001000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "pattern": "foo",
+            "path": ".",
+            "glob": "*.md*.ts"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "[No matches on this page]\n\n[grep pagination] returned=0 total=0 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "files_with_matches",
+              "files": [],
+              "count": 0,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-files-submillisecond-mtime",
+      "cwd": "s/grep-files-submillisecond-mtime",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-files-submillisecond-mtime/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-submillisecond-mtime/z.ts",
+          "content": "foo\n",
+          "mtime": 1700000000100.8
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-submillisecond-mtime/a.ts",
+          "content": "foo\n",
+          "mtime": 1700000000100.2
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "pattern": "foo",
+            "path": "."
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "z.ts\na.ts\n\n[grep pagination] returned=2 total=2 offset=0 limit=250 truncated=false"
+              }
+            ],
+            "data": {
+              "mode": "files_with_matches",
+              "files": [
+                "z.ts",
+                "a.ts"
+              ],
+              "count": 2,
+              "truncated": false
+            },
+            "metadata": {
+              "truncated": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-files-submillisecond-head-limit",
+      "cwd": "s/grep-files-submillisecond-head-limit",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-files-submillisecond-head-limit/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-submillisecond-head-limit/z.ts",
+          "content": "foo\n",
+          "mtime": 1700000000100.8
+        },
+        {
+          "op": "file",
+          "path": "s/grep-files-submillisecond-head-limit/a.ts",
+          "content": "foo\n",
+          "mtime": 1700000000100.2
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "pattern": "foo",
+            "path": ".",
+            "head_limit": 1
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "z.ts\n\n[grep pagination] returned=1 total=2 offset=0 limit=1 truncated=true\nMore results are available. Call grep again with offset=1 and head_limit=1."
+              }
+            ],
+            "data": {
+              "mode": "files_with_matches",
+              "files": [
+                "z.ts"
+              ],
+              "count": 2,
+              "truncated": true
+            },
+            "metadata": {
+              "truncated": true
+            }
+          }
+        }
+      ]
     }
   ]
 }

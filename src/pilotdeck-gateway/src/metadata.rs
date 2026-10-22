@@ -63,6 +63,10 @@ pub(crate) fn js_trim_start(value: &str) -> &str {
     value.trim_start_matches(js_space)
 }
 
+pub(crate) fn js_trim_end(value: &str) -> &str {
+    value.trim_end_matches(js_space)
+}
+
 /// ECMAScript `\s` character-class body for `regex` builders. It includes BOM
 /// and excludes NEL; Rust's Unicode `\s` is the opposite on both. Shared by the
 /// metadata capture and SDK selector validation so the set has one definition.

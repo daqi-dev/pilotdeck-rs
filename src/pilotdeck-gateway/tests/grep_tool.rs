@@ -8,6 +8,10 @@
 //! a failure for parity runs. See `tests/fixtures/grep-tool/README.md`.
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/child_signals.rs"]
+mod child_signals;
+#[path = "common/scratch.rs"]
+mod scratch;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_gateway::{
@@ -172,7 +176,7 @@ fn apply_step(step: &JsValue, scratch: &Scratch) -> Result<(), String> {
             };
             fs::write(&absolute, content).map_err(|e| e.to_string())?;
             if let Some(mtime) = number(field(step, "mtime")) {
-                let taken = UNIX_EPOCH + Duration::from_millis(mtime as u64);
+                let taken = UNIX_EPOCH + Duration::from_secs_f64(mtime / 1_000.0);
                 fs::OpenOptions::new()
                     .write(true)
                     .open(&absolute)
@@ -233,6 +237,42 @@ fn replay_context(scratch: &Scratch, cwd: &Path) -> ToolRunContext {
     ToolRunContext::new(Arc::new(host))
 }
 
+fn env_context(env: &[(&str, &str)], cwd: &Path) -> ToolRunContext {
+    let mut environment = JsObject::new();
+    for (key, value) in env {
+        environment.insert((*key).into(), JsValue::from(*value));
+    }
+    let permission = object([
+        ("mode", JsValue::from("default")),
+        ("canPrompt", JsValue::Bool(true)),
+        ("additionalWorkingDirectories", JsValue::Array(Vec::new())),
+    ]);
+    let fields = object([
+        ("cwd", JsValue::from(cwd.to_string_lossy().as_ref())),
+        ("permissionMode", JsValue::from("default")),
+        ("permissionContext", JsValue::Object(permission)),
+        ("env", JsValue::Object(environment)),
+    ]);
+    let host = ToolRuntimeContext {
+        fields,
+        files: HostToolCheckpoint::default().tool_context_state(),
+        abort_signal: None,
+        model: None,
+        elicitation: None,
+        user_dialog: None,
+        audit_recorder: None,
+        file_history: None,
+        file_update_notifier: None,
+        now: None,
+        progress: None,
+        subagent: None,
+        plan_todo: None,
+        goal: None,
+        plan_directory: None,
+    };
+    ToolRunContext::new(Arc::new(host))
+}
+
 fn futures_block<F: std::future::Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -268,30 +308,17 @@ fn normalize(value: &JsValue, scratch: &Scratch) -> String {
         .replace(&scratch.text(&scratch.root), "<root>")
 }
 
-/// Mirrors the tool's binary resolution, so the replay can report a skip
-/// instead of asserting an `unsupported_tool` error on a machine without rg.
+/// The replay guard must use the same resolver as the tool, so a machine with
+/// only `resources/PilotDeck/node_modules/.../rg` is not skipped.
 fn ripgrep_available() -> bool {
-    if let Some(configured) = std::env::var_os("PILOTDECK_RIPGREP_PATH") {
-        return fs::metadata(configured).is_ok_and(|metadata| metadata.is_file());
-    }
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|directory| {
-        ["rg", "rg.exe"].into_iter().any(|name| {
-            let candidate = directory.join(name);
-            fs::metadata(&candidate).is_ok_and(|metadata| {
-                metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0)
-            })
-        })
-    })
+    pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available()
 }
 
 #[test]
 fn grep_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 51, "scenario count");
+    assert_eq!(scenarios.len(), 61, "scenario count");
     if !ripgrep_available() {
         let message = "grep fixture replay skipped: no ripgrep binary \
             (set PILOTDECK_RIPGREP_PATH or install rg)";
@@ -343,7 +370,69 @@ fn grep_outputs_match_real_ts() {
             );
         }
     }
-    assert_eq!(calls, 51, "call count");
+    assert_eq!(calls, 61, "call count");
+}
+
+#[test]
+fn grep_spawn_resets_inherited_signal_dispositions() {
+    child_signals::ChildSignalProbe::new().launch(
+        "grep_spawn_resets_inherited_signal_dispositions_worker",
+        false,
+    );
+}
+
+/// Runs under the probe launcher: the parent has SIGINT ignored and SIGTERM
+/// blocked. A wrapper "rg" execs the C reporter, so the report reflects the
+/// dispositions the tool's spawn actually delivered.
+#[test]
+#[ignore = "runs under the signal-injecting probe"]
+fn grep_spawn_resets_inherited_signal_dispositions_worker() {
+    let probe = child_signals::probe_path();
+    let scratch = scratch::Scratch::new("grep-signal-reset");
+    let report = scratch.path().join("report.txt");
+    let wrapper = scratch.path().join("rg-report");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec '{}' report-file '{}'\n",
+            probe.display(),
+            report.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let context = env_context(
+        &[
+            (
+                "PILOTDECK_RIPGREP_PATH",
+                wrapper.to_str().expect("utf8 wrapper"),
+            ),
+            ("PATH", "/usr/bin:/bin"),
+        ],
+        scratch.path(),
+    );
+    let input = JsValue::Object(object([
+        ("pattern", JsValue::from("x")),
+        (
+            "path",
+            JsValue::from(scratch.path().to_string_lossy().as_ref()),
+        ),
+    ]));
+    // Whether the wrapper exits 0 or 14, the report is what this test checks.
+    let _ = futures_block(GrepTool::new().execute(input, context));
+
+    let report = fs::read_to_string(&report).expect("signal report");
+    assert!(
+        report.contains("checked=29 mask_empty=1"),
+        "spawn did not clear the inherited mask: {report}"
+    );
+    for line in report.lines().filter(|line| line.starts_with("signal=")) {
+        assert!(
+            line.contains("default=1") && line.contains("blocked=0"),
+            "spawn did not reset an inherited disposition: {line}"
+        );
+    }
 }
 
 #[test]
