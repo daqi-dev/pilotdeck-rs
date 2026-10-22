@@ -1518,3 +1518,5 @@ mod tests {
 
 // Repository file accessors and readable project aggregation (sqlite.ts:592-909).
 pub(crate) mod accessors;
+
+pub mod snapshots;

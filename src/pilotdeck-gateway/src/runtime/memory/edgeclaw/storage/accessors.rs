@@ -20,11 +20,12 @@ type Result<T> = std::result::Result<T, FileMemoryError>;
 
 pub(crate) struct RepositoryContext {
     workspace: PathBuf,
-    general_workspace: PathBuf,
+    pub(super) general_workspace: PathBuf,
     workspaces_root: PathBuf,
     mode: String,
-    clock: FileMemoryClock,
+    pub(super) clock: FileMemoryClock,
     external: Mutex<HashMap<String, Snapshot>>,
+    pub(super) snapshot_io: super::snapshots::SnapshotIoHook,
 }
 #[derive(Clone)]
 struct Snapshot {
@@ -46,6 +47,7 @@ impl RepositoryContext {
             mode: mode.into(),
             clock,
             external: Mutex::default(),
+            snapshot_io: Arc::new(|_, _, _| Ok(())),
         })
     }
 }
@@ -226,7 +228,7 @@ impl EdgeClawFileStores {
     pub fn get_workspace_mode(&self) -> &str {
         &self.repository.mode
     }
-    fn current_workspace(&self) -> Result<PathBuf> {
+    pub(super) fn current_workspace(&self) -> Result<PathBuf> {
         let value = self.storage.get_pipeline_state("workspaceDir")?;
         Ok(value
             .and_then(|v| v.as_string().cloned())

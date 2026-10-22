@@ -110,12 +110,12 @@ thread_local! {
 // TS providers run synchronously inside the calling operation. A provider may
 // read another store with the same root, so only the outer call takes the mutex.
 // Keeping that guard alive still excludes every other thread until it returns.
-struct OperationGuard<'a> {
+pub(super) struct OperationGuard<'a> {
     outer: Option<MutexGuard<'a, ()>>,
     key: usize,
 }
 impl<'a> OperationGuard<'a> {
-    fn enter(operation: &'a Mutex<()>) -> Result<Self> {
+    pub(super) fn enter(operation: &'a Mutex<()>) -> Result<Self> {
         let key = std::ptr::from_ref(operation) as usize;
         if HELD_OPERATIONS.with(|held| held.borrow().contains(&key)) {
             return Ok(Self { outer: None, key });
@@ -137,7 +137,7 @@ impl Drop for OperationGuard<'_> {
         }
     }
 }
-fn operation_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
+pub(super) fn operation_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
     type Locks = HashMap<PathBuf, Weak<Mutex<()>>>;
     static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
     let mut locks = LOCKS
@@ -244,8 +244,30 @@ impl FileMemoryStore {
     }
 }
 
+/// `sqlite.ts:1179-1198`; these materialization options omit the live
+/// repository's manifest provider. Constructor wiring adds that provider below.
+pub(super) fn repository_workspace_options(mode: &str) -> FileMemoryStoreOptions {
+    FileMemoryStoreOptions {
+        workspace_mode: mode.into(),
+        manage_user_profile: false,
+        ..Default::default()
+    }
+}
+pub(super) fn repository_global_options() -> FileMemoryStoreOptions {
+    FileMemoryStoreOptions {
+        manage_project_meta: false,
+        manage_project_files: false,
+        user_profile_relative_path: Some("UserIdentity/user-profile.md".into()),
+        user_notes_relative_dir: Some("UserIdentityNotes".into()),
+        append_only_user_entries: true,
+        enable_manifest: false,
+        ..Default::default()
+    }
+}
+
 /// File-store wiring from `sqlite.ts:523-540`, using only pr10a's public API.
-/// Repository-level snapshots, routing and retrieval remain separate work items.
+/// Repository snapshots are in `storage::snapshots`; routing and retrieval
+/// remain separate work items.
 pub struct EdgeClawFileStores {
     pub(super) repository: super::storage::accessors::RepositoryContext,
     pub storage: EdgeClawStorage,
@@ -270,23 +292,13 @@ impl EdgeClawFileStores {
     ) -> Result<Self> {
         let global_user_memory = Arc::new(FileMemoryStore::with_clock(
             global,
-            FileMemoryStoreOptions {
-                manage_project_meta: false,
-                manage_project_files: false,
-                user_profile_relative_path: Some("UserIdentity/user-profile.md".into()),
-                user_notes_relative_dir: Some("UserIdentityNotes".into()),
-                append_only_user_entries: true,
-                enable_manifest: false,
-                ..Default::default()
-            },
+            repository_global_options(),
             clock.clone(),
         )?);
         let provider = global_user_memory.clone();
         let workspace_memory = FileMemoryStore::with_clock(
             &memory,
             FileMemoryStoreOptions {
-                workspace_mode: mode.into(),
-                manage_user_profile: false,
                 manifest_user_entries_provider: Some(Arc::new(move || {
                     let value = provider.list_memory_entries(&obj(&[
                         ("kinds", strings(&["user".into()])),
@@ -312,7 +324,7 @@ impl EdgeClawFileStores {
                         _ => vec![],
                     })
                 })),
-                ..Default::default()
+                ..repository_workspace_options(mode)
             },
             clock.clone(),
         )?;
@@ -335,7 +347,7 @@ fn now_iso() -> String {
     };
     pilotdeck_transport::system_clock::format_epoch_iso(ms)
 }
-fn absolute(path: &Path) -> Result<PathBuf> {
+pub(super) fn absolute(path: &Path) -> Result<PathBuf> {
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
