@@ -202,10 +202,10 @@ fn plugin(p: &LoadedPlugin) -> Value {
         out["hooksConfig"] = Value::Object(hooks);
     }
     if let Some(servers) = &p.mcp_servers {
-        out["mcpServers"] = servers.clone();
+        out["mcpServers"] = json_value(servers);
     }
     if let Some(servers) = &p.lsp_servers {
-        out["lspServers"] = servers.clone();
+        out["lspServers"] = json_value(servers);
     }
     out
 }
@@ -472,21 +472,46 @@ fn plugin_loader_regenerates_identically() {
     baseline::regenerates_identically("plugin-loader");
 }
 
-#[test]
-fn plugin_loader_server_values_oracle() {
+#[tokio::test]
+async fn plugin_loader_server_values_oracle() {
     let fixture = oracle();
     for case in fixture["serverCases"].as_array().unwrap() {
         let scratch = Scratch::new();
         write(&scratch.0, "plugin.json", case["raw"].as_str().unwrap());
         let loaded = loader::load_plugin_from_path(&scratch.0, PluginSource::Global).unwrap();
         assert_eq!(
-            serde_json::to_string(loaded.mcp_servers.as_ref().unwrap()).unwrap(),
+            pilotdeck_protocol::stringify_json(loaded.mcp_servers.as_ref().unwrap())
+                .unwrap()
+                .unwrap(),
             case["mcp"].as_str().unwrap()
         );
         assert_eq!(
-            serde_json::to_string(loaded.lsp_servers.as_ref().unwrap()).unwrap(),
+            pilotdeck_protocol::stringify_json(loaded.lsp_servers.as_ref().unwrap())
+                .unwrap()
+                .unwrap(),
             case["lsp"].as_str().unwrap()
         );
+        let runtime = PluginRuntime::new(PluginRuntimeOptions {
+            project_root: scratch.0.join("project"),
+            pilot_home: scratch.0.join("home"),
+            builtin_skills_root: None,
+            builtin_plugins: vec![Arc::new(loaded)],
+            builtin_plugins_enabled: Default::default(),
+        });
+        runtime.refresh().await.unwrap();
+        let mcp = JsValue::Object(runtime.mcp_servers().await);
+        let lsp = JsValue::Object(runtime.lsp_servers().await);
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&mcp).unwrap().unwrap(),
+            case["mcp"].as_str().unwrap(),
+            "merged MCP must retain order and deep values"
+        );
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&lsp).unwrap().unwrap(),
+            case["lsp"].as_str().unwrap(),
+            "merged LSP must retain order and deep values"
+        );
+        runtime.dispose().await.unwrap();
     }
 }
 

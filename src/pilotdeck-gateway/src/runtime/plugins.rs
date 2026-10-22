@@ -117,6 +117,7 @@ pub(super) struct PluginRegistry {
     /// Stable insertion order for list() (JS Map preserves it).
     order: Vec<String>,
     retired_plugins: Vec<Arc<LoadedPlugin>>,
+    pending_disposals: HashMap<usize, watch::Receiver<Option<Result<(), PluginRuntimeError>>>>,
     lease_counts: HashMap<usize, usize>,
     waiters: Arc<Notify>,
     state: RegistryState,
@@ -151,6 +152,7 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             order: Vec::new(),
             retired_plugins: Vec::new(),
+            pending_disposals: HashMap::new(),
             lease_counts: HashMap::new(),
             waiters: Arc::new(Notify::new()),
             state: RegistryState::Active,
@@ -196,7 +198,11 @@ impl PluginRegistry {
         })
     }
 
-    fn replace_all(&mut self, plugins: Vec<Arc<LoadedPlugin>>) -> ReplaceResult {
+    fn replace_all(
+        &mut self,
+        plugins: Vec<Arc<LoadedPlugin>>,
+    ) -> Result<ReplaceResult, PluginRuntimeError> {
+        self.assert_active("replace")?;
         // same key logic as TS: `${name}@${source}`
         let previous = self.list();
         let next = plugins.clone();
@@ -243,14 +249,14 @@ impl PluginRegistry {
         }
         self.generation += 1;
 
-        ReplaceResult {
+        Ok(ReplaceResult {
             generation: self.generation,
             previous,
             next,
             removed,
             retired,
             retiring_lease_count,
-        }
+        })
     }
 
     fn is_plugin_referenced(&self, plugin: &Arc<LoadedPlugin>) -> bool {
@@ -286,6 +292,7 @@ pub(super) struct PluginRuntimeState {
     refresh_sender: Option<watch::Sender<Option<Result<PluginRefreshResult, PluginRuntimeError>>>>,
     refresh_receiver:
         Option<watch::Receiver<Option<Result<PluginRefreshResult, PluginRuntimeError>>>>,
+    disposal_requested: bool,
     dispose_sender: Option<watch::Sender<Option<Result<(), PluginRuntimeError>>>>,
     dispose_receiver: Option<watch::Receiver<Option<Result<(), PluginRuntimeError>>>>,
 }
@@ -306,6 +313,7 @@ impl PluginRuntime {
                 registry: PluginRegistry::new(),
                 refresh_sender: None,
                 refresh_receiver: None,
+                disposal_requested: false,
                 dispose_sender: None,
                 dispose_receiver: None,
             })),
@@ -320,10 +328,14 @@ impl PluginRuntime {
     pub async fn refresh_with_report(&self) -> Result<PluginRefreshResult, PluginRuntimeError> {
         let rx = {
             let mut st = self.state.lock().await;
-            if st.registry.state != RegistryState::Active {
+            if st.disposal_requested || st.registry.state != RegistryState::Active {
                 return Err(PluginRuntimeError::new(format!(
                     "Cannot refresh plugins; plugin runtime is {}.",
-                    st.registry.state.as_str()
+                    if st.disposal_requested {
+                        "draining"
+                    } else {
+                        st.registry.state.as_str()
+                    }
                 )));
             }
             if let Some(rx) = &st.refresh_receiver {
@@ -383,6 +395,7 @@ impl PluginRuntime {
             state: Arc::clone(&self.state),
             plugins: lease.plugins,
             released: false,
+            release_receiver: None,
             waiters,
         })
     }
@@ -404,6 +417,7 @@ impl PluginRuntime {
             state: Arc::clone(&self.state),
             plugins: lease.plugins,
             released: false,
+            release_receiver: None,
             waiters,
         })
     }
@@ -422,6 +436,7 @@ impl PluginRuntime {
             state: Arc::clone(&self.state),
             plugins: lease.plugins,
             released: false,
+            release_receiver: None,
             waiters,
         })
     }
@@ -430,43 +445,51 @@ impl PluginRuntime {
         let rx = {
             let mut st = self.state.lock().await;
             if let Some(rx) = &st.dispose_receiver {
-                return wait_watch(rx.clone()).await;
-            }
-            st.registry.state = RegistryState::Draining;
-            let plugins_to_drain: Vec<Arc<LoadedPlugin>> = {
-                let active = st.registry.list();
-                let retired = st.registry.retired_plugins.clone();
-                let mut all = active;
-                for p in retired {
-                    if !all.iter().any(|a| Arc::ptr_eq(a, &p)) {
-                        all.push(p);
+                rx.clone()
+            } else {
+                // PluginRuntime.ts:263-272: close refresh admission, then wait for
+                // the in-flight refresh before transitioning the registry.
+                st.disposal_requested = true;
+                let (tx, rx) = watch::channel(None);
+                st.dispose_sender = Some(tx.clone());
+                st.dispose_receiver = Some(rx.clone());
+                let pending_refresh_rx = st.refresh_receiver.clone();
+                let state_clone = Arc::clone(&self.state);
+                tokio::spawn(async move {
+                    if let Some(prx) = pending_refresh_rx {
+                        let _ = wait_watch(prx).await;
                     }
-                }
-                st.registry.plugins.clear();
-                st.registry.order.clear();
-                st.registry.waiters.notify_waiters();
-                all
-            };
-            let (tx, rx) = watch::channel(None);
-            st.dispose_sender = Some(tx.clone());
-            st.dispose_receiver = Some(rx.clone());
-            let pending_refresh_rx = st.refresh_receiver.clone();
-            let state_clone = Arc::clone(&self.state);
-            tokio::spawn(async move {
-                if let Some(prx) = pending_refresh_rx {
-                    let _ =
-                        wait_watch::<Result<PluginRefreshResult, PluginRuntimeError>>(prx).await;
-                }
-                let errors = drain_plugins(plugins_to_drain, &state_clone).await;
-                {
-                    let mut s = state_clone.lock().await;
-                    s.registry.state = RegistryState::Disposed;
-                    s.registry.waiters.notify_waiters();
-                }
-                let result = PluginRuntimeError::aggregate("Failed to dispose plugins.", errors);
-                let _ = tx.send(Some(result));
-            });
-            rx
+                    let pending = {
+                        let mut s = state_clone.lock().await;
+                        s.registry.state = RegistryState::Draining;
+                        let mut plugins = s.registry.retired_plugins.clone();
+                        for plugin in s.registry.list() {
+                            if !plugins.iter().any(|p| Arc::ptr_eq(p, &plugin)) {
+                                plugins.push(plugin);
+                            }
+                        }
+                        s.registry.plugins.clear();
+                        s.registry.order.clear();
+                        s.registry.waiters.notify_waiters();
+                        start_disposals(&mut s.registry, plugins, &state_clone)
+                    };
+                    let mut errors = settle_disposals(pending).await;
+                    // PluginRegistry.ts:106-114 settles both the individual
+                    // promises and disposeActive's group promise. Its group
+                    // rejection is included even when it shares those causes.
+                    if let Err(group) = PluginRuntimeError::aggregate(
+                        "Failed to dispose retired plugins.",
+                        errors.clone(),
+                    ) {
+                        errors.push(group);
+                    }
+                    state_clone.lock().await.registry.state = RegistryState::Disposed;
+                    let result =
+                        PluginRuntimeError::aggregate("Failed to dispose plugins.", errors);
+                    let _ = tx.send(Some(result));
+                });
+                rx
+            }
         };
         wait_watch(rx).await
     }
@@ -517,19 +540,16 @@ async fn perform_refresh(
             staged_failures: result.staged_failures,
         });
     }
-    let replacement = state.registry.replace_all(result.plugins);
-    let retiring = replacement.retired.clone();
-    let retiring_lease_count = replacement.retiring_lease_count;
-    let state_clone = Arc::clone(state_mutex);
-    if retiring_lease_count == 0 {
-        drop(state);
-        let errors = drain_plugins(retiring, &state_clone).await;
+    let replacement = state.registry.replace_all(result.plugins)?;
+    let pending = start_disposals(
+        &mut state.registry,
+        replacement.retired.clone(),
+        state_mutex,
+    );
+    drop(state);
+    if replacement.retiring_lease_count == 0 {
+        let errors = settle_disposals(pending).await;
         PluginRuntimeError::aggregate("Failed to dispose retired plugins.", errors)?;
-    } else {
-        drop(state);
-        tokio::spawn(async move {
-            let _ = drain_plugins(retiring, &state_clone).await;
-        });
     }
     let added: Vec<_> = replacement
         .next
@@ -554,14 +574,45 @@ async fn perform_refresh(
 
 // ─────────────────────────────────────────────────────────── drain helpers
 
-async fn drain_plugins(
+type DisposalReceiver = watch::Receiver<Option<Result<(), PluginRuntimeError>>>;
+
+// Register every promise under the registry lock before releasing it. A lease
+// release and runtime shutdown must observe the same disposal, even if its
+// callback has not started yet (PluginRegistry.ts:143-161).
+fn start_disposals(
+    registry: &mut PluginRegistry,
     plugins: Vec<Arc<LoadedPlugin>>,
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
-) -> Vec<PluginRuntimeError> {
+) -> Vec<DisposalReceiver> {
+    plugins
+        .into_iter()
+        .map(|plugin| {
+            let key = Arc::as_ptr(&plugin) as usize;
+            if let Some(rx) = registry.pending_disposals.get(&key) {
+                return rx.clone();
+            }
+            let (tx, rx) = watch::channel(None);
+            registry.pending_disposals.insert(key, rx.clone());
+            let state = Arc::clone(state_mutex);
+            tokio::spawn(async move {
+                let result = drain_one_plugin(Arc::clone(&plugin), &state).await;
+                let mut st = state.lock().await;
+                let _ = tx.send(Some(result));
+                st.registry.pending_disposals.remove(&key);
+                st.registry
+                    .retired_plugins
+                    .retain(|p| !Arc::ptr_eq(p, &plugin));
+            });
+            rx
+        })
+        .collect()
+}
+
+async fn settle_disposals(pending: Vec<DisposalReceiver>) -> Vec<PluginRuntimeError> {
     let mut errors = Vec::new();
-    for plugin in plugins {
-        if let Err(e) = drain_one_plugin(plugin, state_mutex).await {
-            errors.push(e);
+    for rx in pending {
+        if let Err(error) = wait_watch(rx).await {
+            errors.push(error);
         }
     }
     errors
@@ -626,8 +677,8 @@ pub(super) async fn release_lease_plugins(
     plugins: &[Arc<LoadedPlugin>],
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
     waiters: &Arc<Notify>,
-) {
-    {
+) -> Result<(), PluginRuntimeError> {
+    let pending = {
         let mut st = state_mutex.lock().await;
         for plugin in plugins {
             let key = Arc::as_ptr(plugin) as usize;
@@ -639,8 +690,19 @@ pub(super) async fn release_lease_plugins(
                 }
             }
         }
-    }
+        plugins
+            .iter()
+            .filter_map(|p| {
+                st.registry
+                    .pending_disposals
+                    .get(&(Arc::as_ptr(p) as usize))
+                    .cloned()
+            })
+            .collect()
+    };
     waiters.notify_waiters();
+    let errors = settle_disposals(pending).await;
+    PluginRuntimeError::aggregate("Failed to dispose released plugins.", errors)
 }
 
 // ─────────────────────────────────────────────────────────── CommandsListInput/Result

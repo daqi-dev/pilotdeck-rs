@@ -19,7 +19,7 @@ CONFIG = 'src/pilotdeck-gateway/src/runtime/plugins/loader/config.rs'
 MARKDOWN = 'src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs'
 # Each replacement is unique and compiles; a compiler error is never a kill.
 CASES = [
-    ('disk-loading', LOADER, 'let discovered = discover_plugin_paths(&[', 'let discovered = discover_plugin_paths(&[', 'plugin_loader_staging_oracle'),
+    ('disk-loading', LOADER, 'plugins.push(Arc::new(plugin));', 'let _ = plugin;', 'plugin_loader_staging_oracle'),
     ('discovery-order', LOADER, 'names.sort();', 'names.sort(); names.reverse();', 'plugin_loader_order'),
     ('follow-symlinks', LOADER, 'fs::metadata(&path)', 'fs::symlink_metadata(&path)', 'plugin_loader_staging_oracle'),
     ('unreadable-directory', LOADER, 'sorted_entries(directory).unwrap_or_default()', 'sorted_entries(directory).expect("negative-control: unreadable directory")', 'plugin_loader_staging_oracle'),
@@ -56,14 +56,12 @@ CASES += [
     ('style-only-config', LOADER, '&configured,\n            "output-styles",', '&JsValue::Undefined,\n            "output-styles",', 'plugin_loader_contributions'),
     ('node-json-diagnostic', LOADER, 'json_syntax::parse_error(&text).unwrap_or(e.message)', 'e.message', 'plugin_loader_invalid'),
     ('configured-trailing-slash', CONFIG, 'out.push("");', 'let _ = path;', 'plugin_loader_contributions'),
-    ('server-depth', LOADER, 'server_value::server_value(get(key)).map(Some)', 'serde_json::from_str(&pilotdeck_protocol::stringify_json(get(key)).unwrap().unwrap()).map(Some).map_err(|e| PluginRuntimeError::new(e.to_string()))', 'plugin_loader_server_values_oracle'),
+    ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
     ('configured-directory-read-error', MARKDOWN,
      'output.push(load_markdown(\n                &path,\n                get_plugin_command_name(plugin_name, &path, base),\n            )?);',
      'if let Ok(command) = load_markdown(&path, get_plugin_command_name(plugin_name, &path, base)) { output.push(command); }',
      'plugin_loader_hooks_paths'),
 ]
-# Discovery unchanged but drop all loaded disk plugins, exercising the old stub.
-CASES[0] = ('disk-loading', LOADER, 'plugins.push(Arc::new(plugin));', 'let _ = plugin;', 'plugin_loader_staging_oracle')
 selected = set(sys.argv[2:])
 if selected:
     assert selected <= {c[0] for c in CASES}, selected

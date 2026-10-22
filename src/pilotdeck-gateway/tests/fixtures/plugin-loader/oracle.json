@@ -1231,8 +1231,27 @@
       "raw": "{\"name\":\"servers\",\"mcpServers\":{\"server\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"leaf\":true}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},\"lspServers\":{\"server\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"leaf\":true}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
       "mcp": "{\"server\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"leaf\":true}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
       "lsp": "{\"server\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"next\":{\"leaf\":true}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+    },
+    {
+      "depth": 0,
+      "raw": "{\"name\":\"ordered-servers\",\"mcpServers\":{\"2\":{},\"10\":{\"z\":1,\"a\":2},\"zeta\":{\"command\":\"node\",\"args\":[\"z.js\"],\"env\":{\"Z\":\"z\",\"A\":\"a\"}},\"alpha\":{\"last\":true,\"first\":false}},\"lspServers\":{\"zulu\":{\"command\":\"lsp\",\"args\":[]},\"alpha\":{\"z\":1,\"a\":2}}}",
+      "mcp": "{\"2\":{},\"10\":{\"z\":1,\"a\":2},\"zeta\":{\"command\":\"node\",\"args\":[\"z.js\"],\"env\":{\"Z\":\"z\",\"A\":\"a\"}},\"alpha\":{\"last\":true,\"first\":false}}",
+      "lsp": "{\"zulu\":{\"command\":\"lsp\",\"args\":[]},\"alpha\":{\"z\":1,\"a\":2}}",
+      "mergedMcp": "{\"2\":{},\"10\":{\"z\":1,\"a\":2},\"zeta\":{\"command\":\"node\",\"args\":[\"z.js\"],\"env\":{\"Z\":\"z\",\"A\":\"a\"}},\"alpha\":{\"last\":true,\"first\":false}}",
+      "mergedLsp": "{\"zulu\":{\"command\":\"lsp\",\"args\":[]},\"alpha\":{\"z\":1,\"a\":2}}"
     }
   ],
+  "lifecycleCases": {
+    "sequentialCalls": 1,
+    "sharedCalls": 1,
+    "releaseError": "dispose failed",
+    "repeatReleaseError": "dispose failed",
+    "shutdownError": "Failed to dispose plugins.",
+    "stateWhileRefresh": "active",
+    "newCalls": 1,
+    "finalCount": 0,
+    "publicationError": "Cannot replace plugins; plugin registry is disposed."
+  },
   "scenarios": [
     {
       "id": "empty-and-missing",
@@ -3613,16 +3632,16 @@
       "id": "discovery-unicode-order",
       "files": [
         {
-          "path": "home/plugins/z/plugin.json",
-          "text": "{\"name\":\"z\"}"
+          "path": "home/plugins/z-lower/plugin.json",
+          "text": "{\"name\":\"z-lower\"}"
         },
         {
           "path": "home/plugins/a/plugin.json",
           "text": "{\"name\":\"a\"}"
         },
         {
-          "path": "home/plugins/Z/plugin.json",
-          "text": "{\"name\":\"Z\"}"
+          "path": "home/plugins/Z-upper/plugin.json",
+          "text": "{\"name\":\"Z-upper\"}"
         },
         {
           "path": "home/plugins/Å/plugin.json",
@@ -3667,6 +3686,10 @@
           "source": "global"
         },
         {
+          "path": "<root>/home/plugins/Z-upper",
+          "source": "global"
+        },
+        {
           "path": "<root>/home/plugins/_",
           "source": "global"
         },
@@ -3675,7 +3698,7 @@
           "source": "global"
         },
         {
-          "path": "<root>/home/plugins/z",
+          "path": "<root>/home/plugins/z-lower",
           "source": "global"
         },
         {
@@ -3733,6 +3756,19 @@
           }
         },
         {
+          "path": "<root>/home/plugins/Z-upper",
+          "source": "global",
+          "kind": "plugin",
+          "value": {
+            "name": "Z-upper",
+            "path": "<root>/home/plugins/Z-upper",
+            "source": "global",
+            "commands": [],
+            "skills": [],
+            "outputStyles": []
+          }
+        },
+        {
           "path": "<root>/home/plugins/_",
           "source": "global",
           "kind": "plugin",
@@ -3759,12 +3795,12 @@
           }
         },
         {
-          "path": "<root>/home/plugins/z",
+          "path": "<root>/home/plugins/z-lower",
           "source": "global",
           "kind": "plugin",
           "value": {
-            "name": "Z",
-            "path": "<root>/home/plugins/z",
+            "name": "z-lower",
+            "path": "<root>/home/plugins/z-lower",
             "source": "global",
             "commands": [],
             "skills": [],
@@ -3843,6 +3879,16 @@
           }
         },
         {
+          "path": "<root>/home/plugins/Z-upper",
+          "source": "global",
+          "value": {
+            "name": "Z-upper",
+            "path": "<root>/home/plugins/Z-upper",
+            "source": "global",
+            "outputStyles": []
+          }
+        },
+        {
           "path": "<root>/home/plugins/_",
           "source": "global",
           "value": {
@@ -3863,11 +3909,11 @@
           }
         },
         {
-          "path": "<root>/home/plugins/z",
+          "path": "<root>/home/plugins/z-lower",
           "source": "global",
           "value": {
-            "name": "Z",
-            "path": "<root>/home/plugins/z",
+            "name": "z-lower",
+            "path": "<root>/home/plugins/z-lower",
             "source": "global",
             "outputStyles": []
           }
@@ -3935,6 +3981,14 @@
               "outputStyles": []
             },
             {
+              "name": "Z-upper",
+              "path": "<root>/home/plugins/Z-upper",
+              "source": "global",
+              "commands": [],
+              "skills": [],
+              "outputStyles": []
+            },
+            {
               "name": "_",
               "path": "<root>/home/plugins/_",
               "source": "global",
@@ -3951,8 +4005,8 @@
               "outputStyles": []
             },
             {
-              "name": "Z",
-              "path": "<root>/home/plugins/z",
+              "name": "z-lower",
+              "path": "<root>/home/plugins/z-lower",
               "source": "global",
               "commands": [],
               "skills": [],
@@ -4012,6 +4066,14 @@
           "outputStyles": []
         },
         {
+          "name": "Z-upper",
+          "path": "<root>/home/plugins/Z-upper",
+          "source": "global",
+          "commands": [],
+          "skills": [],
+          "outputStyles": []
+        },
+        {
           "name": "_",
           "path": "<root>/home/plugins/_",
           "source": "global",
@@ -4028,8 +4090,8 @@
           "outputStyles": []
         },
         {
-          "name": "Z",
-          "path": "<root>/home/plugins/z",
+          "name": "z-lower",
+          "path": "<root>/home/plugins/z-lower",
           "source": "global",
           "commands": [],
           "skills": [],

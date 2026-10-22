@@ -20,9 +20,9 @@ shasum -a 256 /tmp/pdrs-loader-one/oracle.json /tmp/pdrs-loader-two/oracle.json
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test plugin_loader
 ```
 
-场景包括：空目录；合法插件；缺字段、错误类型及 JSON 语法错误；可选字段宽松投影；默认与配置目录；Markdown 前言和嵌套命名；输出样式及仅输出样式加载；inline/file hooks；MCP/LSP（含 150 层嵌套配置）；同名同来源与不同来源；内置技能；独立技能仅根 SKILL.md；内置插件磁盘重载/失败回退/禁用；磁盘插件不受 builtin 开关影响；不可读父目录/插件目录/Markdown 文件；目录与文件符号链接、断链；UTF-8 枚举顺序；失败 refresh 保留旧 generation 与 lease，删除则正常退休。
+场景包括：空目录；合法插件；缺字段、错误类型及 JSON 语法错误；可选字段宽松投影；默认与配置目录；Markdown 前言和嵌套命名；输出样式及仅输出样式加载；inline/file hooks；MCP/LSP（含 150 层嵌套配置、多服务器与配置内部的插入序、数字键的 JS 枚举序及 runtime 合并）；同名同来源与不同来源；内置技能；独立技能仅根 SKILL.md；内置插件磁盘重载/失败回退/禁用；磁盘插件不受 builtin 开关影响；不可读父目录/插件目录/Markdown 文件；目录与文件符号链接、断链；UTF-8 枚举顺序；失败 refresh 保留旧 generation 与 lease，删除则正常退休；用 Promise 屏障记录真实 TS 的退休 dispose 次数、lease release 失败和关闭等待中的 generation 发布。
 
-权限夹具在 Unix 非 root 用户执行。Rust 测试通过独立原生 `read_dir` / `read` 确认 `chmod 000` 的拒绝效果，失败时不跳过、不算通过；Drop 只恢复并清理该测试创建的临时目录。大小写仅有差别的文件名会受宿主文件系统影响（生成与回放须使用相同文件系统语义）。
+权限夹具在 Unix 非 root 用户执行。Rust 测试通过独立原生 `read_dir` / `read` 确认 `chmod 000` 的拒绝效果，失败时不跳过、不算通过；Drop 只恢复并清理该测试创建的临时目录。生成前 `assertPortablePaths` 检查包含隐式父目录的所有夹具路径：拒绝大小写折叠或 NFC/NFD 规范化后相撞的兄弟名。排序场景使用 `Z-upper` / `z-lower` 等互不撞名的 10 项，保留大写、小写、数字、Unicode 相对顺序。执行 `node --test src/pilotdeck-gateway/tests/fixtures/plugin-loader/portable-paths.test.mjs` 可验证旧 Z/z 及规范化撞名均被拒绝。
 
 实现负控（会临时改 Rust 源码；一次仅运行一份，确保工作区独占）：
 
@@ -33,4 +33,6 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-loader/negative-controls.py 
 
 每次检查唯一替换锚点，先执行 cargo-slots，再编译并运行对应金样测试。必须出现实际 `test result: FAILED`，编译失败不算命中；每项用 finally 恢复原始字节，汇总含恢复后的 SHA-256。参数可追加 mutation-id 仅重跑指定项。首次正控与每项失败摘要、范围外缺陷、最终检查结果均见工作区 `_tmp/20261022-a63-pr7b/RESULT.md`。
 
-MCP/LSP 桥接沿用既有 `serde_json::Value` 表示，使用显式栈转换，遵守共用 `MAX_ARRAY_DEPTH=2000` 护栏；超界返回 `Maximum call stack size exceeded`，该区间不声称与 V8 无界 JSON.parse 等价。UTF-16 孤立代理项转为 U+FFFD，非有限数字按 JSON 投影为 null，这也是此既有表示的边界。TS 150 层探针以序列化字符串保存服务器对象，防止夹具读取器自身的 128 层限制干扰被测产品。
+MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型 `JsValue`，保留普通键插入序、数字键 JS 枚举序及嵌套值。显式栈深度检查遵守共用 `MAX_ARRAY_DEPTH=2000` 护栏；超界返回 `Maximum call stack size exceeded`，该区间不声称与 V8 无界 JSON.parse 等价。TS 的服务器对象以序列化字符串保存，Rust 对加载结果和 runtime 合并结果逐字节比较，避免两侧先经 serde map 排序掩盖分歧；150 层用例也防止 runtime 合并偷偷截断为 32 层。
+
+顺序依据是 Node `fs.readdir` 使用 `uv_fs_scandir`，其 Unix 实现向 `scandir` 传入 `strcmp` 比较器，并非直接沿用文件系统 `readdir` 顺序。参见 [Node v22.22.0 node_file.cc:1797-1805](https://github.com/nodejs/node/blob/v22.22.0/src/node_file.cc#L1797-L1805) 与 [libuv v1.52.1 fs.c](https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c)。本机 opendir 与 readdir 的实际不同顺序、正则折叠仲裁、修复负控见 RESULT 所引 `fix2-runtime-probes.json` 等原始证据。

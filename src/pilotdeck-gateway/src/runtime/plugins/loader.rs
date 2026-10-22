@@ -18,8 +18,8 @@ pub struct LoadedPlugin {
     pub skills: Vec<LoadedPluginCommand>,
     pub output_styles: Vec<LoadedPluginCommand>,
     pub hooks_config: Option<HooksSettings>,
-    pub mcp_servers: Option<serde_json::Value>,
-    pub lsp_servers: Option<serde_json::Value>,
+    pub mcp_servers: Option<pilotdeck_protocol::JsValue>,
+    pub lsp_servers: Option<pilotdeck_protocol::JsValue>,
     /// Optional async teardown for programmatic (builtin/test-injected) plugins.
     /// `Ok(())` = success; `Err(message)` = failure text forwarded to callers.
     pub dispose: Option<DisposeFn>,
@@ -165,7 +165,8 @@ fn sorted_entries(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut names = fs::read_dir(directory)?
         .map(|e| e.map(|e| e.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?;
-    // Node/libuv readdir sorts encoded filenames (UTF-8), not JS strings.
+    // Node fs.readdir uses uv_fs_scandir (Unix fs.c: uv__fs_scandir_sort),
+    // whose strcmp comparator sorts encoded filenames, not JS strings.
     names.sort();
     Ok(names
         .into_iter()
@@ -253,7 +254,7 @@ pub fn load_plugin_from_path(
         load_configured_markdown(path, &plugin_name, get("outputStyles"), "output-styles");
     // The existing runtime represents server definitions as serde JSON. Keep
     // this conversion at the bridge; hooks and manifest validation use JsValue.
-    let servers = |key| -> Result<Option<serde_json::Value>, PluginRuntimeError> {
+    let servers = |key| -> Result<Option<pilotdeck_protocol::JsValue>, PluginRuntimeError> {
         if get(key).as_object().is_none() {
             return Ok(None);
         }

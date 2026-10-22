@@ -54,10 +54,6 @@ fn array<'a>(value: &'a JsValue, what: &str) -> &'a [JsValue] {
     }
 }
 
-fn json_value(value: &JsValue) -> serde_json::Value {
-    serde_json::from_str(&text(value)).expect("JSON-compatible value")
-}
-
 /// Fixture-only state encoding: the oracle marks `undefined` explicitly so a
 /// missing `enabled` member is not confused with a JSON omission.
 fn encode_undefined(value: &JsValue, depth: usize) -> JsValue {
@@ -120,7 +116,7 @@ fn plugin(value: &JsValue, what: &str) -> Arc<LoadedPlugin> {
         .expect("plugin name");
     let mcp_servers = match field(value, "mcpServers") {
         JsValue::Undefined => None,
-        other => Some(json_value(other)),
+        other => Some(other.clone()),
     };
     Arc::new(LoadedPlugin {
         name,
