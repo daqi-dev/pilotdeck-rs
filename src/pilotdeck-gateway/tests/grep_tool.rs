@@ -357,6 +357,7 @@ fn parity_ripgrep_override() -> Option<PathBuf> {
 }
 
 #[test]
+#[ignore = "needs a ripgrep binary; CI runners have none yet (installing one is pending a human decision). Run locally with --include-ignored."]
 fn grep_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
