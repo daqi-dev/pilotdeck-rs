@@ -36,3 +36,9 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-loader/negative-controls.py 
 MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型 `JsValue`，保留普通键插入序、数字键 JS 枚举序及嵌套值。显式栈深度检查遵守共用 `MAX_ARRAY_DEPTH=2000` 护栏；超界返回 `Maximum call stack size exceeded`，该区间不声称与 V8 无界 JSON.parse 等价。TS 的服务器对象以序列化字符串保存，Rust 对加载结果和 runtime 合并结果逐字节比较，避免两侧先经 serde map 排序掩盖分歧；150 层用例也防止 runtime 合并偷偷截断为 32 层。
 
 顺序依据是 Node `fs.readdir` 使用 `uv_fs_scandir`，其 Unix 实现向 `scandir` 传入 `strcmp` 比较器，并非直接沿用文件系统 `readdir` 顺序。参见 [Node v22.22.0 node_file.cc:1797-1805](https://github.com/nodejs/node/blob/v22.22.0/src/node_file.cc#L1797-L1805) 与 [libuv v1.52.1 fs.c](https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c)。本机 opendir 与 readdir 的实际不同顺序、正则折叠仲裁、修复负控见 RESULT 所引 `fix2-runtime-probes.json` 等原始证据。
+
+#484 补充金样使用独立 `generate-regressions.mts` → `regressions.json`，原 `oracle.json` 不改。生成命令与上面相同，只替换脚本名，并逐字节比较两次 `regressions.json`。生成器同样绑定固定源树和完整导入闭包；输入通过磁盘 manifest 进入真实 TS runtime，结果中的 `inputJson` / `resultJson` 保留孤立代理的 JSON 转义。
+
+补充样本覆盖 2047/2048/2049 个 UTF-16 码元、CJK 跨字节边界、代理对在截断点两侧、孤立高低代理、ECMAScript trim、skills 的首次插入位置和各级优先覆盖，以及合法目录别名。`plugin_regressions` 回放 instructions 与别名，unit `skill_contributions_keep_ts_map_order` 回放 skills。目录环由独立 TS 子进程观测，3 秒超时后 SIGKILL 并由父进程清理临时目录；Rust 防环测试也通过子进程实现相同超时边界，避免 `spawn_blocking` 阻塞测试进程退出。安全偏离的具体范围与候选登记文字见 RESULT，不把 Rust 防环结果写成 TS 期望。
+
+仓库负控脚本现在也覆盖 `plugins.rs` / `contributions.rs` 的 publication 状态、refresh/dispose 等待、退休清理、共享 dispose、三种租约的 release 错误，以及 UTF-16、防环、合法别名、skills 插入序与同优先级覆盖。脚本支持 `lib:` / `regressions:` / `runtime:` 测试目标，仍要求实际断言失败、唯一变异锚点及 finally 字节恢复；编译失败与外部超时不计击杀。

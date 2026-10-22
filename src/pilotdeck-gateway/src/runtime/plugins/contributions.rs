@@ -34,14 +34,14 @@ pub struct PluginSkillContribution {
 #[derive(Clone, Debug)]
 pub struct PluginMcpInstruction {
     pub server_name: String,
-    pub instructions: Option<String>,
+    pub instructions: Option<JsString>,
 }
 
 /// `PilotDeckMcpInstructionEntry` (always has `instructions`).
 #[derive(Clone, Debug)]
 pub struct PluginMcpInstructionEntry {
     pub server_name: String,
-    pub instructions: String,
+    pub instructions: JsString,
 }
 
 /// `PluginToolContribution` (programmatic; from `toolContributions`).
@@ -365,20 +365,25 @@ pub(super) fn collect_command_contributions(
 pub(super) fn collect_skill_contributions(
     plugins: &[Arc<LoadedPlugin>],
 ) -> Vec<PluginSkillContribution> {
-    let mut selected: std::collections::HashMap<String, (PluginSkillContribution, u8)> =
-        std::collections::HashMap::new();
+    // Map.set replaces in place: precedence may change the value, never the
+    // position where this name was first encountered (PluginRuntime.ts:886-898).
+    let mut positions = std::collections::HashMap::<String, usize>::new();
+    let mut selected: Vec<(PluginSkillContribution, u8)> = Vec::new();
     for plugin in plugins {
         let priority = source_priority(plugin.source);
         for skill in &plugin.skills {
             let contribution = to_skill_contribution(plugin, skill);
-            let name = contribution.name.clone();
-            let entry = selected.get(&name);
-            if entry.is_none_or(|(_, p)| priority >= *p) {
-                selected.insert(name, (contribution, priority));
+            if let Some(&index) = positions.get(&contribution.name) {
+                if priority >= selected[index].1 {
+                    selected[index] = (contribution, priority);
+                }
+            } else {
+                positions.insert(contribution.name.clone(), selected.len());
+                selected.push((contribution, priority));
             }
         }
     }
-    selected.into_values().map(|(c, _)| c).collect()
+    selected.into_iter().map(|(c, _)| c).collect()
 }
 
 fn collect_output_styles(plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginOutputStyleContribution> {
@@ -468,7 +473,6 @@ pub(super) fn collect_lsp_servers(plugins: &[Arc<LoadedPlugin>]) -> JsObject {
 pub(super) fn collect_mcp_instructions(
     plugins: &[Arc<LoadedPlugin>],
 ) -> Vec<PluginMcpInstructionEntry> {
-    const MAX_LEN: usize = 2048;
     let mut entries: Vec<PluginMcpInstructionEntry> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for plugin in plugins {
@@ -492,17 +496,10 @@ pub(super) fn collect_mcp_instructions(
             let Some(str_val) = candidate.as_string() else {
                 continue;
             };
-            let str_val = String::from_utf16_lossy(str_val.units());
-            let trimmed = str_val.trim();
-            if trimmed.is_empty() {
+            let Some(instructions) = truncate_mcp_instruction(str_val) else {
                 continue;
-            }
-            seen.insert(server_name.to_string());
-            let instructions = if trimmed.len() <= MAX_LEN {
-                trimmed.to_owned()
-            } else {
-                format!("{}… [truncated]", &trimmed[..MAX_LEN])
             };
+            seen.insert(server_name.to_string());
             entries.push(PluginMcpInstructionEntry {
                 server_name: server_name.to_string(),
                 instructions,
@@ -511,6 +508,30 @@ pub(super) fn collect_mcp_instructions(
     }
     locale_sort_by(&mut entries, |e| &e.server_name);
     entries
+}
+
+// String.trim / .length / .slice operate on UTF-16, including lone
+// surrogates. Keep JsString through the contribution boundary; replacement
+// decoding here would silently change both values and truncation semantics.
+fn truncate_mcp_instruction(value: &JsString) -> Option<JsString> {
+    const MAX_LEN: usize = 2048;
+    let is_space =
+        |unit: u16| char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space);
+    let mut trimmed = value.units();
+    while trimmed.first().is_some_and(|&u| is_space(u)) {
+        trimmed = &trimmed[1..];
+    }
+    while trimmed.last().is_some_and(|&u| is_space(u)) {
+        trimmed = &trimmed[..trimmed.len() - 1];
+    }
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut units = trimmed[..trimmed.len().min(MAX_LEN)].to_vec();
+    if trimmed.len() > MAX_LEN {
+        units.extend("… [truncated]".encode_utf16());
+    }
+    Some(JsString::from_utf16(units))
 }
 
 /// Raw instructions including `None` (legacy snapshot).

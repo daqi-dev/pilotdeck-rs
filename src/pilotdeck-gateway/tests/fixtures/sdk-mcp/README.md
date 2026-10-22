@@ -57,8 +57,8 @@ Rust `tests/sdk_mcp.rs` 逐场景逐步骤回放，结果、状态与调用序�
 | toggle-enabled | `enabled` 原值保留（null/0/空串/"false"/缺键）与 status 真值、nullish 时 re-set 回落 true |
 | explicit-undefined | 输入显式 `undefined` 三处：sessionKey/serverName/mode 的错误、config 的 TypeError、toggle enabled 的 `undefined` 原值及 re-set `?? true` |
 
-已知限制：`LoadedPlugin.mcp_servers` 是 `serde_json::Value`，默认对象映射按键排序，
-无法保留插件 manifest 的 JS 插入顺序。整数键（数组索引）已由
-`collect_plugin_mcp_names` 按数值升序排到普通键之前，与 `Object.keys` 的可计算部分
-一致；普通键仍按 serde 的字典序给出，不覆盖任意 manifest 插入序。该字段由
-A6.3-pr7b 的加载器填充，届时若需要任意键序，应在加载边界保留原始键序。
+`LoadedPlugin.mcp_servers` 使用协议 `JsValue`，磁盘加载、runtime 合并与 SDK
+枚举均保留 JS 对象序：数组索引键按数值升序，其余键保留首次插入位置，覆盖
+已有键不移动位置。任意 manifest 普通键插入序由
+`plugin_loader_server_values_oracle` 的非字典序多服务器金样逐字节验证，见
+[plugin-loader/README.md](../plugin-loader/README.md)。
