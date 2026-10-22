@@ -78,6 +78,9 @@ pub enum FileMemoryError {
     /// non-array `kinds` passed to `listGlobalMemoryEntries`.
     Type(String),
     Storage(StorageError),
+    /// `MemoryBundleValidationError` (`sqlite.ts:104-109`); the message is the
+    /// TS error text verbatim so import validation failures compare equal.
+    Bundle(String),
 }
 impl fmt::Display for FileMemoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -92,6 +95,7 @@ impl fmt::Display for FileMemoryError {
             Self::InvalidUtf16(e) => write!(f, "{}", String::from_utf16_lossy(e.units())),
             Self::Invalid(e) | Self::Collation(e) | Self::Type(e) => write!(f, "{e}"),
             Self::Storage(e) => write!(f, "{e}"),
+            Self::Bundle(e) => write!(f, "{e}"),
         }
     }
 }

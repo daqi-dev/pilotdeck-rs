@@ -1523,3 +1523,10 @@ pub(crate) mod accessors;
 pub mod snapshots;
 
 pub mod entries;
+
+// Memory bundle export/import with staged swaps and Dream snapshot reads
+// (sqlite.ts:264-353,422-472,1232-1350,1495-1658).
+pub(crate) mod bundle;
+// Dashboard overview, UI snapshot and repository-level list/count
+// (sqlite.ts:1660-1775).
+pub(crate) mod overview;
