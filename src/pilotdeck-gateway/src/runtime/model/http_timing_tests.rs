@@ -193,10 +193,9 @@ async fn finish<F: Future>(
 
 #[tokio::test(start_paused = true)]
 async fn provider_ts_timing_matrix() {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/provider-timing/oracle.json"
-    ))
-    .unwrap();
+    let raw = include_str!("../../../tests/fixtures/provider-timing/oracle.json");
+    crate::test_baseline::oracle(raw);
+    let fixture: Value = serde_json::from_str(raw).unwrap();
     let rows = fixture["cases"].as_array().unwrap();
     assert_eq!(
         rows.len(),

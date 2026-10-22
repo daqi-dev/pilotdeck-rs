@@ -1,6 +1,8 @@
 //! Durable recorder contract tests. Scenario outcomes and transcript bytes
 //! come from the real TS AgentSessionEventRecorder
 //! (tests/fixtures/recorder/generate.mts).
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::storage::recorder::{Recorder, RecorderError};
 use pilotdeck_gateway::storage::{AsyncTranscriptAdapter, SessionStorageInput};
 use pilotdeck_gateway::storage::{JsonlTranscriptStore, TranscriptKey, read_transcript};
@@ -53,7 +55,7 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(&text).unwrap()
+    baseline::oracle(&text)
 }
 fn clean(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
