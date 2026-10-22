@@ -103,3 +103,12 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 人批（2026-10-22，用户本人在协调者会话）：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 两条**接受为已知差异**，但要求 Rust 补实现：BASELINEMODEL 见 https://github.com/daqi-dev/pilotdeck-rs/issues/493，RETENTION（按 V8 dateparser 逐格式移植并用 TS 金样对拍）见 https://github.com/daqi-dev/pilotdeck-rs/issues/494。补齐后在本节追加「已实现，差异消除」。
 
 已实现，差异消除（本 PR 修复轮 4）。`runtime/model/router/config.rs` 的 stats 投影已从同一 snapshot 读取 `modelConfig`，对 `baselineModel` 及 `modelPricing` 每个对象条目的键调用引用校验：未知 provider/model 与非法引用均按 TS 输出 fatal 并丢弃字段/条目；引用诊断入口为 `RouterConfig::from_snapshot_with_ref_diagnostics`。真实 TS 金样及逐字节诊断回放见 `tests/fixtures/token-stats/` 与 `stats_config_projection_matches_real_ts`，同步消除 gate6 sibling P1 的 modelPricing 同源遗漏；原记录保留作为历史。
+
+## A6.4-STATS-SIDECAR-001 · 降级追加写旁路文件（向安全偏离 TS，人批 2026-10-22）
+
+- **类别**：bug 修复（意向书「bug 默认修」第①项：丢数据），向安全偏离。
+- **TS 依据**（cc7c4e6）：`src/router/stats/TokenStatsCollector.ts:258-259` 在 retention 锁的 25×1ms 尝试失败后直接追加主 JSONL；`:316-327` 的压缩在读完主文件后 rename 替换主文件，两者交错会覆盖新追加行。`tests/fixtures/token-stats-sidecar/generate.mts` 在真实 TS 压缩 rename 前插入另一真实 collector 的 observe，`oracle.json.tsRace` 保留替换前含新行、替换后丢行的原始字节及快照。
+- **Rust 行为**：仅 retention 写入锁失败（或遗留合并事务恢复失败）时，将完整 JSONL 行写到 `stats.jsonl.pending/<纳秒时间>.<pid>.<uuid>.jsonl`；临时文件写完并 sync 后原子发布，已发布文件不再修改。无锁加载同时读取主文件与旁路；持锁压缩沿用现有保留判断与序列化，将本轮可见旁路并入主文件。`stats.jsonl.merge` 中的名单与替换文件硬链接先原子发布，主文件 inode 与该硬链接相同即已提交；已提交名单不重复计账，旁路删除并 sync 后才原子退休事务凭据。下次持锁操作先续完遗留事务，避免重放或覆盖后续追加。
+- **范围**：只修 retention 压缩与降级追加交错的丢账窗口，及其必要的无锁重建、崩溃恢复、clear 清除旁路；账目内容、聚合输出、保留判断与压缩过滤不变。不按账目内容去重，相同内容的两次观察仍计两笔。既有实例继续沿用 TS 的内存缓存快照语义，新建/重开的无锁实例可看见已发布旁路；不增加跨实例实时刷新。沿用 best-effort IO 及既有锁重试/遗留锁处理，不扩展为显式 clear 并发语义或混用不同 retention 配置的协调重构。
+- **机器判据**：`runtime/model/stats_journal_tests.rs` 的 `sidecar_interleaved_compaction_and_independent_writers_never_lose_or_duplicate`（三个压缩阶段，各三轮，四个独立写实例，总计 32 行逐笔无丢无重）；`sidecar_crash_boundaries_recover_exactly_once`（发布前、准备后、提交后、删一条、全删、凭据退休六处恢复，同内容独立观察及晚到旁路）；`sidecar_recovery_precedes_a_locked_append`；`sidecar_snapshots_merge_and_clear_match_real_ts`（新建无锁读者的聚合、分时、模型、最近记录、session 与主文件字节对拍真实 TS 金样，含 clear）。每类行为负控及完整命令输出见 `_tmp/20261022-issue-496/RESULT.md`。
+- **批准记录**：用户本人 2026-10-22 选 B，明确「Rust 偏离 TS 修掉：抢锁失败时，降级追加先写到旁路文件；持锁压缩时把旁路文件合并回主文件。只修这个丢数据窗口，其他行为不变」。决策卡：主仓 `_tmp/20261022-loop/card-stats-race.md`；实现 issue #496。本条按该授权登记；独立评审由协调者续办。

@@ -1,0 +1,2071 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/router/stats/TokenStatsCollector.ts": "886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1",
+    "src/router/utils/modelPricing.ts": "f25e61b95a00e44765da0bb81b65b4fb988c886bbca97e03b9fd62b118c54c9c"
+  },
+  "now": 1772366400500,
+  "input": [
+    {
+      "sessionId": "row-000",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 1,
+        "outputTokens": 2,
+        "nativeCost": 0.001
+      }
+    },
+    {
+      "sessionId": "row-001",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 2,
+        "outputTokens": 2,
+        "nativeCost": 0.002
+      }
+    },
+    {
+      "sessionId": "row-002",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 3,
+        "outputTokens": 2,
+        "nativeCost": 0.003
+      }
+    },
+    {
+      "sessionId": "row-003",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 4,
+        "outputTokens": 2,
+        "nativeCost": 0.004
+      }
+    },
+    {
+      "sessionId": "row-004",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 5,
+        "outputTokens": 2,
+        "nativeCost": 0.005
+      }
+    },
+    {
+      "sessionId": "row-005",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 6,
+        "outputTokens": 2,
+        "nativeCost": 0.006
+      }
+    },
+    {
+      "sessionId": "row-006",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 7,
+        "outputTokens": 2,
+        "nativeCost": 0.007
+      }
+    },
+    {
+      "sessionId": "row-007",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 8,
+        "outputTokens": 2,
+        "nativeCost": 0.008
+      }
+    },
+    {
+      "sessionId": "row-008",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 9,
+        "outputTokens": 2,
+        "nativeCost": 0.009
+      }
+    },
+    {
+      "sessionId": "row-009",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 10,
+        "outputTokens": 2,
+        "nativeCost": 0.01
+      }
+    },
+    {
+      "sessionId": "row-010",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 11,
+        "outputTokens": 2,
+        "nativeCost": 0.011
+      }
+    },
+    {
+      "sessionId": "row-011",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 12,
+        "outputTokens": 2,
+        "nativeCost": 0.012
+      }
+    },
+    {
+      "sessionId": "row-012",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 13,
+        "outputTokens": 2,
+        "nativeCost": 0.013
+      }
+    },
+    {
+      "sessionId": "row-013",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 2,
+        "nativeCost": 0.014
+      }
+    },
+    {
+      "sessionId": "row-014",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 15,
+        "outputTokens": 2,
+        "nativeCost": 0.015
+      }
+    },
+    {
+      "sessionId": "row-015",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 16,
+        "outputTokens": 2,
+        "nativeCost": 0.016
+      }
+    },
+    {
+      "sessionId": "row-016",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 17,
+        "outputTokens": 2,
+        "nativeCost": 0.017
+      }
+    },
+    {
+      "sessionId": "row-017",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 18,
+        "outputTokens": 2,
+        "nativeCost": 0.018
+      }
+    },
+    {
+      "sessionId": "row-018",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 19,
+        "outputTokens": 2,
+        "nativeCost": 0.019
+      }
+    },
+    {
+      "sessionId": "row-019",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 20,
+        "outputTokens": 2,
+        "nativeCost": 0.02
+      }
+    },
+    {
+      "sessionId": "row-020",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 21,
+        "outputTokens": 2,
+        "nativeCost": 0.021
+      }
+    },
+    {
+      "sessionId": "row-021",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 22,
+        "outputTokens": 2,
+        "nativeCost": 0.022
+      }
+    },
+    {
+      "sessionId": "row-022",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 23,
+        "outputTokens": 2,
+        "nativeCost": 0.023
+      }
+    },
+    {
+      "sessionId": "row-023",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 24,
+        "outputTokens": 2,
+        "nativeCost": 0.024
+      }
+    },
+    {
+      "sessionId": "row-024",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 25,
+        "outputTokens": 2,
+        "nativeCost": 0.025
+      }
+    },
+    {
+      "sessionId": "row-025",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 26,
+        "outputTokens": 2,
+        "nativeCost": 0.026
+      }
+    },
+    {
+      "sessionId": "row-026",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 27,
+        "outputTokens": 2,
+        "nativeCost": 0.027
+      }
+    },
+    {
+      "sessionId": "row-027",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 28,
+        "outputTokens": 2,
+        "nativeCost": 0.028
+      }
+    },
+    {
+      "sessionId": "row-028",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 29,
+        "outputTokens": 2,
+        "nativeCost": 0.029
+      }
+    },
+    {
+      "sessionId": "row-029",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 30,
+        "outputTokens": 2,
+        "nativeCost": 0.03
+      }
+    },
+    {
+      "sessionId": "row-030",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 31,
+        "outputTokens": 2,
+        "nativeCost": 0.031
+      }
+    },
+    {
+      "sessionId": "row-031",
+      "startedAt": "2026-03-01T11:59:30.000Z",
+      "endedAt": "2026-03-01T11:59:59.500Z",
+      "scenarioType": "default",
+      "resolvedFrom": "scenario",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "usage": {
+        "inputTokens": 32,
+        "outputTokens": 2,
+        "nativeCost": 0.032
+      }
+    }
+  ],
+  "expected": {
+    "observed": [
+      {
+        "sessionId": "row-000",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 1,
+          "outputTokens": 2,
+          "nativeCost": 0.001
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.001
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000022499999999999998
+      },
+      {
+        "sessionId": "row-001",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 2,
+          "outputTokens": 2,
+          "nativeCost": 0.002
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.002
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000024999999999999998
+      },
+      {
+        "sessionId": "row-002",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 3,
+          "outputTokens": 2,
+          "nativeCost": 0.003
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.003
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000027499999999999998
+      },
+      {
+        "sessionId": "row-003",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 4,
+          "outputTokens": 2,
+          "nativeCost": 0.004
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.004
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000029999999999999997
+      },
+      {
+        "sessionId": "row-004",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 5,
+          "outputTokens": 2,
+          "nativeCost": 0.005
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.005
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000325
+      },
+      {
+        "sessionId": "row-005",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 6,
+          "outputTokens": 2,
+          "nativeCost": 0.006
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.006
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000035
+      },
+      {
+        "sessionId": "row-006",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 7,
+          "outputTokens": 2,
+          "nativeCost": 0.007
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.007
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000375
+      },
+      {
+        "sessionId": "row-007",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 8,
+          "outputTokens": 2,
+          "nativeCost": 0.008
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.008
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000039999999999999996
+      },
+      {
+        "sessionId": "row-008",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 9,
+          "outputTokens": 2,
+          "nativeCost": 0.009
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.009
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000425
+      },
+      {
+        "sessionId": "row-009",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 2,
+          "nativeCost": 0.01
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.01
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000044999999999999996
+      },
+      {
+        "sessionId": "row-010",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 11,
+          "outputTokens": 2,
+          "nativeCost": 0.011
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.011
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000047499999999999996
+      },
+      {
+        "sessionId": "row-011",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 12,
+          "outputTokens": 2,
+          "nativeCost": 0.012
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.012
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000049999999999999996
+      },
+      {
+        "sessionId": "row-012",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 13,
+          "outputTokens": 2,
+          "nativeCost": 0.013
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.013
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000052499999999999995
+      },
+      {
+        "sessionId": "row-013",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 14,
+          "outputTokens": 2,
+          "nativeCost": 0.014
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.014
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000054999999999999995
+      },
+      {
+        "sessionId": "row-014",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 15,
+          "outputTokens": 2,
+          "nativeCost": 0.015
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.015
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000575
+      },
+      {
+        "sessionId": "row-015",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 16,
+          "outputTokens": 2,
+          "nativeCost": 0.016
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.016
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000059999999999999995
+      },
+      {
+        "sessionId": "row-016",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 2,
+          "nativeCost": 0.017
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.017
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000625
+      },
+      {
+        "sessionId": "row-017",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 18,
+          "outputTokens": 2,
+          "nativeCost": 0.018
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.018
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00006500000000000001
+      },
+      {
+        "sessionId": "row-018",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 19,
+          "outputTokens": 2,
+          "nativeCost": 0.019
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.019
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000675
+      },
+      {
+        "sessionId": "row-019",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 20,
+          "outputTokens": 2,
+          "nativeCost": 0.02
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.02
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00007
+      },
+      {
+        "sessionId": "row-020",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 21,
+          "outputTokens": 2,
+          "nativeCost": 0.021
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.021
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000725
+      },
+      {
+        "sessionId": "row-021",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 22,
+          "outputTokens": 2,
+          "nativeCost": 0.022
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.022
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000075
+      },
+      {
+        "sessionId": "row-022",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 23,
+          "outputTokens": 2,
+          "nativeCost": 0.023
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.023
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000775
+      },
+      {
+        "sessionId": "row-023",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 24,
+          "outputTokens": 2,
+          "nativeCost": 0.024
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.024
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00007999999999999999
+      },
+      {
+        "sessionId": "row-024",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 25,
+          "outputTokens": 2,
+          "nativeCost": 0.025
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.025
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000825
+      },
+      {
+        "sessionId": "row-025",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 26,
+          "outputTokens": 2,
+          "nativeCost": 0.026
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.026
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00008499999999999999
+      },
+      {
+        "sessionId": "row-026",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 27,
+          "outputTokens": 2,
+          "nativeCost": 0.027
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.027
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000875
+      },
+      {
+        "sessionId": "row-027",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 28,
+          "outputTokens": 2,
+          "nativeCost": 0.028
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.028
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00008999999999999999
+      },
+      {
+        "sessionId": "row-028",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 29,
+          "outputTokens": 2,
+          "nativeCost": 0.029
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.029
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000925
+      },
+      {
+        "sessionId": "row-029",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 30,
+          "outputTokens": 2,
+          "nativeCost": 0.03
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.03
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000095
+      },
+      {
+        "sessionId": "row-030",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 31,
+          "outputTokens": 2,
+          "nativeCost": 0.031
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.031
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000975
+      },
+      {
+        "sessionId": "row-031",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 32,
+          "outputTokens": 2,
+          "nativeCost": 0.032
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.032
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00009999999999999999
+      }
+    ],
+    "snapshot": {
+      "totalRequests": 32,
+      "totalInputTokens": 528,
+      "totalOutputTokens": 64,
+      "totalCost": 0.5280000000000002,
+      "totalBaselineCost": 0.0019599999999999995,
+      "totalSavedCost": -0.5260400000000001,
+      "perScenario": {
+        "default": 32
+      },
+      "perModel": {
+        "openai/gpt-4o": 32
+      },
+      "perProvider": {
+        "openai": 32
+      },
+      "perTier": {},
+      "perRole": {},
+      "costSources": {
+        "provider_reported": 32
+      },
+      "perModelUsage": {
+        "openai/gpt-4o": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "totalRequests": 32,
+          "inputTokens": 528,
+          "outputTokens": 64,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalTokens": 592,
+          "totalCost": 0.5280000000000002,
+          "costSources": {
+            "provider_reported": 32
+          },
+          "roles": {}
+        }
+      }
+    },
+    "hourly": [
+      {
+        "totalRequests": 32,
+        "totalInputTokens": 528,
+        "totalOutputTokens": 64,
+        "totalCost": 0.5280000000000002,
+        "totalBaselineCost": 0.0019599999999999995,
+        "totalSavedCost": -0.5260400000000001,
+        "perScenario": {
+          "default": 32
+        },
+        "perModel": {
+          "openai/gpt-4o": 32
+        },
+        "perProvider": {
+          "openai": 32
+        },
+        "perTier": {},
+        "perRole": {},
+        "costSources": {
+          "provider_reported": 32
+        },
+        "perModelUsage": {
+          "openai/gpt-4o": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "totalRequests": 32,
+            "inputTokens": 528,
+            "outputTokens": 64,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "totalTokens": 592,
+            "totalCost": 0.5280000000000002,
+            "costSources": {
+              "provider_reported": 32
+            },
+            "roles": {}
+          }
+        },
+        "hour": "2026-03-01T11"
+      }
+    ],
+    "models": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "totalRequests": 32,
+        "inputTokens": 528,
+        "outputTokens": 64,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalTokens": 592,
+        "totalCost": 0.5280000000000002,
+        "costSources": {
+          "provider_reported": 32
+        },
+        "roles": {}
+      }
+    ],
+    "recent": [
+      {
+        "sessionId": "row-000",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 1,
+          "outputTokens": 2,
+          "nativeCost": 0.001
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.001
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000022499999999999998
+      },
+      {
+        "sessionId": "row-001",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 2,
+          "outputTokens": 2,
+          "nativeCost": 0.002
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.002
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000024999999999999998
+      },
+      {
+        "sessionId": "row-002",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 3,
+          "outputTokens": 2,
+          "nativeCost": 0.003
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.003
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000027499999999999998
+      },
+      {
+        "sessionId": "row-003",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 4,
+          "outputTokens": 2,
+          "nativeCost": 0.004
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.004
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000029999999999999997
+      },
+      {
+        "sessionId": "row-004",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 5,
+          "outputTokens": 2,
+          "nativeCost": 0.005
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.005
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000325
+      },
+      {
+        "sessionId": "row-005",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 6,
+          "outputTokens": 2,
+          "nativeCost": 0.006
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.006
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000035
+      },
+      {
+        "sessionId": "row-006",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 7,
+          "outputTokens": 2,
+          "nativeCost": 0.007
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.007
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000375
+      },
+      {
+        "sessionId": "row-007",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 8,
+          "outputTokens": 2,
+          "nativeCost": 0.008
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.008
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000039999999999999996
+      },
+      {
+        "sessionId": "row-008",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 9,
+          "outputTokens": 2,
+          "nativeCost": 0.009
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.009
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000425
+      },
+      {
+        "sessionId": "row-009",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 2,
+          "nativeCost": 0.01
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.01
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000044999999999999996
+      },
+      {
+        "sessionId": "row-010",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 11,
+          "outputTokens": 2,
+          "nativeCost": 0.011
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.011
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000047499999999999996
+      },
+      {
+        "sessionId": "row-011",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 12,
+          "outputTokens": 2,
+          "nativeCost": 0.012
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.012
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000049999999999999996
+      },
+      {
+        "sessionId": "row-012",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 13,
+          "outputTokens": 2,
+          "nativeCost": 0.013
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.013
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000052499999999999995
+      },
+      {
+        "sessionId": "row-013",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 14,
+          "outputTokens": 2,
+          "nativeCost": 0.014
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.014
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000054999999999999995
+      },
+      {
+        "sessionId": "row-014",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 15,
+          "outputTokens": 2,
+          "nativeCost": 0.015
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.015
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000575
+      },
+      {
+        "sessionId": "row-015",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 16,
+          "outputTokens": 2,
+          "nativeCost": 0.016
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.016
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000059999999999999995
+      },
+      {
+        "sessionId": "row-016",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 2,
+          "nativeCost": 0.017
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.017
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000625
+      },
+      {
+        "sessionId": "row-017",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 18,
+          "outputTokens": 2,
+          "nativeCost": 0.018
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.018
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00006500000000000001
+      },
+      {
+        "sessionId": "row-018",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 19,
+          "outputTokens": 2,
+          "nativeCost": 0.019
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.019
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000675
+      },
+      {
+        "sessionId": "row-019",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 20,
+          "outputTokens": 2,
+          "nativeCost": 0.02
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.02
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00007
+      },
+      {
+        "sessionId": "row-020",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 21,
+          "outputTokens": 2,
+          "nativeCost": 0.021
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.021
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000725
+      },
+      {
+        "sessionId": "row-021",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 22,
+          "outputTokens": 2,
+          "nativeCost": 0.022
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.022
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000075
+      },
+      {
+        "sessionId": "row-022",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 23,
+          "outputTokens": 2,
+          "nativeCost": 0.023
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.023
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000775
+      },
+      {
+        "sessionId": "row-023",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 24,
+          "outputTokens": 2,
+          "nativeCost": 0.024
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.024
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00007999999999999999
+      },
+      {
+        "sessionId": "row-024",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 25,
+          "outputTokens": 2,
+          "nativeCost": 0.025
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.025
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000825
+      },
+      {
+        "sessionId": "row-025",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 26,
+          "outputTokens": 2,
+          "nativeCost": 0.026
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.026
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00008499999999999999
+      },
+      {
+        "sessionId": "row-026",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 27,
+          "outputTokens": 2,
+          "nativeCost": 0.027
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.027
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000875
+      },
+      {
+        "sessionId": "row-027",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 28,
+          "outputTokens": 2,
+          "nativeCost": 0.028
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.028
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00008999999999999999
+      },
+      {
+        "sessionId": "row-028",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 29,
+          "outputTokens": 2,
+          "nativeCost": 0.029
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.029
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000925
+      },
+      {
+        "sessionId": "row-029",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 30,
+          "outputTokens": 2,
+          "nativeCost": 0.03
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.03
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.000095
+      },
+      {
+        "sessionId": "row-030",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 31,
+          "outputTokens": 2,
+          "nativeCost": 0.031
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.031
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.0000975
+      },
+      {
+        "sessionId": "row-031",
+        "startedAt": "2026-03-01T11:59:30.000Z",
+        "endedAt": "2026-03-01T11:59:59.500Z",
+        "scenarioType": "default",
+        "resolvedFrom": "scenario",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": 32,
+          "outputTokens": 2,
+          "nativeCost": 0.032
+        },
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "total": 0.032
+        },
+        "costSource": "provider_reported",
+        "baselineCost": 0.00009999999999999999
+      }
+    ],
+    "session": {
+      "sessionId": "row-000",
+      "aggregate": {
+        "totalRequests": 1,
+        "totalInputTokens": 1,
+        "totalOutputTokens": 2,
+        "totalCost": 0.001,
+        "totalBaselineCost": 0.000022499999999999998,
+        "totalSavedCost": -0.0009775,
+        "perScenario": {
+          "default": 1
+        },
+        "perModel": {
+          "openai/gpt-4o": 1
+        },
+        "perProvider": {
+          "openai": 1
+        },
+        "perTier": {},
+        "perRole": {},
+        "costSources": {
+          "provider_reported": 1
+        },
+        "perModelUsage": {
+          "openai/gpt-4o": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "totalRequests": 1,
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "totalTokens": 3,
+            "totalCost": 0.001,
+            "costSources": {
+              "provider_reported": 1
+            },
+            "roles": {}
+          }
+        }
+      },
+      "requestLog": [
+        {
+          "sessionId": "row-000",
+          "startedAt": "2026-03-01T11:59:30.000Z",
+          "endedAt": "2026-03-01T11:59:59.500Z",
+          "scenarioType": "default",
+          "resolvedFrom": "scenario",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "nativeCost": 0.001
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "total": 0.001
+          },
+          "costSource": "provider_reported",
+          "baselineCost": 0.000022499999999999998
+        }
+      ]
+    },
+    "journal": "{\"sessionId\":\"row-000\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":1,\"outputTokens\":2,\"nativeCost\":0.001},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.001},\"costSource\":\"provider_reported\",\"baselineCost\":0.000022499999999999998}\n{\"sessionId\":\"row-001\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":2,\"outputTokens\":2,\"nativeCost\":0.002},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.002},\"costSource\":\"provider_reported\",\"baselineCost\":0.000024999999999999998}\n{\"sessionId\":\"row-002\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2,\"nativeCost\":0.003},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.003},\"costSource\":\"provider_reported\",\"baselineCost\":0.000027499999999999998}\n{\"sessionId\":\"row-003\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":4,\"outputTokens\":2,\"nativeCost\":0.004},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.004},\"costSource\":\"provider_reported\",\"baselineCost\":0.000029999999999999997}\n{\"sessionId\":\"row-004\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":5,\"outputTokens\":2,\"nativeCost\":0.005},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.005},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000325}\n{\"sessionId\":\"row-005\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":6,\"outputTokens\":2,\"nativeCost\":0.006},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.006},\"costSource\":\"provider_reported\",\"baselineCost\":0.000035}\n{\"sessionId\":\"row-006\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":7,\"outputTokens\":2,\"nativeCost\":0.007},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.007},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000375}\n{\"sessionId\":\"row-007\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":8,\"outputTokens\":2,\"nativeCost\":0.008},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.008},\"costSource\":\"provider_reported\",\"baselineCost\":0.000039999999999999996}\n{\"sessionId\":\"row-008\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":9,\"outputTokens\":2,\"nativeCost\":0.009},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.009},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000425}\n{\"sessionId\":\"row-009\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":10,\"outputTokens\":2,\"nativeCost\":0.01},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.01},\"costSource\":\"provider_reported\",\"baselineCost\":0.000044999999999999996}\n{\"sessionId\":\"row-010\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":11,\"outputTokens\":2,\"nativeCost\":0.011},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.011},\"costSource\":\"provider_reported\",\"baselineCost\":0.000047499999999999996}\n{\"sessionId\":\"row-011\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":12,\"outputTokens\":2,\"nativeCost\":0.012},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.012},\"costSource\":\"provider_reported\",\"baselineCost\":0.000049999999999999996}\n{\"sessionId\":\"row-012\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":13,\"outputTokens\":2,\"nativeCost\":0.013},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.013},\"costSource\":\"provider_reported\",\"baselineCost\":0.000052499999999999995}\n{\"sessionId\":\"row-013\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":14,\"outputTokens\":2,\"nativeCost\":0.014},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.014},\"costSource\":\"provider_reported\",\"baselineCost\":0.000054999999999999995}\n{\"sessionId\":\"row-014\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":15,\"outputTokens\":2,\"nativeCost\":0.015},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.015},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000575}\n{\"sessionId\":\"row-015\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":16,\"outputTokens\":2,\"nativeCost\":0.016},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.016},\"costSource\":\"provider_reported\",\"baselineCost\":0.000059999999999999995}\n{\"sessionId\":\"row-016\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":17,\"outputTokens\":2,\"nativeCost\":0.017},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.017},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000625}\n{\"sessionId\":\"row-017\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":18,\"outputTokens\":2,\"nativeCost\":0.018},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.018},\"costSource\":\"provider_reported\",\"baselineCost\":0.00006500000000000001}\n{\"sessionId\":\"row-018\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":19,\"outputTokens\":2,\"nativeCost\":0.019},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.019},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000675}\n{\"sessionId\":\"row-019\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":20,\"outputTokens\":2,\"nativeCost\":0.02},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.02},\"costSource\":\"provider_reported\",\"baselineCost\":0.00007}\n{\"sessionId\":\"row-020\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":21,\"outputTokens\":2,\"nativeCost\":0.021},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.021},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000725}\n{\"sessionId\":\"row-021\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":22,\"outputTokens\":2,\"nativeCost\":0.022},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.022},\"costSource\":\"provider_reported\",\"baselineCost\":0.000075}\n{\"sessionId\":\"row-022\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":23,\"outputTokens\":2,\"nativeCost\":0.023},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.023},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000775}\n{\"sessionId\":\"row-023\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":24,\"outputTokens\":2,\"nativeCost\":0.024},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.024},\"costSource\":\"provider_reported\",\"baselineCost\":0.00007999999999999999}\n{\"sessionId\":\"row-024\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":25,\"outputTokens\":2,\"nativeCost\":0.025},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.025},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000825}\n{\"sessionId\":\"row-025\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":26,\"outputTokens\":2,\"nativeCost\":0.026},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.026},\"costSource\":\"provider_reported\",\"baselineCost\":0.00008499999999999999}\n{\"sessionId\":\"row-026\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":27,\"outputTokens\":2,\"nativeCost\":0.027},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.027},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000875}\n{\"sessionId\":\"row-027\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":28,\"outputTokens\":2,\"nativeCost\":0.028},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.028},\"costSource\":\"provider_reported\",\"baselineCost\":0.00008999999999999999}\n{\"sessionId\":\"row-028\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":29,\"outputTokens\":2,\"nativeCost\":0.029},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.029},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000925}\n{\"sessionId\":\"row-029\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":30,\"outputTokens\":2,\"nativeCost\":0.03},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.03},\"costSource\":\"provider_reported\",\"baselineCost\":0.000095}\n{\"sessionId\":\"row-030\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":31,\"outputTokens\":2,\"nativeCost\":0.031},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.031},\"costSource\":\"provider_reported\",\"baselineCost\":0.0000975}\n{\"sessionId\":\"row-031\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":32,\"outputTokens\":2,\"nativeCost\":0.032},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.032},\"costSource\":\"provider_reported\",\"baselineCost\":0.00009999999999999999}\n"
+  },
+  "cleared": {
+    "totalRequests": 0,
+    "totalInputTokens": 0,
+    "totalOutputTokens": 0,
+    "totalCost": 0,
+    "totalBaselineCost": 0,
+    "totalSavedCost": 0,
+    "perScenario": {},
+    "perModel": {},
+    "perProvider": {},
+    "perTier": {},
+    "perRole": {},
+    "costSources": {},
+    "perModelUsage": {}
+  },
+  "tsRace": {
+    "beforeRename": "{\"sessionId\":\"expired\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2000-01-01T00:00:00.000Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":1,\"outputTokens\":2,\"nativeCost\":0.001}}\n{\"sessionId\":\"row-000\",\"startedAt\":\"2026-03-01T11:59:30.000Z\",\"endedAt\":\"2026-03-01T11:59:59.500Z\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":1,\"outputTokens\":2,\"nativeCost\":0.001},\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"total\":0.001},\"costSource\":\"provider_reported\",\"baselineCost\":0.000022499999999999998}\n",
+    "afterRename": "",
+    "snapshot": {
+      "totalRequests": 0,
+      "totalInputTokens": 0,
+      "totalOutputTokens": 0,
+      "totalCost": 0,
+      "totalBaselineCost": 0,
+      "totalSavedCost": 0,
+      "perScenario": {},
+      "perModel": {},
+      "perProvider": {},
+      "perTier": {},
+      "perRole": {},
+      "costSources": {},
+      "perModelUsage": {}
+    }
+  }
+}
