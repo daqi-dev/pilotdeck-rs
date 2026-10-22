@@ -21,6 +21,8 @@ const sources = [
   'src/router/stats/TokenStatsCollector.ts',
   'src/router/utils/modelPricing.ts',
   'src/cli/ProjectRuntimeRegistry.ts',
+  'src/router/config/parseRouterConfig.ts',
+  'src/router/config/schema.ts',
 ];
 const sourceCommit = assertBaseline(baseline);
 const sourceSha256 = await baselineSourceHashes(baseline, sources);
@@ -28,6 +30,7 @@ const importBaseline = (relative: string) =>
   import(pathToFileURL(join(baseline, relative)).href);
 const { TokenStatsCollector } = await importBaseline('src/router/stats/TokenStatsCollector.ts');
 const { ProjectRuntimeRegistry } = await importBaseline('src/cli/ProjectRuntimeRegistry.ts');
+const { parseRouterConfig } = await importBaseline('src/router/config/parseRouterConfig.ts');
 
 const clone = (value: any) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
 const json = (value: any) => JSON.stringify(value);
@@ -148,6 +151,10 @@ const EVENTS_A = [
     { op: 'session', sessionId: 's1' },
     { op: 'modelUsage' },
     { op: 'modelUsage', sessionId: 's1' },
+    { op: 'estimateCost', usage: { inputTokens: 77, outputTokens: 11, nativeCost: 0.0123 }, provider: 'openrouter', model: 'openrouter/auto' },
+    { op: 'estimateCost', usage: { inputTokens: 2000000, outputTokens: 100000 }, provider: 'custom', model: 'exact-model' },
+    { op: 'estimateCost', usage: { inputTokens: 2000000, outputTokens: 100000, nativeCost: 0 }, provider: 'custom', model: 'exact-model' },
+    { op: 'estimateCost', provider: 'custom', model: 'exact-model' },
     { op: 'recent', limit: 3 },
     { op: 'usageProjection', sessionKey: 's1' },
     { op: 'modelUsageProjection', sessionKey: 's1' },
@@ -231,8 +238,35 @@ const MALFORMED_ROW = {
   sessionId: 'malformed',
   endedAt: 'not-a-date',
 };
+// Every row below exercises one `Date.parse` branch the retention decision can
+// reach. Old rows must be dropped (TS parsed them); malformed rows must be kept
+// (`!Number.isFinite`).
+const OLD = (sessionId: string, endedAt: string) => ({
+  ...RETAINED_ROW,
+  sessionId,
+  startedAt: '2001-01-01T00:00:00.000Z',
+  endedAt,
+});
+const RETENTION_ROWS = [
+  EXPIRED_ROW,
+  RETAINED_ROW,
+  MALFORMED_ROW,
+  OLD('bad-offset-hour', '2000-01-01T00:00:00+99:99'),
+  OLD('bad-offset-minute', '2000-01-01T00:00:00+01:99'),
+  OLD('offset-24', '2000-01-01T00:00:00+24:00'),
+  OLD('bad-day-32', '2000-01-32T00:00:00Z'),
+  OLD('rfc-gmt', 'Mon, 01 Jan 2001 00:00:00 GMT'),
+  OLD('offset-no-colon', '2001-01-01T00:00:00+0800'),
+  OLD('hour-24', '2001-01-01T24:00:00Z'),
+  OLD('lowercase-tz', '2001-01-01t00:00:00.000z'),
+  OLD('feb-30-rollover', '2001-02-30T00:00:00Z'),
+  OLD('zone-less', '2001-01-01T00:00:00'),
+  OLD('single-digit-date', '2001-1-1'),
+  OLD('offset-15', '2001-01-01T00:00:00+15:00'),
+  OLD('future-hour-24', '2999-01-01T24:00:00.000Z'),
+];
 {
-  const initial = { 'stats.jsonl': [EXPIRED_ROW, RETAINED_ROW, MALFORMED_ROW].map(json).join('\n') + '\n' };
+  const initial = { 'stats.jsonl': RETENTION_ROWS.map(json).join('\n') + '\n' };
   scenarios.push({
     name: 'retention-compaction',
     config: { enabled: true, retentionMs: 60_000 },
@@ -253,6 +287,38 @@ const MALFORMED_ROW = {
       { op: 'files' },
     ],
   });
+}
+
+// ── G. per-session request-log cap: >200 keeps the newest 100 ────────────────
+{
+  const ops: Array<{ op: string; [key: string]: any }> = [];
+  const base = Date.parse('2026-05-01T00:00:00.000Z');
+  for (let index = 0; index < 201; index += 1) {
+    ops.push({
+      op: 'observe',
+      record: event(
+        'cap',
+        `t${index}`,
+        'default',
+        'scenario',
+        'openai',
+        'gpt-4o',
+        { inputTokens: 1, outputTokens: 1 },
+        new Date(base + index * 1_000).toISOString(),
+        new Date(base + index * 1_000 + 500).toISOString(),
+      ),
+    });
+    if (index >= 198) ops.push({ op: 'session', sessionId: 'cap' });
+  }
+  ops.push(
+    { op: 'snapshot' },
+    { op: 'session', sessionId: 'cap' },
+    { op: 'reopen' },
+    { op: 'session', sessionId: 'cap' },
+    { op: 'snapshot' },
+    { op: 'files' },
+  );
+  scenarios.push({ name: 'session-request-log-cap', config: { enabled: true }, ops });
 }
 
 // ── D. one-time stats.json -> stats.jsonl migration ──────────────────────────
@@ -320,6 +386,38 @@ const MALFORMED_ROW = {
   });
 }
 
+// ── H. stats config projection (baselineModel / pricingNumber / retention) ───
+const CONFIG_MODELS = {
+  providers: { anthropic: { models: { 'claude-sonnet-4-5-20250929': {} } } },
+};
+const CONFIG_CASES = [
+  { name: 'string-baseline', raw: { stats: { baselineModel: 'anthropic/claude-sonnet-4-5-20250929' } } },
+  { name: 'object-trim', raw: { stats: { baselineModel: { provider: ' anthropic ', model: ' claude-sonnet-4-5-20250929 ' } } } },
+  { name: 'object-empty', raw: { stats: { baselineModel: { provider: '  ', model: 'x' } } } },
+  { name: 'string-no-slash', raw: { stats: { baselineModel: 'anthropic' } } },
+  {
+    name: 'pricing-values',
+    raw: {
+      stats: {
+        modelPricing: {
+          'anthropic/claude-sonnet-4-5-20250929': { input: -1, output: 2, cacheRead: 'x' },
+        },
+      },
+    },
+  },
+  { name: 'retention-safe-integer', raw: { stats: { retentionMs: 1e18 } } },
+  { name: 'retention-valid', raw: { stats: { retentionMs: 60_000 } } },
+];
+const configCases = CONFIG_CASES.map((item) => {
+  const parsed = parseRouterConfig(item.raw, CONFIG_MODELS as any);
+  return {
+    name: item.name,
+    raw: item.raw,
+    stats: clone(parsed.config?.stats ?? null),
+    diagnostics: parsed.diagnostics.map((diagnostic) => ({ code: diagnostic.code, path: diagnostic.path })),
+  };
+});
+
 mkdirSync(output, { recursive: true });
 const recorded: any[] = [];
 for (const scenario of scenarios) {
@@ -358,6 +456,9 @@ for (const scenario of scenarios) {
       case 'recent':
         result = clone(stats.recent(step.limit));
         break;
+      case 'estimateCost':
+        result = stats.estimateCost(step.usage, step.provider, step.model);
+        break;
       case 'usageProjection':
         result = clone(usageProjection(stats, step.sessionKey ? { sessionKey: step.sessionKey } : {}));
         break;
@@ -387,6 +488,6 @@ for (const scenario of scenarios) {
 
 writeFileSync(
   join(output, 'oracle.json'),
-  JSON.stringify({ sourceCommit, sourceSha256, scenarios: recorded }, null, 2) + '\n',
+  JSON.stringify({ sourceCommit, sourceSha256, scenarios: recorded, configCases }, null, 2) + '\n',
   { flag: 'wx' },
 );

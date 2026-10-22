@@ -345,12 +345,16 @@ impl TokenStatsCollector {
     }
 
     /// `estimateCost(usage, provider, model)`; absent usage costs zero.
+    ///
+    /// TS delegates to `estimateCostBreakdown`, where a finite non-negative
+    /// `nativeCost` wins over the rate card (`TokenStatsCollector.ts:183-186`,
+    /// `:383-391`). Only the baseline cost uses the pure rate table.
     pub fn estimate_cost(&self, usage: Option<&JsValue>, provider: &str, model: &str) -> f64 {
         let Some(usage) = usage else {
             return 0.0;
         };
         let usage = usage_from_js(usage).unwrap_or_default();
-        self.rate_cost(&usage, provider, model)
+        model_cost::estimate_cost(Some(&usage), provider, model, self.model_pricing.as_ref())
     }
 
     /// `hourlySnapshots()`: hourly buckets sorted by `hour.localeCompare`.
@@ -590,7 +594,7 @@ impl TokenStatsCollector {
         let Some(jsonl) = self.jsonl_path.clone() else {
             return PersistedData::new();
         };
-        let Ok(raw) = fs::read_to_string(&jsonl) else {
+        let Some(raw) = read_bounded_text(&jsonl, super::MAX_STRING_LENGTH) else {
             return PersistedData::new();
         };
         let mut records = Vec::new();
@@ -621,23 +625,21 @@ impl TokenStatsCollector {
     }
 
     fn prune_expired_records(&mut self) {
-        let Some(retained) = self.retained_records.clone() else {
-            return;
-        };
-        let kept: Vec<JsValue> = retained
-            .iter()
-            .filter(|record| self.is_retained(record))
-            .cloned()
-            .collect();
-        if kept.len() == retained.len() {
-            return;
-        }
         let retention = self.retention_ms;
         let now = (self.clock)();
-        self.data = create_data_from_records(&kept);
+        let before = self.retained_records.as_ref().map_or(0, Vec::len);
+        let Some(retained) = self.retained_records.as_mut() else {
+            return;
+        };
+        // Filter in place: `JsValue` is a deep tree, and TS only filters
+        // references (`TokenStatsCollector.ts:305-313`).
+        retained.retain(|record| is_retained_record(retention, now, record));
+        if retained.len() == before {
+            return;
+        }
+        self.data = create_data_from_records(retained);
         self.recent_records
             .retain(|record| is_retained_record(retention, now, record));
-        self.retained_records = Some(kept);
         self.compact_retained_records();
     }
 
@@ -1078,7 +1080,7 @@ fn is_retained_record(retention: Option<f64>, now: f64, record: &JsValue) -> boo
 }
 
 fn read_stats_records(path: &Path) -> Vec<JsValue> {
-    let Ok(raw) = fs::read_to_string(path) else {
+    let Some(raw) = read_bounded_text(path, super::MAX_STRING_LENGTH) else {
         return Vec::new();
     };
     let mut records = Vec::new();
@@ -1094,6 +1096,21 @@ fn read_stats_records(path: &Path) -> Vec<JsValue> {
         }
     }
     records
+}
+
+/// `fs.readFileSync(path, "utf8")` throws `ERR_STRING_TOO_LONG` when the decoded
+/// string exceeds V8's limit (`MAX_STRING_LENGTH`). Callers treat that exactly
+/// like an IO failure; no journal is read past the limit.
+fn read_bounded_text(path: &Path, limit: usize) -> Option<String> {
+    // A UTF-8 file can decode to at most `bytes` UTF-16 units and every scalar
+    // costs at most 3 bytes per unit (4-byte scalars pair up), so a larger file
+    // cannot fit and is rejected before it is read.
+    let maximum_bytes = (limit as u64).saturating_mul(3);
+    if fs::metadata(path).ok()?.len() > maximum_bytes {
+        return None;
+    }
+    let text = fs::read_to_string(path).ok()?;
+    (text.encode_utf16().count() <= limit).then_some(text)
 }
 
 fn append_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -1173,32 +1190,46 @@ fn locale_compare_js(left: &JsString, right: &JsString) -> Ordering {
     collator.compare_utf16(left.units(), right.units())
 }
 
-/// `resolvePilotHome()`: `PILOT_HOME` or `~/.pilotdeck`, expanding a leading
-/// `~` with `HOME`.
+/// `resolvePilotHome()`: `PILOT_HOME ?? "~/.pilotdeck"`, then Node
+/// `path.resolve` against the process cwd (`paths.ts:21-29`). An empty
+/// `PILOT_HOME` is a set value and resolves to the cwd, not the default.
 fn default_pilot_home() -> PathBuf {
-    let raw = std::env::var("PILOT_HOME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "~/.pilotdeck".into());
-    normalize_home_path(&raw)
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    resolve_pilot_home(
+        std::env::var("PILOT_HOME").ok().as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        &cwd,
+    )
 }
 
-fn normalize_home_path(value: &str) -> PathBuf {
-    if value == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(value));
-    }
-    if let Some(rest) = value.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    }
-    PathBuf::from(value)
+fn resolve_pilot_home(raw: Option<&str>, home: Option<&std::ffi::OsStr>, cwd: &Path) -> PathBuf {
+    let raw = raw.unwrap_or("~/.pilotdeck");
+    let expanded = if raw == "~" {
+        home.map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(raw))
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        home.map(|home| PathBuf::from(home).join(rest))
+            .unwrap_or_else(|| PathBuf::from(raw))
+    } else {
+        PathBuf::from(raw)
+    };
+    crate::metadata::resolve_path(cwd, &expanded)
 }
 
 /// One-time migration from the old `stats.json` / `router-stats.json` formats.
 fn migrate_json_to_jsonl(router_dir: &Path, jsonl: &Path) {
+    migrate_json_to_jsonl_with(router_dir, jsonl, &mut |path, text| fs::write(path, text));
+}
+
+/// `write` is the JSONL writer seam: TS wraps each candidate in `try/catch`, so
+/// a failed `writeFileSync` skips the rename and continues with the next
+/// candidate (`TokenStatsCollector.ts:634-662`). The seam keeps that branch
+/// testable without a fault-injecting filesystem.
+fn migrate_json_to_jsonl_with(
+    router_dir: &Path,
+    jsonl: &Path,
+    write: &mut dyn FnMut(&Path, &str) -> std::io::Result<()>,
+) {
     if jsonl.exists() {
         return;
     }
@@ -1213,7 +1244,7 @@ fn migrate_json_to_jsonl(router_dir: &Path, jsonl: &Path) {
         if !json_path.exists() {
             continue;
         }
-        let Ok(raw) = fs::read_to_string(&json_path) else {
+        let Some(raw) = read_bounded_text(&json_path, super::MAX_STRING_LENGTH) else {
             continue;
         };
         let Ok(parsed) = parse_json(&raw) else {
@@ -1246,63 +1277,104 @@ fn migrate_json_to_jsonl(router_dir: &Path, jsonl: &Path) {
                 .into_iter()
                 .map(|(_, line)| format!("{line}\n"))
                 .collect::<String>();
-            let _ = fs::write(jsonl, text);
+            if write(jsonl, &text).is_err() {
+                // TS catches the write error and moves on to the next
+                // candidate without renaming the source.
+                continue;
+            }
         }
         let _ = fs::rename(&json_path, format!("{}.bak", json_path.display()));
         return;
     }
 }
 
-/// `Date.parse` for the ISO-8601 subset this collector writes and reads.
+/// `Date.parse` for the timestamp shapes a router journal can contain.
 ///
-/// Supports `YYYY-MM-DD`, optional `T`/space time, seconds, fractional seconds
-/// and `Z` or `±HH:MM` offsets. A timestamp without a zone is treated as
-/// malformed (retained) instead of guessing the host timezone.
+/// Mirrors V8/Node 22.22 rules (probed with `TZ=UTC`, see
+/// `tests/fixtures/token-stats/`):
+/// - date-only `YYYY-M-D` is UTC; a date-time without a zone is **local** time;
+/// - `t`/`z` may be lower case; seconds are optional; fractions truncate to ms;
+/// - month/day must be two digits once a time follows (`2026-3-1T...` is NaN);
+/// - `24:00[:00[.000]]` rolls to the next day; later values that day are NaN;
+/// - numeric offsets are `±HH:MM` or `±HHMM`, both fields in range: `+99:99`,
+///   `+24:00` and `+01:99` are NaN (the old port accepted them and could drop
+///   an accounting row);
+/// - day `31` in a 30-day month rolls over (`2026-02-30` is valid in V8) while
+///   day `32` is NaN; single-digit month/day is only accepted without a time;
+/// - RFC 2822 date-times (`Mon, 01 Jan 2024 00:00:00 GMT`, numeric zones and
+///   `GMT±HHMM`) are accepted; named zones other than GMT/UT/UTC are not.
+///
+/// `None` means `Number.isFinite(Date.parse(...))` is false, which retention
+/// treats as "keep this historical record".
+enum ParsedDate {
+    Instant(f64),
+    Local { naive: f64 },
+}
+
 pub(crate) fn parse_date_ms(value: &str) -> Option<f64> {
-    let bytes = value.as_bytes();
-    if bytes.len() < 10 {
-        return None;
-    }
-    let digits = |start: usize, end: usize| -> Option<i64> {
-        let slice = bytes.get(start..end)?;
-        if !slice.iter().all(u8::is_ascii_digit) {
-            return None;
+    match parse_date_value(value)? {
+        ParsedDate::Instant(millis) => Some(millis),
+        ParsedDate::Local { naive } => {
+            // Two passes resolve the local offset around DST boundaries the
+            // same way the platform `mktime` does for V8.
+            let first = naive - local_offset_ms(naive);
+            Some(naive - local_offset_ms(first))
         }
-        std::str::from_utf8(slice).ok()?.parse().ok()
-    };
-    let year = digits(0, 4)?;
-    if bytes[4] != b'-' || bytes[7] != b'-' {
-        return None;
     }
-    let month = digits(5, 7)?;
-    let day = digits(8, 10)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
+}
+
+/// Test seam: resolve a zone-less timestamp with an explicit offset so the
+/// expectation does not depend on the machine running the tests.
+#[cfg(test)]
+fn parse_date_ms_with_offset(value: &str, offset_ms: i64) -> Option<f64> {
+    match parse_date_value(value)? {
+        ParsedDate::Instant(millis) => Some(millis),
+        ParsedDate::Local { naive } => Some(naive - offset_ms as f64),
     }
-    let mut millis = days_from_civil(year, month as u32, day as u32) * 86_400_000;
-    let mut index = 10;
-    if index == bytes.len() {
-        return Some(millis as f64);
-    }
-    if !matches!(bytes[index], b'T' | b' ') {
+}
+
+fn parse_date_value(value: &str) -> Option<ParsedDate> {
+    parse_iso_date(value).or_else(|| parse_rfc2822_date(value))
+}
+
+fn parse_iso_date(value: &str) -> Option<ParsedDate> {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    let (year, _) = digits_at(bytes, &mut index, 4, 6)?;
+    if bytes.get(index) != Some(&b'-') {
         return None;
     }
     index += 1;
-    let hour = digits(index, index + 2)?;
-    index += 2;
+    let (month, month_len) = digits_at(bytes, &mut index, 1, 2)?;
+    if bytes.get(index) != Some(&b'-') {
+        return None;
+    }
+    index += 1;
+    let (day, day_len) = digits_at(bytes, &mut index, 1, 2)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    if index == bytes.len() {
+        return Some(ParsedDate::Instant(civil_ms(year, month, day, 0, 0, 0, 0)));
+    }
+    // V8 only accepts the single-digit legacy form for a date without a time.
+    if month_len != 2 || day_len != 2 || !matches!(bytes[index], b'T' | b't' | b' ') {
+        return None;
+    }
+    index += 1;
+    let (hour, _) = digits_at(bytes, &mut index, 2, 2)?;
     if bytes.get(index) != Some(&b':') {
         return None;
     }
     index += 1;
-    let minute = digits(index, index + 2)?;
-    index += 2;
+    let (minute, _) = digits_at(bytes, &mut index, 2, 2)?;
     let mut second = 0;
     if bytes.get(index) == Some(&b':') {
         index += 1;
-        second = digits(index, index + 2)?;
-        index += 2;
+        let (value, _) = digits_at(bytes, &mut index, 2, 2)?;
+        second = value;
     }
-    let mut fraction = 0.0;
+    let mut millis = 0;
     if bytes.get(index) == Some(&b'.') {
         index += 1;
         let start = index;
@@ -1312,50 +1384,211 @@ pub(crate) fn parse_date_ms(value: &str) -> Option<f64> {
         if index == start {
             return None;
         }
-        let text = std::str::from_utf8(&bytes[start..index]).ok()?;
-        let mut units = text.to_owned();
-        units.truncate(3);
+        let mut units = value[start..index].chars().take(3).collect::<String>();
         while units.len() < 3 {
             units.push('0');
         }
-        fraction = units.parse::<f64>().ok()?;
+        millis = units.parse().ok()?;
     }
-    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=59).contains(&second) {
+    if !(0..=59).contains(&minute) || !(0..=59).contains(&second) || !(0..=24).contains(&hour) {
         return None;
     }
-    millis += hour * 3_600_000 + minute * 60_000 + second * 1_000 + fraction as i64;
-    if bytes.get(index) == Some(&b'Z') && index + 1 == bytes.len() {
-        return Some(millis as f64);
+    if hour == 24 && (minute != 0 || second != 0 || millis != 0) {
+        return None;
     }
-    let sign = match bytes.get(index) {
-        Some(b'+') => 1,
-        Some(b'-') => -1,
-        _ => return None,
+    let rollover = if hour == 24 { 86_400_000 } else { 0 };
+    let hour = if hour == 24 { 0 } else { hour };
+    let naive = civil_ms(year, month, day, hour, minute, second, millis) + rollover as f64;
+    let offset = if index == bytes.len() {
+        None
+    } else if matches!(bytes[index], b'Z' | b'z') && index + 1 == bytes.len() {
+        Some(0)
+    } else {
+        Some(parse_offset(&value[index..])?)
     };
-    index += 1;
-    let offset_hour = digits(index, index + 2)?;
-    index += 2;
-    if bytes.get(index) != Some(&b':') {
-        return None;
-    }
-    index += 1;
-    let offset_minute = digits(index, index + 2)?;
-    if index + 2 != bytes.len() {
-        return None;
-    }
-    millis -= sign * (offset_hour * 3_600_000 + offset_minute * 60_000);
-    Some(millis as f64)
+    Some(match offset {
+        Some(offset) => ParsedDate::Instant(naive - offset as f64),
+        None => ParsedDate::Local { naive },
+    })
 }
 
-/// Howard Hinnant's days-from-civil, inverse of `civil_from_days`.
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let month = month as i64;
-    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+fn parse_rfc2822_date(value: &str) -> Option<ParsedDate> {
+    let tokens: Vec<&str> = value
+        .split([' ', ','])
+        .filter(|token| !token.is_empty())
+        .collect();
+    let mut index = 0;
+    if let Some(first) = tokens.first()
+        && is_weekday(first)
+    {
+        index = 1;
+    }
+    let first = tokens.get(index)?;
+    let (day, month) = if let Some(day) = parse_decimal(first) {
+        (day, month_number(tokens.get(index + 1)?)?)
+    } else {
+        (parse_decimal(tokens.get(index + 1)?)?, month_number(first)?)
+    };
+    index += 2;
+    let year_token = tokens.get(index)?;
+    let mut year = parse_decimal(year_token)?;
+    index += 1;
+    if year_token.len() <= 2 {
+        year += if year < 50 { 2000 } else { 1900 };
+    }
+    let (hour, minute, second) = parse_clock(tokens.get(index)?)?;
+    index += 1;
+    let offset = match tokens.get(index) {
+        Some(zone) => {
+            index += 1;
+            Some(parse_rfc_zone(zone)?)
+        }
+        None => None,
+    };
+    if index != tokens.len() || !(1..=31).contains(&day) {
+        return None;
+    }
+    let rollover = if hour == 24 { 86_400_000 } else { 0 };
+    let hour = if hour == 24 { 0 } else { hour };
+    let naive = civil_ms(year, month as i64, day, hour, minute, second, 0) + rollover as f64;
+    Some(match offset {
+        Some(offset) => ParsedDate::Instant(naive - offset as f64),
+        None => ParsedDate::Local { naive },
+    })
+}
+
+fn parse_clock(text: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = text.split(':');
+    let hour = parse_decimal(parts.next()?)?;
+    let minute = parse_decimal(parts.next()?)?;
+    let second = match parts.next() {
+        Some(value) => parse_decimal(value)?,
+        None => 0,
+    };
+    if parts.next().is_some()
+        || !(0..=24).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+        || (hour == 24 && (minute != 0 || second != 0))
+    {
+        return None;
+    }
+    Some((hour, minute, second))
+}
+
+/// `±HH:MM` or `±HHMM`; the whole token must be consumed.
+fn parse_offset(text: &str) -> Option<i64> {
+    let sign = match text.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let rest = &text[1..];
+    let (hour, minute) = if let Some((hour, minute)) = rest.split_once(':') {
+        (fixed_decimal(hour, 2)?, fixed_decimal(minute, 2)?)
+    } else {
+        if rest.len() != 4 {
+            return None;
+        }
+        (fixed_decimal(&rest[..2], 2)?, fixed_decimal(&rest[2..], 2)?)
+    };
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(sign * (hour * 3_600 + minute * 60) * 1_000)
+}
+
+fn parse_rfc_zone(zone: &str) -> Option<i64> {
+    let upper = zone.to_ascii_uppercase();
+    if matches!(upper.as_str(), "Z" | "UT" | "UTC" | "GMT") {
+        return Some(0);
+    }
+    let numeric = upper
+        .strip_prefix("GMT")
+        .or_else(|| upper.strip_prefix("UTC"))
+        .unwrap_or(&upper);
+    parse_offset(numeric)
+}
+
+fn is_weekday(text: &str) -> bool {
+    matches!(
+        text.to_ascii_lowercase().as_str(),
+        "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
+    )
+}
+
+fn month_number(text: &str) -> Option<u32> {
+    let month = match text.to_ascii_lowercase().as_str() {
+        "jan" => 1,
+        "feb" => 2,
+        "mar" => 3,
+        "apr" => 4,
+        "may" => 5,
+        "jun" => 6,
+        "jul" => 7,
+        "aug" => 8,
+        "sep" => 9,
+        "oct" => 10,
+        "nov" => 11,
+        "dec" => 12,
+        _ => return None,
+    };
+    Some(month)
+}
+
+fn parse_decimal(text: &str) -> Option<i64> {
+    if text.is_empty() || text.len() > 4 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn fixed_decimal(text: &str, width: usize) -> Option<i64> {
+    if text.len() != width || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn digits_at(bytes: &[u8], index: &mut usize, min: usize, max: usize) -> Option<(i64, usize)> {
+    let start = *index;
+    while *index < bytes.len() && bytes[*index].is_ascii_digit() && *index - start < max {
+        *index += 1;
+    }
+    let length = *index - start;
+    if length < min {
+        return None;
+    }
+    let value = std::str::from_utf8(&bytes[start..*index])
+        .ok()?
+        .parse()
+        .ok()?;
+    Some((value, length))
+}
+
+fn civil_ms(
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    millis: i64,
+) -> f64 {
+    (crate::runtime::tools::builtin::time::days_from_civil(year, month, day) * 86_400_000
+        + hour * 3_600_000
+        + minute * 60_000
+        + second * 1_000
+        + millis) as f64
+}
+
+/// Local UTC offset (ms) at an instant, with the host timezone database.
+fn local_offset_ms(epoch_ms: f64) -> f64 {
+    use chrono::Local;
+    let Some(instant) = chrono::DateTime::from_timestamp_millis(epoch_ms as i64) else {
+        return 0.0;
+    };
+    instant.with_timezone(&Local).offset().local_minus_utc() as f64 * 1_000.0
 }
 
 #[cfg(test)]
