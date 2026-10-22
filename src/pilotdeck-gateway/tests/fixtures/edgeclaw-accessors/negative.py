@@ -33,10 +33,38 @@ cases = [
     ('cache-refresh', source, '        let mut next = HashMap::new();', '        if !cache.is_empty() { return Ok(cache.values().cloned().collect()); }\n        let mut next = HashMap::new();', replay),
     # listGlobalMemoryEntries must not forward projectId/includeTmp to the store.
     ('global-whitelist', source, 'fn global_entry_input(options: &JsObject, kinds: Option<Vec<JsValue>>) -> JsObject {\n    let mut input = JsObject::new();', 'fn global_entry_input(options: &JsObject, kinds: Option<Vec<JsValue>>) -> JsObject {\n    let mut input = options.clone();', replay),
+    # Dropping every forwarded option (the opposite extreme) must also fail:
+    # numeric limit 2.5/NaN, offset 1 and query "Probe three" change the result.
+    ('global-drop', source, '''    if let Some(query) = options.get("query").filter(|v| js_truthy(v)) {
+        put(&mut input, "query", query.clone());
+    }
+    if let Some(JsValue::Number(limit)) = options.get("limit") {
+        put(&mut input, "limit", JsValue::Number(*limit));
+    }
+    if let Some(JsValue::Number(offset)) = options.get("offset") {
+        put(&mut input, "offset", JsValue::Number(*offset));
+    }
+''', '', replay),
+    # Numeric forwarding alone: with the 6-entry probe store, dropping
+    # limit/offset changes limit 2.5 (2 vs 6) and NaN ([] vs 6).
+    ('global-limit-drop', source, '''    if let Some(JsValue::Number(limit)) = options.get("limit") {
+        put(&mut input, "limit", JsValue::Number(*limit));
+    }
+    if let Some(JsValue::Number(offset)) = options.get("offset") {
+        put(&mut input, "offset", JsValue::Number(*offset));
+    }
+''', '', replay),
+    # NaN is `typeof number` and must be forwarded; treating it as absent makes
+    # the 6-entry probe return all entries instead of the oracle's [].
+    ('global-limit-nan-drop', source, '    if let Some(JsValue::Number(limit)) = options.get("limit") {\n        put(&mut input, "limit", JsValue::Number(*limit));\n    }', '    if let Some(JsValue::Number(limit)) = options.get("limit").filter(|v| !v.as_number().is_some_and(f64::is_nan)) {\n        put(&mut input, "limit", JsValue::Number(*limit));\n    }', replay),
     # Non-array kinds throws TypeError in TS before the scope check.
     ('kinds-typeerror', source, '        Some(_) => Err(FileMemoryError::Type(\n            "options.kinds?.filter is not a function".into(),\n        )),', '        Some(_) => Ok(None),', replay),
     # Project kinds is forwarded to the store's `new Set(...)`: numbers throw.
     ('project-kinds-typeerror', source, '        Some(JsValue::Number(number)) => Err(not_iterable(format!(\n            "number {}",\n            crate::js_value::number_string(*number)\n        ))),', '        Some(value @ JsValue::Number(_)) => Ok(value.clone()),', replay),
+    # Boolean and object kinds have their own TypeError arms; each must be
+    # exercised by a mutation, not only one family representative.
+    ('project-kinds-bool', source, '        Some(JsValue::Bool(value)) => Err(not_iterable(format!("boolean {value}"))),', '        Some(value @ JsValue::Bool(_)) => Ok(value.clone()),', replay),
+    ('project-kinds-object', source, '        Some(JsValue::Object(_)) => Err(not_iterable("object".into())),', '        Some(value @ JsValue::Object(_)) => Ok(value.clone()),', replay),
     # TS hardcodes limit 5000/offset 0 for readable entries.
     ('limit-override', source, '    put(&mut input, "limit", JsValue::Number(5000.0));\n    put(&mut input, "offset", JsValue::Number(0.0));', '    put(\n        &mut input,\n        "limit",\n        options\n            .get("limit")\n            .cloned()\n            .unwrap_or(JsValue::Number(5000.0)),\n    );\n    put(&mut input, "offset", JsValue::Number(0.0));', replay),
     # os.homedir() falls back to passwd when HOME is unset.
