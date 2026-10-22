@@ -9,6 +9,12 @@ use tokio::sync::watch;
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
     fn snapshot(&self) -> JsValue;
+    /// May be called repeatedly while `dispose()` is in progress and after its
+    /// future has completed: the handle remains Draining while releasing its
+    /// project lease. Implementations must make cancellation idempotent and
+    /// must not panic, including after session resources have been disposed.
+    /// Only a fully Disposed handle suppresses subsequent external aborts.
+    /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
     fn dispose(&self) -> DisposeFuture<'_>;
 }
@@ -509,3 +515,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "handle_abort_tests.rs"]
+mod abort_contract_tests;
