@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（#518 PR，透明披露）**：accepted-diffs.md 末尾新增 A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001（超时回滚时 hasActiveTurn 端口 panic，Rust 告警后重新约时，TS 拒绝），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+
 > **2026-10-23 重登记（#516 PR，条目格式更正）**：accepted-diffs.md 末尾只追加「A7.3 interaction 边界条目更正（#516）」小节，内含 A7.3-INTERACTION-BOUNDARY-001-R1（把原条目按标准六字段重述，原条目逐字保留）；仍为边界登记、非豁免，不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-23 A7.2-pr1 修复轮 8 重登记（PR 待开，sink 所有权条目承诺范围更正）**：按本单 codex r8 两条 P1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay/rv-codex-r8.md`），对 accepted-diffs.md 的 A7.2-COORDINATOR-SINK-OWNERSHIP-001 做**只追加更正**（原条目文字未删改，范围以追加块为准）：① 轮 7「最后一个注册 drop 后 emit 拒收」并未成立——emit 以 sink 强引用存活代理注册存活，在途交付与队列均持强 sink；轮 8 起注册存活标记与交付用强 sink 分离（map 弱持注册记录、队列只持内层 sink）；② 「泄漏已从设计上消除」收窄为仅 coordinator 侧环——宿主侧 `Host → registration → sink → Host` 环任何库 API 无法阻止，本轮删除代码注释与轮 7 登记注中的过度承诺，改为文档化所有权约定（sink 回调宿主须弱捕获；会话结束显式 drop 注册或调用新增显式注销 `unregister`），宿主侧残余环按条目登记为已知残余。新增五条钉住测试（断言消息含编号），negative.py 各配专属变异（实测转红）。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。
@@ -41,7 +43,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-32ca0ba8a58e91d1441fdb4a648217d9425f9bee80e61db3ce30e4a9fbb598e8  accepted-diffs.md
+df436bb5752c2ce5a5e8a9091db0d47f60453d711a78b2e41aa4bc5317ed1b15  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

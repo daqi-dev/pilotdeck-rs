@@ -486,3 +486,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：该适配前置于 A7.3 host/turn 接线验收，不涵盖 producer 宿主对象的全部转换路径，也不代表 A7.3 完整轮次验收完成。
 - **机器判据**：`runtime::interaction::tests::interaction_real_ts_stepwise_oracle`（48 场景、281 步，含两种 kind 的同步嵌套 reject 与 consume、`injectedOptions` 全量注入）；`interaction_reject_cross_thread_response_and_bulk_have_one_winner` 与 `interaction_register_racing_reject_window_matches_ts_map_semantics`（channel 固定交错，含 delivered observer 与两种注册竞速交错）；`interaction_injected_options_share_the_supplied_components`（注入组件外部句柄可观测）；`tests/fixtures/interaction-bus/README.md` 为复现与类型边界。
 - **批准记录**：无行为豁免授权；类型域外的 producer 适配待后续接线补齐。本记录不允许忽略 Date/BigInt 等适用输入，也不允许把跨线程双结算登记为接受。
+
+## 已知未对齐（未批准，待人批）· A7.5 替换协调器
+
+### A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001 · 超时回滚时 hasActiveTurn 端口失败：TS 拒绝，Rust 告警后重新约时
+
+- **类别**：Rust 侧 panic 恢复（#518 要求端口 panic 后协调器可恢复）。
+- **TS 依据**（cc7c4e6）：`src/gateway/client/GatewayTurnReplacementCoordinator.ts:274` 超时回调里 `hasActiveTurn` 的调用在 try 之外，getter 抛错时 rollbackExpired 以该错误拒绝。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/replacement.rs` 捕获该端口的 panic，记告警并重新约定超时；getter 正常返回时行为与 TS 一致。
+- **范围**：仅超时路径上 session 端口 `has_active_turn` panic；不影响其他端口失败、正常超时回滚与 active 推迟的对拍。Rust 端口签名返回 bool，没有与 JS throw 对应的 Err 通道，只有 panic 会走到这里。
+- **机器判据**：`runtime::replacement` 单测中 #518 新增的 panic 场景（证据 `_tmp/20261023-issue-518-replacement/RESULT.md`）。
+- **批准记录**：无；实现方按 #518 任务实现并给出候选登记文字；**已知未对齐（未批准）**，待人批。
