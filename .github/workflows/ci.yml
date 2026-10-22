@@ -45,7 +45,13 @@ jobs:
           path: ~/.cargo/bin/rg
           key: ripgrep-15.0.0-${{ runner.os }}
       - name: ripgrep（cargo install 源码编译）
-        run: command -v rg || cargo install ripgrep --locked --version 15.0.0
+        # 镜像可能自带其他版本的 rg：只认 ~/.cargo/bin/rg 且版本须为 15.0.0，否则强制重装
+        run: |
+          "$HOME/.cargo/bin/rg" --version 2>/dev/null | grep -qx 'ripgrep 15.0.0' \
+            || cargo install ripgrep --locked --version 15.0.0 --force
+          # 把 ~/.cargo/bin 放到 PATH 最前，对拍按 PATH 顺序先找到钉住版本的 rg（不设全局 override，免得影响其他 grep 测试）
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rg" --version
       - name: 测试
         run: cargo test --all
       - name: B2 冻结与批准依据（干净检出）
