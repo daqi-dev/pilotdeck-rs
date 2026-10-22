@@ -4,7 +4,7 @@ pub mod binding;
 mod context;
 
 use binding::WsBinding;
-use context::{SessionKey, State, jv_get, jv_str, jv_truthy, truthy};
+use context::{SessionKey, State, jv_get, jv_str, jv_truthy};
 use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsValue, parse_json};
 use serde_json::{Value, json};
 use std::{
