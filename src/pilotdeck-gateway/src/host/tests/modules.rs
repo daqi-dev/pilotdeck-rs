@@ -218,8 +218,10 @@ async fn dispose_once_after_callbacks_on_every_exit_path() {
         "cleanup-hang",
     ] {
         let (mut command, receipt) = peer(mode);
-        let mut limits = protocol_limits();
-        limits.close_timeout = Duration::from_millis(200);
+        // This checks disposal ordering, not the duration of child shutdown.
+        // cleanup-hang must have time to record its EOF assertions before the
+        // host kills it; a 200 ms grace races Python IO under CI load (#389).
+        let limits = protocol_limits();
         let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
         let handler = Handler::new(mode);
         let result = client.execute(request(), handler.clone()).await;

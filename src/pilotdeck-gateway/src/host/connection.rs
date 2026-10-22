@@ -42,6 +42,8 @@ pub(super) struct Connection {
     pub(super) budget: Arc<Budget>,
     limits: Limits,
     closed: bool,
+    #[cfg(test)]
+    term_sent: Arc<AtomicUsize>,
 }
 
 impl Connection {
@@ -206,6 +208,8 @@ impl Connection {
             budget,
             limits,
             closed: false,
+            #[cfg(test)]
+            term_sent: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -310,6 +314,19 @@ impl Connection {
         self.child.id()
     }
 
+    #[cfg(test)]
+    pub(super) fn writer_task(&self) -> tokio::task::AbortHandle {
+        // A test-only observation barrier: stdin EOF can precede completion of
+        // its writer task. Advancing time before the join completes can consume
+        // the writer-join timeout instead of the EOF grace period (#308/#346).
+        self.pumps.last().expect("stdin writer").abort_handle()
+    }
+
+    #[cfg(test)]
+    pub(super) fn term_sent(&self) -> Arc<AtomicUsize> {
+        self.term_sent.clone()
+    }
+
     fn kill_group(&mut self) {
         crate::process_group::kill(self.group.take(), rustix::process::Signal::KILL);
     }
@@ -324,6 +341,8 @@ impl Connection {
         {
             if !self.wait_for_exit_unreaped().await? {
                 crate::process_group::kill(self.group, rustix::process::Signal::TERM);
+                #[cfg(test)]
+                self.term_sent.store(1, Ordering::SeqCst);
                 self.wait_for_exit_unreaped().await?;
             }
             // Also clean descendants of a naturally exited leader. Clear the

@@ -3,9 +3,10 @@
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
+
+from negative_process import run_owned, wait_for_slot
 
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
@@ -104,10 +105,10 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
                            else scratch / "src/runtime/connection")
             (destination / file).write_text(content)
         (scratch / "src/lib.rs").write_text(base_lib)
-        gate = subprocess.run(["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")], capture_output=True, text=True, check=True)
+        gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
         test_filter = "connection::tests::"
         command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"), "--lib", test_filter, "--", "--nocapture"]
-        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=900)
+        result = run_owned(command, env=env, timeout=900)
         raw = result.stdout + result.stderr
         passed = result.returncode == 0 if name == "baseline" else result.returncode == 101 and "assertion `left" in raw and "could not compile" not in raw
         if name == "ticket-scoped-in-flight":
@@ -146,9 +147,9 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
         ("binding-generation-as-project-runtime", 'let _: std::sync::Arc<pilotdeck_gateway::runtime::project::ProjectRuntime> = binding.generation();'),
     ]:
         (scratch / "src/lib.rs").write_text(base_lib + 'fn reject(runtime: std::sync::Arc<pilotdeck_gateway::runtime::project::ProjectRuntime>, binding: connection::binding::WsBinding) {' + statement + '}')
-        gate = subprocess.run(["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")],capture_output=True,text=True,check=True)
+        gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
         command=["cargo","check","--offline","--manifest-path",str(scratch / "Cargo.toml"),"--lib"]
-        result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=900)
+        result=run_owned(command,env=env,timeout=900)
         raw=result.stdout+result.stderr
         passed=result.returncode==101 and "error[E0308]" in raw and "ProjectRuntime" in raw and "u64" in raw
         (output / f"negative-{name}.log").write_text(gate.stdout+gate.stderr+"COMMAND "+" ".join(command)+"\n"+raw+f"\nexit={result.returncode}\n")
