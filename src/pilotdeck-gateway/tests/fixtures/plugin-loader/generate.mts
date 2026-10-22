@@ -1,5 +1,7 @@
 // Real fixed-baseline disk loader probes. No baseline or node_modules writes.
 import assert from 'node:assert/strict';
+import { assertPortablePaths } from './portable-paths.mjs';
+import { lifecycleProbe } from './lifecycle-probe.mts';
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -21,7 +23,7 @@ const prefix = 'src/extension/plugins/';
 const sources = ['discovery/discoverLocalPlugins.ts', 'discovery/PluginDirectoryResolver.ts',
   'loading/PluginLoader.ts', 'loading/PluginCommandLoader.ts', 'loading/PluginHookLoader.ts',
   'config/parsePluginManifest.ts', 'config/validatePluginSource.ts', 'config/validateMarketplaceName.ts',
-  'protocol/marketplace.ts', 'runtime/PluginRuntime.ts'].map(s => prefix + s);
+  'protocol/marketplace.ts', 'runtime/PluginRegistry.ts', 'runtime/PluginRuntime.ts'].map(s => prefix + s);
 const sourceSha256 = sourceClosureSha256(baseline, ref, git, sources);
 const load = (s:string) => import(pathToFileURL(join(baseline,prefix+s)).href);
 const { discoverPluginPaths, discoverSkillPaths } = await load('discovery/discoverLocalPlugins.ts');
@@ -33,6 +35,7 @@ const { resolveMarketplaceReference } = await load('protocol/marketplace.ts');
 const { loadPluginFromPath, loadSkillFromPath, loadPluginOutputStylesFromPath } = await load('loading/PluginLoader.ts');
 const { loadStandaloneSkill } = await load('loading/PluginCommandLoader.ts');
 const { PluginRuntime } = await load('runtime/PluginRuntime.ts');
+const { PluginRegistry } = await load('runtime/PluginRegistry.ts');
 const capture = async (f:()=>any) => { try { return { value:await f() }; } catch(e) { return {error:(e as Error).message}; } };
 const manifestInputs:any[] = [null, [], 3, 'name', {}, {name:null}, {name:3}, {name:''}, {name:' \t\ufeff'},
   {name:' kept ',version:3,description:false,commands:5,agents:[1],skills:null,hooks:[],mcpServers:[],lspServers:3,outputStyles:[1],marketplace:{name:'m'},mcpb:'x.MCPB',settings:[]},
@@ -67,9 +70,10 @@ const scenarios:Scenario[] = [
   {id:'builtin-loading-and-disable',files:[m('builtin/good',{name:'disk-name'}),w('builtin/good/commands/go.md','disk'),m('builtin/off',{name:'disabled-disk'}),m(`${G}/enabled-false`,{name:'global-not-disabled',enabled:false}),w(`${G}/enabled-false/commands/go.md`,'disk')],
     builtins:[{name:'original-name',path:'builtin/good',source:'builtin',commands:[{name:'original',content:'original'}]},{name:'fallback',path:'builtin/missing',source:'builtin',commands:[{name:'fallback',content:'fallback'}]},{name:'off-original',path:'builtin/off',source:'builtin'},{name:'injected-global',path:'builtin/missing-global',source:'global'}],enabled:{'disabled-disk':false,fallback:false,'global-not-disabled':false,'injected-global':false}},
   {id:'hook-files-and-configured-paths',files:[m(`${G}/external`,{name:'ext',hooks:'custom.json',commands:['/custom','../shared','missing'],skills:[]}),w(`${G}/external/custom.json`,'{"Stop":[{"hooks":[{"type":"command","command":"true"}]}],"Unknown":[]}'),w(`${G}/external/custom/a.md`,'absolute-looking dir joined below plugin'),w(`${G}/shared/b.md`,'outside plugin'),m(`${G}/bad-hooks`,{name:'bad',hooks:'bad.json'}),w(`${G}/bad-hooks/bad.json`,'invalid JSON'),m(`${G}/read-failure`,{name:'read-failure',commands:['custom','good']}),w(`${G}/read-failure/custom/ok.md`,'discard whole configured dir'),w(`${G}/read-failure/custom/no.md`,'unreadable'),{path:`${G}/read-failure/custom/no.md`,mode:0},w(`${G}/read-failure/good/ok.md`,'retained')]},
-  {id:'discovery-unicode-order',files:['z','a','Z','Å','_','10','2','😀','\ue000','.hidden'].map(n=>m(`${G}/${n}`,{name:n}))},
+  {id:'discovery-unicode-order',files:['z-lower','a','Z-upper','Å','_','10','2','😀','\ue000','.hidden'].map(n=>m(`${G}/${n}`,{name:n}))},
   {id:'refresh-staging-rollback',files:[m(`${G}/keep`,{name:'keep'}),w(`${G}/keep/commands/run.md`,'old')],invalid:[{path:`${G}/keep/plugin.json`,text:'{}'}],remove:[`${G}/keep`]},
 ];
+for (const scenario of scenarios) assertPortablePaths(scenario.files.map(f => f.path));
 const scratch = await mkdtemp(join(tmpdir(),'pdrs-plugin-loader-'));
 const normalize = (v:any,root:string):any => typeof v==='string'?v.split(root).join('<root>'):Array.isArray(v)?v.map(x=>normalize(x,root)):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,normalize(x,root)])):v;
 function plugin(p:any) { return {name:p.name,path:p.path,source:p.source,commands:p.commands??[],skills:p.skills??[],outputStyles:p.outputStyles??[],...(p.hooksConfig===undefined?{}:{hooksConfig:p.hooksConfig}),...(p.mcpServers===undefined?{}:{mcpServers:p.mcpServers}),...(p.lspServers===undefined?{}:{lspServers:p.lspServers})}; }
@@ -124,7 +128,17 @@ try {
     const loaded=await loadPluginFromPath(path,'global');
     serverCases.push({depth,raw,mcp:JSON.stringify(loaded.mcpServers),lsp:JSON.stringify(loaded.lspServers)});
   }
+  {
+    const raw=JSON.stringify({name:'ordered-servers',mcpServers:{zeta:{command:'node',args:['z.js'],env:{Z:'z',A:'a'}},'10':{z:1,a:2},'2':{},alpha:{last:true,first:false}},lspServers:{zulu:{command:'lsp',args:[]},alpha:{z:1,a:2}}});
+    const path=join(scratch,'server-order'); await mkdir(path); await writeFile(join(path,'plugin.json'),raw);
+    const loaded=await loadPluginFromPath(path,'global');
+    const runtime=new PluginRuntime({projectRoot:join(path,'project'),pilotHome:join(path,'home'),builtinPlugins:[loaded]});
+    await runtime.refreshWithReport();
+    serverCases.push({depth:0,raw,mcp:JSON.stringify(loaded.mcpServers),lsp:JSON.stringify(loaded.lspServers),mergedMcp:JSON.stringify(runtime.mcpServers()),mergedLsp:JSON.stringify(runtime.lspServers())});
+    await runtime.dispose();
+  }
+  const lifecycleCases=await lifecycleProbe(PluginRuntime,PluginRegistry,join(scratch,'lifecycle'));
   const sourcePathCases=[['<root>/safe','<root>'],['<root>/safe/../x','<root>/safe'],['<root>/safe/x','<root>/safe'],['<root>/safe/x','<root>/safe/'],['<root>/safe-other','<root>/safe'],['<root>/outside-real','<root>/home/plugins'],['<root>/safe','/'],['<root>/safe/..','<root>']].map(([path,allowedRoot])=>({path,allowedRoot,value:validatePluginSourcePath(path.replace('<root>',scratch),allowedRoot.replace('<root>',scratch))}));
   await mkdir(output,{recursive:true});
-  await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit:ref,sourceSha256,node:process.version,manifestCases,nameCases,referenceCases,sourcePathCases,serverCases,scenarios:results},null,2)+'\n');
+  await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit:ref,sourceSha256,node:process.version,manifestCases,nameCases,referenceCases,sourcePathCases,serverCases,lifecycleCases,scenarios:results},null,2)+'\n');
 } finally { await rm(scratch,{recursive:true,force:true}); }

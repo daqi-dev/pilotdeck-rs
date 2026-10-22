@@ -903,44 +903,9 @@ fn own_entries(value: Option<&JsValue>) -> Vec<(JsString, JsValue)> {
     }
 }
 
-/// `Object.keys(plugin.mcpServers ?? {})`.
-///
-/// `LoadedPlugin.mcpServers` is a `serde_json::Value`; its default object map
-/// is sorted, so this preserves the order the merged plugin type can represent.
-/// A loader that needs JS manifest insertion order must carry that order at
-/// its own boundary (A6.3-pr7b).
-fn collect_plugin_mcp_names(value: Option<&serde_json::Value>, names: &mut Vec<JsString>) {
-    match value {
-        Some(serde_json::Value::Object(object)) => {
-            // `Object.keys` enumerates array-index keys first in ascending
-            // numeric order, then ordinary keys in insertion order. The
-            // serde map only carries the latter as sorted keys; at least put
-            // the computable index keys in JS order.
-            let mut indexed = Vec::new();
-            let mut ordinary = Vec::new();
-            for key in object.keys() {
-                let name = JsString::from(key.as_str());
-                match name.array_index() {
-                    Some(index) => indexed.push((index, name)),
-                    None => ordinary.push(name),
-                }
-            }
-            indexed.sort_by_key(|(index, _)| *index);
-            names.extend(indexed.into_iter().map(|(_, name)| name));
-            names.extend(ordinary);
-        }
-        Some(serde_json::Value::Array(items)) => {
-            names.extend((0..items.len()).map(|index| JsString::from(index.to_string())));
-        }
-        Some(serde_json::Value::String(value)) => {
-            names.extend(
-                value
-                    .encode_utf16()
-                    .map(|unit| JsString::from_utf16(vec![unit])),
-            );
-        }
-        _ => {}
-    }
+/// `Object.keys(plugin.mcpServers ?? {})`, retaining manifest insertion order.
+fn collect_plugin_mcp_names(value: Option<&JsValue>, names: &mut Vec<JsString>) {
+    names.extend(own_entries(value).into_iter().map(|(key, _)| key));
 }
 
 enum ConfigCheck {
@@ -1286,8 +1251,7 @@ mod tests {
 
     #[test]
     fn plugin_mcp_names_put_array_indices_first() {
-        let value: serde_json::Value =
-            serde_json::from_str(r#"{"b":{},"10":{},"2":{},"a":{}}"#).unwrap();
+        let value = pilotdeck_protocol::parse_json(r#"{"b":{},"10":{},"2":{},"a":{}}"#).unwrap();
         let mut names = Vec::new();
         collect_plugin_mcp_names(Some(&value), &mut names);
         assert_eq!(
@@ -1295,7 +1259,7 @@ mod tests {
                 .iter()
                 .map(|name| name.to_utf8().unwrap())
                 .collect::<Vec<_>>(),
-            ["2", "10", "a", "b"]
+            ["2", "10", "b", "a"]
         );
     }
 

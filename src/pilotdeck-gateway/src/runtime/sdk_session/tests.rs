@@ -758,3 +758,84 @@ fn futures_block_on<F: std::future::Future>(future: F) -> F::Output {
         .unwrap()
         .block_on(future)
 }
+
+#[tokio::test]
+async fn default_plugin_loader_reads_disk_and_maps_manifest_failure() {
+    let scratch = scratch::Scratch::new("sdk-real-plugin-loader");
+    let root = scratch.path();
+    let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: root.into(),
+        pilot_home: root.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: HashMap::new(),
+    }));
+    // Leave the production options untouched: no NamedLoader injection.
+    let options = SdkSessionOptions::new(
+        root,
+        root,
+        Env::new(),
+        Arc::new(FixedResolver {
+            root: root.into(),
+            plugin_runtime: runtime,
+        }),
+    )
+    .with_homedir(root);
+    let mut registry = SdkSessionRegistry::new(options);
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/plugin-loader/oracle.json"
+    ))
+    .unwrap();
+    let case = fixture["serverCases"].as_array().unwrap().last().unwrap();
+    let plugin_dir = root.join("folder");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        case["raw"].as_str().unwrap(),
+    )
+    .unwrap();
+    let config = js_object(vec![(
+        "plugins",
+        JsValue::Array(vec![js_object(vec![(
+            "path",
+            plugin_dir.to_string_lossy().as_ref().into(),
+        )])]),
+    )]);
+    registry
+        .set_session_config(&"s".into(), &config, None, None)
+        .await
+        .unwrap();
+    let plugins = registry.session_plugins(&"s".into());
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].name, "ordered-servers");
+    assert_eq!(plugins[0].source, PluginSource::Project);
+    assert_eq!(plugins[0].path, std::fs::canonicalize(&plugin_dir).unwrap());
+    assert_eq!(
+        stringify_json(plugins[0].mcp_servers.as_ref().unwrap())
+            .unwrap()
+            .unwrap(),
+        case["mcp"].as_str().unwrap()
+    );
+    std::fs::write(plugin_dir.join("plugin.json"), "{}").unwrap();
+    let error = registry
+        .set_session_config(&"bad".into(), &config, None, None)
+        .await
+        .unwrap_err();
+    let diagnostic = fixture["manifestCases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["raw"] == serde_json::json!({}))
+        .unwrap()["error"]
+        .as_str()
+        .unwrap();
+    assert_eq!(error.code, "SDK_PLUGIN_LOAD_FAILED");
+    assert_eq!(
+        error.message,
+        format!(
+            "Could not load SDK plugin {}: {diagnostic}",
+            plugin_dir.display()
+        )
+    );
+    assert!(registry.session_plugins(&"bad".into()).is_empty());
+}

@@ -112,6 +112,24 @@ pub struct PluginContributionSnapshot {
 use super::{PluginRuntimeError, PluginRuntimeState, release_lease_plugins};
 use tokio::sync::{Mutex as TokioMutex, Notify};
 
+// Own the decrement/disposal wait independently of a caller's cancellation,
+// and memoize the result so repeated release observes the same TS promise.
+fn start_lease_release(
+    plugins: &[Arc<LoadedPlugin>],
+    state: &Arc<TokioMutex<PluginRuntimeState>>,
+    waiters: &Arc<Notify>,
+) -> super::DisposalReceiver {
+    let (tx, rx) = tokio::sync::watch::channel(None);
+    let plugins = plugins.to_vec();
+    let state = Arc::clone(state);
+    let waiters = Arc::clone(waiters);
+    tokio::spawn(async move {
+        let result = release_lease_plugins(&plugins, &state, &waiters).await;
+        let _ = tx.send(Some(result));
+    });
+    rx
+}
+
 /// A held lease on one plugin generation (command-catalog flavor).
 pub struct PluginCommandCatalogLease {
     pub generation: u64,
@@ -119,17 +137,21 @@ pub struct PluginCommandCatalogLease {
     pub(super) state: std::sync::Arc<TokioMutex<PluginRuntimeState>>,
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
+    pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
 }
 
 impl PluginCommandCatalogLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
-        if self.released {
-            return Ok(());
-        }
-        self.released = true;
-        release_lease_plugins(&self.plugins, &self.state, &self.waiters).await;
-        Ok(())
+        let rx = if let Some(rx) = &self.release_receiver {
+            rx.clone()
+        } else {
+            self.released = true;
+            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            self.release_receiver = Some(rx.clone());
+            rx
+        };
+        super::wait_watch(rx).await
     }
 }
 
@@ -143,7 +165,7 @@ impl Drop for PluginCommandCatalogLease {
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
             tokio::spawn(async move {
-                release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
+                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }
     }
@@ -156,17 +178,21 @@ pub struct PluginSessionContributionLease {
     pub(super) state: std::sync::Arc<TokioMutex<PluginRuntimeState>>,
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
+    pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
 }
 
 impl PluginSessionContributionLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
-        if self.released {
-            return Ok(());
-        }
-        self.released = true;
-        release_lease_plugins(&self.plugins, &self.state, &self.waiters).await;
-        Ok(())
+        let rx = if let Some(rx) = &self.release_receiver {
+            rx.clone()
+        } else {
+            self.released = true;
+            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            self.release_receiver = Some(rx.clone());
+            rx
+        };
+        super::wait_watch(rx).await
     }
 }
 
@@ -178,7 +204,7 @@ impl Drop for PluginSessionContributionLease {
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
             tokio::spawn(async move {
-                release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
+                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }
     }
@@ -191,17 +217,21 @@ pub struct PluginContributionLease {
     pub(super) state: std::sync::Arc<TokioMutex<PluginRuntimeState>>,
     pub(crate) plugins: Vec<Arc<LoadedPlugin>>,
     pub(crate) released: bool,
+    pub(super) release_receiver: Option<super::DisposalReceiver>,
     pub(crate) waiters: std::sync::Arc<Notify>,
 }
 
 impl PluginContributionLease {
     pub async fn release(&mut self) -> Result<(), PluginRuntimeError> {
-        if self.released {
-            return Ok(());
-        }
-        self.released = true;
-        release_lease_plugins(&self.plugins, &self.state, &self.waiters).await;
-        Ok(())
+        let rx = if let Some(rx) = &self.release_receiver {
+            rx.clone()
+        } else {
+            self.released = true;
+            let rx = start_lease_release(&self.plugins, &self.state, &self.waiters);
+            self.release_receiver = Some(rx.clone());
+            rx
+        };
+        super::wait_watch(rx).await
     }
 }
 
@@ -213,7 +243,7 @@ impl Drop for PluginContributionLease {
             let waiters_clone = std::sync::Arc::clone(&self.waiters);
             let plugins_clone = self.plugins.clone();
             tokio::spawn(async move {
-                release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
+                let _ = release_lease_plugins(&plugins_clone, &state_clone, &waiters_clone).await;
             });
         }
     }
@@ -368,7 +398,7 @@ fn collect_output_styles(plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginOutputStyle
 
 fn collect_tool_contributions(_plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginToolContribution> {
     // Programmatic tools only (disk plugins have no toolContributions).
-    // A6.3-pr7b will fill this in.
+    // Programmatic tool contributions require their own registration seam.
     Vec::new()
 }
 
@@ -414,9 +444,8 @@ pub(super) fn collect_mcp_servers(plugins: &[Arc<LoadedPlugin>]) -> JsObject {
     let mut out = JsObject::new();
     for plugin in plugins {
         if let Some(obj) = plugin.mcp_servers.as_ref().and_then(|v| v.as_object()) {
-            for (key, value) in obj.iter() {
-                let js_val = serde_json_to_js(value);
-                out.insert(JsString::from(key.as_str()), js_val);
+            for (key, value) in obj.own_entries() {
+                out.insert(key.clone(), value.clone());
             }
         }
     }
@@ -427,8 +456,8 @@ pub(super) fn collect_lsp_servers(plugins: &[Arc<LoadedPlugin>]) -> JsObject {
     let mut out = JsObject::new();
     for plugin in plugins {
         if let Some(obj) = plugin.lsp_servers.as_ref().and_then(|v| v.as_object()) {
-            for (key, value) in obj.iter() {
-                out.insert(JsString::from(key.as_str()), serde_json_to_js(value));
+            for (key, value) in obj.own_entries() {
+                out.insert(key.clone(), value.clone());
             }
         }
     }
@@ -449,7 +478,8 @@ pub(super) fn collect_mcp_instructions(
         let Some(obj) = servers.as_object() else {
             continue;
         };
-        for (server_name, raw) in obj.iter() {
+        for (server_name, raw) in obj.own_entries() {
+            let server_name = String::from_utf16_lossy(server_name.units());
             if seen.contains(server_name.as_str()) {
                 continue;
             }
@@ -459,9 +489,10 @@ pub(super) fn collect_mcp_instructions(
             let Some(candidate) = raw_obj.get("instructions") else {
                 continue;
             };
-            let Some(str_val) = candidate.as_str() else {
+            let Some(str_val) = candidate.as_string() else {
                 continue;
             };
+            let str_val = String::from_utf16_lossy(str_val.units());
             let trimmed = str_val.trim();
             if trimmed.is_empty() {
                 continue;
@@ -567,30 +598,4 @@ fn locale_sort_by<T, F: Fn(&T) -> &str>(items: &mut [T], key: F) {
     } else {
         items.sort_by(|a, b| key(a).cmp(key(b)));
     }
-}
-
-/// Minimal `serde_json::Value` → `JsValue` converter, depth-limited at 32.
-fn serde_json_to_js(value: &serde_json::Value) -> JsValue {
-    fn convert(v: &serde_json::Value, depth: u8) -> JsValue {
-        if depth == 0 {
-            return JsValue::Null;
-        }
-        match v {
-            serde_json::Value::Null => JsValue::Null,
-            serde_json::Value::Bool(b) => JsValue::Bool(*b),
-            serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(f64::NAN)),
-            serde_json::Value::String(s) => JsValue::String(JsString::from(s.as_str())),
-            serde_json::Value::Array(arr) => {
-                JsValue::Array(arr.iter().map(|item| convert(item, depth - 1)).collect())
-            }
-            serde_json::Value::Object(obj) => {
-                let mut out = JsObject::new();
-                for (key, val) in obj.iter() {
-                    out.insert(JsString::from(key.as_str()), convert(val, depth - 1));
-                }
-                JsValue::Object(out)
-            }
-        }
-    }
-    convert(value, 32)
 }

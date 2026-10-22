@@ -18,9 +18,6 @@
 //!
 //! - `resolveSdkSubagentScopes` (TS `:2118-2204`) is outside this PR's cited
 //!   ranges. `setSdkSessionConfig` therefore stores `agents` untouched.
-//! - The plugin loader implementation is A6.3-pr7b. This module consumes
-//!   [`SdkPluginLoader`], whose implementation is wired by that slice; the
-//!   pr7 `PluginRuntime` supplies refresh/snapshot/createView.
 //! - Session hook / SDK config-change **dispatch** is A6.7-pr6. This module
 //!   defines the registration types and registry only (see
 //!   [`SessionHandlerRegistry`]).

@@ -49,6 +49,26 @@ pub trait SdkPluginLoader: Send + Sync {
     fn load<'a>(&'a self, path: &'a Path) -> PluginLoadFuture<'a>;
 }
 
+/// Production bridge to the same disk loader used by PluginRuntime.
+struct DiskSdkPluginLoader;
+
+impl SdkPluginLoader for DiskSdkPluginLoader {
+    fn load<'a>(&'a self, path: &'a Path) -> PluginLoadFuture<'a> {
+        let path = path.to_path_buf();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                crate::runtime::plugins::loader::load_plugin_from_path(
+                    &path,
+                    crate::runtime::plugins::PluginSource::Project,
+                )
+                .map_err(|error| error.message)
+            })
+            .await
+            .map_err(|_| "Plugin disk loading task failed.".to_owned())?
+        })
+    }
+}
+
 /// Task-budget operations from A6.4-pr11. A6.3-pr8 decides *when* to call;
 /// the store owns persistence and conflict text.
 pub trait SdkTaskBudget: Send + Sync {
@@ -147,7 +167,7 @@ impl SdkSessionOptions {
             homedir: None,
             resolver,
             organization_policy: None,
-            plugin_loader: None,
+            plugin_loader: Some(Arc::new(DiskSdkPluginLoader)),
             task_budget: None,
             clock: Arc::new(|| {
                 std::time::SystemTime::now()
