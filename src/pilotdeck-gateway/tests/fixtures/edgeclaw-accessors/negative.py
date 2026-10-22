@@ -35,6 +35,8 @@ cases = [
     ('global-whitelist', source, 'fn global_entry_input(options: &JsObject, kinds: Option<Vec<JsValue>>) -> JsObject {\n    let mut input = JsObject::new();', 'fn global_entry_input(options: &JsObject, kinds: Option<Vec<JsValue>>) -> JsObject {\n    let mut input = options.clone();', replay),
     # Non-array kinds throws TypeError in TS before the scope check.
     ('kinds-typeerror', source, '        Some(_) => Err(FileMemoryError::Type(\n            "options.kinds?.filter is not a function".into(),\n        )),', '        Some(_) => Ok(None),', replay),
+    # Project kinds is forwarded to the store's `new Set(...)`: numbers throw.
+    ('project-kinds-typeerror', source, '        Some(JsValue::Number(number)) => Err(not_iterable(format!(\n            "number {}",\n            crate::js_value::number_string(*number)\n        ))),', '        Some(value @ JsValue::Number(_)) => Ok(value.clone()),', replay),
     # TS hardcodes limit 5000/offset 0 for readable entries.
     ('limit-override', source, '    put(&mut input, "limit", JsValue::Number(5000.0));\n    put(&mut input, "offset", JsValue::Number(0.0));', '    put(\n        &mut input,\n        "limit",\n        options\n            .get("limit")\n            .cloned()\n            .unwrap_or(JsValue::Number(5000.0)),\n    );\n    put(&mut input, "offset", JsValue::Number(0.0));', replay),
     # os.homedir() falls back to passwd when HOME is unset.

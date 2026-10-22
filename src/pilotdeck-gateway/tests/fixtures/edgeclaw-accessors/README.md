@@ -19,10 +19,12 @@
 同 workspace 排除、general workspace 排除、外部 workspace 路径变化、目录移除；
 本地/外部/镜像目录、孤立镜像、摘要合并、最新时间及 ICU 名称排序；
 project/feedback/deprecated/query/includeExternal 过滤和外部 ID；
-includeExternal 的 `0`/`""`/`1`/`null` 真值语义；project 条目忽略调用方
-limit/offset（固定 5000/0）；global 入参白名单（多余 projectId/includeTmp 不透传）、
-非数组 kinds 的 TypeError、空/缺省 kinds；global user 过滤、分页、搜索、
-summary 路径前缀；损坏 manifest 的 repair 与重复 repair。
+project kinds 的 `new Set(...)` 语义（数组过滤、字符串按字符迭代得空集、
+`null`/`undefined` 取默认、数字/布尔/对象抛 TypeError；external-only 项目在
+`includeExternal:false` 时不触达 store）；includeExternal 的 `0`/`""`/`1`/`null` 真值语义；
+project 条目忽略调用方 limit/offset（固定 5000/0）；global 入参白名单
+（多余 projectId/includeTmp 不透传）、非数组 kinds 的 TypeError、空/缺省 kinds；
+global user 过滤、分页、搜索、summary 路径前缀；损坏 manifest 的 repair 与重复 repair。
 
 生成两次并核字节（从仓库根目录运行）：
 

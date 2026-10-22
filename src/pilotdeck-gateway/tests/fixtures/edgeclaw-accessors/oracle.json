@@ -714,6 +714,88 @@
       }
     },
     {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": 42
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": true
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": {}
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": null
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": "project"
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "kinds": ""
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "z",
+        "options": {
+          "kinds": 42
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "external-project:39343c0058",
+        "options": {
+          "kinds": 42
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "external-project:39343c0058",
+        "options": {
+          "kinds": 42,
+          "includeExternal": false
+        }
+      }
+    },
+    {
       "method": "listGlobalMemoryEntries",
       "input": {}
     },
@@ -1513,6 +1595,70 @@
         "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
       }
     ],
+    {
+      "error": "TypeError",
+      "message": "number 42 is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "error": "TypeError",
+      "message": "boolean true is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "error": "TypeError",
+      "message": "object is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    [],
+    [],
+    {
+      "error": "TypeError",
+      "message": "number 42 is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "error": "TypeError",
+      "message": "number 42 is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    [],
     [
       {
         "name": "Second",
