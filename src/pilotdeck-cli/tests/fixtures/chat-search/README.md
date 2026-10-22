@@ -32,3 +32,8 @@ src/pilotdeck-cli/tests/fixtures/chat-search/generate.mts /tmp/pdrs-chat-edges-1
 修复轮 4 将 edges 扩至 154 场景，原 77 场景的 argv/stdout/stderr/exit 与原夹具内容逐条保持一致。新增 51 条解码场景覆盖 head/tail、metadata/普通行、title/createdAt、非法 `\x`/`\q`/残缺 `\u12`、原始 TAB/NUL，以及带非 ASCII/非 BMP 前缀时的 UTF-16 错误位置；同时钉住无 summary 不解码、慢路径恢复 summary 后解码及字段求值顺序。损坏文件放在独立 `error-pilot`，仅相应场景通过相对 `--pilot-home` 访问，避免改变已有 all-projects 场景输入。
 
 另加 26 条真实 TS 正则场景，分别以 flags 空串和 `i` 覆盖词边界/行锚点/lookbehind 后量词的错误文本、可量化 lookahead 和断言外层普通组，以及倒序量词。Node 22 的 lookbehind 报 `Invalid quantifier`，词边界和行锚点报 `Nothing to repeat`。生成与复算方式仍用上面的 `edges` 命令；期望全部取自真实 TS，原始流保存在每次输出目录的 `raw/` 中，退出码保存在生成的 `oracle.json` 各场景 `exit` 字段。
+
+
+修复轮 5 将 edges 扩至 176 场景，原 154 条场景和夹具内容保持不变。新增 22 条均由同一真实 TS 生成器采集：两种大小写模式的 65,000 原子 `[\S…]` 长字符类、两种模式的 65,001 码元重复前缀 literal，以及 18 条正/补集转义、负类、忽略大小写和跨代理项区间用例。资源夹具放独立 `bounded-pilot`，不改变已有 all-projects 输入。`chat_search_large_character_classes_are_bounded` 和 `chat_search_large_literal_prefixes_are_bounded` 各对两条真实 TS 金样逐字节回放，单子进程从启动到匹配及输出须 < 1 s，超时主动 kill + wait；stdout/stderr 并发排空以避免长 query 填满管道。类别选择不得为空，两个测试的临时目录各自隔离。
+
+额外的 `giant-quantifier` 生成模式只复算 D2-CHATSEARCH-REGEX-GIANTQUANT-001（`specs/gateway-parity/accepted-diffs.md`）：把上面命令末尾的 `edges` 替换为 `giant-quantifier` 即可。它保存真实 TS 输出，独立于通过的 39 原场景与 176 条 edges；当前 Rust 巨量词编译分歧不计通过，也没有获得豁免。

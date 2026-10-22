@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 PR #513 修复轮 5 重登记（透明披露）**：按 GLM r3 P2 #1（实现方在修复轮 5 中补登，协调者复核后保留），accepted-diffs.md 只追加 D2-CHATSEARCH-REGEX-GIANTQUANT-001（巨量词 V8 饱和语义与 fancy-regex 编译边界），两次真实 TS 重采及 Rust 分歧复算见 RESULT「修复轮 5」。状态为已知未对齐、未批准，不新增豁免、不改变冻结判分语义；仅更新 accepted-diffs.md 哈希，独立评审由协调者续办。
+
 > **2026-10-23 重登记（PR #513，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· D2 CLI chat search」一节，登记 D2-CHATSEARCH-REGEX-BACKTRACK-001（TS 正则灾难性回溯长时间不返回，Rust 回溯上限有界失败）。状态为未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-23 重登记（#518 PR，透明披露）**：accepted-diffs.md 末尾新增 A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001（超时回滚时 hasActiveTurn 端口 panic，Rust 告警后重新约时，TS 拒绝），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
@@ -45,7 +47,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-f131980ec21b8c531bd43deed6b93fdbaaf92dec3becda7ee5d35f34d4393534  accepted-diffs.md
+cdf7062e8a48af253636bde831268c3e4098c6ced944b0698e0b3947940876ad  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

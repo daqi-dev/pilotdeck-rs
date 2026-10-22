@@ -158,7 +158,38 @@ if (edges) {
   const patterns = ['[Z-a]','[[]','[a&&b]','[a--b]','x{,3}','\\1','\\0','\\k','(?<a>x)(?<a>y)','a{1000}{1000}{1000}','[\\d]','[\\w-]','[\\s\\S]','\\xzz','\\u{41}','[a-\\d]','(?i)','(?i:a)','[a\\1]','\\8','(x)\\1','(?<name>x)\\k<name>'];
   for (const [i, pattern] of patterns.entries()) for (const sensitive of [false,true])
     add(`review-regex-${i}-${sensitive}`, [pattern,'--regex','--session','patterns','--limit','100','--json',...(sensitive ? ['--case-sensitive'] : [])]);
+  // Keep resource probes isolated so all original all-projects inputs stay put.
+  files['bounded-pilot/projects/bounded/chats/probe.jsonl'] = [
+    row('probe','Z [ & b 3 - x é K ſ _ 😀'),
+    row('probe','\t\n\r \u00a0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'),
+    row('probe','\ud7ff\ud800\udfff\ue000\uffff'),
+  ].join('\n');
+  const isolated = (id: string, pattern: string, sensitive: boolean) =>
+    cases.push({id, argv:['search',pattern,'--regex','--session','probe','--json',
+      '--pilot-home','../bounded-pilot','--project','/bounded',
+      ...(sensitive ? ['--case-sensitive'] : [])]});
+  files['bounded-pilot/projects/bounded/chats/literal.jsonl'] = row('literal','a'.repeat(130000));
+  for (const sensitive of [false,true]) cases.push({id:`bounded-literal-${sensitive}`,
+    argv:['search','a'.repeat(65000)+'b','--session','literal','--json',
+      '--pilot-home','../bounded-pilot','--project','/bounded',
+      ...(sensitive ? ['--case-sensitive'] : [])]});
+  for (const sensitive of [false,true]) {
+    isolated(`bounded-class-${sensitive}`, `[${String.raw`\S`.repeat(65000)}]`, sensitive);
+    // Both positive and complemented escapes, folding, negative classes and
+    // intervals crossing the surrogate remapping boundaries use actual TS.
+    for (const [i, pattern] of [String.raw`[\D]`, String.raw`[\W]`, String.raw`[\s]`,
+      String.raw`[^\S]`, String.raw`[^\D]`, String.raw`[^\W]`,
+      String.raw`[\0-\uffff]`, String.raw`[\ud7ff-\ue000]`,
+      String.raw`[Z-a\d\s]`].entries())
+      isolated(`interval-class-${i}-${sensitive}`, pattern, sensitive);
+  }
+
 }
+
+// Reproduce the disclosed giant-quantifier divergence without adding it to
+// the passing parity matrix or changing any accepted comparison rules.
+if (process.argv[3] === 'giant-quantifier') cases.splice(0,cases.length,
+  {id:'giant-quantifier',argv:['search','a{2147483648,2147483647}','--regex','--all-projects','--json']});
 
 try {
   await mkdir(project, {recursive:true});

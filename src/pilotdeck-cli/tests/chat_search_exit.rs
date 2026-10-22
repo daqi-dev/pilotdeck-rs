@@ -1,16 +1,17 @@
 //! The oracle comes from the unmodified TS CLI action and native JSONL provider.
 use std::{fs, process::Command};
 
-fn parity(source: &str, errors_only: bool) {
+fn parity(source: &str, errors_only: bool, bounded: Option<&str>) {
     let oracle: serde_json::Value = serde_json::from_str(source).unwrap();
     assert_eq!(
         oracle["provenance"]["sourceCommit"],
         "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
     );
     let root = std::env::temp_dir().join(format!(
-        "pdrs-chat-exit-{}-{errors_only}-{}",
+        "pdrs-chat-exit-{}-{errors_only}-{}-{}",
         std::process::id(),
-        source.len()
+        source.len(),
+        bounded.unwrap_or("ordinary")
     ));
     fs::create_dir_all(root.join("project")).unwrap();
     for (name, text) in oracle["files"].as_object().unwrap() {
@@ -25,19 +26,27 @@ fn parity(source: &str, errors_only: bool) {
         .unwrap();
     }
     let mut failures = Vec::new();
+    let mut checked = 0;
     for case in oracle["cases"].as_array().unwrap() {
         let id = case["id"].as_str().unwrap();
         let pre_storage = matches!(id, "usage" | "unknown" | "empty" | "flags-only");
-        if pre_storage != errors_only {
+        if pre_storage != errors_only
+            || match bounded {
+                Some(prefix) => !id.starts_with(prefix),
+                None => id.starts_with("bounded-"),
+            }
+        {
             continue;
         }
+        checked += 1;
         let args: Vec<_> = case["argv"]
             .as_array()
             .unwrap()
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        let output = Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
+        command
             .arg("chat")
             .args(args)
             .env_clear()
@@ -47,9 +56,12 @@ fn parity(source: &str, errors_only: bool) {
             .env("LANG", "C")
             .env("LC_ALL", "C")
             .env("NO_COLOR", "1")
-            .current_dir(root.join("project"))
-            .output()
-            .unwrap();
+            .current_dir(root.join("project"));
+        let output = if bounded.is_some() {
+            bounded_output(&mut command, id)
+        } else {
+            command.output().unwrap()
+        };
         let expected = |key: &str| {
             case[key]
                 .as_str()
@@ -71,25 +83,101 @@ fn parity(source: &str, errors_only: bool) {
     }
     fs::remove_dir_all(&root).unwrap();
     assert!(
+        checked > 0,
+        "case selection must not silently run zero cases"
+    );
+    assert!(
         failures.is_empty(),
         "TS CLI parity mismatches:\n{}",
         failures.join("\n")
     );
 }
 
+// Drain both pipes while polling: a large JSON query must not block on a full
+// stdout pipe. Kill and reap at the deadline, including for the old OOM path.
+fn bounded_output(command: &mut Command, id: &str) -> std::process::Output {
+    use std::{
+        io::Read,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let started = Instant::now();
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let drain = |mut pipe: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes).unwrap();
+            bytes
+        })
+    };
+    let stdout = drain(Box::new(child.stdout.take().unwrap()));
+    let stderr = drain(Box::new(child.stderr.take().unwrap()));
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(1) {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            stdout.join().unwrap();
+            stderr.join().unwrap();
+            panic!(
+                "{id}: chat search translation + matching exceeded 1 s; child killed and reaped"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let output = std::process::Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr: stderr.join().unwrap(),
+    };
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "chat search translation + matching exceeded 1 s"
+    );
+    output
+}
+
+#[test]
+fn chat_search_large_character_classes_are_bounded() {
+    parity(
+        include_str!("fixtures/chat-search/edges.json"),
+        false,
+        Some("bounded-class"),
+    );
+}
+
+#[test]
+fn chat_search_large_literal_prefixes_are_bounded() {
+    parity(
+        include_str!("fixtures/chat-search/edges.json"),
+        false,
+        Some("bounded-literal"),
+    );
+}
+
 #[test]
 fn chat_search_usage_and_keyword_errors_match_ts() {
-    parity(include_str!("fixtures/chat-search/oracle.json"), true);
+    parity(include_str!("fixtures/chat-search/oracle.json"), true, None);
 }
 
 #[test]
 fn chat_search_storage_and_format_match_ts() {
-    parity(include_str!("fixtures/chat-search/oracle.json"), false);
+    parity(
+        include_str!("fixtures/chat-search/oracle.json"),
+        false,
+        None,
+    );
 }
 
 #[test]
 fn chat_search_utf16_and_raw_storage_edges_match_ts() {
-    parity(include_str!("fixtures/chat-search/edges.json"), false);
+    parity(include_str!("fixtures/chat-search/edges.json"), false, None);
 }
 
 #[test]
