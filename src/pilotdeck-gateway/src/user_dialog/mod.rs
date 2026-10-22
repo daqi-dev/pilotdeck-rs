@@ -9,6 +9,7 @@ mod bus;
 mod channel;
 #[cfg(test)]
 mod channel_tests;
+mod http_store;
 mod journal;
 mod store;
 
@@ -16,6 +17,14 @@ pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};
 pub use channel::{
     AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,
     GatewayUserDialogChannel, InputRequest, SelectChoice, SelectRequest, UserDialogStore,
+};
+pub use http_store::{
+    GatewayUserDialogStoreHttpHandler, GatewayUserDialogStoreHttpServer,
+    HttpGatewayUserDialogStore, HttpGatewayUserDialogStoreOptions, HttpStoreAnswer,
+    HttpStoreHttpRequest, HttpStoreHttpResponse, HttpStoreLeaseClaim, HttpStoreOwnerClaim,
+    HttpStoreTransport, HttpStoreTransportError, HttpStoreTransportRequest,
+    HttpStoreTransportResponse, HttpStoreValidationError, LiveGatewayUserDialogStore,
+    create_gateway_user_dialog_store_http_handler, start_gateway_user_dialog_store_http_server,
 };
 pub use journal::{
     GatewayUserDialogJournal, JournalOptions, UserDialogJournal, create_gateway_user_dialog_journal,
