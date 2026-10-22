@@ -22,9 +22,11 @@ use std::{
     collections::HashSet,
     fmt, fs,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use super::file_memory::FileMemoryClock;
 
 const INDEXING_SETTINGS_STATE_KEY: &str = "indexingSettings";
 const RECENT_CASE_TRACES_STATE_KEY: &str = "recentCaseTraces";
@@ -175,6 +177,11 @@ impl IndexingSettings {
 pub struct EdgeClawStorage {
     path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    /// The repository's `nowIso()`, used for `pipeline_state.updated_at`
+    /// (`sqlite.ts:921`, read once per `setPipelineState` call) and the L0
+    /// `created_at` fallback (`sqlite.ts:941`); injected so replays observe
+    /// the same clock reads as TS.
+    clock: FileMemoryClock,
 }
 
 struct ConnectionGuard<'a>(std::sync::MutexGuard<'a, Option<Connection>>);
@@ -189,6 +196,14 @@ impl EdgeClawStorage {
     /// `sqlite.ts:502-566`: create the parent directory, open, enable WAL,
     /// create the base schema, then run the `pipeline_state` migration.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::with_clock(path, Arc::new(now_iso))
+    }
+
+    /// [`Self::open`] with the repository's injectable clock.
+    pub fn with_clock(
+        path: impl AsRef<Path>,
+        clock: FileMemoryClock,
+    ) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -206,6 +221,7 @@ impl EdgeClawStorage {
         let storage = Self {
             path,
             conn: Mutex::new(Some(conn)),
+            clock,
         };
         storage.migrate_pipeline_state()?;
         Ok(storage)
@@ -325,14 +341,18 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:923-928`.
     pub fn set_pipeline_state(&self, key: &str, value: &JsValue) -> Result<(), StorageError> {
+        let now = (self.clock)();
         let conn = self.conn()?;
-        Self::write_pipeline_state(&conn, key, value)
+        Self::write_pipeline_state(&conn, key, value, &now)
     }
 
     fn write_pipeline_state(
         conn: &Connection,
         key: &str,
         value: &JsValue,
+        // Read before the write, like the `nowIso()` argument at
+        // `sqlite.ts:921`: the clock ticks even when the insert fails.
+        now: &str,
     ) -> Result<(), StorageError> {
         let json = stringify_json(value)
             .map_err(|error| StorageError::Json(error.to_string()))?
@@ -341,7 +361,7 @@ impl EdgeClawStorage {
             "INSERT INTO pipeline_state (state_key, state_json, updated_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(state_key) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
-            params![key, json, now_iso()],
+            params![key, json, now],
         )?;
         Ok(())
     }
@@ -366,7 +386,9 @@ impl EdgeClawStorage {
             record.source.as_str()
         };
         let created_at = if record.created_at.is_empty() {
-            now_iso()
+            // `record.createdAt || nowIso()` (`sqlite.ts:941`): the clock is
+            // only read when the record lacks the date.
+            (self.clock)()
         } else {
             record.created_at.clone()
         };
@@ -779,7 +801,8 @@ impl EdgeClawStorage {
         let sanitized = sanitize_trace_array(&JsValue::Array(items), id_key, "startedAt")?;
         let normalized = normalize_traces(sanitized, kind)?;
         let capped = normalized.into_iter().take(limit.max(1)).collect();
-        Self::write_pipeline_state(&conn, state_key, &JsValue::Array(capped))
+        let now = (self.clock)();
+        Self::write_pipeline_state(&conn, state_key, &JsValue::Array(capped), &now)
     }
 
     fn list_traces(
@@ -829,7 +852,8 @@ impl EdgeClawStorage {
             }
         }
         let next = sanitize_indexing_settings(Some(&JsValue::Object(merged)), defaults);
-        Self::write_pipeline_state(&conn, INDEXING_SETTINGS_STATE_KEY, &next.to_js())?;
+        let now = (self.clock)();
+        Self::write_pipeline_state(&conn, INDEXING_SETTINGS_STATE_KEY, &next.to_js(), &now)?;
         Ok(next)
     }
 }

@@ -228,20 +228,23 @@ impl EdgeClawFileStores {
             filtered.extend(objects(self.list_global_memory_entries(&input)?));
         }
         sort_manifest_entries(&mut filtered)?;
-        // `Math.max(0, options.offset ?? 0)`; a NaN offset limits the slice to
-        // empty, like `slice(0, NaN)` in TS.
-        let offset = options
+        // `Math.max(0, options.offset ?? 0)` / `Math.max(1, options.limit ?? …)`:
+        // JS `Math.max` keeps NaN, so a NaN offset or limit empties the slice.
+        // Rust's `f64::max` returns the other operand, so NaN is checked before
+        // the clamps instead of after them.
+        let raw_offset = options
             .get("offset")
             .and_then(JsValue::as_number)
-            .unwrap_or(0.0)
-            .max(0.0);
-        let limit = match options.get("limit").and_then(JsValue::as_number) {
-            Some(value) => value.max(1.0),
+            .unwrap_or(0.0);
+        let raw_limit = match options.get("limit").and_then(JsValue::as_number) {
+            Some(value) => value,
             None => (filtered.len().max(1)) as f64,
         };
-        if offset.is_nan() || limit.is_nan() {
+        if raw_offset.is_nan() || raw_limit.is_nan() {
             return Ok(values(vec![]));
         }
+        let offset = raw_offset.max(0.0);
+        let limit = raw_limit.max(1.0);
         let start = (offset as usize).min(filtered.len());
         let end = ((offset + limit) as usize).min(filtered.len());
         Ok(values(

@@ -1,10 +1,22 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 export const NOW = '2026-10-22T00:00:00.000Z';
+const RealDate: any = Date;
 export function freezeClock() {
   const ms = Date.parse(NOW);
   class FrozenDate extends Date { constructor(...args: any[]) { super(...((args.length ? args : [ms]) as [number])); } static now() { return ms; } }
   (globalThis as any).Date = FrozenDate;
+}
+// A clock that advances 1ms per read, starting at NOW. Timestamps embedded in
+// observations (exportedAt, manifest "Updated" lines, importedAt) then expose
+// the exact number and order of `nowIso()` reads, so a port that reads the
+// clock a different number of times drifts and fails the byte comparison.
+// Install after seeding (which stays frozen) and before the observed phase.
+export function stepClock() {
+  const ms = Date.parse(NOW);
+  let step = 0;
+  class SteppingDate extends RealDate { constructor(...args: any[]) { super(...((args.length ? args : [ms + step++]) as [number])); } static now() { return ms + step++; } }
+  (globalThis as any).Date = SteppingDate;
 }
 export function tree(root: string, dir = ''): any[] {
   return readdirSync(join(root, dir), {withFileTypes:true}).sort((a,b)=>a.name < b.name ? -1 : a.name > b.name ? 1 : 0).flatMap(e => {

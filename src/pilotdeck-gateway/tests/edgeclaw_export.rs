@@ -6,7 +6,8 @@
 //! optional-field presence are all byte-exact against the TS recording.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
-    EdgeClawFileStores, FileMemoryError, IndexingSettings, L0SessionRecord, StorageError,
+    EdgeClawFileStores, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions, IndexingSettings,
+    L0SessionRecord, StorageError,
 };
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
@@ -15,7 +16,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 #[path = "common/baseline.rs"]
@@ -70,14 +71,18 @@ fn js_text(v: &JsValue, key: &str) -> String {
 fn js_number(v: &JsValue, key: &str) -> Option<f64> {
     v.get(key).and_then(JsValue::as_number)
 }
-/// `expand` for JS-owned values: `$ROOT` substitution without losing key order.
+/// `expand` for JS-owned values: `$ROOT` substitution and the `$NAN` marker
+/// (a NaN number, unencodable in JSON) without losing key order.
 fn expand_js(v: &JsValue, root: &Path) -> JsValue {
     match v {
-        JsValue::String(s) => JsValue::String(
-            String::from_utf16_lossy(s.units())
-                .replace("$ROOT", &root.to_string_lossy())
-                .into(),
-        ),
+        JsValue::String(s) => {
+            let text = String::from_utf16_lossy(s.units());
+            if text == "$NAN" {
+                JsValue::Number(f64::NAN)
+            } else {
+                JsValue::String(text.replace("$ROOT", &root.to_string_lossy()).into())
+            }
+        }
         JsValue::Array(items) => JsValue::Array(items.iter().map(|v| expand_js(v, root)).collect()),
         JsValue::Object(object) => {
             let mut expanded = JsObject::new();
@@ -133,18 +138,60 @@ fn error(e: FileMemoryError) -> Value {
         e => panic!("unexpected repository error: {e}"),
     }
 }
-fn open(root: &Path, id: &str, workspace: &str) -> EdgeClawFileStores {
+fn open_with_clock(
+    root: &Path,
+    id: &str,
+    workspace: &str,
+    clock: Arc<dyn Fn() -> String + Send + Sync>,
+) -> EdgeClawFileStores {
     EdgeClawFileStores::with_workspace_clock(
         root.join("workspaces").join(id).join("control.sqlite"),
         root.join("workspaces").join(id).join("memory"),
         root.join("global"),
         workspace,
         root.join("home/.pilotdeck"),
-        Arc::new(|| NOW.into()),
+        clock,
     )
     .unwrap()
 }
-fn repos(root: &Path, o: &Value) -> HashMap<String, EdgeClawFileStores> {
+/// The generator's clock phases: seeding runs frozen (`freezeClock()`), the
+/// observed phase steps 1ms per read (`stepClock()`), so timestamped
+/// observations expose the number and order of `nowIso()` reads and a replay
+/// that reads the clock differently drifts and fails the byte comparison.
+enum PhaseClock {
+    Frozen,
+    Stepping(Arc<Mutex<u64>>),
+}
+impl PhaseClock {
+    fn clock(&self) -> Arc<dyn Fn() -> String + Send + Sync> {
+        match self {
+            PhaseClock::Frozen => Arc::new(|| NOW.into()),
+            PhaseClock::Stepping(step) => {
+                let step = Arc::clone(step);
+                Arc::new(move || {
+                    let value = {
+                        let mut next = step.lock().unwrap();
+                        let value = *next;
+                        *next += 1;
+                        value as i64
+                    };
+                    pilotdeck_transport::system_clock::format_epoch_iso(now_base_ms() + value)
+                })
+            }
+        }
+    }
+}
+fn now_base_ms() -> i64 {
+    static BASE: OnceLock<i64> = OnceLock::new();
+    *BASE.get_or_init(|| {
+        pilotdeck_transport::system_clock::parse_node22_date(&pilotdeck_protocol::JsString::from(
+            NOW,
+        ))
+        .expect("the fixture NOW must parse")
+        .expect("the fixture NOW must be a valid date") as i64
+    })
+}
+fn repos(root: &Path, o: &Value, clock: &PhaseClock) -> HashMap<String, EdgeClawFileStores> {
     o["configs"]
         .as_array()
         .unwrap()
@@ -153,7 +200,12 @@ fn repos(root: &Path, o: &Value) -> HashMap<String, EdgeClawFileStores> {
             let id = c["id"].as_str().unwrap();
             (
                 id.into(),
-                open(root, id, expand(&c["workspace"], root).as_str().unwrap()),
+                open_with_clock(
+                    root,
+                    id,
+                    expand(&c["workspace"], root).as_str().unwrap(),
+                    clock.clock(),
+                ),
             )
         })
         .collect()
@@ -187,6 +239,7 @@ fn invoke(
     op: &JsValue,
     root: &Path,
     vars: &mut HashMap<String, JsValue>,
+    clock: &PhaseClock,
 ) -> JsValue {
     let repo = js_text(op, "repo");
     let repo = if repo.is_empty() { "main" } else { &repo };
@@ -325,7 +378,7 @@ fn invoke(
         }
         "reopen" => {
             let _ = r.close();
-            let r = open(root, repo, &js_text(&input, "workspace"));
+            let r = open_with_clock(root, repo, &js_text(&input, "workspace"), clock.clock());
             repos.insert(repo.into(), r);
             Ok(JsValue::Null)
         }
@@ -345,10 +398,11 @@ fn invoke(
 fn replay(root: &Path, o: &Value) {
     let expected = ordered_array("observations");
     let operations = ordered_array("operations");
-    let mut repos = repos(root, o);
+    let clock = PhaseClock::Stepping(Arc::new(Mutex::new(0)));
+    let mut repos = repos(root, o, &clock);
     let mut vars = HashMap::new();
     for (i, op) in operations.iter().enumerate() {
-        let observed = invoke(&mut repos, op, root, &mut vars);
+        let observed = invoke(&mut repos, op, root, &mut vars, &clock);
         // Byte-exact: JSON key order, number formatting and optional-field
         // presence all surface in the serialized form.
         assert_eq!(
@@ -384,10 +438,11 @@ fn ts_databases_and_file_tree_replay_repository_export_import() {
     replay(&scratch.0, &o);
 }
 fn seed_rust(root: &Path, o: &Value) {
-    let mut repos = repos(root, o);
+    let clock = PhaseClock::Frozen;
+    let mut repos = repos(root, o, &clock);
     let mut vars = HashMap::new();
     for op in ordered_array("seed") {
-        invoke(&mut repos, &op, root, &mut vars);
+        invoke(&mut repos, &op, root, &mut vars, &clock);
     }
     for r in repos.values() {
         r.close().unwrap();
@@ -465,4 +520,250 @@ fn real_ts_reads_rust_databases_and_files() {
 #[ignore = "requires fixed PDRS_BASELINE with Node 22 and tsx"]
 fn fixture_regenerates_identically() {
     baseline::regenerates_identically("edgeclaw-export");
+}
+
+// -- review fix round 1 (rv-codex-r1 P0 / rv-grok-r1 #1): import locking ----
+//
+// `importMemoryBundle` must hold both live stores' per-root operation locks
+// across the directory swap, manifest repair and runtime reset: without them,
+// a concurrent writer can rebuild the live root after it was moved to the
+// backup, fail the staged rename with ENOTEMPTY and strand the pre-import
+// tree in an orphaned `.memory.backup-*` directory.
+
+mod import_locking {
+    use super::*;
+    use std::sync::{Condvar, Mutex, mpsc};
+
+    /// A clock that parks only the thread that armed it — the concurrent
+    /// writer sitting inside a store operation, whose first clock read is
+    /// under that store's operation lock. Clock reads from other threads
+    /// (the import's normalization and staging) proceed, so a blocked probe
+    /// measures the lock wait, not staging work.
+    #[derive(Clone)]
+    struct GatedClock(Arc<GateInner>);
+    struct GateInner {
+        state: Mutex<GateState>,
+        released: Condvar,
+    }
+    struct GateState {
+        armed: Option<std::thread::ThreadId>,
+        released: bool,
+        parked: bool,
+    }
+    impl GatedClock {
+        fn new() -> Self {
+            Self(Arc::new(GateInner {
+                state: Mutex::new(GateState {
+                    armed: None,
+                    released: false,
+                    parked: false,
+                }),
+                released: Condvar::new(),
+            }))
+        }
+        fn clock(&self) -> Arc<dyn Fn() -> String + Send + Sync> {
+            let inner = self.0.clone();
+            Arc::new(move || {
+                let mut state = inner.state.lock().unwrap();
+                if state.armed == Some(std::thread::current().id()) && !state.released {
+                    state.parked = true;
+                    while !state.released {
+                        state = inner.released.wait(state).unwrap();
+                    }
+                }
+                NOW.into()
+            })
+        }
+        fn arm(&self) {
+            let mut state = self.0.state.lock().unwrap();
+            state.armed = Some(std::thread::current().id());
+            state.released = false;
+            state.parked = false;
+        }
+        fn is_parked(&self) -> bool {
+            self.0.state.lock().unwrap().parked
+        }
+        fn release(&self) {
+            let mut state = self.0.state.lock().unwrap();
+            state.released = true;
+            self.0.released.notify_all();
+        }
+    }
+    /// A one-file bundle: after a successful import the workspace live root
+    /// holds `Imported/marker.md`, which is what both probes look for.
+    fn marker_bundle() -> JsValue {
+        parse_json(
+            r#"{"formatVersion":"clawxmemory-memory-snapshot.v4","scope":"current_project","exportedAt":"2026-10-22T00:00:00.000Z","files":[{"relativePath":"Imported/marker.md","content":"imported marker"}]}"#,
+        )
+        .unwrap()
+    }
+    fn writer_candidate() -> JsObject {
+        parse_json(
+            r#"{"type":"project","scope":"project","name":"parked writer","description":"parked writer description"}"#,
+        )
+        .unwrap()
+        .as_object()
+        .cloned()
+        .unwrap()
+    }
+    /// Spawns the writer thread, waits until its upsert has parked on the
+    /// gated clock inside the target store's operation lock.
+    fn spawn_parked_writer<'scope, F>(
+        scope: &'scope std::thread::Scope<'scope, '_>,
+        gate: &GatedClock,
+        upsert: F,
+    ) -> std::thread::ScopedJoinHandle<'scope, ()>
+    where
+        F: FnOnce() + Send + 'scope,
+    {
+        let armed_gate = gate.clone();
+        let handle = scope.spawn(move || {
+            armed_gate.arm();
+            upsert();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !gate.is_parked() {
+            assert!(
+                Instant::now() < deadline,
+                "writer never reached a clock read inside its operation"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        handle
+    }
+    fn assert_no_swap_leftovers(memory_root: &Path) {
+        let parent = memory_root.parent().unwrap();
+        let leftovers: Vec<String> = fs::read_dir(parent)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".memory."))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no orphaned import/backup directories may remain: {leftovers:?}"
+        );
+    }
+
+    /// A writer parked inside a *workspace* store operation blocks the import
+    /// before the directory swap: the probe below must time out, not observe
+    /// a completed (or failed) import. `chflags uchg` on the live root makes
+    /// the unsynchronized swap of the broken variant fail with a permission
+    /// error instead of racing, so the probe discriminates deterministically.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn import_waits_for_workspace_store_writer() {
+        fn chflags(path: &Path, flags: &str) {
+            let status = std::process::Command::new("chflags")
+                .arg(flags)
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(status.success(), "chflags {flags} {}", path.display());
+        }
+        let scratch = Scratch::new();
+        let root = scratch.0.clone();
+        let gate = GatedClock::new();
+        let repo = Mutex::new(open_with_clock(&root, "lock", "/fixture/w", gate.clock()));
+        let bundle = marker_bundle();
+        let memory_root = root.join("workspaces").join("lock").join("memory");
+        let writer = FileMemoryStore::with_clock(
+            &memory_root,
+            FileMemoryStoreOptions::default(),
+            gate.clock(),
+        )
+        .unwrap();
+        let (tx, rx) = mpsc::channel();
+        // Make the unsynchronized swap fail instead of silently racing.
+        chflags(&memory_root, "uchg");
+        std::thread::scope(|scope| {
+            let writer = spawn_parked_writer(scope, &gate, || {
+                writer
+                    .execute("upsertCandidate", &writer_candidate())
+                    .unwrap();
+            });
+            let importer = scope.spawn(|| {
+                let repo = repo.lock().unwrap();
+                tx.send(repo.import_memory_bundle(&bundle)).unwrap();
+            });
+            let probe = rx.recv_timeout(Duration::from_secs(1));
+            chflags(&memory_root, "nouchg");
+            gate.release();
+            writer.join().unwrap();
+            let completed_early = probe.is_ok();
+            let imported = match probe {
+                Err(_blocked) => rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+                // Completed while the writer still held the lock.
+                Ok(early) => early,
+            };
+            importer.join().unwrap();
+            assert!(
+                !completed_early,
+                "import finished while a writer held the workspace store's operation lock"
+            );
+            assert!(
+                imported.is_ok(),
+                "import after the writer released the lock failed: {:?}",
+                imported.err()
+            );
+            assert_no_swap_leftovers(&memory_root);
+        });
+    }
+
+    /// A writer parked inside a *global* store operation also blocks the
+    /// import — the workspace live root must not even be swapped while that
+    /// operation is in flight. The broken variant swaps the workspace root
+    /// (its locks are not held) and only then blocks on the global lock
+    /// through the manifest provider, so the marker file appearing in the
+    /// live root is the deterministic red signal.
+    #[test]
+    fn import_waits_for_global_store_writer() {
+        let scratch = Scratch::new();
+        let root = scratch.0.clone();
+        let gate = GatedClock::new();
+        let repo = Mutex::new(open_with_clock(&root, "lock", "/fixture/w", gate.clock()));
+        let bundle = marker_bundle();
+        let memory_root = root.join("workspaces").join("lock").join("memory");
+        let writer = FileMemoryStore::with_clock(
+            root.join("global"),
+            FileMemoryStoreOptions::default(),
+            gate.clock(),
+        )
+        .unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let writer = spawn_parked_writer(scope, &gate, || {
+                writer
+                    .execute("upsertCandidate", &writer_candidate())
+                    .unwrap();
+            });
+            let importer = scope.spawn(|| {
+                let repo = repo.lock().unwrap();
+                tx.send(repo.import_memory_bundle(&bundle)).unwrap();
+            });
+            // Give the import enough time to reach its blocking point; a
+            // correct import cannot swap the live root at all while the
+            // global store's operation lock is held.
+            std::thread::sleep(Duration::from_secs(1));
+            let swapped = memory_root.join("Imported").join("marker.md").exists();
+            gate.release();
+            writer.join().unwrap();
+            let imported = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            importer.join().unwrap();
+            assert!(
+                !swapped,
+                "the workspace live root was swapped while a writer held the global store's operation lock"
+            );
+            assert!(
+                imported.is_ok(),
+                "import after the writer released the lock failed: {:?}",
+                imported.err()
+            );
+            assert!(
+                memory_root.join("Imported").join("marker.md").exists(),
+                "the successful import must have installed the bundle's marker file"
+            );
+            assert_no_swap_leftovers(&memory_root);
+        });
+    }
 }

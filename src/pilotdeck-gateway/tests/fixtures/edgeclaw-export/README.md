@@ -12,11 +12,33 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
   that `getOverview` must exclude), pipeline state, traces, L0 sessions and
   `last_dream` snapshots, then records one observation per operation plus the
   final file tree into `oracle.json`.
+- The seeding phase runs on the frozen clock; the observed operations then
+  switch to a stepping clock (`stepClock` in `../edgeclaw-file-memory/observe.mts`:
+  every `Date` read advances +1 ms from the frozen base). Timestamps in the
+  observations therefore pin the *number and order* of `nowIso()`/`Date.now()`
+  reads — e.g. `exportedAt` is exactly 2 reads after the previous op, and a
+  full import of the saved bundle consumes 14 reads before `importedAt`.
+  `verify.mts` and the Rust replay must run the same two-phase clock.
+- JSON cannot carry `NaN`: op inputs use the string marker `"$NAN"`, expanded
+  to a real `NaN` number by `expand()` in `observe.mts` and by `expand_js` in
+  the Rust replay. The NaN pagination inputs (UI snapshot `limit`, list
+  `limit`/`offset`) pin the JS `Math.max`-keeps-NaN behavior.
+- The L0 seed includes an indexed-only session key and two unindexed rows
+  sharing one key, so `pendingSessions` detects both a dropped
+  `WHERE indexed = 0` and a dropped `COUNT(DISTINCT …)` (both must stay 3 for
+  the main repo).
+- Mixed-error import inputs (duplicate path + invalid record, legacy path +
+  missing content) pin the `files.map(...)`-before-duplicate-check error
+  precedence.
 - The Rust replay (`tests/edgeclaw_export.rs`) restores the TS databases and
   file tree (or re-seeds everything through the Rust implementation) and
   compares every observation and the final tree.
 - `verify.mts` replays the oracle's operations against real TS on the
   Rust-seeded root, proving the Rust-written databases and files round-trip.
+- `projectId`-filtered list/count ops are gated behind
+  `PDRS_EXPORT_PROJECT_ID=1` (they depend on the `accessors.rs` projectId
+  pass-through fixed in PR #525 / #517; regenerate the oracle after that PR
+  is merged and this branch is rebased on it — see the review round notes).
 
 Regenerate: `node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <out-dir>`
 with `PDRS_BASELINE` set (see `tests/common/baseline.rs`; the ignored

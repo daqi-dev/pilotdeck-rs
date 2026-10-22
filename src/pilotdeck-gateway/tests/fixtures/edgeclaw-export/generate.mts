@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {bindSourceTree,sourceClosureSha256} from '../../baseline_source_guard.mjs';
-import {configs,expand,openRepos,invoke,fileTree,freezeClock,observe} from './observe.mts';
+import {configs,expand,openRepos,invoke,fileTree,freezeClock,stepClock,observe} from './observe.mts';
 assert.ok(process.env.PDRS_BASELINE);assert.ok(process.argv[2]);
 const baseline=resolve(process.env.PDRS_BASELINE!);const out=resolve(process.argv[2]!);
 const commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -72,11 +72,17 @@ seed.push(
   {repo:'main',method:'dream',input:{record:{dreamTraceId:'dream-2',startedAt:'2026-10-21T05:00:00.000Z',status:'completed',outcome:{deletedFiles:0,rewrittenProjects:0,profileUpdated:false}},limit:30}},
 );
 // L0 sessions: duplicate session key plus an indexed row, so pendingSessions
-// counts DISTINCT unindexed keys.
+// counts DISTINCT unindexed keys. l0-d is an indexed-only key and l0-e/l0-f
+// are two unindexed rows sharing one key, so both `indexed = 0` and DISTINCT
+// are load-bearing: main's count is 3, dropping the WHERE gives 4 keys and
+// dropping DISTINCT gives 4 rows.
 seed.push(
   {repo:'main',method:'l0',input:{l0IndexId:'l0-a',sessionKey:'session-alpha',timestamp:'2026-10-21T10:00:00.000Z',messages:[{role:'user',content:'hello'}],source:'openclaw',indexed:false,createdAt:'2026-10-21T10:00:00.000Z'}},
   {repo:'main',method:'l0',input:{l0IndexId:'l0-b',sessionKey:'session-alpha',timestamp:'2026-10-21T11:00:00.000Z',messages:[],source:'openclaw',indexed:true,createdAt:'2026-10-21T11:00:00.000Z'}},
   {repo:'main',method:'l0',input:{l0IndexId:'l0-c',sessionKey:'session-beta',timestamp:'2026-10-21T12:00:00.000Z',messages:[{role:'assistant',content:'hi'}],source:'claude',indexed:false,createdAt:'2026-10-21T12:00:00.000Z'}},
+  {repo:'main',method:'l0',input:{l0IndexId:'l0-d',sessionKey:'session-delta',timestamp:'2026-10-21T13:00:00.000Z',messages:[],source:'openclaw',indexed:true,createdAt:'2026-10-21T13:00:00.000Z'}},
+  {repo:'main',method:'l0',input:{l0IndexId:'l0-e',sessionKey:'session-epsilon',timestamp:'2026-10-21T14:00:00.000Z',messages:[],source:'claude',indexed:false,createdAt:'2026-10-21T14:00:00.000Z'}},
+  {repo:'main',method:'l0',input:{l0IndexId:'l0-f',sessionKey:'session-epsilon',timestamp:'2026-10-21T15:00:00.000Z',messages:[],source:'openclaw',indexed:false,createdAt:'2026-10-21T15:00:00.000Z'}},
   {repo:'beta',method:'l0',input:{l0IndexId:'l0-x',sessionKey:'session-gamma',timestamp:'2026-10-21T09:00:00.000Z',messages:[],source:'openclaw',indexed:false,createdAt:'2026-10-21T09:00:00.000Z'}},
 );
 for(const op of seed) {const result=invoke(repos,op,root,{});assert.ok(!result?.error,JSON.stringify(result));}
@@ -118,10 +124,16 @@ const ops:any[]=[
   {method:'export',saveAs:'b1'},{repo:'target',method:'export',saveAs:'b2'},{repo:'empty',method:'export',saveAs:'bEmpty'},{repo:'beta',method:'export',saveAs:'bBeta'},
   ...['main','target','beta','empty','general'].map(repo=>({repo,method:'overview'})),
   {method:'uiSnapshot'},{method:'uiSnapshot',input:{limit:2}},{repo:'general',method:'uiSnapshot',input:{limit:0}},
-  ...[{}, {scope:'project'}, {scope:'global'}, {kinds:['project']}, {kinds:[]}, {kinds:['user']}, {kinds:['project','user']}, {limit:1,offset:1}, {limit:0}, {offset:5}, {includeDeprecated:true}].map(input=>({method:'list',input})),
-  // NOTE: a {projectId} option is deliberately absent — the Rust port of
+  // NaN pagination (offset, limit and the UI snapshot's limit): JS Math.max
+  // keeps NaN, so every one of these must observe an empty entry list. The
+  // `$NAN` markers are expanded to real NaNs by the harnesses on both sides.
+  {method:'uiSnapshot',input:{limit:'$NAN'}},
+  ...[{}, {scope:'project'}, {scope:'global'}, {kinds:['project']}, {kinds:[]}, {kinds:['user']}, {kinds:['project','user']}, {limit:1,offset:1}, {limit:0}, {offset:5}, {includeDeprecated:true}, {limit:1,offset:'$NAN'}, {limit:'$NAN'}].map(input=>({method:'list',input})),
+  // NOTE: {projectId} options are deliberately absent — the Rust port of
   // listGlobalMemoryEntries forwards projectId to the global store while TS
-  // does not; that passthrough belongs to #517's rework of accessors.rs.
+  // does not; that passthrough belongs to #517's rework of accessors.rs
+  // (PR #525). The combinations below stay behind PDRS_EXPORT_PROJECT_ID=1
+  // until that lands; regenerate the oracle with the flag set after rebasing.
   ...[{}, {scope:'project'}, {scope:'global'}, {kinds:['user']}, {kinds:[]}].map(input=>({method:'count',input})),
   // Import a TS-produced bundle, then observe the swapped state.
   {repo:'target',method:'import',input:{bundle:'@b1'},saveAs:'r1'},
@@ -134,6 +146,11 @@ const ops:any[]=[
   // Legacy bundle with global files: staged, counted, then ignored with a
   // warning; invalid status drops, padded timestamps trim, junk traces filter.
   {repo:'empty',method:'import',input:{bundle:{formatVersion:'clawxmemory-memory-snapshot.v4',exportedAt:'2026-10-21T00:00:00.000Z',lastDreamStatus:'bogus',lastIndexedAt:'  2026-10-18T00:00:00.000Z  ',recentCaseTraces:[42,{caseId:'case-9',startedAt:'2026-10-01T00:00:00.000Z',status:'completed'}],files:[{relativePath:'global/UserIdentity/user-profile.md',content:'# Legacy profile\n'},{relativePath:'Project/Legacy.md',content:'# Legacy project note\n'}]}}},
+  {repo:'empty',method:'overview'},
+  // A bundle without exportedAt: the stepping clock makes the normalize-time
+  // fallback, the staged manifest build and importedAt read distinct values,
+  // so importedAt must observe the completion-time timestamp.
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'Imported/marker.md',content:'# imported marker\n'}]})}},
   {repo:'empty',method:'overview'},
   // Validation errors: every message is the TS text verbatim and the live
   // roots stay untouched (verified by the next overview).
@@ -150,6 +167,11 @@ const ops:any[]=[
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a.md',content:'1'},{relativePath:'a.md',content:'2'}]})}},
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'projects/x.md',content:''}]})}},
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a/project.meta.md',content:''}]})}},
+  // Mixed errors: TS normalizes every record before the duplicate/legacy
+  // checks, so the later record's validation error outranks the earlier
+  // record's duplicate path or legacy path.
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a.md',content:'1'},{relativePath:'a.md',content:'2'},42]})}},
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'projects/x.md',content:''},{relativePath:'b.md'}]})}},
   {repo:'empty',method:'overview'},
   // Partial failure: the swap and manifest repair land, then the closed
   // database fails the runtime reset, leaving the imported files behind.
@@ -159,6 +181,17 @@ const ops:any[]=[
   {repo:'beta',method:'reopen',input:{workspace:'/fixture/Beta'}},
   {repo:'beta',method:'overview'},
 ];
+// {projectId} list/count combinations for the post-#525 rebase (see the NOTE
+// above): disabled by default so the committed oracle stays green until the
+// Rust listGlobalMemoryEntries passthrough is fixed in #525.
+if(process.env.PDRS_EXPORT_PROJECT_ID==='1') ops.push(
+  ...[{projectId:'current_project'},{projectId:'g1'},{scope:'project',projectId:'g1'},{scope:'global',projectId:'g1'},{kinds:['user'],projectId:'g1'}].map(input=>({method:'list',input})),
+  ...[{projectId:'current_project'},{projectId:'g1'},{scope:'global',projectId:'g1'}].map(input=>({method:'count',input})),
+);
+// The observed phase runs on a stepping clock so timestamps expose the number
+// and order of nowIso() reads (exportedAt, manifest "Updated" lines,
+// importedAt); the seed phase above stayed frozen.
+stepClock();
 const result=observe(MemoryRepository,root,ops);
 const oracle={sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,configs,seed,seedFiles,databases,operations:ops,...result};
 mkdirSync(out,{recursive:true});const text=JSON.stringify(oracle,null,2)+'\n';writeFileSync(join(out,'oracle.json'),text);console.log(`sha256 ${createHash('sha256').update(text).digest('hex')}; ${ops.length} observations`);
