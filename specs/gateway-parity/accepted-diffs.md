@@ -518,3 +518,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：至少覆盖上述巨量词；未穷举 V8/fancy-regex 的数值与编译尺寸边界。不得推广为所有大数模式均不匹配，或因此放宽其他正则结果和错误文本。
 - **机器复算**：生成器 `giant-quantifier` 模式保存真实 TS argv、exit、stdout、stderr；用相同 files/env/argv 执行 Rust 可复现分歧。该模式独立于通过的 39 原场景与 edges 矩阵，不能被计作对拍通过。
 - **批准记录**：无；按 PR #513 GLM r3 P2 #1 由实现方在修复轮 5 补登，协调者复核后保留，**已知未对齐（未批准，待人批）**。后续须完成语义对齐或取得明确接受差异授权，D2 完成前不得据此宣称全量一致；本轮只补台账，不改变匹配行为或判分语义。
+
+## 已知未对齐（未批准，待人批）· A7.2 submit 编排
+
+### A7.2-SUBMIT-FAILURE-GUARD-001 · runPolicy 启用 FailureGuard 时 Rust 显式拒绝（运行时未移植）
+
+- **类别**：未移植运行时依赖（显式能力拒绝，非静默跳过）。
+- **TS 依据**（cc7c4e6）：`src/gateway/client/InProcessGateway.ts:1346-1383、1702-1706、1776-1778、1841-1843`，依赖 `src/agent/policy/FailureGuard.ts:14-91` 与 `classify.ts:3-32`：启用 failureGuard 时计数模型 / 工具错误，trip 后发 `run_policy_stopped` 并以 run_policy 原因 abort。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/turn/submit.rs:786-789` 在 refresh 后发现 FailureGuard enabled 即发并持久化 `CAPABILITY_UNAVAILABLE`（`FailureGuard runtime is unavailable; requires A7.2-pr4b.`），拒绝本轮 native submit 并释放资源；enabled=false 时走正常 submit 路径。
+- **范围**：仅启用该 run policy 的提交；不得据此宣称 guard 已对齐，也不放宽其他 submit 路径的对拍。推迟到 A7.2-pr4b（FailureGuard / classify 移植与 submit 的 observe / trip / active 生命周期接线），前置于 A7.2-pr6 生产宿主接线验收与 A7.2 关闭；补齐后移除此能力拒绝，须有真实 TS guard 金样与计数 / trip 负控。
+- **机器判据**：`src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs:805` `unavailable_capabilities_are_explicitly_refused` 的 `failure-guard-unavailable` 用例（:811）。
+- **批准记录**：无；PR #533 Grok r1 F1 要求登记，实现方在修复轮 1 给出候选，协调者核对引用后登记；**已知未对齐（未批准，待人批）**。
