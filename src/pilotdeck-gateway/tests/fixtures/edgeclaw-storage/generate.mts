@@ -348,6 +348,22 @@ const OPERATIONS: any[] = [
   { kind: 'saveCaseTrace', record: caseTrace('case-collate-dup', '0Z') },
   { kind: 'saveCaseTrace', record: caseTrace('case-collate-dup', '0a') },
 
+  // Unpaired surrogates in `startedAt`: Node/ICU4C collates them as distinct
+  // UCA implicit weights in code-unit order (\ud800 < \ud801 < \udfff), above
+  // every assigned character (and below U+FFFD, which the unit test covers).
+  // TS therefore saves each one, sorts them descending, and dedupes by id; the
+  // Rust port must do the same instead of failing with `HostRequired`. These
+  // seven saves also cover consecutive saves of distinct surrogates, the
+  // existing-state query (`getPipelineState('recentCaseTraces')`), and the
+  // duplicate-id retention.
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-a', '\ud800a') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-b', '\ud800b') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-c', '\ud801') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-d', '\udfff') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-z', 'zzz') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-dup', '\ud800a') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-surrogate-dup', '\ud801a') },
+
   // Index traces: `isNoOp` and `displayStatus` normalization.
   {
     kind: 'saveIndexTrace',
@@ -539,7 +555,13 @@ const OPERATIONS: any[] = [
 // Applied only after the first snapshot; exercises the save-side `limit`
 // truncation without hiding the richer history above from the oracle.
 const LIMIT_OPERATIONS: any[] = [
-  { kind: 'saveCaseTrace', record: caseTrace('case-limit', T('20:00')), limit: 2 },
+  // Sorts above the surrogate corpus, so the assertion below still checks that
+  // the newest record survives the truncation.
+  {
+    kind: 'saveCaseTrace',
+    record: caseTrace('case-limit', '\udfffz'),
+    limit: 2,
+  },
   {
     kind: 'saveIndexTrace',
     record: indexTrace('idx-limit', T('20:00')),
