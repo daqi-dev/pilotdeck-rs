@@ -1,4 +1,4 @@
-//! EdgeClaw memory storage layer (SQLite).
+//! EdgeClaw SQLite and file memory storage.
 //!
 //! Ports the storage subset of the fixed TS baseline
 //! `src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts`
@@ -11,9 +11,15 @@
 //! * case/index/dream trace save/list/get (:1105-1166)
 //! * indexing settings (:1168-1176)
 //!
-//! File memory stores, snapshots, dream stage root swaps, retrieval,
-//! extraction and heartbeat are deliberately out of scope; see the delivery
-//! note for the follow-up split.
+//! [`file_memory`] adds A6.6-pr10b FileMemoryStore, manifest, profile, metadata
+//! and file export APIs, plus workspace/global file-store wiring. Repository
+//! snapshot capture and root swaps, retrieval, extraction and heartbeat belong
+//! to the remaining work packages.
+pub mod file_memory;
 pub mod storage;
+
+pub use file_memory::{
+    EdgeClawFileStores, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
+};
 
 pub use storage::{EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError};
