@@ -2,10 +2,13 @@
 //!
 //! `oracle.json` is recorded by `tests/fixtures/grep-tool/generate.mts` from the
 //! fixed baseline's `createGrepTool`, which spawns the ripgrep binary bundled by
-//! `@vscode/ripgrep`. The replay therefore needs a ripgrep binary too:
-//! `PILOTDECK_RIPGREP_PATH` (what the tool itself honors) or `rg` on `PATH`.
-//! Without one the test prints a loud skip; `PDRS_REQUIRE_RG=1` turns that into
-//! a failure for parity runs. See `tests/fixtures/grep-tool/README.md`.
+//! `@vscode/ripgrep`. The product resolver is bundled-only, exactly like TS
+//! (`filesystem/ripgrep.ts:89-103`): `PILOTDECK_RIPGREP_PATH` is the only
+//! override. The replay therefore resolves a bundled engine directly, or — on a
+//! machine without the baseline module tree — finds a test-only system `rg` and
+//! feeds it through that override. Without either it prints a loud skip;
+//! `PDRS_REQUIRE_RG=1` or a CI environment (`CI=true`) turns that into a
+//! failure for parity runs. See `tests/fixtures/grep-tool/README.md`.
 #[path = "common/baseline.rs"]
 mod baseline;
 #[path = "common/child_signals.rs"]
@@ -195,27 +198,31 @@ fn apply_step(step: &JsValue, scratch: &Scratch) -> Result<(), String> {
     Ok(())
 }
 
-fn replay_context(scratch: &Scratch, cwd: &Path) -> ToolRunContext {
+fn replay_context(scratch: &Scratch, cwd: &Path, ripgrep: Option<&Path>) -> ToolRunContext {
     let checkpoint = HostToolCheckpoint::default();
     let permission = object([
         ("mode", JsValue::from("default")),
         ("canPrompt", JsValue::Bool(true)),
         ("additionalWorkingDirectories", JsValue::Array(Vec::new())),
     ]);
+    let mut environment = object([
+        (
+            "PILOT_HOME",
+            JsValue::from(scratch.root.join("pilot-home").to_string_lossy().as_ref()),
+        ),
+        ("HOME", JsValue::from(scratch.text(&scratch.root).as_str())),
+    ]);
+    if let Some(ripgrep) = ripgrep {
+        environment.insert(
+            "PILOTDECK_RIPGREP_PATH".into(),
+            JsValue::from(ripgrep.to_string_lossy().as_ref()),
+        );
+    }
     let fields = object([
         ("cwd", JsValue::from(cwd.to_string_lossy().as_ref())),
         ("permissionMode", JsValue::from("default")),
         ("permissionContext", JsValue::Object(permission)),
-        (
-            "env",
-            JsValue::Object(object([
-                (
-                    "PILOT_HOME",
-                    JsValue::from(scratch.root.join("pilot-home").to_string_lossy().as_ref()),
-                ),
-                ("HOME", JsValue::from(scratch.text(&scratch.root).as_str())),
-            ])),
-        ),
+        ("env", JsValue::Object(environment)),
     ]);
     let host = ToolRuntimeContext {
         fields,
@@ -308,10 +315,45 @@ fn normalize(value: &JsValue, scratch: &Scratch) -> String {
         .replace(&scratch.text(&scratch.root), "<root>")
 }
 
-/// The replay guard must use the same resolver as the tool, so a machine with
-/// only `resources/PilotDeck/node_modules/.../rg` is not skipped.
-fn ripgrep_available() -> bool {
-    pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available()
+/// Whether a missing engine must fail instead of skip. CI sets `CI=true` on
+/// every runner, so the guard cannot depend on a workflow-file edit landing in
+/// the same commit as this test.
+fn ripgrep_required() -> bool {
+    fn flag(name: &str) -> bool {
+        std::env::var_os(name).is_some_and(|value| {
+            let value = value.to_string_lossy();
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+    }
+    flag("PDRS_REQUIRE_RG") || flag("CI")
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+/// Test-only engine lookup. The product resolver is bundled-only (the TS
+/// contract), so a parity run on a machine without the baseline module tree
+/// finds `rg` here and passes it through `PILOTDECK_RIPGREP_PATH`.
+fn parity_ripgrep_override() -> Option<PathBuf> {
+    if pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available() {
+        // The override from the process env or the bundled package already
+        // resolves; leave the product path untouched.
+        return None;
+    }
+    let paths = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&paths) {
+        for name in ["rg", "rg.exe"] {
+            let candidate = directory.join(name);
+            if executable_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 #[test]
@@ -319,16 +361,18 @@ fn grep_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
     assert_eq!(scenarios.len(), 61, "scenario count");
-    if !ripgrep_available() {
+    let ripgrep = parity_ripgrep_override();
+    if ripgrep.is_none() && !pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available() {
         let message = "grep fixture replay skipped: no ripgrep binary \
-            (set PILOTDECK_RIPGREP_PATH or install rg)";
-        if std::env::var_os("PDRS_REQUIRE_RG").is_some() {
+            (set PILOTDECK_RIPGREP_PATH, install rg, or use CI=true)";
+        if ripgrep_required() {
             panic!("{message}");
         }
         eprintln!("{message}");
         return;
     }
     let mut calls = 0;
+    let mut compared = 0;
     for scenario in scenarios {
         let name = text(field(scenario, "name"));
         let scratch = Scratch::new();
@@ -344,7 +388,7 @@ fn grep_outputs_match_real_ts() {
             Some(cwd) => scratch.root.join(cwd.to_utf8().unwrap()),
             None => scratch.root.clone(),
         };
-        let context = replay_context(&scratch, &cwd);
+        let context = replay_context(&scratch, &cwd, ripgrep.as_deref());
         let calls_value = array(field(scenario, "calls"));
         for step in array(field(scenario, "steps")) {
             if text(field(step, "op")) != "call" {
@@ -357,8 +401,11 @@ fn grep_outputs_match_real_ts() {
             let input = substitute(field(call, "input"), &scratch);
             let expected = field(call, "execute");
             if matches!(expected, JsValue::Null) {
+                // An oracle record without an expected result must not count as
+                // a compared call; otherwise all-null corpora look green.
                 continue;
             }
+            compared += 1;
             let actual = match futures_block(GrepTool::new().execute(input, context.clone())) {
                 Ok(output) => output_value(output),
                 Err(error) => error_value(&error),
@@ -371,6 +418,7 @@ fn grep_outputs_match_real_ts() {
         }
     }
     assert_eq!(calls, 61, "call count");
+    assert_eq!(compared, 61, "compared call count");
 }
 
 #[test]
