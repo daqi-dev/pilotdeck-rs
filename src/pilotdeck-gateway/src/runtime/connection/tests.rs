@@ -1,21 +1,24 @@
 use super::binding::BindingOwners;
 use super::*;
 use pilotdeck_protocol::{JsObject, parse_json, stringify_json};
+use serde_json::json;
 use std::collections::BTreeMap;
 use tokio::sync::Semaphore;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/connection-context/oracle.json");
 #[derive(Default)]
 struct MemoryText {
-    frames: Mutex<Vec<Value>>,
+    // Raw text: an outbound id may contain a lone surrogate escape, which
+    // serde_json::Value cannot represent.
+    frames: Mutex<Vec<String>>,
     closes: Mutex<Vec<Value>>,
     final_in_flight: Mutex<Vec<Vec<Value>>>,
     owner: Mutex<Option<std::sync::Weak<GatewayConnection>>>,
 }
 impl GatewayTextConnection for MemoryText {
     fn send_text(&self, message: String) {
-        let frame: Value = serde_json::from_str(&message).unwrap();
-        if frame["final"] == true
+        let frame = parse_json(&message).unwrap();
+        if frame.get("final") == Some(&JsValue::Bool(true))
             && let Some(owner) = self
                 .owner
                 .lock()
@@ -26,7 +29,7 @@ impl GatewayTextConnection for MemoryText {
             let sessions = session_values(&owner.state.lock().unwrap().in_flight);
             self.final_in_flight.lock().unwrap().push(sessions);
         }
-        self.frames.lock().unwrap().push(frame);
+        self.frames.lock().unwrap().push(message);
     }
     fn close(&self, code: u16, reason: &str) {
         self.closes
@@ -36,7 +39,16 @@ impl GatewayTextConnection for MemoryText {
     }
 }
 fn session_values(sessions: &[SessionKey]) -> Vec<Value> {
-    sessions.iter().map(|key| key.value().clone()).collect()
+    sessions
+        .iter()
+        .map(|key| serde_json::from_str(&stringify_json(key.value()).unwrap().unwrap()).unwrap())
+        .collect()
+}
+fn frame_values(frames: &[String]) -> Vec<Value> {
+    frames
+        .iter()
+        .map(|raw| serde_json::from_str(raw).unwrap())
+        .collect()
 }
 struct Gateway {
     calls: Mutex<Vec<JsValue>>,
@@ -90,22 +102,39 @@ impl ConnectionGateway for Gateway {
             Ok(json!({"name":"fixture-server","capabilities":["fixture"]}))
         })
     }
-    fn request(&self, method: String, params: JsValue) -> Call<'_, Result<Value, RequestError>> {
+    fn request(&self, method: JsString, params: JsValue) -> Call<'_, Result<Value, RequestError>> {
         Box::pin(async move {
-            match method.as_str() {
-                "permission_decide" | "elicitation_respond" => {
-                    self.record(&method, params);
+            match method.to_utf8().ok().as_deref() {
+                Some("describe_server") => {
+                    // TS dispatchRequest calls gateway.describeServer() directly,
+                    // so its call record has no params.
+                    self.calls
+                        .lock()
+                        .unwrap()
+                        .push(js(&json!({"method":"describe_server"})));
+                    Ok(json!({"name":"fixture-server","capabilities":["fixture"]}))
+                }
+                Some("permission_decide") => {
+                    self.record("permission_decide", params);
                     Ok(json!({"accepted":true}))
                 }
-                "reconnect_interaction" => {
-                    self.record(&method, params.clone());
+                Some("elicitation_respond") => {
+                    self.record("elicitation_respond", params);
+                    Ok(json!({"accepted":true}))
+                }
+                Some("abort_turn") => {
+                    self.record("abort_turn", params);
+                    Ok(json!({"ok":true}))
+                }
+                Some("reconnect_interaction") => {
+                    self.record("reconnect_interaction", params.clone());
                     let next =
                         WsBinding::from_json(&property_json(&params, "nextBinding")).unwrap();
                     // The real TS provider treats a falsy previous as absent;
                     // the connection still forwards explicit null unchanged.
                     let previous_json = property_json(&params, "previousBinding");
                     let previous = Some(&previous_json)
-                        .filter(|value| truthy(value))
+                        .filter(|value| truthy(&js(value)))
                         .map(WsBinding::from_json)
                         .transpose()
                         .map_err(RequestError::new)?;
@@ -115,14 +144,14 @@ impl ConnectionGateway for Gateway {
                         previous.as_ref(),
                     ))
                 }
-                "steer_turn" => Err(RequestError::new("plain fixture error")),
-                "cancel_steer" => Err(RequestError {
+                Some("steer_turn") => Err(RequestError::new("plain fixture error")),
+                Some("cancel_steer") => Err(RequestError {
                     code: "FIXTURE_ERROR".into(),
                     message: "structured fixture error".into(),
                     details: Some(json!({"nested":{"value":1}})),
                     validation: None,
                 }),
-                "skill_validate" => Err(RequestError {
+                Some("skill_validate") => Err(RequestError {
                     code: "validation_failed".into(),
                     message: "Validation failed.".into(),
                     details: None,
@@ -130,15 +159,18 @@ impl ConnectionGateway for Gateway {
                         json!({"valid":false,"issues":[{"code":"fixture","message":"fixture validation"}]}),
                     ),
                 }),
-                "skill_read" => Err(RequestError {
+                Some("skill_read") => Err(RequestError {
                     code: "not_found".into(),
                     message: "fixture skill missing".into(),
                     details: None,
                     validation: None,
                 }),
-                _ => Err(RequestError::new(format!(
+                Some(method) => Err(RequestError::new(format!(
                     "Unknown gateway method {method}."
                 ))),
+                // The method itself is a lone surrogate: build the TS message
+                // from UTF-16 code units, never through to_utf8.
+                None => Err(RequestError::new(unknown_method_message(&method))),
             }
         })
     }
@@ -182,27 +214,34 @@ impl ConnectionGateway for Gateway {
     }
     fn disconnect(
         &self,
-        session: Value,
+        session: JsValue,
         binding: WsBinding,
     ) -> Call<'_, Result<bool, RequestError>> {
         Box::pin(async move {
-            self.record(
-                "disconnect",
-                js(&json!({"sessionKey":session,"binding":binding.to_json()})),
-            );
+            let mut params = JsObject::new();
+            params.insert("sessionKey".into(), session.clone());
+            params.insert("binding".into(), js(&binding.to_json()));
+            self.record("disconnect", JsValue::Object(params));
             if self.fail_disconnect {
                 return Err(RequestError::new("fixture disconnect failed"));
             }
-            self.bindings.disconnect(&session.to_string(), &binding);
+            let owner = stringify_json(&session).unwrap().unwrap();
+            self.bindings.disconnect(&owner, &binding);
             Ok(self.preserve)
         })
     }
-    fn abort_on_close(&self, params: Value) -> Call<'_, Result<(), RequestError>> {
+    fn abort_on_close(&self, params: JsValue) -> Call<'_, Result<(), RequestError>> {
         Box::pin(async move {
-            self.record("abort", js(&params));
+            self.record("abort", params);
             Ok(())
         })
     }
+}
+fn unknown_method_message(method: &JsString) -> JsString {
+    let mut units = "Unknown gateway method ".encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(method.units());
+    units.extend(".".encode_utf16());
+    JsString::from_utf16(units)
 }
 fn js(value: &Value) -> JsValue {
     parse_json(&value.to_string()).unwrap()
@@ -312,7 +351,7 @@ async fn replay(only: Option<&str>) {
                     .receive(step["raw"].as_str().unwrap())
                     .await
                     .unwrap(),
-                "notify" => connection.notify("fixture", Some(json!({"value":1}))),
+                "notify" => connection.notify("fixture", Some(js(&json!({"value":1})))),
                 "start_hello" => {
                     gateway
                         .hold_describe
@@ -341,7 +380,15 @@ async fn replay(only: Option<&str>) {
                     assert!(submissions.insert(slot, (release, task)).is_none());
                 }
                 "close" => connection.closed().await.unwrap(),
-                "close_error" => close_errors.push(connection.closed().await.unwrap_err().message),
+                "close_error" => close_errors.push(
+                    connection
+                        .closed()
+                        .await
+                        .unwrap_err()
+                        .message
+                        .to_utf8()
+                        .unwrap(),
+                ),
                 "finish" => {
                     let slot = step["slot"].as_str().unwrap_or("default");
                     let (release, task) = submissions.remove(slot).unwrap();
@@ -357,7 +404,8 @@ async fn replay(only: Option<&str>) {
                     session_values(&state.interactions),
                 )
             };
-            let mut actual = json!({"frames":*text.frames.lock().unwrap(), "closes":*text.closes.lock().unwrap(),
+            let frames = frame_values(&text.frames.lock().unwrap());
+            let mut actual = json!({"frames":frames, "closes":*text.closes.lock().unwrap(),
                 "finalInFlight":*text.final_in_flight.lock().unwrap(),
                 "inFlight":in_flight,"interactions":interactions});
             if gateway.fail_disconnect {
@@ -428,7 +476,7 @@ fn real_ts_binding_provider() {
                     let next = WsBinding::from_json(&step["next"])?;
                     let previous = step
                         .get("previous")
-                        .filter(|value| truthy(value))
+                        .filter(|value| truthy(&js(value)))
                         .map(WsBinding::from_json)
                         .transpose()?;
                     bindings.reconnect("owner", next, previous.as_ref())
@@ -629,14 +677,14 @@ fn cancelled_receive_sends_no_invented_terminal() {
 #[test]
 fn session_sets_use_js_scalar_equality_and_object_identity() {
     let mut state = State::default();
-    let number = SessionKey::new(json!(5));
+    let number = SessionKey::new(js(&json!(5)));
     state.track_in_flight(&number);
-    state.track_in_flight(&SessionKey::new(json!(5.0)));
-    state.track_in_flight(&SessionKey::new(json!(true)));
-    let object = SessionKey::new(json!({}));
+    state.track_in_flight(&SessionKey::new(js(&json!(5.0))));
+    state.track_in_flight(&SessionKey::new(js(&json!(true))));
+    let object = SessionKey::new(js(&json!({})));
     state.track_interaction(&object);
     state.track_interaction(&object.clone());
-    state.track_interaction(&SessionKey::new(json!({})));
+    state.track_interaction(&SessionKey::new(js(&json!({}))));
     assert_eq!(session_values(&state.in_flight), [json!(5), json!(true)]);
     assert_eq!(state.interactions.len(), 2);
     assert_eq!(state.sessions().len(), 4);
@@ -646,11 +694,179 @@ fn session_sets_use_js_scalar_equality_and_object_identity() {
 fn sessions_preserve_in_flight_then_interaction_insertion_order() {
     // TS GatewayWsConnection.ts:49-58 unions the Sets in this order before close.
     let mut state = State::default();
-    let b = SessionKey::new(json!("b"));
+    let b = SessionKey::new(js(&json!("b")));
     state.track_in_flight(&b);
-    state.track_interaction(&SessionKey::new(json!("a")));
+    state.track_interaction(&SessionKey::new(js(&json!("a"))));
     assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
     // Real submit also puts b in interactions (TS:126-127); union deduplicates it.
     state.track_interaction(&b);
     assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
+}
+
+// The four frames below were replayed against the real baseline
+// GatewayWsConnection.ts with Node v22 (see _tmp/20261022-issue-458/ts-probe*).
+// TS accepts every one without closing; these tests pin the same frames and
+// the same close behavior, keeping lone surrogate code units intact.
+fn sent_frames(text: &MemoryText) -> Vec<JsValue> {
+    text.frames
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|raw| parse_json(raw).unwrap())
+        .collect()
+}
+fn assert_same_json(actual: &JsValue, expected: &str) {
+    let expected = parse_json(expected).unwrap();
+    assert_eq!(
+        normalized(actual, &BTreeMap::new()),
+        normalized(&expected, &BTreeMap::new())
+    );
+}
+fn string_units(value: &JsValue) -> Vec<u16> {
+    value.as_string().unwrap().units().to_vec()
+}
+async fn lone_surrogate_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
+    let text = Arc::new(MemoryText::default());
+    let gateway = Arc::new(Gateway::new(false));
+    let connection = Arc::new(GatewayConnection::new(
+        text.clone(),
+        gateway.clone(),
+        "fixture-token".into(),
+        "test".into(),
+    ));
+    connection
+        .receive(
+            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
+        )
+        .await
+        .unwrap();
+    (text, gateway, connection)
+}
+
+#[tokio::test]
+async fn lone_surrogate_id_round_trips_in_response() {
+    let (text, _gateway, connection) = lone_surrogate_connection().await;
+    connection
+        .receive(r#"{"type":"request","id":"\ud800","method":"describe_server"}"#)
+        .await
+        .unwrap();
+    let frames = sent_frames(&text);
+    assert_eq!(frames.len(), 2);
+    assert_eq!(string_units(frames[1].get("id").unwrap()), [0xD800]);
+    assert_same_json(
+        &frames[1],
+        r#"{"type":"response","id":"\ud800","ok":true,"result":{"name":"fixture-server","capabilities":["fixture"]}}"#,
+    );
+    // JSON.stringify re-escapes the lone surrogate rather than replacing it.
+    assert!(text.frames.lock().unwrap()[1].contains(r#""id":"\ud800""#));
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lone_surrogate_method_reaches_gateway_and_echoes_in_error() {
+    let (text, gateway, connection) = lone_surrogate_connection().await;
+    connection
+        .receive(r#"{"type":"request","id":"1","method":"\ud800"}"#)
+        .await
+        .unwrap();
+    let frames = sent_frames(&text);
+    assert_eq!(frames.len(), 2);
+    assert_same_json(
+        &frames[1],
+        r#"{"type":"response","id":"1","ok":false,"error":{"code":"gateway_request_failed","message":"Unknown gateway method \ud800."}}"#,
+    );
+    assert_eq!(
+        string_units(frames[1].get("error").unwrap().get("message").unwrap()),
+        "Unknown gateway method "
+            .encode_utf16()
+            .chain([0xD800])
+            .chain(".".encode_utf16())
+            .collect::<Vec<_>>()
+    );
+    // Exactly the hello describe call: the gateway got the surrogate method,
+    // it did not first collapse to a replacement character and dispatch.
+    assert_eq!(gateway.calls.lock().unwrap().len(), 1);
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lone_surrogate_session_key_is_forwarded_unchanged() {
+    let (text, gateway, connection) = lone_surrogate_connection().await;
+    connection
+        .receive(
+            r#"{"type":"request","id":"1","method":"abort_turn","params":{"sessionKey":"\ud83d"}}"#,
+        )
+        .await
+        .unwrap();
+    let frames = sent_frames(&text);
+    assert_eq!(frames.len(), 2);
+    assert_same_json(
+        &frames[1],
+        r#"{"type":"response","id":"1","ok":true,"result":{"ok":true}}"#,
+    );
+    let calls = gateway.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    let params = calls[1].get("params").unwrap();
+    assert_eq!(string_units(params.get("sessionKey").unwrap()), [0xD83D]);
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lone_surrogate_client_name_is_accepted_in_hello() {
+    let text = Arc::new(MemoryText::default());
+    let gateway = Arc::new(Gateway::new(false));
+    let connection = Arc::new(GatewayConnection::new(
+        text.clone(),
+        gateway,
+        "fixture-token".into(),
+        "test".into(),
+    ));
+    connection
+        .receive(
+            r#"{"type":"hello","protocolVersion":"1.2","clientName":"\ud800","clientVersion":"test","token":"fixture-token"}"#,
+        )
+        .await
+        .unwrap();
+    {
+        let state = connection.state.lock().unwrap();
+        assert!(state.authed);
+        assert_eq!(state.client_name.as_ref().unwrap().units(), [0xD800]);
+    }
+    let frames = sent_frames(&text);
+    assert_eq!(frames.len(), 1);
+    let hello_ok = &frames[0];
+    assert!(
+        hello_ok
+            .get("type")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .equals_str("hello_ok")
+    );
+    assert!(
+        hello_ok
+            .get("protocolVersion")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .equals_str(GATEWAY_PROTOCOL_VERSION)
+    );
+    assert_same_json(
+        hello_ok.get("serverInfo").unwrap(),
+        r#"{"name":"fixture-server","capabilities":["fixture"]}"#,
+    );
+    let binding = hello_ok.get("interactionBinding").unwrap();
+    assert!(
+        binding
+            .get("connectionId")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .equals_str(&connection.binding().connection_id)
+    );
+    assert_eq!(
+        binding.get("generation").unwrap().as_number(),
+        Some(connection.binding().generation() as f64)
+    );
+    assert!(text.closes.lock().unwrap().is_empty());
 }

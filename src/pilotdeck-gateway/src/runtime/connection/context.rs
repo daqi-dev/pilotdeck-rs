@@ -3,44 +3,51 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use serde_json::Value;
 use std::sync::Arc;
 
-fn js_value(value: &Value) -> JsValue {
+pub(super) fn js_value(value: &Value) -> JsValue {
     parse_json(&value.to_string()).expect("serde JSON is valid JS JSON")
 }
 
 // JSON scalars use JS SameValueZero; arrays/objects retain request identity.
 // Cloning a key for cleanup/close must preserve that identity.
 #[derive(Clone, Debug)]
-pub(super) struct SessionKey(Arc<Value>);
+pub(super) struct SessionKey(Arc<JsValue>);
 impl SessionKey {
-    pub fn new(value: Value) -> Self {
+    pub fn new(value: JsValue) -> Self {
         Self(Arc::new(value))
     }
-    pub fn value(&self) -> &Value {
+    pub fn value(&self) -> &JsValue {
         &self.0
     }
 }
 impl PartialEq for SessionKey {
     fn eq(&self, other: &Self) -> bool {
         match (self.value(), other.value()) {
-            (Value::Array(_) | Value::Object(_), _) => Arc::ptr_eq(&self.0, &other.0),
-            (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
-            (a, b) => a == b,
+            (JsValue::Array(_) | JsValue::Object(_), _) => Arc::ptr_eq(&self.0, &other.0),
+            // SameValueZero: NaN equals NaN, +0 equals -0.
+            (JsValue::Number(a), JsValue::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
+            (JsValue::String(a), JsValue::String(b)) => a == b,
+            (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
+            (JsValue::Null, JsValue::Null) => true,
+            (JsValue::Undefined, JsValue::Undefined) => true,
+            _ => false,
         }
     }
 }
-pub(super) fn truthy(value: &Value) -> bool {
+pub(super) fn truthy(value: &JsValue) -> bool {
     match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
     }
 }
 #[derive(Default)]
 pub(super) struct State {
     pub authed: bool,
-    pub client_name: Option<String>,
+    // JS strings are UTF-16 code units; a lone surrogate clientName must remain
+    // comparable with "sdk" without a lossy UTF-8 conversion.
+    pub client_name: Option<JsString>,
     // Insertion-ordered session sets, matching TS Set (including its
     // unconditional session deletion when any concurrent submit completes).
     pub in_flight: Vec<SessionKey>,
@@ -57,21 +64,27 @@ impl State {
             self.interactions.push(session.clone());
         }
     }
-    pub fn inject(&mut self, method: &str, params: Value, binding: &WsBinding) -> JsValue {
-        if !matches!(
-            method,
-            "submit_turn" | "elicitation_respond" | "permission_decide" | "reconnect_interaction"
-        ) {
-            return js_value(&params);
+    pub fn inject(&mut self, method: &JsString, params: JsValue, binding: &WsBinding) -> JsValue {
+        if ![
+            "submit_turn",
+            "elicitation_respond",
+            "permission_decide",
+            "reconnect_interaction",
+        ]
+        .iter()
+        .any(|name| method.equals_str(name))
+        {
+            return params;
         }
-        let session = SessionKey::new(params["sessionKey"].clone());
+        let session_value = params.get("sessionKey").cloned().unwrap_or(JsValue::Null);
+        let session = SessionKey::new(session_value);
         // JS object spread enumerates UTF-16 code units, including surrogate
         // halves. Keep those in JsValue all the way to the gateway dispatch.
         let mut fields = match &params {
-            Value::Object(_) => js_value(&params).as_object().unwrap().clone(),
-            Value::String(text) => {
+            JsValue::Object(object) => object.clone(),
+            JsValue::String(text) => {
                 let mut fields = JsObject::new();
-                for (index, unit) in text.encode_utf16().enumerate() {
+                for (index, unit) in text.units().iter().copied().enumerate() {
                     fields.insert(
                         index.to_string().into(),
                         JsValue::String(JsString::from_utf16(vec![unit])),
@@ -79,42 +92,49 @@ impl State {
                 }
                 fields
             }
-            Value::Array(items) => {
+            JsValue::Array(items) => {
                 let mut fields = JsObject::new();
                 for (index, item) in items.iter().enumerate() {
-                    fields.insert(index.to_string().into(), js_value(item));
+                    fields.insert(index.to_string().into(), item.clone());
                 }
                 fields
             }
             _ => JsObject::new(),
         };
-        match method {
-            "submit_turn" | "elicitation_respond" => {
+        if method.equals_str("submit_turn") || method.equals_str("elicitation_respond") {
+            fields.insert("interactionBinding".into(), js_value(&binding.to_json()));
+        } else if method.equals_str("permission_decide") {
+            let sdk_control = self
+                .client_name
+                .as_ref()
+                .is_some_and(|name| name.equals_str("sdk"))
+                && (session.value().as_string().is_none_or(JsString::is_empty)
+                    || !self.interactions.contains(&session));
+            if !sdk_control {
                 fields.insert("interactionBinding".into(), js_value(&binding.to_json()));
             }
-            "permission_decide" => {
-                let sdk_control = self.client_name.as_deref() == Some("sdk")
-                    && (session.value().as_str().is_none_or(str::is_empty)
-                        || !self.interactions.contains(&session));
-                if !sdk_control {
-                    fields.insert("interactionBinding".into(), js_value(&binding.to_json()));
-                }
+        } else {
+            self.track_interaction(&session);
+            // TS forwards `params.sessionKey ?? ""`: null and undefined become
+            // the empty string; any other value, including a lone surrogate,
+            // passes through untouched.
+            let forwarded = match session.value() {
+                JsValue::Null | JsValue::Undefined => JsValue::from(""),
+                value => value.clone(),
+            };
+            let mut next = JsObject::new();
+            next.insert("sessionKey".into(), forwarded);
+            next.insert("nextBinding".into(), js_value(&binding.to_json()));
+            // Forward previousBinding when the key is present, even if null.
+            if let JsValue::Object(params) = &params
+                && params.contains_key("previousBinding")
+            {
+                next.insert(
+                    "previousBinding".into(),
+                    params.get("previousBinding").cloned().unwrap(),
+                );
             }
-            "reconnect_interaction" => {
-                self.track_interaction(&session);
-                let forwarded = if session.value().is_null() {
-                    serde_json::json!("")
-                } else {
-                    session.value().clone()
-                };
-                let mut next =
-                    serde_json::json!({"sessionKey":forwarded, "nextBinding":binding.to_json()});
-                if let Some(previous) = params.get("previousBinding") {
-                    next["previousBinding"] = previous.clone();
-                }
-                return js_value(&next);
-            }
-            _ => {}
+            return JsValue::Object(next);
         }
         JsValue::Object(fields)
     }
