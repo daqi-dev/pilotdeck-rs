@@ -1,0 +1,221 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9"
+  },
+  "cases": [
+    {
+      "active": false,
+      "checkpoints": [
+        {
+          "phase": "dispose_pending",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": false,
+          "abortCalls": 0,
+          "leaseCount": 1,
+          "runtimeState": "retired",
+          "events": [
+            "session_dispose_start"
+          ]
+        },
+        {
+          "phase": "dispose_aborts",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": false,
+          "abortCalls": 2,
+          "leaseCount": 1,
+          "runtimeState": "retired",
+          "events": [
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live"
+          ]
+        },
+        {
+          "phase": "lease_pending",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": true,
+          "abortCalls": 2,
+          "leaseCount": 0,
+          "runtimeState": "retired",
+          "events": [
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start"
+          ]
+        },
+        {
+          "phase": "lease_aborts",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": true,
+          "abortCalls": 4,
+          "leaseCount": 0,
+          "runtimeState": "retired",
+          "events": [
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed"
+          ]
+        },
+        {
+          "phase": "disposed",
+          "state": "disposed",
+          "done": true,
+          "sessionDisposed": true,
+          "abortCalls": 4,
+          "leaseCount": 0,
+          "runtimeState": "disposed",
+          "events": [
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed",
+            "lease_release_done"
+          ]
+        },
+        {
+          "phase": "late_abort",
+          "state": "disposed",
+          "done": true,
+          "sessionDisposed": true,
+          "abortCalls": 4,
+          "leaseCount": 0,
+          "runtimeState": "disposed",
+          "events": [
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed",
+            "lease_release_done"
+          ]
+        }
+      ]
+    },
+    {
+      "active": true,
+      "checkpoints": [
+        {
+          "phase": "dispose_pending",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": false,
+          "abortCalls": 1,
+          "leaseCount": 1,
+          "runtimeState": "retired",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start"
+          ]
+        },
+        {
+          "phase": "dispose_aborts",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": false,
+          "abortCalls": 3,
+          "leaseCount": 1,
+          "runtimeState": "retired",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live"
+          ]
+        },
+        {
+          "phase": "lease_pending",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": true,
+          "abortCalls": 3,
+          "leaseCount": 0,
+          "runtimeState": "retired",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start"
+          ]
+        },
+        {
+          "phase": "lease_aborts",
+          "state": "draining",
+          "done": false,
+          "sessionDisposed": true,
+          "abortCalls": 5,
+          "leaseCount": 0,
+          "runtimeState": "retired",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed"
+          ]
+        },
+        {
+          "phase": "disposed",
+          "state": "disposed",
+          "done": true,
+          "sessionDisposed": true,
+          "abortCalls": 5,
+          "leaseCount": 0,
+          "runtimeState": "disposed",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed",
+            "lease_release_done"
+          ]
+        },
+        {
+          "phase": "late_abort",
+          "state": "disposed",
+          "done": true,
+          "sessionDisposed": true,
+          "abortCalls": 5,
+          "leaseCount": 0,
+          "runtimeState": "disposed",
+          "events": [
+            "abort:dispose:live",
+            "session_dispose_start",
+            "abort:during-dispose:live",
+            "abort:during-dispose:live",
+            "session_dispose_done",
+            "lease_release_start",
+            "abort:during-lease:disposed",
+            "abort:during-lease:disposed",
+            "lease_release_done"
+          ]
+        }
+      ]
+    }
+  ]
+}
