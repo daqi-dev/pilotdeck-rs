@@ -1031,6 +1031,24 @@ cases.push({ name: 'memory-timeout', setup: { memory: { pending: true }, memoryT
 for (const mode of ['before', 'memory', 'memory-pending'] as const) {
   cases.push({ name: `memory-abort-${mode}`, setup: { memory: { abort: true, context: 'returned while aborting' }, discovery: { projectRoot: '<fixture>/project', cwd: '<fixture>/project', pilotHome: '<fixture>/emptyhome' } }, steps: [{ clockMs: baseClock, abort: mode, input: memoryInput({ protocol: 'anthropic', supportsPromptCache: true }) }, { clockMs: baseClock + 86400000, input: memoryInput() }] });
 }
+// `extractRecentUserText` throws on a malformed text block (`block.text.trim()`)
+// instead of skipping it; the provider is never reached. Non-text blocks and
+// whitespace-only text still skip to the previous user message.
+for (const [name, block] of [
+  ['missing', { type: 'text' }],
+  ['non-string', { type: 'text', text: 42 }],
+  ['null', { type: 'text', text: null }],
+] as const) {
+  cases.push({ name: `memory-text-block-${name}`, setup: { memory: { context: 'never delivered' } }, steps: [{ clockMs: baseClock, input: memoryInput({ messages: [user(block)] }) }] });
+}
+cases.push({ name: 'memory-text-block-after-bad', setup: { memory: { context: 'never delivered' } }, steps: [
+  { clockMs: baseClock, input: memoryInput({ messages: [user({ type: 'text' }, text('good'))] }) },
+  { clockMs: baseClock, input: memoryInput({ messages: [user(text('earlier')), user({ type: 'text' })] }) },
+] });
+cases.push({ name: 'memory-text-block-non-text', setup: { memory: { context: 'delivered' } }, steps: [{ clockMs: baseClock, input: memoryInput({ messages: [user({ type: 'image' }, text('  ')), user(text('hit'))] }) }] });
+// Without a memory resolver `extractRecentUserText` is never called, so the
+// same malformed block passes through unnoticed.
+cases.push({ name: 'text-block-malformed-no-memory', steps: [{ clockMs: baseClock, input: memoryInput({ messages: [user({ type: 'text' })] }) }] });
 // Stable cwd is intentional: a temp path inside the SHA-256 input cannot be
 // normalized after hashing. These cases perform no instruction filesystem IO.
 const cacheInput = (extra: any = {}) => baseInput({ cwd: '/pdrs-cache-fixture', customSystemPrompt: 'cache system', protocol: 'anthropic', supportsPromptCache: true, ...extra });
@@ -1067,8 +1085,32 @@ cases.push({ name: 'cache-tool-order', steps: [
   [{ name: 'z', inputSchema: { b: 2, a: 1 } }, { name: 'a', inputSchema: {} }, { name: 'a', inputSchema: { z: 1 } }, { name: 'Ä', inputSchema: {} }, { name: 'A', inputSchema: {} }],
   [{ name: 'A', inputSchema: {} }, { name: 'Ä', inputSchema: {} }, { name: 'a', inputSchema: { z: 1 } }, { name: 'a', inputSchema: {} }, { name: 'z', inputSchema: { a: 1, b: 2 } }],
 ].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
+// `left.name.localeCompare(right.name)` failure modes: a single tool never
+// reaches the comparator, only the comparator's left operand needs a string
+// name (a malformed name at index 0 is only `String()`-coerced as the right
+// operand), and a nullish tool element fails at the `name` read itself.
+cases.push({ name: 'cache-tool-name-missing', steps: [
+  { clockMs: baseClock, input: cacheInput({ tools: [{}] }) },
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'a' }, {}] }) },
+  { clockMs: baseClock, input: cacheInput({ tools: [{}, { name: 'a' }] }) },
+] });
+cases.push({ name: 'cache-tool-name-non-string', steps: [
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'a' }, { name: 42 }] }) },
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 42 }, { name: 'a' }] }) },
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'a' }, { name: null }] }) },
+] });
+cases.push({ name: 'cache-tool-null-element', steps: [
+  { clockMs: baseClock, input: cacheInput({ tools: [null, { name: 'a' }] }) },
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'a' }, null] }) },
+] });
+// Well-formed non-ASCII names (emoji sorts before letters in ICU) plus
+// lone-surrogate / astral object keys, which both sides serialize as
+// `\ud800` escapes / raw astral characters inside the fingerprint.
+cases.push({ name: 'cache-tool-name-non-ascii', steps: [
+  { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'b' }, { name: '' }, { name: '�' }, { name: '😀' }, { name: 'k', inputSchema: { '\ud800': 1, '😀': 2, a: 3 } }] }) },
+] });
 cases.push({ name: 'cache-memory-user-surface', setup: { surface: 'user_message', memory: { context: 'cache memory' } }, steps: [{ clockMs: baseClock, input: cacheInput({ messages: [user(text('old')), assistant(text('reply')), user(text('new'))] }) }] });
-assert.equal(cases.length, 58, 'case count');
+assert.equal(cases.length, 68, 'case count');
 
 // ---------------------------------------------------------------- execute
 // JSON cannot carry NaN/Infinity/-0. Inputs use {$number: "..."} markers and

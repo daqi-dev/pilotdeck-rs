@@ -4,6 +4,7 @@
 mod baseline;
 
 use pilotdeck_gateway::runtime::{
+    context::memory::{MemoryFuture as RetrieveFuture, MemoryRetrieveInput, MemoryRetrieveResult},
     memory::{
         MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryFuture, MemoryListInput,
         MemoryMaintenanceService, MemoryManagementService, MemoryProjection, MemoryProjectionError,
@@ -41,7 +42,13 @@ impl Events {
 }
 
 struct FakeResolver;
-impl MemoryResolver for FakeResolver {}
+// The bundle replay only carries the handle; retrieval is the context
+// package's contract, so this stub is never invoked.
+impl MemoryResolver for FakeResolver {
+    fn retrieve(&self, _input: MemoryRetrieveInput) -> RetrieveFuture {
+        Box::pin(async { Ok(MemoryRetrieveResult::default()) })
+    }
+}
 struct FakeMaintenance;
 impl MemoryMaintenanceService for FakeMaintenance {
     fn run_due_scheduled_maintenance(&self, _: &str) -> MemoryFuture<'_, ()> {

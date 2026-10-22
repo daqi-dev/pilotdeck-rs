@@ -5101,6 +5101,286 @@
       ]
     },
     {
+      "name": "memory-text-block-missing",
+      "setup": {
+        "memory": {
+          "context": "never delivered"
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "Cannot read properties of undefined (reading 'trim')"
+        }
+      ]
+    },
+    {
+      "name": "memory-text-block-non-string",
+      "setup": {
+        "memory": {
+          "context": "never delivered"
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": 42
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "block.text.trim is not a function"
+        }
+      ]
+    },
+    {
+      "name": "memory-text-block-null",
+      "setup": {
+        "memory": {
+          "context": "never delivered"
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": null
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "Cannot read properties of null (reading 'trim')"
+        }
+      ]
+    },
+    {
+      "name": "memory-text-block-after-bad",
+      "setup": {
+        "memory": {
+          "context": "never delivered"
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text"
+                  },
+                  {
+                    "type": "text",
+                    "text": "good"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "Cannot read properties of undefined (reading 'trim')"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "earlier"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "error": "Cannot read properties of undefined (reading 'trim')"
+        }
+      ]
+    },
+    {
+      "name": "memory-text-block-non-text",
+      "setup": {
+        "memory": {
+          "context": "delivered"
+        }
+      },
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "image"
+                  },
+                  {
+                    "type": "text",
+                    "text": "  "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hit"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image\"},{\"type\":\"text\",\"text\":\"  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hit\"}]}],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\\n\\n<memory-context>\\ndelivered\\n</memory-context>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\",\"<memory-context>\\ndelivered\\n</memory-context>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"},{\"name\":\"pilotdeck:memory:0:0\",\"text\":\"<memory-context>\\ndelivered\\n</memory-context>\"}]}}"
+        }
+      ]
+    },
+    {
+      "name": "text-block-malformed-no-memory",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "<fixture>/project",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "base"
+              }
+            ]
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\"}]}],\"systemPrompt\":\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\\n\\n<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\\n\\n<environment>\\nnow: 2026-01-02\\n</environment>\",\"systemPromptParts\":[\"You are PilotDeck, an AI agent runtime. You execute tasks across CLI, TUI, web, and chat channels by calling structured tools and reasoning over their results.\\nOperate decisively: prefer using available tools to gather facts before answering, prefer concise replies, and surface uncertainty when present.\\n\\nDocumentation lookup policy:\\nWhen implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear, prefer installed types, local source, examples, and project docs. State any remaining uncertainty and proceed conservatively.\\n\\nParallel delegation policy:\\nWhen the agent tool is available and the task contains two or more independent, repetitive, or separable workstreams, prefer launching multiple subagents in the same assistant message instead of waiting for one to finish before starting the next. Good parallel candidates include inspecting multiple files/modules, researching independent APIs, checking several artifacts, or comparing alternatives. Do not parallelize tasks that write to the same files, depend on another subagent's output, require shared ordering, or need user approval between steps. Give each subagent a self-contained prompt, distinct scope, and expected output. After all sibling results return, synthesize them yourself and decide the next step.\\n\\nReusable script workflow:\\nWhen code is more than a tiny one-off command, or you expect to rerun it with changed parameters, write it to a workspace file first with write_file, then run it with bash. Prefer scripts with CLI arguments, environment variables, or a small config section so parameters can be adjusted with edit_file or command args. Do not pack large Python/JS/shell programs into bash heredocs or long `python -c` / `node -e` strings. After each run, inspect output and edit the saved script instead of regenerating a new inline command.\\n\\nPermission mode: default — write/shell tools require explicit approval.\",\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"<environment>\\nnow: 2026-01-02\\n</environment>\"],\"tools\":[{\"name\":\"base\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: <fixture>/project\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]}}"
+        }
+      ]
+    },
+    {
       "name": "cache-gating",
       "setup": {},
       "steps": [
@@ -6104,6 +6384,346 @@
             "supportsPromptCache": true
           },
           "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"systemPrompt\":\"cache system\\n\\n<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"systemPromptParts\":[\"cache system\",\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"],\"tools\":[{\"name\":\"A\",\"inputSchema\":{}},{\"name\":\"Ä\",\"inputSchema\":{}},{\"name\":\"a\",\"inputSchema\":{\"z\":1}},{\"name\":\"a\",\"inputSchema\":{}},{\"name\":\"z\",\"inputSchema\":{\"a\":1,\"b\":2}}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":5},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]},\"cacheBreakpoints\":[0],\"cachePlan\":{\"provider\":\"provider\",\"model\":\"model\",\"system\":true,\"tools\":false,\"messages\":[0],\"fingerprint\":\"a77b668899501c20513a8f56d17bd38fc051244446938567af9ecab1d234e48b\",\"generation\":1}}"
+        }
+      ]
+    },
+    {
+      "name": "cache-tool-name-missing",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {}
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"systemPrompt\":\"cache system\\n\\n<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"systemPromptParts\":[\"cache system\",\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"],\"tools\":[{}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":1},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]},\"cacheBreakpoints\":[0],\"cachePlan\":{\"provider\":\"provider\",\"model\":\"model\",\"system\":true,\"tools\":false,\"messages\":[0],\"fingerprint\":\"cf5b85e573ebafe072d49d4223f56bed8b2e06f4c40d516652d257863ff2e9e5\",\"generation\":1}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "a"
+              },
+              {}
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "error": "Cannot read properties of undefined (reading 'localeCompare')"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {},
+              {
+                "name": "a"
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"systemPrompt\":\"cache system\\n\\n<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"systemPromptParts\":[\"cache system\",\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"],\"tools\":[{},{\"name\":\"a\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":2},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]},\"cacheBreakpoints\":[0],\"cachePlan\":{\"provider\":\"provider\",\"model\":\"model\",\"system\":true,\"tools\":false,\"messages\":[0],\"fingerprint\":\"6e2f6061a497d17f177d5454bfc25dcbbbf6a8a4ca2af2966c65c22d965722c8\",\"generation\":2}}"
+        }
+      ]
+    },
+    {
+      "name": "cache-tool-name-non-string",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "a"
+              },
+              {
+                "name": 42
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "error": "left.name.localeCompare is not a function"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": 42
+              },
+              {
+                "name": "a"
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"systemPrompt\":\"cache system\\n\\n<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"systemPromptParts\":[\"cache system\",\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"],\"tools\":[{\"name\":42},{\"name\":\"a\"}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":2},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]},\"cacheBreakpoints\":[0],\"cachePlan\":{\"provider\":\"provider\",\"model\":\"model\",\"system\":true,\"tools\":false,\"messages\":[0],\"fingerprint\":\"a1fe2fabf62101a205b6c6040ce70906dff64b357b6bf4d3cc4ab1dcd60b3e76\",\"generation\":1}}"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "a"
+              },
+              {
+                "name": null
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "error": "Cannot read properties of null (reading 'localeCompare')"
+        }
+      ]
+    },
+    {
+      "name": "cache-tool-null-element",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              null,
+              {
+                "name": "a"
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "error": "Cannot read properties of null (reading 'name')"
+        },
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "a"
+              },
+              null
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "error": "Cannot read properties of null (reading 'name')"
+        }
+      ]
+    },
+    {
+      "name": "cache-tool-name-non-ascii",
+      "setup": {},
+      "steps": [
+        {
+          "clockMs": 1767323045000,
+          "input": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-cache-fixture",
+            "provider": "provider",
+            "model": "model",
+            "permissionMode": "default",
+            "additionalWorkingDirectories": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "b"
+              },
+              {
+                "name": ""
+              },
+              {
+                "name": "�"
+              },
+              {
+                "name": "😀"
+              },
+              {
+                "name": "k",
+                "inputSchema": {
+                  "\ud800": 1,
+                  "😀": 2,
+                  "a": 3
+                }
+              }
+            ],
+            "customSystemPrompt": "cache system",
+            "protocol": "anthropic",
+            "supportsPromptCache": true
+          },
+          "output": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"systemPrompt\":\"cache system\\n\\n<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\",\"systemPromptParts\":[\"cache system\",\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"],\"tools\":[{\"name\":\"b\"},{\"name\":\"\"},{\"name\":\"�\"},{\"name\":\"😀\"},{\"name\":\"k\",\"inputSchema\":{\"\\ud800\":1,\"😀\":2,\"a\":3}}],\"diagnostics\":[],\"boundaries\":[],\"metadata\":{\"droppedCount\":0,\"toolCount\":5},\"materialization\":{\"runtimeContexts\":[{\"name\":\"pilotdeck:user-context:0\",\"text\":\"<user-context>\\ncwd: /pdrs-cache-fixture\\nIMPORTANT: When the user does not specify an explicit file path, all file paths in tool calls MUST be relative to the cwd above — use \\\"foo.html\\\", not an absolute path like \\\"/home/user/foo.html\\\". If the user explicitly provides a path, respect their choice.\\nmodel: provider/model\\npermission_mode: default\\nplatform: darwin\\nnode: v22.22.0\\n</user-context>\"}]},\"cacheBreakpoints\":[0],\"cachePlan\":{\"provider\":\"provider\",\"model\":\"model\",\"system\":true,\"tools\":false,\"messages\":[0],\"fingerprint\":\"95285bca0389e7ead9e7feb2cb370132ea013687d8be9b0a63757a7ee20e4cbc\",\"generation\":1}}"
         }
       ]
     },

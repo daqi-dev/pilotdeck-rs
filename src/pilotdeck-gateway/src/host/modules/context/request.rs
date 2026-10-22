@@ -3,8 +3,7 @@
 //! context/cache/CachePlan. No routing or context-runtime implementation lives here.
 use super::{get, is, object};
 use crate::host::{HostError, JsObject, JsValue, ModuleError};
-use pilotdeck_protocol::{JsString, stringify_json};
-use sha2::{Digest, Sha256};
+use pilotdeck_protocol::JsString;
 
 fn error(message: impl Into<JsString>) -> HostError {
     ModuleError::new(message).into()
@@ -205,60 +204,6 @@ async fn materialize(messages: JsValue) -> Result<Vec<JsValue>, HostError> {
     }
     Ok(messages)
 }
-fn stable(value: &JsValue) -> Result<Option<String>, HostError> {
-    enum Part<'a> {
-        Value(&'a JsValue),
-        Text(String),
-    }
-    if value.is_undefined() {
-        return Ok(None);
-    }
-    let mut output = String::new();
-    let mut stack = vec![Part::Value(value)];
-    while let Some(part) = stack.pop() {
-        match part {
-            Part::Text(s) => output.push_str(&s),
-            Part::Value(JsValue::Array(a)) => {
-                output.push('[');
-                stack.push(Part::Text("]".into()));
-                for (i, v) in a.iter().enumerate().rev() {
-                    if !v.is_undefined() {
-                        stack.push(Part::Value(v));
-                    }
-                    if i > 0 {
-                        stack.push(Part::Text(",".into()));
-                    }
-                }
-            }
-            Part::Value(JsValue::Object(o)) => {
-                output.push('{');
-                stack.push(Part::Text("}".into()));
-                let mut fields = o.entries().iter().collect::<Vec<_>>();
-                fields.sort_by(|a, b| a.0.units().cmp(b.0.units()));
-                for (i, (k, v)) in fields.into_iter().enumerate().rev() {
-                    if v.is_undefined() {
-                        stack.push(Part::Text("undefined".into()));
-                    } else {
-                        stack.push(Part::Value(v));
-                    }
-                    let key = stringify_json(&JsValue::String(k.clone()))
-                        .map_err(|e| error(e.to_string()))?
-                        .unwrap();
-                    stack.push(Part::Text(format!("{key}:")));
-                    if i > 0 {
-                        stack.push(Part::Text(",".into()));
-                    }
-                }
-            }
-            Part::Value(v) => output.push_str(
-                &stringify_json(v)
-                    .map_err(|e| error(e.to_string()))?
-                    .unwrap(),
-            ),
-        }
-    }
-    Ok(Some(output))
-}
 fn string_items(s: &JsString) -> Vec<JsValue> {
     let mut values = Vec::new();
     let mut units = s.units().iter().copied().peekable();
@@ -278,88 +223,23 @@ fn cache_plan(
     prepared: &JsValue,
     messages: &[JsValue],
 ) -> Result<JsValue, HostError> {
-    let selected = messages
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| {
-            !is(
-                &m.get("role").cloned().unwrap_or(JsValue::Undefined),
-                "system",
-            )
-        })
-        .map(|(i, _)| i)
-        .collect::<Vec<_>>();
-    let selected = &selected[selected.len().saturating_sub(3)..];
     let tools = value(prepared, "tools")?;
-    let mut tools = match &tools {
+    let tools = match &tools {
         JsValue::Array(a) => a.clone(),
         JsValue::String(s) => string_items(s),
         _ => return Err(error("input.tools is not iterable")),
     };
-    if tools.len() > 1 {
-        let locale = crate::project_files::node_locale(|key| std::env::var(key).ok());
-        let collator = crate::project_files::node_collator(&locale).map_err(|(_, m)| error(m))?;
-        let compare = |left: &JsValue, right: &JsValue| -> Result<std::cmp::Ordering, HostError> {
-            let name = value(left, "name")?;
-            let left_name = name.as_string().ok_or_else(|| {
-                error(if name.is_undefined() {
-                    "Cannot read properties of undefined (reading 'localeCompare')"
-                } else if matches!(name, JsValue::Null) {
-                    "Cannot read properties of null (reading 'localeCompare')"
-                } else {
-                    "left.name.localeCompare is not a function"
-                })
-            })?;
-            let right_name = crate::js_value::to_string_units(&value(right, "name")?)
-                .map_err(|_| error(crate::js_value::StackOverflow::MESSAGE))?;
-            let order = collator.compare_utf16(left_name.units(), &right_name);
-            if order != std::cmp::Ordering::Equal {
-                return Ok(order);
-            }
-            let left = JsString::from(stable(left)?.unwrap_or_default());
-            let right = JsString::from(stable(right)?.unwrap_or_default());
-            Ok(collator.compare_utf16(left.units(), right.units()))
-        };
-        let mut failure = None;
-        tools.sort_by(|a, b| {
-            if failure.is_some() {
-                return std::cmp::Ordering::Equal;
-            }
-            match compare(a, b) {
-                Ok(order) => order,
-                Err(e) => {
-                    failure = Some(e);
-                    std::cmp::Ordering::Equal
-                }
-            }
-        });
-        if let Some(e) = failure {
-            return Err(e);
-        }
-    }
-
     let system = value(prepared, "systemPrompt")?;
-    let nullish = |v: JsValue| {
-        if matches!(v, JsValue::Null | JsValue::Undefined) {
-            "".into()
-        } else {
-            v
-        }
-    };
-    let fingerprint = JsValue::Object(object([
-        ("provider", nullish(get(request, "provider"))),
-        ("model", nullish(get(request, "model"))),
-        ("system", nullish(system.clone())),
-        ("tools", JsValue::Array(tools)),
-        (
-            "messages",
-            JsValue::Array(selected.iter().map(|i| messages[*i].clone()).collect()),
-        ),
-    ]));
-    let fingerprint = format!(
-        "{:x}",
-        Sha256::digest(stable(&fingerprint)?.unwrap().as_bytes())
-    );
+    // One fingerprint port for both TS call sites of `CachePlan.buildCachePlan`
+    // (this host-side finalization and the runtime's coordinator).
+    let identity = crate::runtime::context::cache::cache_plan_identity(
+        &crate::project_files::node_locale(|key| std::env::var(key).ok()),
+        &get(request, "provider"),
+        &get(request, "model"),
+        &system,
+        &tools,
+        messages,
+    )?;
     Ok(JsValue::Object(object([
         ("provider", get(request, "provider")),
         ("model", get(request, "model")),
@@ -368,13 +248,14 @@ fn cache_plan(
         (
             "messages",
             JsValue::Array(
-                selected
+                identity
+                    .breakpoints
                     .iter()
                     .map(|i| JsValue::Number(*i as f64))
                     .collect(),
             ),
         ),
-        ("fingerprint", JsValue::String(fingerprint.into())),
+        ("fingerprint", JsValue::String(identity.fingerprint.into())),
         (
             "generation",
             value(&value(prepared, "cachePlan")?, "generation")?,

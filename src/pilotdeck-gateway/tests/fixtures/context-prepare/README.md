@@ -40,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 58 个用例 / 108 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 68 个用例 / 124 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -115,3 +115,20 @@ provider 后的检查，会返回 `LATE` 而不是中止。
 
 已有 41 个 case 保留真实 TS 输出；本次更换真实 coordinator 后，其旧输入没有启用 cache，旧输出不变。
 新增/扩展行为的临时实现变异、原始失败日志与恢复后的回放记录见交付 `_tmp/20261022-a66-pr5b/RESULT.md`。
+
+本轮（#495 评审遗留 P2）新增：
+
+- `extractRecentUserText` 的畸形 text 块失败模式：`type:"text"` 缺 `text` /
+  `text` 为数字 / null 时整个 prepare 以 TS 同文 TypeError 拒绝（provider 不会被
+  调用），坏块在前也不跳过到后面的好块；非 text 块与纯空白 text 仍照常跳过；
+  无 memory resolver 时该函数根本不会被调用，同样输入照常出 context；
+- cache 工具排序的 `left.name.localeCompare` 失败模式：单工具不进比较器；
+  只有比较器左操作数的 `name` 需要是字符串（index 0 的坏名只作右操作数被
+  `String()` 强转，不抛错）；nullish 工具元素在 `name` 读取处抛错。金样含
+  良构非 ASCII 名（emoji 在 ICU 中排字母前）与孤代理项 / 星面键（两侧都按
+  `\ud800` 转义 / 原星面字符进入指纹的 stableSerialize 文本）。孤代理项
+  **名**不进用例：Node ICU 给未配对代理项独立权重（实测 `\ud800` 排在字母后、
+  `` 前），而 icu4x 两个比较通道都按 U+FFFD 处理，指纹必然分叉，登记
+  为已知未对齐而不是钉进金样；
+- 指纹算法收敛为单一 `cache_plan_identity`（coordinator 与 host 侧 finalize 共用），
+  旧 58 case / 108 步逐字节不变即证两处行为未变。

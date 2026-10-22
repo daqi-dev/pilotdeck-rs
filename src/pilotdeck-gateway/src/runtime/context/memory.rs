@@ -1,7 +1,10 @@
 //! Failure-tolerant memory attachments (`MemoryAttachmentBuilder.ts:25-89`).
 //! The provider is injected; this layer owns only request cancellation, timeout
 //! and attachment rendering, never the provider's retrieval/truncation policy.
-use crate::{host::Cancellation, metadata::js_trim};
+use crate::{
+    host::{Cancellation, HostError, ModuleError},
+    metadata::js_trim,
+};
 use pilotdeck_protocol::JsValue;
 use std::{future::Future, pin::Pin, time::Duration};
 
@@ -103,7 +106,11 @@ pub(super) async fn build(
     }
 }
 
-pub(super) fn recent_user_text(messages: &[JsValue]) -> String {
+/// `DefaultContextRuntime.ts:633-644` `extractRecentUserText`, including its
+/// failure mode: a `type: "text"` block whose `text` is missing or not a
+/// string throws at `block.text.trim()`, rejecting the whole prepare, instead
+/// of skipping the block.
+pub(super) fn recent_user_text(messages: &[JsValue]) -> Result<String, HostError> {
     for message in messages.iter().rev() {
         if !message
             .get("role")
@@ -118,15 +125,24 @@ pub(super) fn recent_user_text(messages: &[JsValue]) -> String {
                     .get("type")
                     .and_then(JsValue::as_string)
                     .is_some_and(|s| s.equals_str("text"))
-                    && let Some(text) = block.get("text").and_then(JsValue::as_string)
                 {
+                    let text = block.get("text").cloned().unwrap_or(JsValue::Undefined);
+                    let text = text.as_string().cloned().ok_or_else(|| {
+                        ModuleError::new(match &text {
+                            JsValue::Undefined => {
+                                "Cannot read properties of undefined (reading 'trim')"
+                            }
+                            JsValue::Null => "Cannot read properties of null (reading 'trim')",
+                            _ => "block.text.trim is not a function",
+                        })
+                    })?;
                     let text = String::from_utf16_lossy(text.units());
                     if !js_trim(&text).is_empty() {
-                        return text;
+                        return Ok(text);
                     }
                 }
             }
         }
     }
-    String::new()
+    Ok(String::new())
 }

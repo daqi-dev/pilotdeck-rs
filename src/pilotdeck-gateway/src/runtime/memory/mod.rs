@@ -18,9 +18,10 @@ use std::{
 use tokio::sync::Notify;
 
 /// One context-facing memory resolver handle. Retrieve/capture semantics are
-/// owned by the context work package; this bundle owns only the exact handle
-/// and its disposal, so it does not duplicate that contract here.
-pub trait MemoryResolver: Send + Sync {}
+/// owned by the context work package; the bundle owns only the exact handle
+/// and its disposal, so it uses that contract directly instead of keeping a
+/// second trait of the same name.
+pub use crate::runtime::context::memory::MemoryResolver;
 
 /// Maintenance handle retained for `ProjectMemoryMaintenanceController`.
 pub trait MemoryMaintenanceService: Send + Sync {
