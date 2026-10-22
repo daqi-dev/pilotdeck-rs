@@ -1,0 +1,1464 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/mcp/protocol/types.ts": "8176ead2cf6d407d93caf96d6b882cf959b81a6f172857dafeae188a82b4e5aa",
+    "src/mcp/runtime/sanitize.ts": "53851ed8c64e37496a98291b5f630c27b5d4231b849a8b6af939f59dc988945a",
+    "src/mcp/runtime/truncate.ts": "b28e609f9df3d7173e92c0570cd75ea1c1e82a3a796d7692f7482bd877c7651b",
+    "src/mcp/runtime/wireName.ts": "311952c3359f583082c440a6bbb99d89bffd75b03cf23b4a6190eb74ac12e630",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "sdk": "1.29.0",
+  "ajv": "8.20.0",
+  "ajvFormats": "3.0.1",
+  "providerSha256": "1893726b2b43d0688e8c37ce48b3c5f87a55eb93ca370433f882ae81c09c491a",
+  "ajvSha256": "edaed56fc546f5551b0d6dc2ff2a9cc25c2d6c83318a086eaa8c3ad0b2479297",
+  "formatsSha256": "b61693a26869970a92cc1fe832c931ccd3afe8b6d66802b19c48306349e84880",
+  "regexCompilation": [
+    {
+      "pattern": "^sdk_flag_probe$",
+      "flags": "u"
+    },
+    {
+      "pattern": "^sdk_key_probe$",
+      "flags": "u"
+    }
+  ],
+  "cases": [
+    {
+      "id": "lookbehind/positive/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=prefix:)value$"
+      },
+      "data": "prefix:value",
+      "valid": true
+    },
+    {
+      "id": "lookbehind/positive/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<=prefix:)value$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "prefix:value": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "lookbehind/positive/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=prefix:)value$"
+      },
+      "data": "other:value",
+      "valid": false,
+      "errorText": "data must match pattern \"(?<=prefix:)value$\""
+    },
+    {
+      "id": "lookbehind/positive/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<=prefix:)value$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "other:value": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "lookbehind/negative/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<!prefix:)value$"
+      },
+      "data": "other:value",
+      "valid": true
+    },
+    {
+      "id": "lookbehind/negative/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<!prefix:)value$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "other:value": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "lookbehind/negative/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<!prefix:)value$"
+      },
+      "data": "prefix:value",
+      "valid": false,
+      "errorText": "data must match pattern \"(?<!prefix:)value$\""
+    },
+    {
+      "id": "lookbehind/negative/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<!prefix:)value$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "prefix:value": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "lookbehind/reverse-captures/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=([ab]+)([bc]+))$"
+      },
+      "data": "abc",
+      "valid": true
+    },
+    {
+      "id": "lookbehind/reverse-captures/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<=([ab]+)([bc]+))$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "abc": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "lookbehind/reverse-captures/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "(?<=([ab]+)([bc]+))$"
+      },
+      "data": "xyz",
+      "valid": false,
+      "errorText": "data must match pattern \"(?<=([ab]+)([bc]+))$\""
+    },
+    {
+      "id": "lookbehind/reverse-captures/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?<=([ab]+)([bc]+))$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "xyz": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "lookahead/positive/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?=a)a$"
+      },
+      "data": "a",
+      "valid": true
+    },
+    {
+      "id": "lookahead/positive/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?=a)a$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "a": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "lookahead/positive/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?=a)a$"
+      },
+      "data": "b",
+      "valid": false,
+      "errorText": "data must match pattern \"^(?=a)a$\""
+    },
+    {
+      "id": "lookahead/positive/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?=a)a$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "b": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "lookahead/negative/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?!a)b$"
+      },
+      "data": "b",
+      "valid": true
+    },
+    {
+      "id": "lookahead/negative/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?!a)b$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "b": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "lookahead/negative/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?!a)b$"
+      },
+      "data": "a",
+      "valid": false,
+      "errorText": "data must match pattern \"^(?!a)b$\""
+    },
+    {
+      "id": "lookahead/negative/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?!a)b$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "a": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "backreference/number/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(a|b)\\1$"
+      },
+      "data": "aa",
+      "valid": true
+    },
+    {
+      "id": "backreference/number/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(a|b)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "aa": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "backreference/number/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(a|b)\\1$"
+      },
+      "data": "ab",
+      "valid": false,
+      "errorText": "data must match pattern \"^(a|b)\\1$\""
+    },
+    {
+      "id": "backreference/number/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(a|b)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "ab": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "backreference/name/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<word>[a-z]+):\\k<word>$"
+      },
+      "data": "abc:abc",
+      "valid": true
+    },
+    {
+      "id": "backreference/name/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?<word>[a-z]+):\\k<word>$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "abc:abc": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "backreference/name/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?<word>[a-z]+):\\k<word>$"
+      },
+      "data": "abc:abd",
+      "valid": false,
+      "errorText": "data must match pattern \"^(?<word>[a-z]+):\\k<word>$\""
+    },
+    {
+      "id": "backreference/name/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?<word>[a-z]+):\\k<word>$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "abc:abd": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "backreference/forward/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\1(a)$"
+      },
+      "data": "a",
+      "valid": true
+    },
+    {
+      "id": "backreference/forward/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\1(a)$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "a": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "backreference/forward/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\1(a)$"
+      },
+      "data": "aa",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\1(a)$\""
+    },
+    {
+      "id": "backreference/forward/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\1(a)$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "aa": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "backreference/unmatched/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?:(a)|b)\\1$"
+      },
+      "data": "b",
+      "valid": true
+    },
+    {
+      "id": "backreference/unmatched/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:(a)|b)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "b": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "backreference/unmatched/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(?:(a)|b)\\1$"
+      },
+      "data": "ba",
+      "valid": false,
+      "errorText": "data must match pattern \"^(?:(a)|b)\\1$\""
+    },
+    {
+      "id": "backreference/unmatched/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(?:(a)|b)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "ba": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "property/currency/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Sc}+$"
+      },
+      "data": "$€",
+      "valid": true
+    },
+    {
+      "id": "property/currency/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Sc}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "$€": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "property/currency/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Sc}+$"
+      },
+      "data": "ab",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\p{Sc}+$\""
+    },
+    {
+      "id": "property/currency/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Sc}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "ab": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "property/script-extensions/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Script_Extensions=Hira}+$"
+      },
+      "data": "ーあ",
+      "valid": true
+    },
+    {
+      "id": "property/script-extensions/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Script_Extensions=Hira}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "ーあ": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "property/script-extensions/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Script_Extensions=Hira}+$"
+      },
+      "data": "A",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\p{Script_Extensions=Hira}+$\""
+    },
+    {
+      "id": "property/script-extensions/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Script_Extensions=Hira}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "A": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "property/complement/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\P{ASCII}+$"
+      },
+      "data": "é😀",
+      "valid": true
+    },
+    {
+      "id": "property/complement/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\P{ASCII}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "é😀": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "property/complement/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\P{ASCII}+$"
+      },
+      "data": "a",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\P{ASCII}+$\""
+    },
+    {
+      "id": "property/complement/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\P{ASCII}+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "a": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "property/surrogate/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Surrogate}$"
+      },
+      "data": "\ud800",
+      "valid": true
+    },
+    {
+      "id": "property/surrogate/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Surrogate}$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "property/surrogate/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{Surrogate}$"
+      },
+      "data": "�",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\p{Surrogate}$\""
+    },
+    {
+      "id": "property/surrogate/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{Surrogate}$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "�": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/lone-high/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD800$"
+      },
+      "data": "\ud800",
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-high/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uD800$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-high/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD800$"
+      },
+      "data": "�",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\uD800$\""
+    },
+    {
+      "id": "utf16/lone-high/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uD800$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "�": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/lone-low/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uDFFF$"
+      },
+      "data": "\udfff",
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-low/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uDFFF$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\udfff": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-low/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uDFFF$"
+      },
+      "data": "\ud800",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\uDFFF$\""
+    },
+    {
+      "id": "utf16/lone-low/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uDFFF$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/dot-lone/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^.$"
+      },
+      "data": "\ud800",
+      "valid": true
+    },
+    {
+      "id": "utf16/dot-lone/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^.$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/dot-lone/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^.$"
+      },
+      "data": "ab",
+      "valid": false,
+      "errorText": "data must match pattern \"^.$\""
+    },
+    {
+      "id": "utf16/dot-lone/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^.$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "ab": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/astral-unit/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^.$"
+      },
+      "data": "😀",
+      "valid": true
+    },
+    {
+      "id": "utf16/astral-unit/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^.$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "😀": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/astral-unit/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^.$"
+      },
+      "data": "😀a",
+      "valid": false,
+      "errorText": "data must match pattern \"^.$\""
+    },
+    {
+      "id": "utf16/astral-unit/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^.$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "😀a": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/lone-is-not-pair/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD83D$"
+      },
+      "data": "\ud83d",
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-is-not-pair/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uD83D$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud83d": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/lone-is-not-pair/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\uD83D$"
+      },
+      "data": "😀",
+      "valid": false,
+      "errorText": "data must match pattern \"^\\uD83D$\""
+    },
+    {
+      "id": "utf16/lone-is-not-pair/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\uD83D$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "😀": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/surrogate-backreference/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^(.)\\1$"
+      },
+      "data": "\ud800\ud800",
+      "valid": true
+    },
+    {
+      "id": "utf16/surrogate-backreference/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(.)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800\ud800": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "utf16/surrogate-backreference/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^(.)\\1$"
+      },
+      "data": "𐏿",
+      "valid": false,
+      "errorText": "data must match pattern \"^(.)\\1$\""
+    },
+    {
+      "id": "utf16/surrogate-backreference/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^(.)\\1$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "𐏿": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "utf16/raw-lone-pattern/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^\ud800$"
+      },
+      "data": "\ud800",
+      "valid": true
+    },
+    {
+      "id": "utf16/raw-lone-pattern/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\ud800$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "compileError": {
+        "name": "URIError",
+        "message": "URI malformed"
+      }
+    },
+    {
+      "id": "utf16/raw-lone-pattern/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^\ud800$"
+      },
+      "data": "�",
+      "valid": false,
+      "errorText": "data must match pattern \"^\ud800$\""
+    },
+    {
+      "id": "utf16/raw-lone-pattern/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\ud800$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "�": 7
+      },
+      "compileError": {
+        "name": "URIError",
+        "message": "URI malformed"
+      }
+    },
+    {
+      "id": "u-not-v/intersection/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a&&b]$"
+      },
+      "data": "&",
+      "valid": true
+    },
+    {
+      "id": "u-not-v/intersection/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[a&&b]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "&": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "u-not-v/intersection/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a&&b]$"
+      },
+      "data": "c",
+      "valid": false,
+      "errorText": "data must match pattern \"^[a&&b]$\""
+    },
+    {
+      "id": "u-not-v/intersection/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[a&&b]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "c": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "u-not-v/double-tilde/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a~~b]$"
+      },
+      "data": "~",
+      "valid": true
+    },
+    {
+      "id": "u-not-v/double-tilde/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[a~~b]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "~": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "u-not-v/double-tilde/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^[a~~b]$"
+      },
+      "data": "c",
+      "valid": false,
+      "errorText": "data must match pattern \"^[a~~b]$\""
+    },
+    {
+      "id": "u-not-v/double-tilde/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[a~~b]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "c": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "u-not-v/empty-class/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^]$"
+      },
+      "data": "\ud800",
+      "valid": true
+    },
+    {
+      "id": "u-not-v/empty-class/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[^]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "\ud800": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "u-not-v/empty-class/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^[^]$"
+      },
+      "data": "",
+      "valid": false,
+      "errorText": "data must match pattern \"^[^]$\""
+    },
+    {
+      "id": "u-not-v/empty-class/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[^]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "u-not-v/nested-open/value/positive",
+      "schema": {
+        "type": "string",
+        "pattern": "^[[]$"
+      },
+      "data": "[",
+      "valid": true
+    },
+    {
+      "id": "u-not-v/nested-open/key/positive",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[[]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "[": 7
+      },
+      "valid": true
+    },
+    {
+      "id": "u-not-v/nested-open/value/negative",
+      "schema": {
+        "type": "string",
+        "pattern": "^[[]$"
+      },
+      "data": "a",
+      "valid": false,
+      "errorText": "data must match pattern \"^[[]$\""
+    },
+    {
+      "id": "u-not-v/nested-open/key/negative",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[[]$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "data": {
+        "a": 7
+      },
+      "valid": false,
+      "errorText": "data must NOT have additional properties"
+    },
+    {
+      "id": "syntax/class-string/value",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\p{RGI_Emoji}$"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^\\p{RGI_Emoji}$/u: Invalid property name"
+      }
+    },
+    {
+      "id": "syntax/class-string/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\p{RGI_Emoji}$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^\\p{RGI_Emoji}$/u: Invalid property name"
+      }
+    },
+    {
+      "id": "syntax/class-string-q/value",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\q{ab|cd}]$"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[\\q{ab|cd}]$/u: Invalid escape"
+      }
+    },
+    {
+      "id": "syntax/class-string-q/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[\\q{ab|cd}]$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[\\q{ab|cd}]$/u: Invalid escape"
+      }
+    },
+    {
+      "id": "syntax/nested-set/value",
+      "schema": {
+        "type": "string",
+        "pattern": "^[[a]--[b]]$"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[[a]--[b]]$/u: Lone quantifier brackets"
+      }
+    },
+    {
+      "id": "syntax/nested-set/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[[a]--[b]]$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[[a]--[b]]$/u: Lone quantifier brackets"
+      }
+    },
+    {
+      "id": "syntax/inline-v-flag/value",
+      "schema": {
+        "type": "string",
+        "pattern": "(?v:a)"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /(?v:a)/u: Invalid group"
+      }
+    },
+    {
+      "id": "syntax/inline-v-flag/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "(?v:a)": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /(?v:a)/u: Invalid group"
+      }
+    },
+    {
+      "id": "syntax/u-identity-escape/value",
+      "schema": {
+        "type": "string",
+        "pattern": "^\\a$"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^\\a$/u: Invalid escape"
+      }
+    },
+    {
+      "id": "syntax/u-identity-escape/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^\\a$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^\\a$/u: Invalid escape"
+      }
+    },
+    {
+      "id": "syntax/u-identity-in-class/value",
+      "schema": {
+        "type": "string",
+        "pattern": "^[\\q]$"
+      },
+      "data": "",
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[\\q]$/u: Invalid escape"
+      }
+    },
+    {
+      "id": "syntax/u-identity-in-class/key",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^[\\q]$": {
+            "type": "number"
+          }
+        }
+      },
+      "data": {
+        "a": 1
+      },
+      "compileError": {
+        "name": "SyntaxError",
+        "message": "Invalid regular expression: /^[\\q]$/u: Invalid escape"
+      }
+    }
+  ]
+}
