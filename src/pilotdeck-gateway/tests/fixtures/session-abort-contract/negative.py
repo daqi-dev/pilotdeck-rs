@@ -17,21 +17,52 @@ def main():
     assert os.environ.get('CARGO_HOME'), 'set CARGO_HOME'
     assert os.environ.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     handle = 'pilotdeck-gateway/src/runtime/session/handle.rs'
-    original = (rust / handle).read_text()
-    test = 'runtime::session::handle::abort_contract_tests::abort_at_dispose_and_lease_windows_matches_ts'
+    fixture = 'pilotdeck-gateway/tests/fixtures/session-abort-contract/oracle.json'
+    test = 'runtime::session::handle::abort_contract_tests::abort_at_lease_and_dispose_windows_matches_ts'
+    trace = 'lease/dispose abort trace; active=false'
     mutants = [
-        ('suppress-abort-while-draining',
+        ('suppress-abort-while-draining', handle,
          'if progress.state == HandleState::Disposed {',
-         'if progress.state != HandleState::Active {'),
-        ('disposed-before-lease-release',
+         'if progress.state != HandleState::Active {', trace),
+        ('disposed-before-lease-release', handle,
          'if let Some(mut lease) = guard.lease.take()',
          'handle.0.progress.lock().unwrap().state = HandleState::Disposed;\n'
-         '            if let Some(mut lease) = guard.lease.take()'),
-        ('forward-abort-after-disposed',
-         'if progress.state == HandleState::Disposed {', 'if false {'),
+         '            if let Some(mut lease) = guard.lease.take()', trace),
+        ('forward-abort-after-disposed', handle,
+         'if progress.state == HandleState::Disposed {', 'if false {', trace),
+        # Production order (TS createAgentSession.ts:229,234) releases the
+        # project lease before disposing session resources. Reverting to the
+        # pre-alignment Rust order opens the session window first, so the
+        # lease window never opens; the replay is caught by its own designed
+        # in-test 3-second bound, not by any external timeout.
+        ('reverted-cleanup-order', handle,
+         'let mut disposal_failures = Vec::new();\n'
+         '            if let Some(mut lease) = guard.lease.take()\n'
+         '                && let Err(error) = lease.release().await\n'
+         '            {\n'
+         '                disposal_failures.push(error);\n'
+         '            }\n'
+         '            if let Err(error) = handle.0.session.dispose().await {\n'
+         '                disposal_failures.push(error);\n'
+         '            }',
+         'let mut disposal_failures = Vec::new();\n'
+         '            if let Err(error) = handle.0.session.dispose().await {\n'
+         '                disposal_failures.push(error);\n'
+         '            }\n'
+         '            if let Some(mut lease) = guard.lease.take()\n'
+         '                && let Err(error) = lease.release().await\n'
+         '            {\n'
+         '                disposal_failures.push(error);\n'
+         '            }', 'controlled dispose/lease interleaving hung'),
     ]
-    for name, before, _ in mutants:
-        assert original.count(before) == 1, (name, original.count(before))
+    originals = {name: (rust / name).read_text() for name in {m[1] for m in mutants} | {fixture}}
+    oracle = json.loads(originals[fixture])
+    source = 'src/agent/scope/AgentHandle.ts'
+    mutants.append(('tampered-source-hash', fixture,
+                    oracle['sourceSha256'][source], '0' * 64,
+                    f'oracle hash for {source} does not match'))
+    for name, file, before, _after, _marker in mutants:
+        assert originals[file].count(before) == 1, (name, originals[file].count(before))
     results = []
     with tempfile.TemporaryDirectory(prefix='pdrs-abort-contract-negative-', dir='/tmp') as directory:
         scratch = Path(directory) / 'src'
@@ -39,8 +70,10 @@ def main():
             'target', '.git', 'node_modules', '.env*'))
         shutil.copytree(rust.parent / 'specs', Path(directory) / 'specs')
         env = dict(os.environ, CARGO_NET_OFFLINE='true', CARGO_TARGET_DIR=str(scratch / 'target'))
-        for name, before, after in [('baseline', None, None)] + mutants:
-            (scratch / handle).write_text(original if before is None else original.replace(before, after, 1))
+        for name, file, before, after, marker in [('baseline', None, None, None, None)] + mutants:
+            if file is not None:
+                (scratch / file).write_text(originals[file] if before is None
+                                            else originals[file].replace(before, after, 1))
             gate_logs = []
             while True:
                 gate = subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'],
@@ -58,15 +91,15 @@ def main():
             raw = result.stdout + result.stderr
             (output / f'negative-{name}.log').write_text(''.join(gate_logs) + raw + f'\nexit={result.returncode}\n')
             valid = ('1 passed; 0 failed' in raw and result.returncode == 0) if name == 'baseline' else (
-                result.returncode == 101 and 'dispose/lease abort trace; active=false' in raw
+                result.returncode == 101 and marker in raw
                 and '0 passed; 1 failed' in raw and 'could not compile' not in raw)
-            results.append(dict(name=name, file=handle, before=before, after=after,
+            results.append(dict(name=name, file=file, before=before, after=after,
                                 command=command, exit=result.returncode, valid=valid))
             (output / 'negative-summary.json').write_text(json.dumps(results, indent=2) + '\n')
             print(f'{name}: {"PASS" if valid else "INVALID"} exit={result.returncode}', flush=True)
             if not valid:
                 raise SystemExit(1)
-        (scratch / handle).write_text(original)
+        (scratch / handle).write_text(originals[handle])
     print('all mutations detected; scratch workspace restored and removed', flush=True)
 
 
