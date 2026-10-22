@@ -481,14 +481,34 @@ const CONFIG_CASES = [
   },
   { name: 'retention-safe-integer', raw: { stats: { retentionMs: 1e18 } } },
   { name: 'retention-valid', raw: { stats: { retentionMs: 60_000 } } },
+  { name: 'baseline-unknown-provider', raw: { stats: { baselineModel: 'missing/model' } } },
+  { name: 'baseline-unknown-model', raw: { stats: { baselineModel: 'anthropic/missing' } } },
+  { name: 'baseline-object-unknown-provider', raw: { stats: { baselineModel: { provider: ' missing ', model: ' model ' } } } },
+  { name: 'baseline-object-unknown-model', raw: { stats: { baselineModel: { provider: ' anthropic ', model: ' missing ' } } } },
+  {
+    name: 'pricing-mixed-refs',
+    raw: { stats: { modelPricing: {
+      'missing/model': { input: -1 }, // Unknown ref skips rate diagnostics.
+      'anthropic/claude-sonnet-4-5-20250929': { input: 1, output: 2, cacheRead: 0 },
+      'anthropic/missing': { output: 3 },
+    }, baselineModel: 'missing/baseline' } },
+  },
+  { name: 'pricing-no-valid-refs', raw: { stats: { modelPricing: {
+    'missing/model': { input: 1 }, 'anthropic/missing': { output: 2 },
+  } } } },
+  { name: 'pricing-malformed-refs', raw: { stats: { modelPricing: {
+    '': {}, 'anthropic': {}, '/model': {}, 'anthropic/': {},
+  } } } },
+
 ];
 const configCases = CONFIG_CASES.map((item) => {
   const parsed = parseRouterConfig(item.raw, CONFIG_MODELS as any);
   return {
     name: item.name,
     raw: item.raw,
+    modelConfig: CONFIG_MODELS,
     stats: clone(parsed.config?.stats ?? null),
-    diagnostics: parsed.diagnostics.map((diagnostic) => ({ code: diagnostic.code, path: diagnostic.path })),
+    diagnostics: clone(parsed.diagnostics),
   };
 });
 

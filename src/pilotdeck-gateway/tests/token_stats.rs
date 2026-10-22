@@ -237,12 +237,28 @@ fn token_stats_replay_matches_real_ts() {
 fn stats_config_projection_matches_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "configCases"));
-    assert_eq!(cases.len(), 7);
+    assert_eq!(cases.len(), 14);
     for case in cases {
         let name = text(get(case, "name"));
         let raw = get(case, "raw");
-        let snapshot = obj(&[("config", obj(&[("router", raw.clone())]))]);
-        let config = RouterConfig::from_snapshot(&snapshot);
+        let snapshot = obj(&[(
+            "config",
+            obj(&[
+                ("router", raw.clone()),
+                ("model", get(case, "modelConfig").clone()),
+            ]),
+        )]);
+        let (config, diagnostics) = RouterConfig::from_snapshot_with_ref_diagnostics(&snapshot);
+        let expected_diagnostics: Vec<_> = items(get(case, "diagnostics"))
+            .iter()
+            .filter(|d| text(get(d, "code")).starts_with("ROUTER_REF_"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            stringify_json(&JsValue::Array(diagnostics)),
+            stringify_json(&JsValue::Array(expected_diagnostics)),
+            "{name}: ref diagnostics"
+        );
         let expected = get(case, "stats");
         assert!(!matches!(expected, JsValue::Null), "{name}: expected stats");
         assert_eq!(

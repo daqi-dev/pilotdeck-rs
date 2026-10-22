@@ -19,7 +19,7 @@ Gateway `usageSnapshotForSdk` / `modelUsageSnapshotForSdk` projections.
   - `src/router/config/schema.ts`
     `69c8427d7d854eaed0d89475d6a97bfa8e9bd960deefd6e76de7e2f983056609`
 - `oracle.json` sha256:
-  `1fb59484c2544f51c0bc12edc4df87dbff97338b76691ad80e2e5beb6ab89f88`
+  `3c701dfcaa5e0df2a6949de497f01d235ad7a4c6c681e865e4edfcb59e9855ec`
 
 `generate.mts` imports the real modules and calls
 `ProjectRuntimeRegistry.prototype.usageSnapshotForSdk` /
@@ -78,7 +78,13 @@ rate-card, and absent usage.
 
 `oracle.json.configCases` records `parseRouterConfig` output for the stats
 projection: string and object `baselineModel`, trim, rejected shapes,
-`pricingNumber` filtering and the `retentionMs` safe-integer bound.
+`pricingNumber` filtering and the `retentionMs` safe-integer bound. The 14
+cases also pin known/unknown providers and models for both baseline forms,
+mixed valid/invalid pricing keys, all-invalid pricing (empty map), malformed
+references, and reference diagnostic order. Each case records the model
+directory and complete real-TS diagnostics; Rust compares the `ROUTER_REF_*`
+subset byte-for-byte (code, severity, path and message), as other loader
+validation is outside this runtime projection.
 
 ## Rust replay
 

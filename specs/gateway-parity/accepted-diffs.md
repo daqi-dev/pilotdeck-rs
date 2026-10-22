@@ -101,3 +101,5 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **批准记录**：无。`未批准，非已接受差异`；前置于 stats 配置接入 `modelConfig` 的后续单，届时补真实 TS 金样与 fatal 路径回放。
 
 人批（2026-10-22，用户本人在协调者会话）：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 两条**接受为已知差异**，但要求 Rust 补实现：BASELINEMODEL 见 https://github.com/daqi-dev/pilotdeck-rs/issues/493，RETENTION（按 V8 dateparser 逐格式移植并用 TS 金样对拍）见 https://github.com/daqi-dev/pilotdeck-rs/issues/494。补齐后在本节追加「已实现，差异消除」。
+
+已实现，差异消除（本 PR 修复轮 4）。`runtime/model/router/config.rs` 的 stats 投影已从同一 snapshot 读取 `modelConfig`，对 `baselineModel` 及 `modelPricing` 每个对象条目的键调用引用校验：未知 provider/model 与非法引用均按 TS 输出 fatal 并丢弃字段/条目；引用诊断入口为 `RouterConfig::from_snapshot_with_ref_diagnostics`。真实 TS 金样及逐字节诊断回放见 `tests/fixtures/token-stats/` 与 `stats_config_projection_matches_real_ts`，同步消除 gate6 sibling P1 的 modelPricing 同源遗漏；原记录保留作为历史。

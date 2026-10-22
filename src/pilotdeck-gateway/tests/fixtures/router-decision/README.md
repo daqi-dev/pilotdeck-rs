@@ -11,7 +11,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 生成器先跑共享溯源守卫 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`（固定 HEAD、干净 tracked 树、逐 blob 对照 Git 对象），再对 `src/router/RouterRuntime.ts` 与 `src/pilot/config/loadPilotConfig.ts` 的 import 闭包逐个文件记 `sourceSha256`。`locale` 断言 `en-US`（`Intl.Collator` 默认 locale），与 config/snapshot 夹具一致。
 
-配置不是手写对象：每个 case 将 YAML 写入独占临时 home，调用真实 `loadPilotConfig({configPath, env, version:1})`，把 `snapshot.config.router` 传给 `createRouterRuntime`，同一份 JSON 存进 `oracle.json` 供 Rust 用 `RouterConfig::from_snapshot` 读取。临时目录用 `mkdtemp` 创建，`finally` 只删本进程创建的那一棵。
+配置不是手写对象：每个 case 将 YAML 写入独占临时 home，调用真实 `loadPilotConfig({configPath, env, version:1})`，把 `snapshot.config.router` 传给 `createRouterRuntime`，同一份 router JSON 连同真实 snapshot 的 `config.model` 存进 `oracle.json`（stats 引用校验使用该模型目录）供 Rust 用 `RouterConfig::from_snapshot` 读取。临时目录用 `mkdtemp` 创建，`finally` 只删本进程创建的那一棵。
 
 ## 覆盖（28 个 case）
 

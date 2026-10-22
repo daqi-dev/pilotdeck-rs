@@ -776,7 +776,7 @@ try {
     }
     recorded.push({
       id: item.id,
-      snapshot: JSON.parse(JSON.stringify({ config: { router: routerConfig } })),
+      snapshot: JSON.parse(JSON.stringify({ config: { router: routerConfig, model: snapshot.config.model } })),
       capabilities,
       multimodal,
       denied: item.denied ?? [],
