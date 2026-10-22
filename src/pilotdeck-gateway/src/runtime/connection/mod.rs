@@ -27,8 +27,11 @@ pub struct RequestError {
     /// JS strings are UTF-16 code units: an unknown-method message must echo a
     /// lone surrogate exactly as TS does, so no lossy UTF-8 conversion happens.
     pub message: JsString,
-    pub details: Option<Value>,
-    pub validation: Option<Value>,
+    /// Provider error payloads stay JsValue: serde_json::Value sorts keys and
+    /// would reorder nested objects relative to the TS JSON.stringify output.
+    /// Boxed to keep RequestError small (clippy::result_large_err).
+    pub details: Option<Box<JsValue>>,
+    pub validation: Option<Box<JsValue>>,
 }
 impl RequestError {
     pub fn new(message: impl Into<JsString>) -> Self {
@@ -47,8 +50,12 @@ impl RequestError {
 /// lock using the supplied binding. abort receives exactly {sessionKey}, with no
 /// runId, preserving A5's unfenced socket-close behavior (including old sockets).
 pub trait ConnectionGateway: Send + Sync {
-    fn describe_server(&self) -> Call<'_, Result<Value, RequestError>>;
-    fn request(&self, method: JsString, params: JsValue) -> Call<'_, Result<Value, RequestError>>;
+    /// Provider results are JsValue so insertion order survives to JSON.stringify.
+    /// serde_json::Value (BTreeMap) would alphabetize nested keys and break the
+    /// byte-for-byte frame comparison against TS.
+    fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>>;
+    fn request(&self, method: JsString, params: JsValue)
+    -> Call<'_, Result<JsValue, RequestError>>;
     fn submit<'a>(
         &'a self,
         params: JsValue,
@@ -187,7 +194,7 @@ impl GatewayConnection {
                     "serverVersion".into(),
                     JsValue::from(self.server_version.as_str()),
                 );
-                out.insert("serverInfo".into(), js_value(&info));
+                out.insert("serverInfo".into(), info);
                 out.insert(
                     "interactionBinding".into(),
                     js_value(&self.binding.to_json()),
@@ -291,7 +298,7 @@ impl GatewayConnection {
                     out.insert("type".into(), JsValue::from("response"));
                     out.insert("id".into(), id);
                     out.insert("ok".into(), JsValue::Bool(true));
-                    out.insert("result".into(), js_value(&result));
+                    out.insert("result".into(), result);
                     self.send(JsValue::Object(out));
                 }
                 Ok(None) => {}
@@ -300,9 +307,9 @@ impl GatewayConnection {
                     detail.insert("code".into(), JsValue::from(failure.code.as_str()));
                     detail.insert("message".into(), JsValue::String(failure.message));
                     if let Some(validation) = failure.validation {
-                        detail.insert("validation".into(), js_value(&validation));
+                        detail.insert("validation".into(), *validation);
                     } else if let Some(details) = failure.details {
-                        detail.insert("details".into(), js_value(&details));
+                        detail.insert("details".into(), *details);
                     }
                     let mut out = JsObject::new();
                     out.insert("type".into(), JsValue::from("response"));
@@ -361,16 +368,27 @@ impl GatewayConnection {
         drop(cleanup);
         result?;
         let (seq, completed, error) = stream.into_inner().unwrap();
-        let terminal = error.or(completed).unwrap_or_else(|| {
-            serde_json::json!({"type":"error", "code":"result_unknown",
-            "message":"Gateway stream ended without a terminal result.", "recoverable":true})
-        });
+        // Build the fallback in TS property order rather than serde's sort.
+        let terminal = match error.or(completed) {
+            Some(event) => js_value(&event),
+            None => {
+                let mut fallback = JsObject::new();
+                fallback.insert("type".into(), JsValue::from("error"));
+                fallback.insert("code".into(), JsValue::from("result_unknown"));
+                fallback.insert(
+                    "message".into(),
+                    JsValue::from("Gateway stream ended without a terminal result."),
+                );
+                fallback.insert("recoverable".into(), JsValue::Bool(true));
+                JsValue::Object(fallback)
+            }
+        };
         let mut out = JsObject::new();
         out.insert("type".into(), JsValue::from("event"));
         out.insert("id".into(), id.clone());
         out.insert("seq".into(), JsValue::Number(seq as f64));
         out.insert("final".into(), JsValue::Bool(true));
-        out.insert("event".into(), js_value(&terminal));
+        out.insert("event".into(), terminal);
         self.send(JsValue::Object(out));
         Ok(())
     }

@@ -89,7 +89,7 @@ impl Gateway {
     }
 }
 impl ConnectionGateway for Gateway {
-    fn describe_server(&self) -> Call<'_, Result<Value, RequestError>> {
+    fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
             self.calls
                 .lock()
@@ -99,10 +99,17 @@ impl ConnectionGateway for Gateway {
                 self.started.add_permits(1);
                 self.release.acquire().await.unwrap().forget();
             }
-            Ok(json!({"name":"fixture-server","capabilities":["fixture"]}))
+            // TS insertion order (name before capabilities), not serde's sort.
+            Ok(json_text(
+                r#"{"name":"fixture-server","capabilities":["fixture"]}"#,
+            ))
         })
     }
-    fn request(&self, method: JsString, params: JsValue) -> Call<'_, Result<Value, RequestError>> {
+    fn request(
+        &self,
+        method: JsString,
+        params: JsValue,
+    ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
             match method.to_utf8().ok().as_deref() {
                 Some("describe_server") => {
@@ -112,19 +119,21 @@ impl ConnectionGateway for Gateway {
                         .lock()
                         .unwrap()
                         .push(js(&json!({"method":"describe_server"})));
-                    Ok(json!({"name":"fixture-server","capabilities":["fixture"]}))
+                    Ok(json_text(
+                        r#"{"name":"fixture-server","capabilities":["fixture"]}"#,
+                    ))
                 }
                 Some("permission_decide") => {
                     self.record("permission_decide", params);
-                    Ok(json!({"accepted":true}))
+                    Ok(json_text(r#"{"accepted":true}"#))
                 }
                 Some("elicitation_respond") => {
                     self.record("elicitation_respond", params);
-                    Ok(json!({"accepted":true}))
+                    Ok(json_text(r#"{"accepted":true}"#))
                 }
                 Some("abort_turn") => {
                     self.record("abort_turn", params);
-                    Ok(json!({"ok":true}))
+                    Ok(json_text(r#"{"ok":true}"#))
                 }
                 Some("reconnect_interaction") => {
                     self.record("reconnect_interaction", params.clone());
@@ -138,26 +147,26 @@ impl ConnectionGateway for Gateway {
                         .map(WsBinding::from_json)
                         .transpose()
                         .map_err(RequestError::new)?;
-                    Ok(self.bindings.reconnect(
-                        &property_json(&params, "sessionKey").to_string(),
+                    Ok(js(&self.bindings.reconnect(
+                        &property_text(&params, "sessionKey"),
                         next,
                         previous.as_ref(),
-                    ))
+                    )))
                 }
                 Some("steer_turn") => Err(RequestError::new("plain fixture error")),
                 Some("cancel_steer") => Err(RequestError {
                     code: "FIXTURE_ERROR".into(),
                     message: "structured fixture error".into(),
-                    details: Some(json!({"nested":{"value":1}})),
+                    details: Some(Box::new(js(&json!({"nested":{"value":1}})))),
                     validation: None,
                 }),
                 Some("skill_validate") => Err(RequestError {
                     code: "validation_failed".into(),
                     message: "Validation failed.".into(),
                     details: None,
-                    validation: Some(
-                        json!({"valid":false,"issues":[{"code":"fixture","message":"fixture validation"}]}),
-                    ),
+                    validation: Some(Box::new(js(
+                        &json!({"valid":false,"issues":[{"code":"fixture","message":"fixture validation"}]}),
+                    ))),
                 }),
                 Some("skill_read") => Err(RequestError {
                     code: "not_found".into(),
@@ -185,7 +194,7 @@ impl ConnectionGateway for Gateway {
             // connection cleanup independently, including malformed mutants.
             if self.replay_bindings {
                 self.bindings.reconnect(
-                    &property_json(&params, "sessionKey").to_string(),
+                    &property_text(&params, "sessionKey"),
                     WsBinding::from_json(&property_json(&params, "interactionBinding")).unwrap(),
                     None,
                 );
@@ -246,14 +255,25 @@ fn unknown_method_message(method: &JsString) -> JsString {
 fn js(value: &Value) -> JsValue {
     parse_json(&value.to_string()).unwrap()
 }
-// Only the provider's known session/binding fields need serde JSON. Spread
-// index values never cross this conversion and remain lossless UTF-16.
+/// Provider results are constructed from source text so insertion order is the
+/// TS order; going through serde_json::Value would alphabetize nested keys.
+fn json_text(text: &str) -> JsValue {
+    parse_json(text).unwrap()
+}
+// Only the provider's known binding fields need serde JSON. Session keys and
+// spread index values stay JsValue: a lone surrogate cannot round-trip serde.
 fn property_json(value: &JsValue, key: &str) -> Value {
     value
         .get(key)
         .and_then(|value| stringify_json(value).unwrap())
         .map(|text| serde_json::from_str(&text).unwrap())
         .unwrap_or(Value::Null)
+}
+fn property_text(value: &JsValue, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|value| stringify_json(value).unwrap())
+        .unwrap_or_default()
 }
 fn array(value: &JsValue) -> &[JsValue] {
     let JsValue::Array(items) = value else {
@@ -703,29 +723,40 @@ fn sessions_preserve_in_flight_then_interaction_insertion_order() {
     assert_eq!(session_values(&state.sessions()), [json!("b"), json!("a")]);
 }
 
-// The four frames below were replayed against the real baseline
-// GatewayWsConnection.ts with Node v22 (see _tmp/20261022-issue-458/ts-probe*).
-// TS accepts every one without closing; these tests pin the same frames and
-// the same close behavior, keeping lone surrogate code units intact.
-fn sent_frames(text: &MemoryText) -> Vec<JsValue> {
-    text.frames
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|raw| parse_json(raw).unwrap())
-        .collect()
-}
-fn assert_same_json(actual: &JsValue, expected: &str) {
-    let expected = parse_json(expected).unwrap();
-    assert_eq!(
-        normalized(actual, &BTreeMap::new()),
-        normalized(&expected, &BTreeMap::new())
-    );
+// The frames below are the verbatim `sent` strings replayed against the real
+// baseline GatewayWsConnection.ts with Node v22 (see
+// _tmp/20261022-issue-458/ts-probe-output.json). Only the per-connection UUID
+// and the process-wide generation counter are placeholder-substituted; every
+// other byte, including nested key order, must match.
+const TS_HELLO_OK: &str = r#"{"type":"hello_ok","protocolVersion":"1.2","serverVersion":"test","serverInfo":{"name":"fixture-server","capabilities":["fixture"]},"interactionBinding":{"connectionId":"{connectionId}","generation":{generation}}}"#;
+const TS_DESCRIBE_OK: &str = r#"{"type":"response","id":"1","ok":true,"result":{"name":"fixture-server","capabilities":["fixture"]}}"#;
+const TS_SURROGATE_ID_OK: &str = r#"{"type":"response","id":"\ud800","ok":true,"result":{"name":"fixture-server","capabilities":["fixture"]}}"#;
+const TS_UNKNOWN_SURROGATE_METHOD: &str = r#"{"type":"response","id":"1","ok":false,"error":{"code":"gateway_request_failed","message":"Unknown gateway method \ud800."}}"#;
+const TS_ABORT_OK: &str = r#"{"type":"response","id":"1","ok":true,"result":{"ok":true}}"#;
+
+fn assert_sent(text: &MemoryText, connection: &GatewayConnection, expected: &[&str]) {
+    let frames = text.frames.lock().unwrap();
+    assert_eq!(frames.len(), expected.len(), "sent frames: {frames:?}");
+    let binding = &connection.binding;
+    for (index, template) in expected.iter().enumerate() {
+        let expected = template
+            .replace("{connectionId}", &binding.connection_id)
+            .replace("{generation}", &binding.generation().to_string());
+        assert_eq!(frames[index], expected, "frame {index}");
+    }
 }
 fn string_units(value: &JsValue) -> Vec<u16> {
     value.as_string().unwrap().units().to_vec()
 }
-async fn lone_surrogate_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
+/// Compare tracked sessions at UTF-16 code-unit level: the replay helper
+/// `session_values` goes through serde_json and would panic on lone surrogates.
+fn session_units(sessions: &[SessionKey]) -> Vec<Vec<u16>> {
+    sessions
+        .iter()
+        .map(|key| string_units(key.value()))
+        .collect()
+}
+async fn authed_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<GatewayConnection>) {
     let text = Arc::new(MemoryText::default());
     let gateway = Arc::new(Gateway::new(false));
     let connection = Arc::new(GatewayConnection::new(
@@ -743,40 +774,49 @@ async fn lone_surrogate_connection() -> (Arc<MemoryText>, Arc<Gateway>, Arc<Gate
     (text, gateway, connection)
 }
 
+// Ordinary ASCII request: pins the top-level type,id,ok,result insertion order
+// that changed when frames stopped going through serde_json::Value.
+#[tokio::test]
+async fn ascii_describe_pins_ts_top_level_order() {
+    let (text, _gateway, connection) = authed_connection().await;
+    connection
+        .receive(r#"{"type":"request","id":"1","method":"describe_server"}"#)
+        .await
+        .unwrap();
+    assert_sent(&text, &connection, &[TS_HELLO_OK, TS_DESCRIBE_OK]);
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn lone_surrogate_id_round_trips_in_response() {
-    let (text, _gateway, connection) = lone_surrogate_connection().await;
+    let (text, _gateway, connection) = authed_connection().await;
     connection
         .receive(r#"{"type":"request","id":"\ud800","method":"describe_server"}"#)
         .await
         .unwrap();
-    let frames = sent_frames(&text);
-    assert_eq!(frames.len(), 2);
-    assert_eq!(string_units(frames[1].get("id").unwrap()), [0xD800]);
-    assert_same_json(
-        &frames[1],
-        r#"{"type":"response","id":"\ud800","ok":true,"result":{"name":"fixture-server","capabilities":["fixture"]}}"#,
-    );
-    // JSON.stringify re-escapes the lone surrogate rather than replacing it.
-    assert!(text.frames.lock().unwrap()[1].contains(r#""id":"\ud800""#));
+    assert_sent(&text, &connection, &[TS_HELLO_OK, TS_SURROGATE_ID_OK]);
+    let sent = text.frames.lock().unwrap()[1].clone();
+    let frame = parse_json(&sent).unwrap();
+    assert_eq!(string_units(frame.get("id").unwrap()), [0xD800]);
     assert!(text.closes.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn lone_surrogate_method_reaches_gateway_and_echoes_in_error() {
-    let (text, gateway, connection) = lone_surrogate_connection().await;
+    let (text, gateway, connection) = authed_connection().await;
     connection
         .receive(r#"{"type":"request","id":"1","method":"\ud800"}"#)
         .await
         .unwrap();
-    let frames = sent_frames(&text);
-    assert_eq!(frames.len(), 2);
-    assert_same_json(
-        &frames[1],
-        r#"{"type":"response","id":"1","ok":false,"error":{"code":"gateway_request_failed","message":"Unknown gateway method \ud800."}}"#,
+    assert_sent(
+        &text,
+        &connection,
+        &[TS_HELLO_OK, TS_UNKNOWN_SURROGATE_METHOD],
     );
+    let sent = text.frames.lock().unwrap()[1].clone();
+    let frame = parse_json(&sent).unwrap();
     assert_eq!(
-        string_units(frames[1].get("error").unwrap().get("message").unwrap()),
+        string_units(frame.get("error").unwrap().get("message").unwrap()),
         "Unknown gateway method "
             .encode_utf16()
             .chain([0xD800])
@@ -791,23 +831,85 @@ async fn lone_surrogate_method_reaches_gateway_and_echoes_in_error() {
 
 #[tokio::test]
 async fn lone_surrogate_session_key_is_forwarded_unchanged() {
-    let (text, gateway, connection) = lone_surrogate_connection().await;
+    let (text, gateway, connection) = authed_connection().await;
     connection
         .receive(
             r#"{"type":"request","id":"1","method":"abort_turn","params":{"sessionKey":"\ud83d"}}"#,
         )
         .await
         .unwrap();
-    let frames = sent_frames(&text);
-    assert_eq!(frames.len(), 2);
-    assert_same_json(
-        &frames[1],
-        r#"{"type":"response","id":"1","ok":true,"result":{"ok":true}}"#,
-    );
+    assert_sent(&text, &connection, &[TS_HELLO_OK, TS_ABORT_OK]);
     let calls = gateway.calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
     let params = calls[1].get("params").unwrap();
     assert_eq!(string_units(params.get("sessionKey").unwrap()), [0xD83D]);
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
+// SessionKey equality is SameValueZero on UTF-16 code units: two separately
+// parsed lone surrogates hit the same session, a different surrogate and U+FFFD
+// do not. Reading the sets never goes through serde_json::Value.
+#[test]
+fn lone_surrogate_session_keys_compare_by_utf16_units() {
+    let mut state = State::default();
+    state.track_in_flight(&SessionKey::new(json_text(r#""\ud83d""#)));
+    state.track_in_flight(&SessionKey::new(json_text(r#""\ud83d""#)));
+    assert_eq!(session_units(&state.in_flight), vec![vec![0xD83D]]);
+    state.track_interaction(&SessionKey::new(json_text(r#""\ud83e""#)));
+    state.track_interaction(&SessionKey::new(json_text(r#""\ufffd""#)));
+    assert_eq!(
+        session_units(&state.interactions),
+        vec![vec![0xD83E], vec![0xFFFD]]
+    );
+}
+
+// The submit path must register the lone-surrogate session and close must
+// forward it unchanged to disconnect and abort_on_close (no serde round-trip).
+#[tokio::test]
+async fn lone_surrogate_submit_session_is_tracked_and_forwarded_on_close() {
+    let (text, gateway, connection) = authed_connection().await;
+    gateway
+        .hold
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let conn = connection.clone();
+    let task = tokio::spawn(async move {
+        conn.receive(
+            r#"{"type":"request","id":"s1","method":"submit_turn","params":{"sessionKey":"\ud83d"}}"#,
+        )
+        .await
+        .unwrap()
+    });
+    gateway.started.acquire().await.unwrap().forget();
+    {
+        let state = connection.state.lock().unwrap();
+        assert_eq!(session_units(&state.in_flight), vec![vec![0xD83D]]);
+        assert_eq!(session_units(&state.interactions), vec![vec![0xD83D]]);
+    }
+    connection.closed().await.unwrap();
+    let guard = gateway.submit_gates.lock().unwrap().last().unwrap().clone();
+    guard.add_permits(1);
+    task.await.unwrap();
+    let calls = gateway.calls.lock().unwrap();
+    let method = |index: usize| {
+        calls[index]
+            .get("method")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+    };
+    assert_eq!(method(1), "submit_turn");
+    assert_eq!(method(2), "disconnect");
+    assert_eq!(method(3), "abort");
+    for index in [2, 3] {
+        let session = calls[index]
+            .get("params")
+            .unwrap()
+            .get("sessionKey")
+            .unwrap();
+        assert_eq!(string_units(session), [0xD83D], "call {index}");
+    }
     assert!(text.closes.lock().unwrap().is_empty());
 }
 
@@ -832,41 +934,6 @@ async fn lone_surrogate_client_name_is_accepted_in_hello() {
         assert!(state.authed);
         assert_eq!(state.client_name.as_ref().unwrap().units(), [0xD800]);
     }
-    let frames = sent_frames(&text);
-    assert_eq!(frames.len(), 1);
-    let hello_ok = &frames[0];
-    assert!(
-        hello_ok
-            .get("type")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .equals_str("hello_ok")
-    );
-    assert!(
-        hello_ok
-            .get("protocolVersion")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .equals_str(GATEWAY_PROTOCOL_VERSION)
-    );
-    assert_same_json(
-        hello_ok.get("serverInfo").unwrap(),
-        r#"{"name":"fixture-server","capabilities":["fixture"]}"#,
-    );
-    let binding = hello_ok.get("interactionBinding").unwrap();
-    assert!(
-        binding
-            .get("connectionId")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .equals_str(&connection.binding().connection_id)
-    );
-    assert_eq!(
-        binding.get("generation").unwrap().as_number(),
-        Some(connection.binding().generation() as f64)
-    );
+    assert_sent(&text, &connection, &[TS_HELLO_OK]);
     assert!(text.closes.lock().unwrap().is_empty());
 }
