@@ -192,9 +192,14 @@ async fn abort_at_lease_and_dispose_windows_matches_ts() {
     const ORACLE: &str = include_str!("../../../tests/fixtures/session-abort-contract/oracle.json");
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    // Fail closed on an empty or truncated corpus: the generator records
-    // exactly these six gated phases per case, so a vacuous replay over zero
-    // or reshaped cases must not pass (same fail-closed shape as owner_tests).
+    // Fail closed on an empty or truncated corpus (same shape as owner_tests):
+    // the generator enumerates exactly `for (const active of [false, true])`
+    // (generate.mts:71), so pin the whole scenario family, not just
+    // non-emptiness — a corpus cut down to one case (or duplicated/reordered)
+    // must fail instead of silently skipping the active:true drain window.
+    // The per-case count/phase assertions below pin each case's shape ahead of
+    // the whole-JSON compare, so truncation reports a precise left/right diff
+    // instead of a wall of JSON.
     const PHASES: [&str; 6] = [
         "lease_pending",
         "lease_aborts",
@@ -204,13 +209,24 @@ async fn abort_at_lease_and_dispose_windows_matches_ts() {
         "late_abort",
     ];
     let cases = oracle["cases"].as_array().unwrap();
-    assert!(!cases.is_empty(), "oracle cases must not be empty");
+    assert_eq!(
+        cases
+            .iter()
+            .map(|case| case["active"].as_bool().unwrap())
+            .collect::<Vec<_>>(),
+        [false, true],
+        "oracle case scenarios; the generator records exactly [false, true]"
+    );
     for expected in cases {
         let active = expected["active"].as_bool().unwrap();
+        let checkpoints = expected["checkpoints"].as_array().unwrap();
         assert_eq!(
-            expected["checkpoints"]
-                .as_array()
-                .unwrap()
+            checkpoints.len(),
+            PHASES.len(),
+            "oracle checkpoint count; active={active}"
+        );
+        assert_eq!(
+            checkpoints
                 .iter()
                 .map(|checkpoint| checkpoint["phase"].as_str().unwrap())
                 .collect::<Vec<_>>(),
