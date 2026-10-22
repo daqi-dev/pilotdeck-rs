@@ -32,7 +32,8 @@ use pilotdeck_gateway::user_dialog::{
     HttpStoreOwnerClaim, HttpStoreTransport, HttpStoreTransportError, HttpStoreTransportRequest,
     HttpStoreTransportResponse, Lease, LeaseClaim, LiveGatewayUserDialogStore, OwnerClaim,
     Result as UserDialogResult, StoreKey, StoreOptions, StoredAnswer, StoredDialog,
-    create_gateway_user_dialog_store_http_handler, start_gateway_user_dialog_store_http_server,
+    UserDialogStore, create_gateway_user_dialog_store_http_handler,
+    start_gateway_user_dialog_store_http_server,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::Value;
@@ -527,7 +528,7 @@ impl RecordingStore {
         self.calls.lock().unwrap().push(object(fields));
     }
 }
-impl LiveGatewayUserDialogStore for RecordingStore {
+impl UserDialogStore for RecordingStore {
     fn put(&self, key: &StoreKey, dialog: &StoredDialog) -> UserDialogResult<()> {
         // The TS failing double throws before recording the call.
         if self.failing {
@@ -540,13 +541,6 @@ impl LiveGatewayUserDialogStore for RecordingStore {
         ]);
         Ok(())
     }
-    fn list(&self, key: &StoreKey) -> UserDialogResult<Vec<StoredDialog>> {
-        if self.failing {
-            return Err(DialogError::Invalid("disk exploded".into()));
-        }
-        self.record(vec![("op", JsValue::from("list")), ("key", key_value(key))]);
-        Ok(vec![dialog()])
-    }
     fn remove(&self, key: &StoreKey, request_id: &JsString) -> UserDialogResult<()> {
         self.record(vec![
             ("op", JsValue::from("remove")),
@@ -554,6 +548,15 @@ impl LiveGatewayUserDialogStore for RecordingStore {
             ("requestId", JsValue::String(request_id.clone())),
         ]);
         Ok(())
+    }
+}
+impl LiveGatewayUserDialogStore for RecordingStore {
+    fn list(&self, key: &StoreKey) -> UserDialogResult<Vec<StoredDialog>> {
+        if self.failing {
+            return Err(DialogError::Invalid("disk exploded".into()));
+        }
+        self.record(vec![("op", JsValue::from("list")), ("key", key_value(key))]);
+        Ok(vec![dialog()])
     }
     fn clear(&self, key: &StoreKey) -> UserDialogResult<()> {
         if self.failing {
