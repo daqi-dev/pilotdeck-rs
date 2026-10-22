@@ -7,7 +7,10 @@ mod owner;
 
 pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
-pub use handle::{HandleActivity, HandleState, LiveSession, LiveSessionHandle};
+pub use handle::{
+    HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionNext,
+    SessionSubmission,
+};
 pub use owner::{
     EvictionReason, MaintenanceReservation, SessionContext, SessionFactory, SessionOwner,
     SessionOwnerOptions,

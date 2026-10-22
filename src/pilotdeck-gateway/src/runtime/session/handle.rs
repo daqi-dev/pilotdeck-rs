@@ -3,11 +3,33 @@
 use super::super::project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
+use std::{future::Future, pin::Pin};
 use tokio::sync::watch;
+
+/// One awaited native stream step.
+pub type SessionNext<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<JsValue>, RuntimeError>> + Send + 'a>>;
+
+/// Native AgentEvent stream, including SessionEnd hooks after turn_completed.
+/// input_accepted MUST follow the session's successful recordAcceptedInput;
+/// a failed write yields the native failure/status/completion events instead.
+/// The host adapter owns that writer (A7.2-pr6); submit never duplicates it.
+pub trait LiveTurn: Send {
+    fn next(&mut self) -> SessionNext<'_>;
+}
 
 /// Implementations own the real session writer and its resources. No default
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
+    /// Explicit capability error preserves compatibility with lifecycle-only
+    /// adapters; it cannot silently acknowledge input or start a fake loop.
+    fn submit(
+        &self,
+        _input: JsValue,
+        _options: JsValue,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        Err(RuntimeError::new("Agent session submit is unavailable."))
+    }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
     /// future has completed: the handle remains Draining through the project
@@ -113,6 +135,22 @@ impl LiveSessionHandle {
         Ok(HandleActivity(self.clone()))
     }
 
+    /// Admission is reserved before invoking host code, with no synchronous
+    /// lock held across host calls or stream I/O. Dropping the stream drains
+    /// the activity even when next() fails or its consumer is cancelled.
+    pub fn submit(
+        &self,
+        input: JsValue,
+        options: JsValue,
+    ) -> Result<SessionSubmission, RuntimeError> {
+        let activity = self.begin_activity()?;
+        let stream = self.0.session.submit(input, options)?;
+        Ok(SessionSubmission {
+            stream,
+            _activity: activity,
+        })
+    }
+
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
         // Set cancelled inside the lock; call session.abort() outside so that
         // a panic does not poison the progress mutex.
@@ -209,6 +247,16 @@ impl LiveSessionHandle {
             guard.outcome = Some(aggregate("Failed to dispose agent handle.", failures));
         });
         Box::pin(wait_result(completion))
+    }
+}
+
+pub struct SessionSubmission {
+    stream: Box<dyn LiveTurn>,
+    _activity: HandleActivity,
+}
+impl SessionSubmission {
+    pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
+        self.stream.next().await
     }
 }
 
