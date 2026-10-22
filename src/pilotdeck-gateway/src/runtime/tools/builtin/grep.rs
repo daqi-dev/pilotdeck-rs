@@ -1515,6 +1515,61 @@ mod tests {
             .block_on(future)
     }
 
+    const TS_KILL_GRACE: Duration = Duration::from_secs(1);
+
+    fn frozen_time_block<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .expect("runtime")
+            .block_on(future)
+    }
+
+    /// Drive real process/pipe events without letting Tokio auto-advance to
+    /// the next deadline while the OS is still scheduling a shell. Only the
+    /// final KILL/reap phase passes a nonzero clock step. The wall-clock bound
+    /// is a generous deadlock watchdog, never the behavioral oracle.
+    async fn drive_test_run<F: std::future::Future>(
+        mut run: std::pin::Pin<&mut F>,
+        mut ready: impl FnMut() -> bool,
+        clock_step: Duration,
+    ) -> Option<F::Output> {
+        let watchdog = std::time::Instant::now();
+        loop {
+            let poll =
+                std::future::poll_fn(|cx| std::task::Poll::Ready(run.as_mut().poll(cx))).await;
+            if let std::task::Poll::Ready(result) = poll {
+                return Some(result);
+            }
+            if ready() {
+                return None;
+            }
+            assert!(
+                watchdog.elapsed() < StdDuration::from_secs(60),
+                "process handshake/reap watchdog expired"
+            );
+            // OS children use real time even though the tool's clock is
+            // paused. Yield with a runnable task to prevent auto-advance.
+            std::thread::sleep(StdDuration::from_millis(1));
+            tokio::task::yield_now().await;
+            if !clock_step.is_zero() {
+                tokio::time::advance(clock_step).await;
+            }
+        }
+    }
+
+    async fn wait_test_event(ready: impl FnMut() -> bool, clock_step: Duration) {
+        let mut pending = std::pin::pin!(std::future::pending::<()>());
+        drive_test_run(pending.as_mut(), ready, clock_step).await;
+    }
+
+    fn pid_file_ready(path: &Path) -> bool {
+        // Creating a redirected file precedes the shell's write; existence
+        // alone is not a completed PID handshake under CPU contention.
+        std::fs::read_to_string(path).is_ok_and(|text| text.trim().parse::<i32>().is_ok())
+    }
+
     fn read_pid(path: &Path) -> rustix::process::Pid {
         let raw: i32 = std::fs::read_to_string(path)
             .expect("descendant pid file")
@@ -1758,11 +1813,13 @@ mod tests {
         let descendant_file = scratch.root.join("descendant.pid");
         let ready = scratch.root.join("ready");
         let term = scratch.root.join("term");
+        let probe = scratch.root.join("probe");
+        let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-drop",
             &format!(
-                "#!/bin/sh\ntrap 'printf term > \"{}\"' TERM\n( trap '' TERM; printf ready > '{}' ; exec /bin/sleep 30 ) &\necho $! > '{}'\necho $$ > '{}'\nwhile :; do wait; done\n",
-                term.display(), ready.display(), descendant_file.display(), leader_file.display()
+                "#!/bin/sh\ntrap 'printf term > \"{}\"' TERM\n( trap '' TERM; printf ready > '{}'; while [ ! -f '{}' ]; do /bin/sleep 0.01; done; printf ack > '{}'; exec /bin/sleep 120 ) &\necho $! > '{}'\necho $$ > '{}'\nwhile :; do wait; done\n",
+                term.display(), ready.display(), probe.display(), ack.display(), descendant_file.display(), leader_file.display()
             ),
         );
         let context = context(
@@ -1774,51 +1831,47 @@ mod tests {
             &scratch.root,
         );
         let cwd = cwd_string(&scratch.root);
-        futures_block(async {
+        frozen_time_block(async {
             let mut run = Box::pin(run_ripgrep_with_timeout(
                 &[],
                 &cwd,
                 &context,
                 Duration::from_secs(30),
             ));
-            // Poll the actual tool future until both processes have installed
-            // their TERM handlers. Dropping a JoinHandle would only detach it.
-            tokio::select! {
-                result = &mut run => panic!("run ended before Drop: {result:?}"),
-                _ = async {
-                    timeout(Duration::from_secs(8), async {
-                        while !ready.exists() || !leader_file.exists() || !descendant_file.exists() {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
-                    }).await.expect("wrapper ready");
-                } => {}
-            }
+            // Both shells install their TERM handlers before Drop; no wall
+            // time can consume the timeout or the grace during startup.
+            let early = drive_test_run(
+                run.as_mut(),
+                || {
+                    ready.exists()
+                        && pid_file_ready(&leader_file)
+                        && pid_file_ready(&descendant_file)
+                },
+                Duration::ZERO,
+            )
+            .await;
+            assert!(early.is_none(), "run ended before Drop: {early:?}");
             let group = read_pid(&leader_file);
             let descendant = read_pid(&descendant_file);
             let mut cleanup = crate::process_group::GroupGuard(Some(group));
             drop(run);
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            let term_sent = term.exists();
-            let alive_during_grace = rustix::process::test_kill_process(descendant).is_ok();
-            crate::process_group::wait_for_group_empty(Some(group), Duration::from_secs(4)).await;
-            let group_gone = !crate::process_group::group_exists(group);
-            let reaped = matches!(
-                crate::process_group::leader_exited_unreaped(group),
-                Err(rustix::io::Errno::CHILD)
-            );
-            // Clean even a negative-control failure before asserting.
-            if !group_gone {
-                cleanup.signal(rustix::process::Signal::KILL);
-                let _ = wait_process_gone(descendant, Duration::from_secs(2)).await;
-            }
-            cleanup.disarm();
+            wait_test_event(|| term.exists(), Duration::ZERO).await;
+            tokio::time::advance(TS_KILL_GRACE - Duration::from_millis(1)).await;
+            std::fs::write(&probe, "probe").expect("probe during grace");
+            wait_test_event(|| ack.exists(), Duration::ZERO).await;
             assert!(
-                group_gone,
-                "process group survived Drop past the KILL grace"
+                rustix::process::test_kill_process(descendant).is_ok(),
+                "Drop cut short the TERM grace"
             );
-            assert!(term_sent, "Drop did not send TERM to the group");
-            assert!(alive_during_grace, "Drop cut short the TERM grace");
-            assert!(reaped, "Drop left the leader unreaped");
+            tokio::time::advance(Duration::from_millis(1)).await;
+            wait_test_event(
+                || !crate::process_group::group_exists(group),
+                Duration::from_millis(10),
+            )
+            .await;
+            // Group disappearance includes zombies; querying waitid by PID
+            // afterwards races with PID reuse by parallel tests.
+            cleanup.disarm();
         });
     }
 
@@ -1861,150 +1914,186 @@ mod tests {
     fn timeout_kills_a_descendant_that_holds_the_stdout_pipe() {
         let scratch = Scratch::new("timeout");
         let pid_file = scratch.root.join("descendant.pid");
+        let leader_file = scratch.root.join("leader.pid");
+        let ready = scratch.root.join("ready");
+        let term = scratch.root.join("term");
+        let probe = scratch.root.join("probe");
+        let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-hold",
             &format!(
-                "#!/bin/sh\n( /bin/sleep 30 ) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                pid_file.display()
+                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                term.display(), probe.display(), ack.display(), ready.display(), pid_file.display(), leader_file.display()
             ),
         );
         let context = context(
             &[
-                (
-                    "PILOTDECK_RIPGREP_PATH",
-                    script.to_str().expect("utf8 script"),
-                ),
+                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
                 ("PATH", "/usr/bin:/bin"),
             ],
             None,
             &scratch.root,
         );
         let cwd = cwd_string(&scratch.root);
-        let (error, elapsed) = futures_block(async move {
-            let started = std::time::Instant::now();
-            let error =
-                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(3000))
-                    .await
-                    .expect_err("timeout");
-            let elapsed = started.elapsed();
+        frozen_time_block(async {
+            let limit = Duration::from_secs(3);
+            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit));
+            let early = drive_test_run(
+                run.as_mut(),
+                || {
+                    ready.exists()
+                        && pid_file_ready(&leader_file)
+                        && pid_file_ready(&pid_file)
+                        && matches!(
+                            crate::process_group::leader_exited_unreaped(read_pid(&leader_file)),
+                            Ok(true)
+                        )
+                },
+                Duration::ZERO,
+            )
+            .await;
+            assert!(early.is_none(), "run ended before timeout: {early:?}");
+            let group = read_pid(&leader_file);
             let pid = read_pid(&pid_file);
-            if !wait_process_gone(pid, StdDuration::from_secs(3)).await {
-                kill_descendant_if_alive(pid);
-                panic!("descendant {pid:?} survived the timeout");
-            }
-            (error, elapsed)
+            let mut cleanup = crate::process_group::GroupGuard(Some(group));
+            // Tokio rounds timer deadlines to milliseconds. Cross that tick
+            // explicitly, without charging any real process startup time.
+            tokio::time::advance(limit + Duration::from_millis(1)).await;
+            let early = drive_test_run(run.as_mut(), || term.exists(), Duration::ZERO).await;
+            assert!(
+                early.is_none(),
+                "pipe holder returned before KILL: {early:?}"
+            );
+            let term_at = Instant::now();
+            tokio::time::advance(TS_KILL_GRACE - Duration::from_millis(1)).await;
+            // Poll the tool at the last instant before KILL. An early KILL
+            // regression must fail even when the OS has not delivered it yet.
+            std::fs::write(&probe, "probe").expect("probe during grace");
+            let early = drive_test_run(run.as_mut(), || ack.exists(), Duration::ZERO).await;
+            assert!(
+                early.is_none(),
+                "pipe holder returned inside grace: {early:?}"
+            );
+            assert!(rustix::process::test_kill_process(pid).is_ok());
+            tokio::time::advance(Duration::from_millis(1)).await;
+            let error = drive_test_run(run.as_mut(), || false, Duration::from_millis(10))
+                .await
+                .expect("completed")
+                .expect_err("timeout");
+            assert_eq!(error.code, "tool_timeout");
+            assert!(Instant::now() - term_at >= TS_KILL_GRACE);
+            wait_test_event(
+                || !crate::process_group::group_exists(group),
+                Duration::from_millis(10),
+            )
+            .await;
+            cleanup.disarm();
         });
-        assert_eq!(error.code, "tool_timeout");
-        assert!(
-            elapsed < StdDuration::from_secs(5),
-            "timeout must bound pipe draining: {elapsed:?}"
-        );
     }
 
     #[test]
     fn timeout_keeps_the_ts_grace_when_the_pipes_close_early() {
-        let scratch = Scratch::new("grace");
-        let marker = scratch.root.join("descendant-cleaned");
-        // The descendant keeps stdout open, so the loop cannot finish before
-        // the 3 s timeout fires. On TERM it closes the pipes immediately
-        // (the Rust loop then breaks at pipe EOF) but keeps cleaning up for
-        // 0.35 s. TS's 1 s KILL timer must not cut that short; the deferred
-        // group KILL fires at ~4 s, after the marker is written.
-        let script = scratch.script(
-            "rg-grace",
-            &format!(
-                "#!/bin/sh\n(\n  trap 'exec 1>&- 2>&-; sleep 0.35; printf done > \"{}\"; exit 0' TERM\n  while :; do sleep 0.05; done\n) &\nprintf 'partial\\n'\nexit 0\n",
-                marker.display()
-            ),
-        );
-        let context = context(
-            &[
-                (
-                    "PILOTDECK_RIPGREP_PATH",
-                    script.to_str().expect("utf8 script"),
-                ),
-                ("PATH", "/usr/bin:/bin"),
-            ],
-            None,
-            &scratch.root,
-        );
-        let cwd = cwd_string(&scratch.root);
-        let marker_for_check = marker.clone();
-        let (error, elapsed) = futures_block(async move {
-            let started = std::time::Instant::now();
-            let error =
-                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(3000))
-                    .await
-                    .expect_err("timeout");
-            let elapsed = started.elapsed();
-            // The deferred group KILL runs in the background one second after
-            // TERM (limit + 1 s); this 0.35 s cleanup must finish before it.
-            let deadline = Instant::now() + StdDuration::from_secs(2);
-            while !marker_for_check.exists() && Instant::now() < deadline {
-                tokio::time::sleep(StdDuration::from_millis(10)).await;
-            }
-            (error, elapsed)
-        });
-        assert_eq!(error.code, "tool_timeout");
-        assert!(
-            elapsed < StdDuration::from_millis(3_900),
-            "pipe EOF should return before the grace timer: {elapsed:?}"
-        );
-        assert!(
-            marker.exists(),
-            "descendant was SIGKILLed before its 0.35 s cleanup finished"
-        );
+        check_pipe_eof_grace(true);
     }
 
     #[test]
     fn deferred_kill_still_fires_after_the_pipe_eof_return() {
-        let scratch = Scratch::new("grace-kill");
+        check_pipe_eof_grace(false);
+    }
+
+    fn check_pipe_eof_grace(check_cleanup: bool) {
+        let scratch = Scratch::new("grace");
         let pid_file = scratch.root.join("descendant.pid");
-        // The descendant survives TERM (closes the pipes, then keeps running),
-        // so only the deferred group KILL can end it. The tool must return at
-        // pipe EOF while the descendant is still alive, then the background
-        // task must still fire the KILL one second after TERM.
+        let leader_file = scratch.root.join("leader.pid");
+        let ready = scratch.root.join("ready");
+        let term = scratch.root.join("term");
+        let probe = scratch.root.join("probe");
+        let ack = scratch.root.join("ack");
+        let release = scratch.root.join("release");
+        let done = scratch.root.join("done");
+        // Before TERM, the shell uses only builtins: a ready-before-fork
+        // sleep can defer its trap for the entire external command's lifetime.
+        // TERM closes the pipes. Cleanup then waits for a test-owned event,
+        // rather than racing a fork/sleep against the one-second grace. The
+        // child survives cleanup so the deferred KILL must still remove it.
         let script = scratch.script(
-            "rg-grace-kill",
+            "rg-grace",
             &format!(
-                "#!/bin/sh\n(\n  trap 'exec 1>&- 2>&-; while :; do sleep 0.05; done' TERM\n  while :; do sleep 0.05; done\n) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                pid_file.display()
+                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; exec 1>&- 2>&-; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf done > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                term.display(), release.display(), done.display(), probe.display(), ack.display(), ready.display(),
+                pid_file.display(), leader_file.display()
             ),
         );
         let context = context(
             &[
-                (
-                    "PILOTDECK_RIPGREP_PATH",
-                    script.to_str().expect("utf8 script"),
-                ),
+                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
                 ("PATH", "/usr/bin:/bin"),
             ],
             None,
             &scratch.root,
         );
         let cwd = cwd_string(&scratch.root);
-        let (error, alive_at_return, gone) = futures_block(async move {
-            let error =
-                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(2000))
-                    .await
-                    .expect_err("timeout");
+        frozen_time_block(async {
+            let limit = Duration::from_secs(3);
+            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit));
+            let early = drive_test_run(
+                run.as_mut(),
+                || {
+                    ready.exists()
+                        && pid_file_ready(&leader_file)
+                        && pid_file_ready(&pid_file)
+                        && matches!(
+                            crate::process_group::leader_exited_unreaped(read_pid(&leader_file)),
+                            Ok(true)
+                        )
+                },
+                Duration::ZERO,
+            )
+            .await;
+            assert!(early.is_none(), "run ended before timeout: {early:?}");
+            let group = read_pid(&leader_file);
             let pid = read_pid(&pid_file);
-            let alive_at_return = rustix::process::test_kill_process(pid).is_ok();
-            let gone = wait_process_gone(pid, StdDuration::from_secs(3)).await;
-            if !gone {
-                kill_descendant_if_alive(pid);
+            let mut cleanup = crate::process_group::GroupGuard(Some(group));
+            // Tokio rounds timer deadlines to milliseconds. Cross that tick
+            // explicitly, without charging any real process startup time.
+            tokio::time::advance(limit + Duration::from_millis(1)).await;
+            let term_at = Instant::now();
+            // Time stays frozen until pipe EOF returns. Waiting for the KILL
+            // timer instead of returning here hits the real-time watchdog.
+            let error = drive_test_run(run.as_mut(), || false, Duration::ZERO)
+                .await
+                .expect("completed at pipe EOF")
+                .expect_err("timeout");
+            assert_eq!(error.code, "tool_timeout");
+            assert!(
+                rustix::process::test_kill_process(pid).is_ok(),
+                "grace cut short at EOF"
+            );
+            wait_test_event(|| term.exists(), Duration::ZERO).await;
+            if check_cleanup {
+                tokio::time::advance(Duration::from_millis(350)).await;
             }
-            (error, alive_at_return, gone)
+            std::fs::write(&release, "release").expect("release cleanup");
+            wait_test_event(|| done.exists(), Duration::ZERO).await;
+            let elapsed = Instant::now() - term_at;
+            tokio::time::advance(TS_KILL_GRACE - elapsed - Duration::from_millis(1)).await;
+            // Drive the deferred task with the clock still one ms before its
+            // deadline, then verify cleanup did not cut the grace short.
+            std::fs::write(&probe, "probe").expect("probe during grace");
+            wait_test_event(|| ack.exists(), Duration::ZERO).await;
+            assert!(
+                rustix::process::test_kill_process(pid).is_ok(),
+                "grace cut short after cleanup"
+            );
+            tokio::time::advance(Duration::from_millis(1)).await;
+            wait_test_event(
+                || !crate::process_group::group_exists(group),
+                Duration::from_millis(10),
+            )
+            .await;
+            assert!(Instant::now() - term_at >= TS_KILL_GRACE);
+            cleanup.disarm();
         });
-        assert_eq!(error.code, "tool_timeout");
-        assert!(
-            alive_at_return,
-            "the 1 s grace was cut short: descendant was already gone at return"
-        );
-        assert!(
-            gone,
-            "the deferred group KILL never fired; the descendant survived"
-        );
     }
 
     #[test]
