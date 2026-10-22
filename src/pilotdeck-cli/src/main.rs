@@ -1,4 +1,5 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
+mod chat_search;
 mod config;
 mod paths;
 mod sdk;
@@ -70,7 +71,7 @@ fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         Some("cron") => Err(Failure::Todo("pilotdeck cron")),
         Some("update") => Err(Failure::Todo("pilotdeck update")),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
-        Some("chat") => Err(Failure::Todo("pilotdeck chat")),
+        Some("chat") => chat_search::run(&argv[1..], env, cwd),
         Some("tui") => {
             if !std::io::stdin().is_terminal() {
                 stderr_line("pilotdeck tui requires an interactive terminal.");

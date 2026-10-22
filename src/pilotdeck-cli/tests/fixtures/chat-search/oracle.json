@@ -1,0 +1,566 @@
+{
+  "provenance": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "sourceSha256": {
+      "src/cli/commands/chatSearch.ts": "643b65e2bf057a96d6415f3701eb2d2901c60a9f9003f5d1ac1c87d9fa66e41a",
+      "src/session/search/NodeSessionSearchPort.ts": "a3ebaeb9f51d6deaa4cb1c3dca0e21d471821ac05e7a7686cb54d7bf68212b4f",
+      "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443",
+      "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+      "src/session/storage/SessionList.ts": "f0649c933de46d312fd5f519734999ae191fddf82956369c6c67a203140a8d9d",
+      "src/session/storage/SessionLiteReader.ts": "23fd1df4ffa04a12d8ae12bfa815b2856283c5dfdec4d8e28786da0777fcabad",
+      "src/session/storage/ProjectSessionStorage.ts": "51aae89cf30959264f67e09d21051bb4ff58aa83135480337027599032a52d95",
+      "src/session/metadata/SessionMetadataStore.ts": "d96049bb312e00a9b5e17062c3c3f192b77f240515284b7afa84122a439f5a79"
+    },
+    "node": "v22.22.0"
+  },
+  "files": {
+    "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+    "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+    "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+    "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+    "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+    "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+    "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+  },
+  "cases": [
+    {
+      "id": "usage",
+      "argv": [
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]\n"
+    },
+    {
+      "id": "unknown",
+      "argv": [
+        "bogus",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]\n"
+    },
+    {
+      "id": "empty",
+      "argv": [
+        "search",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Error: search keyword is required.\n"
+    },
+    {
+      "id": "flags-only",
+      "argv": [
+        "search",
+        "--json",
+        "--limit",
+        "3",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Error: search keyword is required.\n"
+    },
+    {
+      "id": "text",
+      "argv": [
+        "search",
+        "hello",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "🔍 5 match(es) for \"hello\"\n\n1. **Custom title** (`a-long-s…`)\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\n2. **Custom title** (`a-long-s…`)\n   assistant · Jan 2, 01:04 PM\n   > hello reply 42\n\n3. **Custom title** (`a-long-s…`)\n   assistant · Jan 2, 01:04 PM\n   > durable HELLO\n\n4. **Custom title** (`a-long-s…`)\n   user · unknown time\n   > emoji 😀 中文 İ Σ hello\n\n5. **Generated title** (`b`)\n   user · invalid date\n   > hello last prompt\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "json",
+      "argv": [
+        "search",
+        "hello",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "case-sensitive",
+      "argv": [
+        "search",
+        "hello",
+        "--case-sensitive",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "role-user",
+      "argv": [
+        "search",
+        "hello",
+        "--role",
+        "user",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "role-assistant",
+      "argv": [
+        "search",
+        "hello",
+        "--role",
+        "assistant",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "role-invalid",
+      "argv": [
+        "search",
+        "hello",
+        "--role",
+        "tool",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "all",
+      "argv": [
+        "search",
+        "hello",
+        "--all-projects",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "🔍 6 match(es) for \"hello\"\n\n1. **Custom title** (`a-long-s…`) · fixture-chat-project\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\n2. **Custom title** (`a-long-s…`) · fixture-chat-project\n   assistant · Jan 2, 01:04 PM\n   > hello reply 42\n\n3. **Custom title** (`a-long-s…`) · fixture-chat-project\n   assistant · Jan 2, 01:04 PM\n   > durable HELLO\n\n4. **Custom title** (`a-long-s…`) · fixture-chat-project\n   user · unknown time\n   > emoji 😀 中文 İ Σ hello\n\n5. **Generated title** (`b`) · fixture-chat-project\n   user · invalid date\n   > hello last prompt\n\n6. **hello other project** (`c`) · other\n   user · Jan 2, 01:04 PM\n   > hello other project\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "all-json",
+      "argv": [
+        "search",
+        "hello",
+        "--all-projects",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"c\",\n      \"role\": \"user\",\n      \"text\": \"hello other project\",\n      \"snippet\": \"hello other project\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"hello other project\",\n      \"projectKey\": \"other\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 4\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "1",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "🔍 1 match(es) for \"hello\" (truncated — try a higher --limit)\n\n1. **Custom title** (`a-long-s…`)\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "fraction-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "1.5",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "zero-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "0",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "negative-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "-2",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "nan-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "NaN",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "hex-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "0x2",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "infinite-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "Infinity",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "session",
+      "argv": [
+        "search",
+        "hello",
+        "--session",
+        "b",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "internal-session",
+      "argv": [
+        "search",
+        "hello",
+        "--session",
+        "always-on-report-hidden",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 0\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "no-result",
+      "argv": [
+        "search",
+        "absent",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "No chat history matches for \"absent\".\nScanned 3 session(s).\n",
+      "stderr": ""
+    },
+    {
+      "id": "snippet",
+      "argv": [
+        "search",
+        "needle",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"needle\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\n      \"snippet\": \"...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz...\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "multiword",
+      "argv": [
+        "search",
+        "hello",
+        "WORLD",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello WORLD\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "unknown-flag",
+      "argv": [
+        "search",
+        "hello",
+        "--bogus",
+        "reply",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello reply\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "missing-role",
+      "argv": [
+        "search",
+        "hello",
+        "--role",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "repeat-limit",
+      "argv": [
+        "search",
+        "hello",
+        "--limit",
+        "2",
+        "--limit",
+        "1",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "regex",
+      "argv": [
+        "search",
+        "h.llo",
+        "--regex",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"h.llo\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "regex-lookbehind",
+      "argv": [
+        "search",
+        "(?<=hello )reply",
+        "--regex",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(?<=hello )reply\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "regex-backref",
+      "argv": [
+        "search",
+        "(l)\\1",
+        "--regex",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(l)\\\\1\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "regex-alternation",
+      "argv": [
+        "search",
+        "reply|durable",
+        "--regex",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"reply|durable\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "regex-invalid-class",
+      "argv": [
+        "search",
+        "[",
+        "--regex",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /[/i: Unterminated character class\n"
+    },
+    {
+      "id": "regex-invalid-group",
+      "argv": [
+        "search",
+        "(",
+        "--regex",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(/i: Unterminated group\n"
+    },
+    {
+      "id": "regex-invalid-repeat",
+      "argv": [
+        "search",
+        "*",
+        "--regex",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /*/i: Nothing to repeat\n"
+    },
+    {
+      "id": "regex-invalid-range",
+      "argv": [
+        "search",
+        "[z-a]",
+        "--regex",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /[z-a]/i: Range out of order in character class\n"
+    },
+    {
+      "id": "unicode",
+      "argv": [
+        "search",
+        "İ",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"İ\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "literal-dot",
+      "argv": [
+        "search",
+        "h.llo",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"h.llo\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "pilot-home-token",
+      "argv": [
+        "search",
+        "--pilot-home",
+        "missing",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"missing\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 0\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "empty-project",
+      "argv": [
+        "search",
+        "hello",
+        "--project",
+        "",
+        "--json",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"c\",\n      \"role\": \"user\",\n      \"text\": \"hello other project\",\n      \"snippet\": \"hello other project\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"hello other project\",\n      \"projectKey\": \"other\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 4\n}\n",
+      "stderr": ""
+    }
+  ]
+}

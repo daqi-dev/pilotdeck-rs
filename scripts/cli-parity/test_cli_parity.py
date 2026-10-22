@@ -20,6 +20,7 @@ from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, 
                     digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
 from compare import coalesce, compare, comparison_view, expected_stdout, load_round, PROBE_CHECKS
 from controls import run_controls
+from host_negative_controls import check_exec_control
 from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
 
 
@@ -34,8 +35,11 @@ def bind_policy(run):
         Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
 
 
-REGISTERED_SCENARIOS = SCENARIOS
-CALIBRATED_SCENARIOS = [s for s in SCENARIOS if s.get('oracle') != 'PENDING-TS-CALIBRATION']
+# These legacy contract fixtures always target the default registry, even when
+# this test process is launched with the chat-search suite selected.
+REGISTERED_SCENARIOS = json.loads((SCRIPT / 'scenarios.json').read_text())
+CHAT_SEARCH_SCENARIOS = json.loads((SCRIPT / 'chat-search.json').read_text())
+CALIBRATED_SCENARIOS = [s for s in REGISTERED_SCENARIOS if s.get('oracle') != 'PENDING-TS-CALIBRATION']
 CORE_SCENARIOS = REGISTERED_SCENARIOS[:13]
 SKILLS_SCENARIOS = REGISTERED_SCENARIOS[13:]
 CALIBRATED_SKILLS_SCENARIOS = [s for s in SKILLS_SCENARIOS if s in CALIBRATED_SCENARIOS]
@@ -84,7 +88,7 @@ def write_stream(case, stream, data):
     save(case / 'events.json', events)
 
 
-def synthetic_round(path, runtime):
+def synthetic_round(path, runtime, scenario_fixtures=False):
     path.mkdir()
     (path / 'cases').mkdir()
     run = {'schema': 1, 'kind': 'cli-d0-recording', 'origin': 'synthetic-unit-fixture', 'side': 'ts', 'status': 'DONE',
@@ -107,8 +111,8 @@ def synthetic_round(path, runtime):
     for scenario in SCENARIOS:
         folder = path / 'cases' / scenario['id']
         folder.mkdir()
-        fixture(folder / 'tree')
-        save(folder / 'initial.json', initial_tree())
+        fixture(folder / 'tree', scenario if scenario_fixtures else None)
+        save(folder / 'initial.json', initial_tree(scenario if scenario_fixtures else None))
         if 'pilot/.legacy-bundled-skills-migrated-v1' in scenario.get('diskAdditions', {}):
             marker = folder / 'tree/pilot/.legacy-bundled-skills-migrated-v1'
             marker.write_bytes(b'completed\n')
@@ -272,7 +276,94 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result['status'], 'PASS', result)
         self.assertEqual(len(result['controls']), 5)
         for row in result['controls']:
+            self.assertEqual(row['status'], 'PASS')
+            self.assertEqual(row['scenario'], 'flag-missing' if row['name'] == 'change-stderr' else 'help-long')
             self.assertIn(row['expectedPairRule'], row['observedRules'])
+        self.assertEqual(result['notApplicable'], [])
+
+    def test_chat_search_controls_select_eligible_cases_and_detect_mutations(self):
+        with patch('compare.SCENARIOS', CHAT_SEARCH_SCENARIOS), \
+             patch.object(sys.modules[__name__], 'SCENARIOS', CHAT_SEARCH_SCENARIOS):
+            source = self.root / 'chat-source'
+            synthetic_round(source, self.root / 'chat-runtime', scenario_fixtures=True)
+            result = run_controls(source, self.root / 'chat-controls')
+        self.assertEqual(result['status'], 'PASS', result)
+        self.assertEqual(result['notApplicable'], [])
+        self.assertEqual(len(result['controls']), 5)
+        for row in result['controls']:
+            self.assertEqual(row['status'], 'PASS', row)
+            self.assertEqual(row['scenario'], 'chat-text' if row['name'] == 'drop-stdout' else 'chat-usage')
+            self.assertIn(row['expectedRule'], row['observedRules'])
+            self.assertIn(row['expectedPairRule'], row['observedRules'])
+
+    def test_controls_report_inapplicable_surfaces_explicitly(self):
+        cases = [{'id': 'empty', 'argv': [], 'stdinHex': '', 'token': False,
+                  'exit': 73, 'stdout': '', 'stderr': '',
+                  'diskRemovals': ['pilot/pilotdeck.yaml', 'project/keep.txt', 'openssl.cnf']}]
+        with patch('compare.SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source = self.root / 'empty-source'
+            synthetic_round(source, self.root / 'empty-runtime')
+            case = source / 'cases/empty'
+            for name in cases[0]['diskRemovals']:
+                (case / 'tree' / name).unlink()
+            save(case / 'final.json', snapshot(case / 'tree'))
+            result = run_controls(source, self.root / 'empty-controls')
+        self.assertEqual(result['status'], 'PASS', result)
+        self.assertEqual(result['notApplicable'], ['drop-stdout', 'drop-disk', 'extra-file'])
+        self.assertEqual(json.loads((self.root / 'empty-controls/controls.json').read_text()), result)
+        for row in result['controls']:
+            if row['name'] in result['notApplicable']:
+                self.assertEqual(row['status'], 'NOT_APPLICABLE')
+                self.assertIsNone(row['scenario'])
+                self.assertIn('no eligible case', row['reason'])
+            else:
+                self.assertEqual(row['status'], 'PASS', row)
+
+    def test_disk_controls_find_artifacts_without_keep_txt(self):
+        cases = [{'id': 'other-file', 'argv': [], 'stdinHex': '', 'token': False,
+                  'exit': 0, 'stdout': 'ok\n', 'stderr': '',
+                  'fixtureFiles': {'project/unexpected.bin': 'existing\n'},
+                  'diskRemovals': ['pilot/pilotdeck.yaml', 'project/keep.txt', 'openssl.cnf']}]
+        with patch('compare.SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source = self.root / 'other-source'
+            synthetic_round(source, self.root / 'other-runtime', scenario_fixtures=True)
+            case = source / 'cases/other-file'
+            for name in cases[0]['diskRemovals']:
+                (case / 'tree' / name).unlink()
+            save(case / 'final.json', snapshot(case / 'tree'))
+            result = run_controls(source, self.root / 'other-controls')
+        self.assertEqual(result['status'], 'PASS', result)
+        self.assertEqual(result['notApplicable'], [])
+        tree = self.root / 'other-controls/extra-file/cases/other-file/tree/project'
+        self.assertEqual((tree / 'unexpected.bin').read_bytes(), b'existing\n')
+        self.assertEqual((tree / 'unexpected.bin.extra').read_bytes(), b'INJECTED\x00\xff')
+
+    def test_host_control_uses_current_suite_and_keeps_default_choice(self):
+        summary = {'status': 'FAIL', 'rustComparison': {'status': 'FAIL'}}
+        for scenarios, expected in ((REGISTERED_SCENARIOS, 'help-long'),
+                                    (CHAT_SEARCH_SCENARIOS, 'chat-usage')):
+            with self.subTest(scenario=expected), patch('host_negative_controls.SCENARIOS', scenarios):
+                recording = self.root / expected
+                case = recording / 'rust/cases' / expected
+                case.mkdir(parents=True)
+                (case / 'stderr.bin').write_bytes(b'D0 exec-node denied\n')
+                save(case / 'record.json', {'exitCode': 126})
+                result = check_exec_control(recording, summary, 1)
+                self.assertEqual(result['status'], 'PASS', result)
+                self.assertEqual(result['scenario'], expected)
+                for exit_code, stderr, runner_exit in ((125, b'D0 exec-node denied\n', 1),
+                                                      (126, b'other error\n', 1),
+                                                      (126, b'D0 exec-node denied\n', 0)):
+                    save(case / 'record.json', {'exitCode': exit_code})
+                    (case / 'stderr.bin').write_bytes(stderr)
+                    self.assertEqual(check_exec_control(recording, summary, runner_exit)['status'], 'FAIL')
+
+    def test_host_control_reports_empty_suite_as_not_applicable(self):
+        with patch('host_negative_controls.SCENARIOS', []):
+            result = check_exec_control(self.root / 'absent', {}, 0)
+        self.assertEqual(result['status'], 'NOT_APPLICABLE')
+        self.assertIsNone(result['scenario'])
+        self.assertIn('no case', result['reason'])
 
     def test_exact_ts_warning_prefix_only_once_without_mutating_raw_evidence(self):
         source = self.source()

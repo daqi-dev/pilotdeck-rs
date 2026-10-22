@@ -1,0 +1,280 @@
+{
+  "provenance": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "sourceSha256": {
+      "src/cli/commands/chatSearch.ts": "643b65e2bf057a96d6415f3701eb2d2901c60a9f9003f5d1ac1c87d9fa66e41a",
+      "src/session/search/NodeSessionSearchPort.ts": "a3ebaeb9f51d6deaa4cb1c3dca0e21d471821ac05e7a7686cb54d7bf68212b4f",
+      "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443",
+      "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+      "src/session/storage/SessionList.ts": "f0649c933de46d312fd5f519734999ae191fddf82956369c6c67a203140a8d9d",
+      "src/session/storage/SessionLiteReader.ts": "23fd1df4ffa04a12d8ae12bfa815b2856283c5dfdec4d8e28786da0777fcabad",
+      "src/session/storage/ProjectSessionStorage.ts": "51aae89cf30959264f67e09d21051bb4ff58aa83135480337027599032a52d95",
+      "src/session/metadata/SessionMetadataStore.ts": "d96049bb312e00a9b5e17062c3c3f192b77f240515284b7afa84122a439f5a79"
+    },
+    "node": "v22.22.0"
+  },
+  "files": {
+    "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+    "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+    "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+    "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+    "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+    "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+    "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}",
+    "pilot/projects/edge/chats/snippet.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"snippet\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀odd😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}]}]}",
+    "pilot/projects/edge/chats/unicode.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"unicode\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 中文 ١ K ſ\"}]}]}",
+    "pilot/projects/edge/chats/linebreak.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"linebreak\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a b\"}]}]}",
+    "pilot/projects/edge/chats/raw.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"raw\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"First title\"}}\r\rbroken\r{\"type\":\"accepted_input\",\"sessionId\":\"raw\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edge raw record\"}]}]}\r{\"type\":\"session_metadata\",\"sessionId\":\"raw\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"  Latest title  \"}}",
+    "pilot/projects/edge/chats/patch.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"First title\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"patch\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edge patch record\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"  Latest title  \"}}"
+  },
+  "cases": [
+    {
+      "id": "unit-one",
+      "argv": [
+        "search",
+        "^.$",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"^.$\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "utf16-units",
+      "argv": [
+        "search",
+        "^.. ",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"^..\",\n  \"matches\": [\n    {\n      \"sessionId\": \"unicode\",\n      \"role\": \"user\",\n      \"text\": \"😀 中文 ١ K ſ\",\n      \"snippet\": \"😀 中文 ١ K ſ\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"😀 中文 ١ K ſ\",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "surrogate-snippet",
+      "argv": [
+        "search",
+        "odd",
+        "--session",
+        "snippet",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"odd\",\n  \"matches\": [\n    {\n      \"sessionId\": \"snippet\",\n      \"role\": \"user\",\n      \"text\": \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀odd😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\n      \"snippet\": \"...😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀odd😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\\ud83d...\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀odd😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "unit-two",
+      "argv": [
+        "search",
+        "😀",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"😀\",\n  \"matches\": [\n    {\n      \"sessionId\": \"unicode\",\n      \"role\": \"user\",\n      \"text\": \"😀 中文 ١ K ſ\",\n      \"snippet\": \"😀 中文 ١ K ſ\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"😀 中文 ١ K ſ\",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "ascii-digit",
+      "argv": [
+        "search",
+        "\\d",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\d\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "ascii-word",
+      "argv": [
+        "search",
+        "\\w",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\w\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "kelvin",
+      "argv": [
+        "search",
+        "k",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"k\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "long-s",
+      "argv": [
+        "search",
+        "s",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"s\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "space",
+      "argv": [
+        "search",
+        "\\s",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\s\",\n  \"matches\": [\n    {\n      \"sessionId\": \"unicode\",\n      \"role\": \"user\",\n      \"text\": \"😀 中文 ١ K ſ\",\n      \"snippet\": \"😀 中文 ١ K ſ\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"😀 中文 ١ K ſ\",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "identity-escape",
+      "argv": [
+        "search",
+        "\\q",
+        "--regex",
+        "--session",
+        "unicode",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\q\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "dot-linebreak",
+      "argv": [
+        "search",
+        "a.b",
+        "--regex",
+        "--session",
+        "linebreak",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"a.b\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "raw-order-lines",
+      "argv": [
+        "search",
+        "edge",
+        "--session",
+        "raw",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"edge\",\n  \"matches\": [\n    {\n      \"sessionId\": \"raw\",\n      \"role\": \"user\",\n      \"text\": \"edge raw record\",\n      \"snippet\": \"edge raw record\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"First title\",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "metadata-patch",
+      "argv": [
+        "search",
+        "edge",
+        "--session",
+        "patch",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"edge\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patch\",\n      \"role\": \"user\",\n      \"text\": \"edge patch record\",\n      \"snippet\": \"edge patch record\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"  Latest title  \",\n      \"projectKey\": \"/edge\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "missing-session",
+      "argv": [
+        "search",
+        "edge",
+        "--session",
+        "missing",
+        "--json",
+        "--project",
+        "/edge",
+        "--project",
+        "/fixture/chat-project"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "ENOENT: no such file or directory, open '{runtime}/pilot/projects/edge/chats/missing.jsonl'\n"
+    }
+  ]
+}

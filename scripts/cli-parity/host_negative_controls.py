@@ -8,7 +8,22 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import ROOT, SCRIPT, baseline_path, output_path, read_plain, save
+from common import ROOT, SCRIPT, SCENARIOS, baseline_path, output_path, read_plain, save
+from controls import select_case
+
+
+def check_exec_control(recording, summary, runner_exit):
+    scenario = select_case({row['id']: row for row in SCENARIOS}, 'help-long', lambda case: True)
+    if scenario is None:
+        return {'status': 'NOT_APPLICABLE', 'control': 'native-execv-node-as-rust',
+                'scenario': None, 'reason': 'current suite has no case to execute'}
+    case = recording / 'rust/cases' / scenario
+    passed = (runner_exit == 1 and summary['status'] == 'FAIL'
+              and summary.get('rustComparison', {}).get('status') == 'FAIL'
+              and read_plain(case / 'stderr.bin') == b'D0 exec-node denied\n'
+              and json.loads(read_plain(case / 'record.json'))['exitCode'] == 126)
+    return {'status': 'PASS' if passed else 'BLOCKED' if summary['status'] == 'BLOCKED' else 'FAIL',
+            'control': 'native-execv-node-as-rust', 'scenario': scenario, 'runnerExit': runner_exit}
 
 
 def main():
@@ -37,17 +52,11 @@ def main():
         result = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=2380)
     # Evidence leaves are read like compare.py: plain single-link files only.
     summary = json.loads(read_plain(output / 'recording/summary.json'))
-    case = output / 'recording/rust/cases/help-long'
-    passed = (result.returncode == 1 and summary['status'] == 'FAIL'
-              and summary.get('rustComparison', {}).get('status') == 'FAIL'
-              and read_plain(case / 'stderr.bin') == b'D0 exec-node denied\n'
-              and json.loads(read_plain(case / 'record.json'))['exitCode'] == 126)
-    report = {'status': 'PASS' if passed else 'BLOCKED' if summary['status'] == 'BLOCKED' else 'FAIL',
-              'control': 'native-execv-node-as-rust', 'runnerExit': result.returncode,
+    report = {**check_exec_control(output / 'recording', summary, result.returncode),
               'compileArgv': compile_argv, 'runnerArgv': argv, 'summary': summary}
     save(output / 'control.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2}[report['status']]
+    return {'PASS': 0, 'NOT_APPLICABLE': 0, 'FAIL': 1, 'BLOCKED': 2}[report['status']]
 
 
 if __name__ == '__main__':
