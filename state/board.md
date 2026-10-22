@@ -1,15 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 04:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #401 | review | doing | PR #429 已入 merge queue（gate3 0/0、两家非作者 0 P0/P1）
-- #438 | gate | doing | PR #441 @974fd6d6 开 debug_assert_with_mut_call lint；codex + GLM r2 增量与 gate2 排队
-- #443 | gate | doing | PR #445 @d57b7e19 两家非作者 0 P0/P1、CI 绿，等 --serial 闸门块后入队；#446 前置于 #443 关单
-- #410 | gate | doing | PR #434 @f08c78f7 修复轮 2 推送；DeepSeek 增量 0/0，GLM 增量在跑；410-gate3 排队；#447 前置于 #410 关单
-- A7.1-pr3 | gate | doing | PR #421 @729ac713 修复轮 3 推送；GLM + DeepSeek 增量 0/0；a7-1-gate5 排队
-- #423 | gate | doing | PR #433 @4b23fdb3 修复轮 1；闸门排队；P2-1 开 #442
-- A6.5-pr9b | gate | doing | PR #406 @8f1a4fc1 沙箱外全量 1062/0；--serial 闸门排队
-- #386 | coord | doing | PR #407 已合入（Refs）；关单前置 #448、#449
+updated: 2026-10-22 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A7.1-pr3 | gate | blocked | PR #421 @0a75d155：孤立代理 P1 连续 3 轮（gate5/6/7 boundary），挂起；需人实测 `{"type":"request","id":"\ud800","method":"describe_server"}` TS 行为；决策卡 state/decisions-20261022.md:#421-surrogate-p1
+- #434 | gate | ready | PR #434 token_accounting；gate PASS（旧 head），pr-gate CI FAILURE（head 不符，需重跑 run-review-roles.py）
+- #455 | gate | ready | PR #455 P2-跟进第5批；无结果块，需首次跑 run-review-roles.py
+- #390 | impl | ready | codex/issue-390 已推 origin（含 boundary P2 金样）；需开 PR 再走评审
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -20,6 +16,14 @@ updated: 2026-10-22 04:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 10:30 · /loop 协调轮（新会话接续）
+> **清理**：8 棵已合入 worktree 全部归档 `_tmp/archive/worktrees-20261022/`（4880 文件，rsync -aH --sparse），git worktree remove 删除；磁盘 96.6→60.8 GiB，worktree 12→4/12。
+> **#421 A7.1-pr3**：修复轮 6（gate5 P1：params JsValue 展开语义）+ 修复轮 7（gate6 P1：入站解析改 parse_json）均提交推送；gate7 boundary 报 3 条新 P1（id/method/sessionKey 孤立代理处理双轨）。同一修复方向第 3 次失败，挂起。决策卡 `state/decisions-20261022.md:#421-surrogate-p1`（建议人实测 `{"type":"request","id":"\ud800","method":"describe_server"}` TS 行为后再定改法）。PR #421 head=0a75d155，696+12 测试全过。
+> **project-mark**：#255/#319/#338 状态改 Done。
+> **memory**：三条新教训（macOS exec SIGKILL、worker 证据移回、zsh 等号展开）+ decisions-20261022.md 入库。
+> **READY**：清除过时条目（#406/#407/#401/#390 doing 全已合入）；#421 改 blocked；加入 #434/#455 待闸门；#390 需开 PR。
+> **下一步**：① 人实测孤立代理 TS 行为后续 #421；② #434 重跑 run-review-roles.py（head 不符）；③ #455 首次跑闸门；④ #390 分支 codex/issue-390 已推，需开 PR。
 
 > ## 2026-10-22 01:40 · /loop 协调轮
 > **卡点与脱困**：逐角色串行跑出的单角色块会被 `check-pr-gate.py` 拒收，因为它要求每块含四角色，#430/#429/#406 因此入不了队。新增 `scripts/merge-review-roles.py`：只合并 status.json，要求 head、diff 字节、runner/model 一致，角色不重复；test-review-roles 加正负例，负控 2 项命中。CLAUDE.md pr-ready 停点同步。PR #432；合入前用 `_tmp/20261022-loop/merge-roles.sh`。
