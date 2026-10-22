@@ -12,3 +12,5 @@ metadata:
 2. 想停 #458 修复轮的 dsh，用了 `pkill -n 'dsh --profile'`，结果误杀了正在写夹具生成器的 EdgeClaw pr10a worker，只能续跑。
 
 **How to apply:** 派发时记 pid；停任务前用 `ps -o pid,lstart,command -p <pid>` 核对是不是目标再 kill。核对 worker 是否异常结束，看 status 文件的时间戳和 out 的末尾，不要只看 exit=0（被信号打断的 dsh 也可能写出 exit=0）。关联 [[macos-exec-sigkill]]、[[worker-evidence-pullback]]。
+
+**补充（17:40）**：归档失败产物时，只挪输出文件（`.out`、`.err`、`.status`、`.try*`，评审输出 `rv-*.md`），任务书（`fix*.md`、`impl.md`、`*-resume.md`）一律不动。17:15 后缀表里带了 `md`，把 `fix1-resume.md` 也挪走了，之后两次重派都立刻 exit=1，空转 20 分钟。
