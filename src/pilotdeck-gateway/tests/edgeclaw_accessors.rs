@@ -58,9 +58,38 @@ fn clean(v: &Value, root: &Path) -> Value {
         v => v.clone(),
     }
 }
+/// `{$number:"NaN"}` transports probe values JSON cannot represent; the TS
+/// generator (`observe.mts`) decodes the same sentinel before invoking TS.
+fn decode_probe(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::Array(items) => JsValue::Array(items.iter().map(decode_probe).collect()),
+        JsValue::Object(object) => {
+            let number = object
+                .get("$number")
+                .and_then(JsValue::as_string)
+                .and_then(|kind| kind.to_utf8().ok())
+                .and_then(|kind| match kind.as_str() {
+                    "NaN" => Some(f64::NAN),
+                    "Infinity" => Some(f64::INFINITY),
+                    "-Infinity" => Some(f64::NEG_INFINITY),
+                    _ => None,
+                });
+            if object.len() == 1
+                && let Some(number) = number
+            {
+                return JsValue::Number(number);
+            }
+            let mut decoded = JsObject::new();
+            for (key, value) in object.entries() {
+                decoded.insert(key.clone(), decode_probe(value));
+            }
+            JsValue::Object(decoded)
+        }
+        other => other.clone(),
+    }
+}
 fn js(v: &Value) -> JsObject {
-    parse_json(&v.to_string())
-        .unwrap()
+    decode_probe(&parse_json(&v.to_string()).unwrap())
         .as_object()
         .unwrap()
         .clone()
@@ -81,11 +110,13 @@ fn error(e: FileMemoryError) -> Value {
         e => panic!("unexpected repository error: {e}"),
     }
 }
-fn open(root: &Path, id: &str, workspace: &str) -> EdgeClawFileStores {
+fn open(root: &Path, id: &str, workspace: &str, global: Option<&Path>) -> EdgeClawFileStores {
     EdgeClawFileStores::with_workspace_clock(
         root.join("workspaces").join(id).join("control.sqlite"),
         root.join("workspaces").join(id).join("memory"),
-        root.join("global"),
+        global
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.join("global")),
         workspace,
         root.join("home/.pilotdeck"),
         Arc::new(|| NOW.into()),
@@ -110,7 +141,15 @@ fn repos(root: &Path, o: &Value) -> HashMap<String, EdgeClawFileStores> {
                     )
                     .unwrap()
                 } else {
-                    open(root, id, expand(&c["workspace"], root).as_str().unwrap())
+                    // Configs may point at an isolated global store (`probe`);
+                    // default configs keep the shared `$ROOT/global`.
+                    let global = expand(c.get("global").unwrap_or(&json!("$ROOT/global")), root);
+                    open(
+                        root,
+                        id,
+                        expand(&c["workspace"], root).as_str().unwrap(),
+                        Some(Path::new(global.as_str().unwrap())),
+                    )
                 },
             )
         })
@@ -202,7 +241,7 @@ fn invoke(repos: &mut HashMap<String, EdgeClawFileStores>, op: &Value, root: &Pa
         }
         "reopen" => {
             let _ = r.close();
-            let r = open(root, id, input["workspace"].as_str().unwrap());
+            let r = open(root, id, input["workspace"].as_str().unwrap(), None);
             repos.insert(id.into(), r);
             Ok(JsValue::Null)
         }

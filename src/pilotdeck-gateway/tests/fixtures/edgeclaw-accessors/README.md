@@ -7,8 +7,8 @@
 `sourceClosureSha256` 校验固定基线及其完整源码依赖，随后调用真实 TS。
 没有用 Rust 产生期望值。
 
-金样包含六个 TS 创建的 SQLite 数据库（base64）、TS 写出的初始文件树、
-可在 Rust 侧重放的写入操作和 81 个真实 TS 观测值。`seedFiles` 只记录文件，
+金样包含七个 TS 创建的 SQLite 数据库（base64）、TS 写出的初始文件树、
+可在 Rust 侧重放的写入操作和 108 个真实 TS 观测值。`seedFiles` 只记录文件，
 空目录由仓库构造器建立；损坏外部库的输入另行记录。时钟固定为
 `2026-10-22T00:00:00.000Z`。外部 workspace 标识用稳定的 `/fixture/*` 字符串；
 临时 HOME 在导入 TS 前注入，绝不使用真实 `~/.pilotdeck`。
@@ -24,7 +24,12 @@ project kinds 的 `new Set(...)` 语义（数组过滤、字符串按字符迭�
 `includeExternal:false` 时不触达 store）；includeExternal 的 `0`/`""`/`1`/`null` 真值语义；
 project 条目忽略调用方 limit/offset（固定 5000/0）；global 入参白名单
 （多余 projectId/includeTmp 不透传）、非数组 kinds 的 TypeError、空/缺省 kinds；
-global user 过滤、分页、搜索、summary 路径前缀；损坏 manifest 的 repair 与重复 repair。
+独立 `probe` 全局 store（6 条 user）上 limit/offset/query 的类型与真值语义：
+`'2'`/`true`/`null` 丢弃返回全部，`2.5` 转发后 slice 截断到 2，`NaN`
+（`{$number:"NaN"}` 编码，JSON 无法表示）转发后得空集，`offset:'1'`/`null`
+丢弃、`1`/`2.5` 转发，`query:''`/`0` 丢弃、`query:"Probe three"` 命中；
+whitelist 的 `projectId` 不透传；global user 过滤、分页、搜索、summary 路径前缀；
+损坏 manifest 的 repair 与重复 repair。
 
 生成两次并核字节（从仓库根目录运行）：
 

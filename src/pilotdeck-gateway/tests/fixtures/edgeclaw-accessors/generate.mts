@@ -31,6 +31,12 @@ for(const [repo,name] of [['alpha','éclair'],['beta','Zebra']] as const) {
 for(const [id,name] of [['z','Zebra'],['e','éclair'],['a','apple'],['c','中文']]) seed.push(ws('main','upsertGeneralProjectMeta',{projectId:id,projectName:name}),ws('main','upsertCandidate',candidate('project',name,{projectId:id})));
 seed.push(ws('main','upsertGeneralProjectMeta',{projectId:'mirror',projectName:'Alpha mirror',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Alpha/../Alpha',sourceProjectId:'current_project'}),ws('main','upsertCandidate',candidate('feedback','local feedback',{projectId:'mirror'})),ws('main','upsertGeneralProjectMeta',{projectId:'orphan',projectName:'Invisible orphan',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Missing',sourceProjectId:'current_project'}));
 seed.push({method:'global',action:'upsertCandidate',input:candidate('user','User😀')},{method:'global',action:'upsertCandidate',input:candidate('user','Second')});
+// The shared global store keeps two entries (existing observations unchanged).
+// A dedicated `probe` store gets six users so limits below the entry count are
+// discriminating: six entries require both a dropped and a forwarded limit to
+// produce different observations.
+for(const [i,name] of ['Probe one','Probe two','Probe three','Probe four','Probe five','Probe six'].entries())
+  seed.push({repo:'probe',method:'global',action:'upsertCandidate',input:candidate('user',name,{capturedAt:`2026-10-2${i+1}T00:00:00.000Z`})});
 for(const op of seed) {const result=invoke(repos,op,root);assert.ok(!result?.error,JSON.stringify(result));}
 for(const id of ['alpha','beta']) {
   const entries=repos[id].getFileMemoryStore().listMemoryEntries({includeDeprecated:true});
@@ -81,6 +87,17 @@ const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',
 {method:'listGlobalMemoryEntries',input:{kinds:'project',scope:'project'}},{method:'listGlobalMemoryEntries',input:{kinds:42}},
 {method:'listGlobalMemoryEntries',input:{kinds:null}},
 {method:'listGlobalMemoryEntries',input:{query:'',limit:'2',offset:null,includeTmp:true,projectId:'x'}},
+// Six-entry global store: `limit`/`offset` are forwarded only when
+// `typeof === "number"` (NaN included), `query` only when truthy. Strings,
+// booleans and null are dropped and therefore return all six; 2.5 is forwarded
+// and slices to two; NaN is forwarded and slices to none. `$number` encodes NaN
+// because JSON cannot (decoded by observe.mts and edgeclaw_accessors.rs).
+...[{}, {limit:'2'},{limit:true},{limit:null},{limit:2.5},{limit:2},{limit:0},{limit:{$number:'NaN'}},
+    {offset:'1'},{offset:null},{offset:1},{offset:2.5},{query:''},{query:0},{query:'Probe three'},
+    {kinds:['user']},{scope:'project'}].map(input=>({repo:'probe',method:'listGlobalMemoryEntries',input})),
+// A non-whitelisted projectId must not reach the store: forwarded, the store's
+// single-mode project filter returns [] instead of the two sliced entries.
+{repo:'probe',method:'listGlobalMemoryEntries',input:{limit:2,projectId:'x'}},
 {method:'getUserSummary'},
 {method:'raw',input:{path:'workspaces/main/memory/MEMORY.md',content:'broken manifest'}},{method:'repairWorkspaceManifest'},{method:'repairWorkspaceManifest'},
 {method:'state',input:'/fixture/Beta'},{method:'listReadableProjectCatalog'},{method:'state',input:'$ROOT/home/.pilotdeck'},

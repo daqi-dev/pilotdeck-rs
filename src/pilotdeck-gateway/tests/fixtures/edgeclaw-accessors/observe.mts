@@ -9,15 +9,31 @@ export const configs = [
   {id:'empty',workspace:'/fixture/Empty'},
   {id:'general',workspace:'$ROOT/home/.pilotdeck'},
   {id:'defaults',workspace:'$ROOT/workspaces',defaults:true},
+  // Dedicated global store with more entries than the shared two, so dropped
+  // versus forwarded limit/offset/query produce different byte output.
+  {id:'probe',workspace:'/fixture/Probe',global:'$ROOT/global-probe'},
 ];
+// JSON cannot carry NaN; the generator writes {$number:'NaN'} and both this
+// replay path and the Rust harness decode it into an actual Number(NaN).
+function probeNumber(v:any):number|undefined {
+  if(!v || typeof v!=='object' || Array.isArray(v) || Object.keys(v).length!==1 || !('$number' in v)) return undefined;
+  if(v.$number==='NaN') return NaN;
+  if(v.$number==='Infinity') return Infinity;
+  if(v.$number==='-Infinity') return -Infinity;
+  return undefined;
+}
 export function expand(v:any,root:string):any {
   if(typeof v==='string') return v.replaceAll('$ROOT',root);
   if(Array.isArray(v)) return v.map(x=>expand(x,root));
-  if(v && typeof v==='object') return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,expand(x,root)]));
+  if(v && typeof v==='object') {
+    const number=probeNumber(v);
+    if(number!==undefined) return number;
+    return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,expand(x,root)]));
+  }
   return v;
 }
 export function openRepos(Repo:any,root:string) {
-  return Object.fromEntries(configs.map(c=>[c.id,new Repo(join(root,'workspaces',c.id,'control.sqlite'),c.defaults?{}:{memoryDir:join(root,'workspaces',c.id,'memory'),globalRootDir:join(root,'global'),workspaceDir:expand(c.workspace,root)})]));
+  return Object.fromEntries(configs.map(c=>[c.id,new Repo(join(root,'workspaces',c.id,'control.sqlite'),c.defaults?{}:{memoryDir:join(root,'workspaces',c.id,'memory'),globalRootDir:expand((c as any).global??'$ROOT/global',root),workspaceDir:expand(c.workspace,root)})]));
 }
 export function fileTree(root:string) {
   return tree(root).filter((e:any)=>!e.relativePath.endsWith('control.sqlite') && !e.relativePath.endsWith('control.sqlite-wal') && !e.relativePath.endsWith('control.sqlite-shm'));
@@ -38,7 +54,7 @@ export function invoke(repos:any, op:any, root:string):any {
       case 'remove': rmSync(join(root,input.path),{recursive:true,force:true});return null;
       case 'project': return r.getReadableProject(input.id)??null;
       case 'entries': return r.listReadableProjectEntries(input.id,input.options??{});
-      case 'reopen': try { r.close(); } catch {}; repos[op.repo??'main'] = new r.constructor(join(root,'workspaces',op.repo??'main','control.sqlite'),{memoryDir:join(root,'workspaces',op.repo??'main','memory'),globalRootDir:join(root,'global'),workspaceDir:expand(input.workspace,root)});return null;
+      case 'reopen': try { r.close(); } catch {}; repos[op.repo??'main'] = new r.constructor(join(root,'workspaces',op.repo??'main','control.sqlite'),{memoryDir:join(root,'workspaces',op.repo??'main','memory'),globalRootDir:expand((configs.find(c=>c.id===(op.repo??'main')) as any)?.global??'$ROOT/global',root),workspaceDir:expand(input.workspace,root)});return null;
       default: return r[op.method](input)??null;
     }
   } catch(e:any) { return {error:e.code??e.name,message:e.message}; }
