@@ -551,3 +551,34 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：用私有 CA 或依赖代理的 https hook。扩展信任源会改变安全边界，需产品决定。
 - **机器判据**：暂无（实现方在 `_tmp/20261023-p2-hooks/RESULT.md`「范围外」记录）。
 - **批准记录**：无；**已知未对齐（未批准，待人批）**。
+
+## 已知未对齐（未批准，待人批）· A7.4 user_dialog HTTP store
+
+以下九条来自 PR #535 修复轮 1 实现方的候选（`_tmp/20261023-a74-pr2-http-store/RESULT.md` §8 C1–C12），协调者核对引用后登记；C2（spawn_blocking，输出字节不变）、C5（重复请求头取首个，与 Node 默认一致）、C6（类型层不可表达的入参，无运行时行为）不是可观察差异，未登记。TS 依据均指 `src/gateway/user-dialog/HttpGatewayUserDialogStore.ts`（cc7c4e6）与 Node v22.22.0 `http.createServer` 默认值。
+
+### A7.4-HTTPSTORE-AUTH-BEFORE-BODY-001 · 鉴权与长度检查先于读请求体（向安全偏离）
+- **类别**：处理顺序 / 资源边界。**TS 依据**：`:515-523` 先收完整 body 再进 handler，401 在 `:194-204`。**Rust 行为**：405 / 404 / 401 与 Content-Length 检查在读 body 之前，未认证的大 body 直接 401。**范围**：HTTP server 包装层；handler API 仍接收完整 body。**机器判据**：`src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs` `request_body_limit_rejects_oversized_content_length_before_reading`。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-BODY-LIMIT-001 · 请求体 2 MiB 上限，超限 413（向安全偏离）
+- **类别**：新增资源上限。**TS 依据**：`:522-523` 无上限收集，仅受 V8 字符串上限约束。**Rust 行为**：`DEFAULT_MAX_BODY_BYTES = 2 MiB`，Content-Length 预检与 chunked `Limited` 均回 413。**范围**：所有 POST body；合法夹具 1,048,709 B 仍通过。**机器判据**：`src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs` `request_body_limit_rejects_oversized_content_length_before_reading`、`request_body_limit_rejects_oversized_chunked_bodies`、`request_body_at_the_limit_is_accepted`；金样 `huge-valid-json` 为 200。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-TIMEOUTS-001 · 请求头 60 s + 请求体 300 s 两段超时（Node 为单一 requestTimeout 覆盖整段）
+- **类别**：超时语义。**TS 依据**：Node 默认 `headersTimeout = 60000`、`requestTimeout = 300000`（后者覆盖整段请求），`:236` 用默认值。**Rust 行为**：`header_read_timeout(60 s)` 加 body `timeout(300 s)`，极端情况下总时长约 360 s。**范围**：仅慢客户端。**机器判据**：`src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs` `partial_headers_are_closed_after_headers_timeout`、`slow_request_bodies_are_closed_after_request_timeout`；360 s 总时长无测试。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-KEEPALIVE-001 · 未实现 keepAliveTimeout 5 s
+- **类别**：连接生命周期。**TS 依据**：Node 默认 `keepAliveTimeout = 5000`。**Rust 行为**：未单独实现，空闲 keep-alive 连接由 60 s 请求头超时兜底关闭。**范围**：空闲 keep-alive 连接；单请求不受影响。**机器判据**：暂无（实现方建议后续补）。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-MAX-CONNECTIONS-001 · 连接数上限 64（向安全偏离）
+- **类别**：新增资源上限。**TS 依据**：Node `maxConnections` 默认无限。**Rust 行为**：`DEFAULT_MAX_CONNECTIONS = 64` + Semaphore，满额时暂停 accept。**范围**：单进程 server。**机器判据**：`src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs` `connection_semaphore_caps_in_flight_connections`。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-431-408-SHAPE-001 · 431 / 408 响应可能多出 content-length: 0
+- **类别**：错误响应字节。**TS 依据**：Node 原始 socket 实测为 `HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n` 与 `HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n`（空 body）。**Rust 行为**：空 body + `Connection: close`，状态码与 Node 一致；hyper 可能补 `content-length: 0`，未逐字节比对。**范围**：仅超限 / 超时路径。**机器判据**：`src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs` `oversized_headers_are_rejected_like_node`、`slow_request_bodies_are_closed_after_request_timeout`（断言状态、空 body、connection: close）。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-KEY-ORDER-001 · handler 透传 store 结果时键序固定
+- **类别**：JSON 字节。**TS 依据**：`:210` 直接 `JSON.stringify` store 返回对象，保留其插入顺序。**Rust 行为**：`StoredAnswer` / `StoredDialog` 固定为 `requestId,result,submittedAt` 与 `request,createdAt`。**范围**：自定义 store 用别的插入顺序时字节不同；File store 一致。**机器判据**：handlerCases 的 `claim-ok` 等金样；自定义顺序 store 无测试。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-CLIENT-ERROR-CLASS-001 · 客户端网络 / 中止错误不保留 JS 错误类名
+- **类别**：错误对象形状。**TS 依据**：`:154-167` 只把 `response.json()` 失败吞成 undefined，网络 / 中止异常仍是 TypeError / AbortError。**Rust 行为**：`HttpStoreTransportError` 只有 message 与 invalid_response 标志，统一为 `fetch failed` 或 invalid-response 文案。**范围**：client 错误面；成功路径不受影响。**机器判据**：clientRequests 的 message 金样（类名不可观察）。**批准记录**：无；**已知未对齐（未批准）**。
+
+### A7.4-HTTPSTORE-CLIENT-BODY-UNITS-001 · 客户端响应体上限按 UTF-8 字节计（TS 按 UTF-16 码元）
+- **类别**：字符串上限语义。**TS 依据**：`Response.text()` 受 V8 `MAX_STRING_LENGTH`（UTF-16 码元）约束。**Rust 行为**：复用 `fetch_redirect::read_body`，按 UTF-8 字节累计，多字节文本可能更早触发上限并映射为 invalid response。**范围**：仅接近 512 MB 的超大响应。**机器判据**：暂无（需构造多字节 512 MB 边界）。**批准记录**：无；**已知未对齐（未批准）**。
