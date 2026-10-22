@@ -37,6 +37,7 @@
 
 - 模型 / 账号 / 额度：
   - 优先用两家（2026-10-22 人定）：GLM `glm-5.3-mb`、DeepSeek `deepseek-v4.1-flash-mb`，都经 llm-center（`https://llm-center.modelbest.co`），密钥在 `.env.local` 的 `ZAI_API_KEY` / `DEEPSEEK_API_KEY`。实现默认 DeepSeek，评审默认 GLM + DeepSeek；作者是其中一家时，第二家评审才由 codex 补位。codex（`gpt-6.1-sol`）走 OpenAI 自家后端，不经 llm-center。
+  - Grok Bot（经 Cursor API，「代码分析」bot，`scripts/grokbot-call.py`）2026-10-19 人批进入评审谱系：只评审、不在本机写代码；材料会发到 Cursor 云端。DeepSeek 单 key 限 50 RPM，只够 2 个 dsh 同跑，所以 DeepSeek 主要用于实现，评审默认 GLM + Grok，codex 补位。
   - 模型名必须带 `-mb`。GLM 跑在 `claude -p` 里时，stderr 的 `unrecognized_model` 是上下文窗口提示，不是失败。
   - 怎么调、已知坑：正本是 `state/memory/20261015-model-runners.md` 的 2026-10-22 段。
   - 详细清单与行号：`_tmp/20261022-model-channels-inventory/`（不入库）

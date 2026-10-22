@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 17:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-22 19:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -51,6 +51,25 @@ updated: 2026-10-22 17:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > - #477、#481 入队；#483 入队。
 > **17:50**：A7.2-pr2 开 PR #488（DeepSeek；与 #487 都会新建 turn/mod.rs，后合入的一方合并那一行）。codex r1：#486 pr9c P1×3、#487 pr1 P1×4。GLM r1 和闸门结束后，由等待脚本自动派 DeepSeek 修复轮 1。#408（夹具回放统一走溯源守卫，前置于 A6、A7.1 收尾）派 codex，新树 wt-408。dsh-retry 已实测：17:36 两单撞 429 后自动续跑。#477、#481、#483 在合并队列。worktree 12/12。
 > **17:55**：#477、#481（#470 关闭）、#483 合入，邮箱 noreply；wt-a63-pr7b、wt-a72-pr0b、wt-board-1720 回收。主仓工作区里由协调者直接写的两份 memory 与 main 冲突，存档后还原，再快进；本地多出的 17:15 段落随本 PR 补进 deepseek-rpm。**以后 state/ 下的文件只在 board 分支上改，不在主仓工作区写。**
+
+> ## 2026-10-22 18:05 · /loop 协调轮
+> - **#482 修复轮 1**（b7360117）：沙箱外 lib 775/0，negative.py 19/19。r2 增量评审与 gate2 在跑。
+> - **#475 grep 修复轮 2**（a6b07f7c）：查到 CI 上金样对拍在缺 rg 时静默跳过，测试 0.03 s 就「通过」。改为 CI=true 或 PDRS_REQUIRE_RG=1 时缺 rg 即失败。worker 另外改了 ci.yml，推送被拒（令牌无 workflow 权限），而 CI=true 已能覆盖，所以 ci.yml 不提交。若 CI 因 runner 上没有 rg 而变红，就要在 CI 里装预编译 rg，这碰红线，届时写卡请人定。r3 增量评审与 gate3 在跑。
+> - **pr9c 修复轮 1**：dsh 推演到会话用尽，没改文件就退出了（不是 429）。已重派，任务书加「先列清单、逐条改、单条超过 20 分钟就交协调者」。
+> - **#408**：统一守卫已接上 20 项；provider-timing 旧金样的溯源块是数组格式，派 codex 修复轮 1，用真实 TS 重生成，数据部分必须逐字节不变。
+> - **stats 修复轮 2** 已交付，沙箱外核验中。
+> **18:20**：
+> - **#475 grep**：CI 实测，runner 上没有 rg，对拍测试在 CI=true 下失败。这证实了此前 CI 上的 grep 对拍一直静默跳过、显示通过。现把 `grep_outputs_match_real_ts` 改成显式 `#[ignore]` 并写明理由（04d7b30f，Claude）；本机 `--include-ignored` 通过。CI 装 rg 写了卡 `_tmp/20261022-loop/card-ci-ripgrep.md` 请人定：建议 `cargo install ripgrep --locked` 源码编译；另外改 workflow 需要令牌带 workflow 权限。
+> - **#482**：r2 两家 0/0，`finalize-pr.sh` 等 gate2 出块后贴结果块、CI 绿后入队。
+> - **#476 stats 修复轮 2**（3753b9d0）：按卡只认 toISOString；r3 与 gate3 在跑。
+> - **#408**：provider-timing 重生成时 `timers.start` 有 682 处计时漂移，不可能逐字节复现。改为不重生成，只把溯源块从数组机械迁成对象，数据不动，派 codex 修复轮 2。
+> **18:35**：#489 合入，#482 入队。#475 r3 两家无 P0/P1，在新 head 重跑 gate4，由 finalize-pr 收尾。#476 codex r3 P1（toISOString 扩展年份 ±YYYYYY 被拒）→ 修复轮 3 等 gate3 后派。提交并推送：#480 修复轮 1（430eb4d5）、#487 修复轮 1（64be91fd）；#408 → PR #490（provider-timing 只迁溯源块格式，数据零改动）。三单增量评审与闸门已派。闸门加全局名额，最多 3 个（`slot.sh`，/tmp/pdrs-gate-slots）。
+> **18:40**：#482 合入（#479 关闭），wt-a72-pr0-connection 回收。新派 A6.6-pr5b（memory 附件 + prompt cache，清 #326、#339）给 codex，新树 wt-a66-pr5b，避开 #480 与 A7.2 的文件。#480 codex r2 P1×1 → 修复轮 2 等 GLM r2 与 gate2 出结果后派。闸门名额 3 个都在用。
+> **18:55**：
+> - **人定 CI rg 选 A**：#475 加 CI 步骤，`cargo install ripgrep --locked --version 14.1.1` 从源码编译，按版本缓存；grep 金样对拍去掉 ignore（add5d3b7，Claude）。gh 令牌本来就带 workflow 权限，之前是 git 走了另一份凭据；改为单条命令指定 `credential.helper='!gh auth git-credential'`。gate4 的 P1×2（ignore 与 README 矛盾）随之解决，gate5 与 r4 增量评审在跑，finalize-pr 收尾。
+> - **DeepSeek 限流再收紧**：pr9c、A7.2-pr2 修复轮 1 在 3 并发下用完 4 次续跑仍撞 429。dsh 名额降到 2，续跑改为最多 8 次、间隔 90 s，两单重新续跑。下一步：dsh 评审改用单次请求的 review-deepseek.py；新的实现单试派给 GLM（glm_impl 通道加 Bash，模型 glm-5.3-mb）。
+> - #490（#408）：GLM r1 0/0、DeepSeek r1 0/0，gate1 0/0，交 finalize。A7.2-pr1 codex r2 P1×5，等修复轮 2。
+> **19:05**：人提醒还有 Grok Bot。它 10-19 已人批进入评审谱系，但 real.md 和 model-runners 都没写，今天的派活脚本也没有入口，所以一直没用上。已在 review.sh 加 grok 入口（全局 1 单，没拿到 VERDICT 时自动 `--read` 补取，冒烟通过），real.md 与 model-runners 补上分工：DeepSeek 只做实现，评审默认 GLM + Grok，codex 补位。
 
 > ## 2026-10-22 15:50 · /loop 协调轮（汇总 14:12 起四轮）
 > **合入**：#472（board）、#473（模型通道核验：real.md、memory model-runners 10-22 段、CLAUDE.md），邮箱 noreply。#471（#414 mark_session_dirty）在合并队列。

@@ -8,6 +8,7 @@ type: feedback
 
 **2026-10-22 核验（人定：优先 `glm-5.3-mb` 与 `deepseek-v4.1-flash-mb`；本段优先于下文）**
 - **分工**：实现默认 DeepSeek（dsh + `scripts/dsh-headless-llm-center.patch.yml`，`model: deepseek-v4.1-flash-mb`）。评审默认两家：GLM（`scripts/run-review-roles.py` 默认 `--runner zai`，模型 `glm-5.3-mb`）+ DeepSeek（`scripts/review-deepseek.py` 默认 `deepseek-v4.1-flash-mb`，或 dsh read-only）。作者是 GLM 或 DeepSeek 时，第二家评审才用 codex（`gpt-6.1-sol`，走 OpenAI 自家后端，不经 llm-center）。Claude 只做难单。
+- **分工更新（10-22 晚）**：DeepSeek 单 key 50 RPM，实测 3 个 dsh 同跑仍频繁 429，所以 dsh 全局 ≤2（`dsh-slot.sh`），只用于实现。撞 429 由 `dsh-retry.sh` 自动续跑（最多 8 次，间隔 90 s）。评审默认 **GLM + Grok Bot**（`_tmp/20261018-a6-split/review.sh … glm,grok`；grok 经 `_tmp/20261021-loop/grok-review.sh`，全局同时 1 单；回复里没有 VERDICT 时用 `--read --since-seq` 补取，10-22 冒烟通过），codex 补位；作者是 GLM 时用 Grok + codex。Grok 细节见 memory「grokbot-channel」。
 - **模型名必须带 `-mb`**。不带 `-mb` 的 `glm-5.3` 网关也会应答，但不是指定通道，出错时不容易察觉。10-22 查出 `_tmp/20261018-a6-split/glm_review.py` 写死了 `--model glm-5.3`，已改成 `glm-5.3-mb`。派单前先 `grep -n -- '--model\|model:'` 看一眼启动脚本或 patch。
 - **不是失败的输出**：`claude -p` 跑 GLM 时，stderr 会打 `Claude Code doesn't recognize the model "glm-5.3-mb"…` 和 `[claude-code:unrecognized_model]`，意思只是按 200k 估上下文窗口。判成败只看三样：exit 码、jsonl 里有没有 `"type":"result"` 行、`.md` 末尾有没有 `VERDICT:` 行。网关回显的展示名 `GLM-5.3` 已由 `RESP_MODEL_ALIAS` 放行。
 - **中断不是失败**：jsonl 停在 `thinking_tokens`、没有 result 行，说明进程被打断了（比如上一会话退出连带杀掉）。作废重跑，不计入「同一失败 3 次」。
