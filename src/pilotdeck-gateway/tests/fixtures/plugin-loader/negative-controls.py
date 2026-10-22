@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 OUTPUT = Path(sys.argv[1]).resolve()
@@ -77,18 +79,12 @@ try:
     for name, relative, old, new, test in CASES:
         path = ROOT/relative
         assert path.read_bytes() == originals[relative], f'concurrent modification: {relative}'
-        slots = ROOT/'scripts/cargo-slots.sh'
-        with (OUTPUT/(name+'.slots.log')).open('w') as log:
-            while True:
-                code = subprocess.run([str(slots)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT).returncode
-                assert code in (0,1), f'cargo-slots failed: {code}'
-                if code == 0:
-                    break
-                time.sleep(5)
+        gate = wait_for_slot(ROOT/'scripts/cargo-slots.sh', interval=5)
+        (OUTPUT/(name+'.slots.log')).write_text(gate.stdout + gate.stderr)
         path.write_text(originals[relative].decode().replace(old,new))
         try:
-            with (OUTPUT/(name+'.log')).open('w') as log:
-                result = subprocess.run(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','plugin_loader',test,'--','--exact'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=180)
+            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','plugin_loader',test,'--','--exact'],cwd=ROOT,env=env,timeout=180)
+            (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
             output = (OUTPUT/(name+'.log')).read_text()
             killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output
             row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}

@@ -91,6 +91,45 @@ class ProcessControls(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
+    def test_setsid_grandchild_cannot_extend_cleanup_past_its_bound(self):
+        # A descendant that calls setsid() leaves the owned process group and
+        # keeps the inherited pipes open. Killpg therefore cannot make EOF
+        # arrive; cleanup must give up on the pipes after kill_timeout instead
+        # of waiting for the 900 s command budget (#528). The descendant exits
+        # on its own after 15 s so deliberately removing the bound fails the
+        # 10 s assertion instead of leaving an orphan behind.
+        grandchild = "import time; print('escaped-ready', flush=True); time.sleep(15)"
+        leader = (
+            "import os, pathlib, subprocess, sys, time; "
+            f"p = subprocess.Popen([sys.executable, '-c', {grandchild!r}], "
+            "start_new_session=True); "
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()) + ' ' + str(p.pid)); "
+            "print('leader-ready', flush=True); time.sleep(60)"
+        )
+        with tempfile.TemporaryDirectory(prefix="pdrs-negative-escape-") as temp:
+            pids_file = Path(temp) / "pids"
+            pids = []
+            try:
+                started = time.monotonic()
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    run_owned([sys.executable, "-c", leader, str(pids_file)],
+                              timeout=1, kill_timeout=1)
+                elapsed = time.monotonic() - started
+                self.assertIn("leader-ready", caught.exception.output)
+                self.assertLess(
+                    elapsed, 10,
+                    f"cleanup waited on an escaped pipe holder for {elapsed:.1f}s")
+                pids = [int(pid) for pid in pids_file.read_text().split()]
+            finally:
+                # The escaped grandchild survives the group signal by design.
+                if not pids and pids_file.exists():
+                    pids = [int(pid) for pid in pids_file.read_text().split()]
+                for pid in pids:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     @staticmethod
     def gone(pid):
         try:

@@ -368,9 +368,14 @@ impl HostHandler for DisposeProbe {
 async fn disposer_timeout_rejection_and_panic_keep_the_terminal() {
     for mode in ["pending", "reject", "panic"] {
         let (mut command, receipt) = peer("positive");
-        let mut limits = protocol_limits();
-        limits.close_timeout = Duration::from_millis(100);
-        let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
+        let mut client = HostClient::spawn(&mut command, None, protocol_limits())
+            .await
+            .unwrap();
+        // close_timeout bounds child shutdown and disposer cleanup. Only the
+        // cleanup deadline is under test here; the connection snapshotted the
+        // five-second protocol grace at spawn, so shortening this copy after
+        // spawn cannot SIGKILL the peer before it persists PASS (#389/#528).
+        client.limits.close_timeout = Duration::from_millis(100);
         let handler = DisposeProbe::new(mode);
         let result = timeout(
             Duration::from_secs(5),

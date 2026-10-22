@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
+
 
 def main():
     root = Path(__file__).resolve().parents[5]
@@ -41,11 +44,13 @@ def main():
 
     def run(name, test):
         with (output / f'{name}.log').open('w') as log:
-            subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root,
-                           stdout=log, stderr=subprocess.STDOUT, check=True)
-            return subprocess.run(command + ([test, '--', '--exact', '--nocapture'] if test else []),
-                                  cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                  timeout=600).returncode
+            gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
+            log.write(gate.stdout + gate.stderr)
+            log.flush()
+            result = run_owned(command + ([test, '--', '--exact', '--nocapture'] if test else []),
+                               cwd=root, env=env, timeout=600)
+            log.write(result.stdout + result.stderr)
+            return result.returncode
 
     assert run('positive', '') == 0, 'positive tests must pass before mutating'
     try:

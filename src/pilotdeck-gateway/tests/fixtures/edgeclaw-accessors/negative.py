@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/accessors.rs'
@@ -106,14 +108,9 @@ try:
         assert text.count(before) == 1, (name, text.count(before))
         path.write_text(text.replace(before, after))
         try:
-            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')],capture_output=True,text=True)
-            while slots.returncode == 1:
-                time.sleep(15)
-                slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')],capture_output=True,text=True)
-            if slots.returncode != 0:
-                raise RuntimeError('cargo slots unavailable: '+slots.stdout+slots.stderr)
+            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             cmd = ['cargo','test','--manifest-path',str(root/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','edgeclaw_accessors',test,'--','--exact']
-            run = subprocess.run(cmd,cwd=root,capture_output=True,text=True,timeout=180)
+            run = run_owned(cmd, cwd=root, timeout=180)
             log = run.stdout+run.stderr
             (out/f'{name}.log').write_text(slots.stdout+slots.stderr+log)
             assert run.returncode != 0 and 'test result: FAILED.' in log and 'could not compile' not in log, name+' did not fail a runtime assertion'

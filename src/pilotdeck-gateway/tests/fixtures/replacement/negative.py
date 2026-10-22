@@ -8,7 +8,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 EVIDENCE = Path(sys.argv[1]).resolve()
@@ -98,24 +100,18 @@ for name, path, before, after, test in MUTATIONS:
 
 summary = []
 for name, path, before, after, test in MUTATIONS:
-    while True:
-        slots = subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'], capture_output=True, text=True)
-        if slots.returncode == 0:
-            break
-        if slots.returncode != 1:
-            raise RuntimeError(f'cargo slots failed: {slots.stdout}\n{slots.stderr}')
-        time.sleep(5)
+    slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', interval=5)
     mutated = ORIGINAL[path].replace(before, after, 1)
     assert path.read_text() == ORIGINAL[path], f'concurrent edit: {path}'
     log = EVIDENCE / f'{name}.log'
     print(f'RUN {name}: {test}', flush=True)
     try:
         path.write_text(mutated)
+        proc = run_owned(['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'],
+                         cwd=ROOT / 'src', timeout=240)
         with log.open('w') as output:
             output.write(slots.stdout + slots.stderr)
-            output.flush()
-            proc = subprocess.run(['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'],
-                                  cwd=ROOT / 'src', stdout=output, stderr=subprocess.STDOUT, timeout=240)
+            output.write(proc.stdout + proc.stderr)
         text = log.read_text(errors='replace')
         assert proc.returncode == 101 and f'test {test} ... FAILED' in text and '1 failed;' in text, \
             f'{name}: expected a compiled failing test; see {log}'

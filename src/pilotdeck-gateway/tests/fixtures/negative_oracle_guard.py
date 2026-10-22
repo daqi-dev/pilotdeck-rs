@@ -11,7 +11,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
+
+from negative_process import run_owned, wait_for_slot
 
 
 CASES = [
@@ -54,14 +55,8 @@ def main():
                 if phase == "tampered":
                     assert path.read_bytes() == original, "fixture changed during baseline test"
                     path.write_bytes(original.replace(recorded.encode(), forged.encode(), 1))
-                while True:
-                    gate = subprocess.run([str(slots)], capture_output=True, text=True)
-                    if gate.returncode != 1:
-                        gate.check_returncode()
-                        break
-                    print("cargo slots full; retry in 30 seconds", flush=True)
-                    time.sleep(30)
-                result = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=600)
+                gate = wait_for_slot(slots)
+                result = run_owned(command, cwd=workspace, timeout=600)
                 raw = result.stdout + result.stderr
                 (output / f"{name}-{phase}.log").write_text(
                     gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
