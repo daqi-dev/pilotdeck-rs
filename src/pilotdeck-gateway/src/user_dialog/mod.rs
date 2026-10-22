@@ -6,9 +6,20 @@
 //! before consuming the bus or submitting to the hosted store.
 
 mod bus;
+mod channel;
+#[cfg(test)]
+mod channel_tests;
+mod journal;
 mod store;
 
 pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};
+pub use channel::{
+    AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,
+    GatewayUserDialogChannel, InputRequest, SelectChoice, SelectRequest, UserDialogStore,
+};
+pub use journal::{
+    GatewayUserDialogJournal, JournalOptions, UserDialogJournal, create_gateway_user_dialog_journal,
+};
 pub use store::{FileGatewayUserDialogStore, StoreOptions};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -91,6 +102,21 @@ impl DialogAnswer {
             }
             Self::Cancelled(reason) => {
                 let mut value = object([("behavior", "cancelled".into())]);
+                if let Some(reason) = reason.as_ref().filter(|reason| !reason.is_empty()) {
+                    set(&mut value, "reason", JsValue::String(reason.clone()));
+                }
+                value
+            }
+        }
+    }
+    /// Native channel answer shape (`type`, not the store's `behavior`).
+    pub fn to_channel_value(&self) -> JsValue {
+        match self {
+            Self::Answered(value) => {
+                object([("type", "answered".into()), ("value", value.clone())])
+            }
+            Self::Cancelled(reason) => {
+                let mut value = object([("type", "cancelled".into())]);
                 if let Some(reason) = reason.as_ref().filter(|reason| !reason.is_empty()) {
                     set(&mut value, "reason", JsValue::String(reason.clone()));
                 }
