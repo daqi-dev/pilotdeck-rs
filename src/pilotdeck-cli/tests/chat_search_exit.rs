@@ -43,7 +43,7 @@ fn parity(source: &str, errors_only: bool) {
             .env_clear()
             .env("HOME", root.join("home"))
             .env("PILOT_HOME", root.join("pilot"))
-            .env("TZ", "UTC")
+            .env("TZ", case["tz"].as_str().unwrap_or("UTC"))
             .env("LANG", "C")
             .env("LC_ALL", "C")
             .env("NO_COLOR", "1")
@@ -90,4 +90,45 @@ fn chat_search_storage_and_format_match_ts() {
 #[test]
 fn chat_search_utf16_and_raw_storage_edges_match_ts() {
     parity(include_str!("fixtures/chat-search/edges.json"), false);
+}
+
+#[test]
+fn chat_search_backtracking_limit_is_a_bounded_error() {
+    let root = std::env::temp_dir().join(format!("pdrs-chat-backtrack-{}", std::process::id()));
+    let chats = root.join("pilot/projects/backtrack/chats");
+    fs::create_dir_all(&chats).unwrap();
+    fs::write(
+        chats.join("s.jsonl"),
+        serde_json::to_vec(&serde_json::json!({
+            "type":"accepted_input", "sessionId":"s", "messages":[{
+                "content":[{"type":"text", "text":format!("{}!", "a".repeat(100))}]
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
+        .args([
+            "chat",
+            "search",
+            r"\b(a+)+$",
+            "--regex",
+            "--all-projects",
+            "--json",
+        ])
+        .env_clear()
+        .env("HOME", &root)
+        .env("PILOT_HOME", root.join("pilot"))
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&root).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"Chat search regex exceeded backtracking limit\n"
+    );
 }

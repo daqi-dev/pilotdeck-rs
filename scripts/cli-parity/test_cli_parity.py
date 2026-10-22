@@ -20,7 +20,7 @@ from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, 
                     digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
 from compare import coalesce, compare, comparison_view, expected_stdout, load_round, PROBE_CHECKS
 from controls import run_controls
-from host_negative_controls import check_exec_control
+from host_negative_controls import check_exec_control, main as host_control_main
 from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
 
 
@@ -319,6 +319,15 @@ class ContractTests(unittest.TestCase):
             else:
                 self.assertEqual(row['status'], 'PASS', row)
 
+    def test_controls_block_zero_applicable_cases(self):
+        with patch('controls.compare', return_value={'status': 'PASS'}), \
+                patch('controls.load_round', return_value=({}, {}, [])):
+            result = run_controls(self.root / 'zero-source', self.root / 'zero-controls')
+        self.assertEqual(result['status'], 'BLOCKED', result)
+        self.assertEqual(len(result['notApplicable']), 5)
+        self.assertFalse(any(row['status'] == 'PASS' for row in result['controls']))
+        self.assertEqual(json.loads((self.root / 'zero-controls/controls.json').read_text()), result)
+
     def test_disk_controls_find_artifacts_without_keep_txt(self):
         cases = [{'id': 'other-file', 'argv': [], 'stdinHex': '', 'token': False,
                   'exit': 0, 'stdout': 'ok\n', 'stderr': '',
@@ -358,12 +367,28 @@ class ContractTests(unittest.TestCase):
                     (case / 'stderr.bin').write_bytes(stderr)
                     self.assertEqual(check_exec_control(recording, summary, runner_exit)['status'], 'FAIL')
 
-    def test_host_control_reports_empty_suite_as_not_applicable(self):
+    def test_host_control_blocks_empty_suite(self):
         with patch('host_negative_controls.SCENARIOS', []):
             result = check_exec_control(self.root / 'absent', {}, 0)
-        self.assertEqual(result['status'], 'NOT_APPLICABLE')
+        self.assertEqual(result['status'], 'BLOCKED')
         self.assertIsNone(result['scenario'])
         self.assertIn('no case', result['reason'])
+
+    def test_host_control_empty_suite_exits_nonzero(self):
+        output = self.root / 'empty-host-control'
+        argv = ['host_negative_controls.py', '--baseline', str(self.root),
+                '--node', str(self.root / 'node'), '--output', str(output)]
+        completed = subprocess.CompletedProcess([], 0, b'', b'')
+        with patch('sys.argv', argv), patch('host_negative_controls.SCENARIOS', []), \
+                patch('host_negative_controls.output_path', return_value=output), \
+                patch('host_negative_controls.baseline_path', return_value=self.root), \
+                patch('host_negative_controls.subprocess.run', return_value=completed), \
+                patch('host_negative_controls.read_plain', return_value=b'{"status":"BLOCKED"}'), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(host_control_main(), 2)
+        report = json.loads((output / 'control.json').read_text())
+        self.assertEqual(report['status'], 'BLOCKED')
+        self.assertIsNone(report['scenario'])
 
     def test_exact_ts_warning_prefix_only_once_without_mutating_raw_evidence(self):
         source = self.source()

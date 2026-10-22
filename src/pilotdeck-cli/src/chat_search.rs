@@ -8,12 +8,16 @@ use crate::{
 use pilotdeck_gateway::{list_session_entries, read_session_bytes, session_chat_dir};
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 mod matcher;
 mod title;
 
-struct Snippet(JsString);
-impl Serialize for Snippet {
+#[derive(Clone)]
+struct Text(JsString);
+impl Serialize for Text {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let json = stringify_json(&JsValue::String(self.0.clone()))
             .unwrap()
@@ -23,7 +27,7 @@ impl Serialize for Snippet {
             .serialize(serializer)
     }
 }
-impl std::fmt::Display for Snippet {
+impl std::fmt::Display for Text {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&String::from_utf16_lossy(self.0.units()))
     }
@@ -35,13 +39,13 @@ const USAGE: &str = "Usage: pilotdeck chat search <keyword> [--project <path>] [
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Match {
-    session_id: String,
+    session_id: Text,
     role: &'static str,
-    text: String,
-    snippet: Snippet,
-    created_at: String,
+    text: Text,
+    snippet: Text,
+    created_at: Text,
     line_number: usize,
-    session_title: String,
+    session_title: Text,
     project_key: String,
 }
 #[derive(Serialize)]
@@ -115,6 +119,15 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         truncated: false,
         sessions_scanned: files.len(),
     };
+    // The TS provider indexes every file before searching or applying the limit.
+    let mut titles = HashMap::new();
+    for file in &files {
+        let bytes = read_session_bytes(&file.path).unwrap_or_default();
+        if let Some(title) = title::read(&bytes) {
+            let id = file.path.file_stem().unwrap_or_default().to_string_lossy();
+            titles.insert((file.project.clone(), JsString::from(id.as_ref())), title);
+        }
+    }
     for file in files {
         let bytes = read_session_bytes(&file.path).map_err(|error| {
             Failure::Error(
@@ -122,8 +135,6 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             )
         })?;
         let source = String::from_utf8_lossy(&bytes);
-        let id = file.path.file_stem().unwrap_or_default().to_string_lossy();
-        let title = title::read(&bytes).unwrap_or_else(|| id.into_owned());
         let mut file_matches = vec![];
         // Node readline treats CR, LF and CRLF as line boundaries.
         for (index, line) in physical_lines(&source).enumerate() {
@@ -146,27 +157,35 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             }
             let normalized = normalize(&text);
             let center = matcher.find(&normalized)?.unwrap_or(0);
-            let units: Vec<_> = normalized.encode_utf16().collect();
+            let units = normalized.0.units();
             let start = center.saturating_sub(60);
             let end = (center + 60).min(units.len());
             let mut snippet = Vec::new();
             if start > 0 {
                 snippet.extend("...".encode_utf16());
             }
-            snippet.extend_from_slice(&units[start..end]);
+            // JS slice clamps both bounds and returns empty when start >= end.
+            if start < end {
+                snippet.extend_from_slice(&units[start..end]);
+            }
             if end < units.len() {
                 snippet.extend("...".encode_utf16());
             }
-            let snippet = Snippet(JsString::from_utf16(snippet));
+            let snippet = Text(JsString::from_utf16(snippet));
+            let session_id = string(&entry, "sessionId")
+                .unwrap_or_else(|| Text(file.path.to_string_lossy().as_ref().into()));
+            let session_title = titles
+                .get(&(file.project.clone(), session_id.0.clone()))
+                .cloned()
+                .unwrap_or_else(|| session_id.clone());
             file_matches.push(Match {
-                session_id: string(&entry, "sessionId")
-                    .unwrap_or_else(|| file.path.to_string_lossy().into_owned()),
+                session_id,
                 role: entry_role,
                 text,
                 snippet,
-                created_at: string(&entry, "createdAt").unwrap_or_default(),
+                created_at: string(&entry, "createdAt").unwrap_or_else(|| Text("".into())),
                 line_number: index + 1,
-                session_title: title.clone(),
+                session_title,
                 project_key: file.project.clone(),
             });
         }
@@ -264,34 +283,40 @@ fn list(dir: &Path, project: &str) -> Vec<Target> {
         })
         .collect()
 }
-fn string(entry: &JsValue, key: &str) -> Option<String> {
-    entry
-        .get(key)?
-        .as_string()
-        .map(|s| String::from_utf16_lossy(s.units()))
+fn string(entry: &JsValue, key: &str) -> Option<Text> {
+    entry.get(key)?.as_string().map(|s| Text(s.clone()))
 }
-fn canonical(messages: &[JsValue]) -> Option<String> {
+fn canonical(messages: &[JsValue]) -> Option<Text> {
     let mut parts = vec![];
     for message in messages {
         let Some(JsValue::Array(content)) = message.get("content") else {
             continue;
         };
         for block in content {
-            if string(block, "type").as_deref() != Some("text") {
+            if !string(block, "type").is_some_and(|s| s.0.equals_str("text")) {
                 continue;
             }
             if let Some(text) = string(block, "text") {
-                let text = js_trim(&text);
-                if !text.is_empty() {
-                    parts.push(text.to_owned());
+                let text = trim(&text);
+                if !text.0.is_empty() {
+                    parts.push(text);
                 }
             }
         }
     }
-    (!parts.is_empty()).then(|| parts.join("\n"))
+    (!parts.is_empty()).then(|| {
+        let mut units = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                units.push(10);
+            }
+            units.extend_from_slice(part.0.units());
+        }
+        Text(JsString::from_utf16(units))
+    })
 }
-fn searchable(entry: &JsValue) -> Option<(&'static str, String)> {
-    match string(entry, "type").as_deref() {
+fn searchable(entry: &JsValue) -> Option<(&'static str, Text)> {
+    match string(entry, "type").map(|s| s.to_string()).as_deref() {
         Some("accepted_input") => {
             let JsValue::Array(messages) = entry.get("messages")? else {
                 return None;
@@ -316,11 +341,32 @@ fn physical_lines(source: &str) -> impl Iterator<Item = &str> {
             .split('\r')
     })
 }
-fn normalize(text: &str) -> String {
-    text.split(|c: char| js_trim(&c.to_string()).is_empty())
+fn space(unit: u16) -> bool {
+    char::from_u32(u32::from(unit)).is_some_and(|c| js_trim(&c.to_string()).is_empty())
+}
+fn trim(text: &Text) -> Text {
+    let units = text.0.units();
+    let start = units.iter().position(|u| !space(*u)).unwrap_or(units.len());
+    let end = units
+        .iter()
+        .rposition(|u| !space(*u))
+        .map_or(start, |i| i + 1);
+    Text(JsString::from_utf16(units[start..end].to_vec()))
+}
+fn normalize(text: &Text) -> Text {
+    let mut units = Vec::new();
+    for part in text
+        .0
+        .units()
+        .split(|u| space(*u))
         .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    {
+        if !units.is_empty() {
+            units.push(32);
+        }
+        units.extend_from_slice(part);
+    }
+    Text(JsString::from_utf16(units))
 }
 
 fn format_result(result: &SearchResult, projects: bool, env: &Env) -> String {
@@ -344,11 +390,11 @@ fn format_result(result: &SearchResult, projects: bool, env: &Env) -> String {
         String::new(),
     ];
     for (index, item) in result.matches.iter().enumerate() {
-        let units: Vec<_> = item.session_id.encode_utf16().collect();
+        let units = item.session_id.0.units();
         let short = if units.len() > 12 {
             format!("{}…", String::from_utf16_lossy(&units[..8]))
         } else {
-            item.session_id.clone()
+            item.session_id.to_string()
         };
         let project = if projects && !item.project_key.is_empty() {
             format!(
@@ -367,7 +413,7 @@ fn format_result(result: &SearchResult, projects: bool, env: &Env) -> String {
             index + 1,
             item.session_title,
             item.role,
-            when(&item.created_at, env),
+            when(&item.created_at.to_string(), env),
             item.snippet
         ));
         lines.push(String::new());
