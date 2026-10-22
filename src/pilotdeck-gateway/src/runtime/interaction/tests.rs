@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::permission::GatewaySessionPermissionRuleSetRegistry;
 use crate::test_baseline as baseline;
 use pilotdeck_protocol::stringify_json;
 use std::sync::{
@@ -50,19 +51,42 @@ struct Harness {
 }
 impl Harness {
     fn new() -> Arc<Self> {
+        Self::build(false)
+    }
+    /// Every `InteractionOptions` component is injected, mirroring the
+    /// generator's `injectedOptions` scenarios.
+    fn injected() -> Arc<Self> {
+        Self::build(true)
+    }
+    fn build(injected: bool) -> Arc<Self> {
         Arc::new_cyclic(|weak: &Weak<Self>| {
             let weak = weak.clone();
-            Self {
-                coordinator: GatewayInteractionCoordinator::new(InteractionOptions {
-                    on_elicitation_delivered: Some(Arc::new(move |session, id| {
-                        weak.upgrade().unwrap().events.lock().unwrap().push(object([
-                            ("event", "delivered".into()),
-                            ("session", JsValue::String(session.clone())),
-                            ("id", JsValue::String(id.clone())),
-                        ]));
-                    })),
+            let delivered: DeliveredObserver = Arc::new(move |session, id| {
+                weak.upgrade().unwrap().events.lock().unwrap().push(object([
+                    ("event", "delivered".into()),
+                    ("session", JsValue::String(session.clone())),
+                    ("id", JsValue::String(id.clone())),
+                ]));
+            });
+            let options = if injected {
+                let port = InteractionReconnectPort::default();
+                InteractionOptions {
+                    reconnect_port: Some(port.clone()),
+                    permission_bus: Some(GatewayPermissionBus::new(port.clone())),
+                    elicitation_bus: Some(GatewayElicitationBus::new(port)),
+                    permission_grants: Some(Arc::new(
+                        GatewaySessionPermissionRuleSetRegistry::default(),
+                    )),
+                    on_elicitation_delivered: Some(delivered),
+                }
+            } else {
+                InteractionOptions {
+                    on_elicitation_delivered: Some(delivered),
                     ..Default::default()
-                }),
+                }
+            };
+            Self {
+                coordinator: GatewayInteractionCoordinator::new(options),
                 events: Mutex::new(vec![]),
                 registrations: Mutex::new(vec![]),
                 timers: Mutex::new(vec![]),
@@ -479,17 +503,22 @@ fn interaction_real_ts_stepwise_oracle() {
         "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
     );
     let scenarios = array(oracle.get("scenarios").unwrap());
-    assert_eq!(scenarios.len(), 46, "recorded TS scenario cardinality");
+    assert_eq!(scenarios.len(), 48, "recorded TS scenario cardinality");
     assert_eq!(
         scenarios
             .iter()
             .map(|s| array(s.get("steps").unwrap()).len())
             .sum::<usize>(),
-        268,
+        281,
         "recorded TS step cardinality"
     );
     for scenario in scenarios {
-        let harness = Harness::new();
+        let injected = scenario.get("injectedOptions").and_then(JsValue::as_bool) == Some(true);
+        let harness = if injected {
+            Harness::injected()
+        } else {
+            Harness::new()
+        };
         let steps = array(scenario.get("steps").unwrap());
         assert_eq!(
             steps.len(),
@@ -523,6 +552,233 @@ fn interaction_real_ts_stepwise_oracle() {
         }
         harness.coordinator.dispose(&"fixture_end".into());
     }
+}
+
+#[test]
+fn interaction_register_racing_reject_window_matches_ts_map_semantics() {
+    use std::sync::mpsc;
+    // Real TS runs rejectSession's exhausted loop and bySession.delete as
+    // adjacent statements (GatewayElicitationBus.ts:127-138; probe evidence in
+    // this issue's RESULT). A register the live bucket still holds is settled by
+    // the loop; a register landing after the delete keeps a fresh bucket; a
+    // register into a bucket the loop does not hold is dropped as an unsettled
+    // zombie whose replay record survives — the pinned TS baseline
+    // reject-deny-register-original-map.
+    for p in [false, true] {
+        for replacement in [false, true] {
+            let events: Arc<Mutex<Vec<(&'static str, &'static str)>>> =
+                Arc::new(Mutex::new(Vec::new()));
+            let coordinator = Arc::new(GatewayInteractionCoordinator::new(
+                InteractionOptions::default(),
+            ));
+            let register = move |coordinator: &GatewayInteractionCoordinator,
+                                 entry: PendingEntry| {
+                if p {
+                    coordinator
+                        .permission_bus()
+                        .register(&"s".into(), entry, None)
+                } else {
+                    coordinator
+                        .elicitation_bus()
+                        .register(&"s".into(), entry, None)
+                }
+                .unwrap()
+            };
+            let reject = move |coordinator: &GatewayInteractionCoordinator, reason: &str| {
+                let reason = reason.into();
+                if p {
+                    coordinator
+                        .permission_bus()
+                        .reject_session(&"s".into(), &reason);
+                } else {
+                    coordinator
+                        .elicitation_bus()
+                        .reject_session(&"s".into(), &reason);
+                }
+            };
+            let pending_count = move |coordinator: &GatewayInteractionCoordinator| {
+                if p {
+                    coordinator.permission_bus().pending_count(&"s".into())
+                } else {
+                    coordinator.elicitation_bus().pending_count(&"s".into())
+                }
+            };
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (resume_tx, resume_rx) = mpsc::channel();
+            let resume_rx = Arc::new(Mutex::new(resume_rx));
+            let paused = Arc::new(AtomicBool::new(false));
+            for id in ["first", "last"] {
+                let (resolved, rejected) = (events.clone(), events.clone());
+                let (entered_tx, resume_rx, paused) =
+                    (entered_tx.clone(), resume_rx.clone(), paused.clone());
+                let entry = PendingEntry {
+                    request_id: id.into(),
+                    tool_call_id: id.into(),
+                    tool_name: "fixture".into(),
+                    resolve: Arc::new(move |_| resolved.lock().unwrap().push((id, "resolve"))),
+                    reject: Arc::new(move |_| {
+                        rejected.lock().unwrap().push((id, "reject"));
+                        if id == "first" && !paused.swap(true, Ordering::SeqCst) {
+                            entered_tx.send(()).unwrap();
+                            resume_rx.lock().unwrap().recv().unwrap();
+                        }
+                    }),
+                };
+                register(&coordinator, entry);
+            }
+            let rejecting = coordinator.clone();
+            let worker = std::thread::spawn(move || {
+                reject(&rejecting, "closed");
+            });
+            // The worker is parked inside first's reject callback, holding no
+            // lock: a cross-thread register can land around its final scan.
+            entered_rx.recv().unwrap();
+            let (settled, dropped) = (events.clone(), events.clone());
+            let entry = PendingEntry {
+                request_id: "new".into(),
+                tool_call_id: "new".into(),
+                tool_name: "fixture".into(),
+                resolve: Arc::new(move |_| settled.lock().unwrap().push(("new", "resolve"))),
+                reject: Arc::new(move |_| dropped.lock().unwrap().push(("new", "reject"))),
+            };
+            if replacement {
+                // A second bulk finishes first: it settles "last" ("first" is
+                // claimed cross-thread) and deletes the shared bucket, so
+                // "new" registers into a bucket the parked loop never held.
+                reject(&coordinator, "other");
+            }
+            let registration = register(&coordinator, entry);
+            resume_tx.send(()).unwrap();
+            worker.join().unwrap();
+            let events = events.lock().unwrap();
+            let settle_count =
+                |id: &'static str| events.iter().filter(|(key, _)| *key == id).count();
+            for id in ["first", "last"] {
+                assert_eq!(
+                    settle_count(id),
+                    1,
+                    "{id}: p={p}, {replacement:?}, {events:?}"
+                );
+            }
+            if replacement {
+                // The zombie matches the TS replacement-Map baseline: no
+                // callback, active handle, no pending, replay residue.
+                assert_eq!(settle_count("new"), 0, "p={p}, {events:?}");
+                assert!(registration.active(), "p={p}");
+                assert_eq!(pending_count(&coordinator), 0, "p={p}");
+                assert_eq!(
+                    coordinator.reconnect_port().snapshot(&"s".into()).len(),
+                    1,
+                    "p={p}"
+                );
+                let delivered = if p {
+                    coordinator.decide_permission(
+                        &"s".into(),
+                        PermissionDecision {
+                            request_id: "new".into(),
+                            decision: "allow".into(),
+                            remember: None,
+                            reason: None,
+                        },
+                        None,
+                    )
+                } else {
+                    coordinator.respond_elicitation(
+                        &"s".into(),
+                        &"new".into(),
+                        "answer".into(),
+                        None,
+                    )
+                };
+                assert!(!delivered, "p={p}");
+            } else {
+                // The register landed in the bucket the loop still drains, so
+                // TS settles it like any same-Map reentrant registration.
+                assert_eq!(settle_count("new"), 1, "p={p}, {events:?}");
+                assert!(!registration.active(), "p={p}");
+                assert_eq!(pending_count(&coordinator), 0, "p={p}");
+                assert_eq!(
+                    coordinator.reconnect_port().snapshot(&"s".into()).len(),
+                    0,
+                    "p={p}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn interaction_injected_options_share_the_supplied_components() {
+    // The InteractionOptions Some-branches must wire the caller's components,
+    // not silent defaults: a default port, bus or registry behaves identically
+    // through the coordinator while leaving every external handle empty.
+    let port = InteractionReconnectPort::default();
+    let permission_bus = GatewayPermissionBus::new(port.clone());
+    let elicitation_bus = GatewayElicitationBus::new(port.clone());
+    let grants = Arc::new(GatewaySessionPermissionRuleSetRegistry::default());
+    let coordinator = GatewayInteractionCoordinator::new(InteractionOptions {
+        reconnect_port: Some(port.clone()),
+        permission_bus: Some(permission_bus.clone()),
+        elicitation_bus: Some(elicitation_bus.clone()),
+        permission_grants: Some(grants.clone()),
+        on_elicitation_delivered: None,
+    });
+    let entry = |id: &str| PendingEntry {
+        request_id: id.into(),
+        tool_call_id: id.into(),
+        tool_name: "fixture".into(),
+        resolve: Arc::new(|_| ()),
+        reject: Arc::new(|_| ()),
+    };
+    permission_bus
+        .register(&"s".into(), entry("p"), None)
+        .unwrap();
+    elicitation_bus
+        .register(&"s".into(), entry("q"), None)
+        .unwrap();
+    assert_eq!(port.snapshot(&"s".into()).len(), 2);
+    assert_eq!(coordinator.reconnect_port().snapshot(&"s".into()).len(), 2);
+    let binding = InteractionBinding {
+        connection_id: "a".into(),
+        generation: 1,
+    };
+    coordinator
+        .reconnect(&"s".into(), Some(binding.clone()), None)
+        .unwrap();
+    assert_eq!(port.current_binding(&"s".into()), Some(binding));
+    let decided = coordinator.decide_permission(
+        &"s".into(),
+        PermissionDecision {
+            request_id: "p".into(),
+            decision: "allow".into(),
+            remember: None,
+            reason: None,
+        },
+        None,
+    );
+    assert_eq!(
+        permission_bus.pending_count(&"s".into()),
+        0,
+        "decide delivered"
+    );
+    assert!(decided);
+    let answered = coordinator.respond_elicitation(&"s".into(), &"q".into(), "answer".into(), None);
+    assert_eq!(
+        elicitation_bus.pending_count(&"s".into()),
+        0,
+        "answer delivered"
+    );
+    assert!(answered);
+    let granted = coordinator.grant_session_permission(&"s".into(), &"Read".into());
+    assert_eq!(
+        granted.get("granted").and_then(JsValue::as_bool),
+        Some(true)
+    );
+    assert_eq!(grants.allow_rules(&"s".into()).len(), 1);
+    assert_eq!(coordinator.session_allow_rules(&"s".into()).len(), 1);
+    coordinator.dispose(&"gone".into());
+    assert_eq!(grants.allow_rules(&"s".into()).len(), 0);
+    assert_eq!(port.snapshot(&"s".into()).len(), 0);
 }
 
 #[test]

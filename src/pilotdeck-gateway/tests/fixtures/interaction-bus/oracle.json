@@ -18675,6 +18675,1033 @@
           ]
         }
       ]
+    },
+    {
+      "name": "injected-options-components",
+      "injectedOptions": true,
+      "steps": [
+        {
+          "op": "grant",
+          "session": "s",
+          "entry": "Read"
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "reconnect",
+          "session": "s",
+          "next": {
+            "connectionId": "a",
+            "generation": 1
+          }
+        },
+        {
+          "op": "decide",
+          "id": "r",
+          "session": "s",
+          "decision": "allow"
+        },
+        {
+          "op": "answer",
+          "id": "r",
+          "session": "s",
+          "answer": {
+            "behavior": "answered",
+            "value": {
+              "text": "yes"
+            }
+          }
+        },
+        {
+          "op": "close",
+          "session": "s",
+          "reason": "injected_close"
+        },
+        {
+          "op": "grant",
+          "session": "s",
+          "entry": "Write"
+        },
+        {
+          "op": "dispose",
+          "reason": "injected_dispose"
+        },
+        {
+          "op": "grant",
+          "session": "z",
+          "entry": "Read"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "granted": true,
+            "entry": "Read"
+          },
+          "events": [],
+          "registrations": [],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 1,
+              "hasP": true,
+              "hasQ": true,
+              "pendingP": true,
+              "pendingQ": true,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "outcome": "initial",
+            "binding": {
+              "connectionId": "a",
+              "generation": 1
+            },
+            "requests": [
+              {
+                "ownerId": "s",
+                "requestId": "r",
+                "kind": "permission",
+                "toolCallId": "tc-r",
+                "toolName": "fixture",
+                "binding": {
+                  "connectionId": "a",
+                  "generation": 1
+                }
+              },
+              {
+                "ownerId": "s",
+                "requestId": "r",
+                "kind": "question",
+                "toolCallId": "tc-r",
+                "toolName": "fixture",
+                "binding": {
+                  "connectionId": "a",
+                  "generation": 1
+                }
+              }
+            ]
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 1,
+              "hasP": true,
+              "hasQ": true,
+              "pendingP": true,
+              "pendingQ": true,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "binding": {
+                "connectionId": "a",
+                "generation": 1
+              },
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "binding": {
+                "connectionId": "a",
+                "generation": 1
+              },
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": {
+                "connectionId": "a",
+                "generation": 1
+              },
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "granted": true,
+            "entry": "Write"
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "write_file"
+                }
+              ]
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "granted": true,
+            "entry": "Read"
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            },
+            {
+              "session": "z",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "injected-options-shared-port-duplicate",
+      "injectedOptions": true,
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "r",
+          "session": "s",
+          "peer": true
+        },
+        {
+          "op": "decide",
+          "id": "r",
+          "session": "s",
+          "decision": "allow"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "error": "Interaction request r is already pending for s."
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
     }
   ]
 }
