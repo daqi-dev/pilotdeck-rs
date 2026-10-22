@@ -508,3 +508,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅 `pilotdeck chat search --regex` 执行时回溯超限；不放宽其他正则编译错误、匹配结果、snippet 或输出的逐字节对拍。
 - **机器判据**：`src/pilotdeck-cli/tests/chat_search_exit.rs` 的 `chat_search_backtracking_limit_is_a_bounded_error`（exit、空 stdout、stderr 原文、耗时 < 10 s）；负控「改坏回溯超限文本」转红。
 - **批准记录**：无；PR #513 评审（Grok r1 #4）建议保留上限并登记；**已知未对齐（未批准）**，待人批是否接受为向安全偏离。
+
+
+### D2-CHATSEARCH-REGEX-GIANTQUANT-001 · 巨量词的 V8 饱和语义与 Rust 编译限制
+
+- **类别**：CLI 正则编译边界，已知未对齐；非已接受差异，不产生对拍豁免。
+- **TS 依据**（cc7c4e6）：`src/session/search/NodeSessionSearchPort.ts:85-91` 使用原生 `RegExp`，`a{2147483648,2147483647}` 在 Node v22.22.0 编译成功，当前真实 CLI 夹具返回 exit 0、JSON `matches: []`。V8 在量词顺序检查前把边界饱和到 2^31-1；可用 `src/pilotdeck-cli/tests/fixtures/chat-search/generate.mts <输出目录> giant-quantifier`（相同 Node loader 与 PDRS_BASELINE 设置）独立重采，沿用 HEAD、工作区和源码 SHA-256 守卫。两次真实输出及哈希见工作区 `_tmp/20261023-d2-pr2-chat-search/RESULT.md`「修复轮 5」。
+- **Rust 行为**：`src/pilotdeck-cli/src/chat_search/matcher.rs` 顺序检查使用饱和边界，但向 fancy-regex 传入原始巨量词，编译被拒绝；同查询 exit 1、stdout 为空、stderr 为 `Invalid regular expression: /a{2147483648,2147483647}/i: Invalid regular expression\n`。
+- **范围**：至少覆盖上述巨量词；未穷举 V8/fancy-regex 的数值与编译尺寸边界。不得推广为所有大数模式均不匹配，或因此放宽其他正则结果和错误文本。
+- **机器复算**：生成器 `giant-quantifier` 模式保存真实 TS argv、exit、stdout、stderr；用相同 files/env/argv 执行 Rust 可复现分歧。该模式独立于通过的 39 原场景与 edges 矩阵，不能被计作对拍通过。
+- **批准记录**：无；按 PR #513 GLM r3 P2 #1 由实现方在修复轮 5 补登，协调者复核后保留，**已知未对齐（未批准，待人批）**。后续须完成语义对齐或取得明确接受差异授权，D2 完成前不得据此宣称全量一致；本轮只补台账，不改变匹配行为或判分语义。

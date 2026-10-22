@@ -4,21 +4,44 @@ use crate::Failure;
 use fancy_regex::{Error, ParseError, Regex, RegexBuilder};
 
 pub(super) enum Matcher {
-    Literal { needle: Vec<u16>, sensitive: bool },
-    Regex { pattern: Regex, sensitive: bool },
+    Literal {
+        needle: Vec<u16>,
+        fallback: Vec<usize>,
+        sensitive: bool,
+    },
+    Regex {
+        pattern: Regex,
+        sensitive: bool,
+    },
 }
 impl Matcher {
     pub(super) fn new(query: &str, regex: bool, sensitive: bool) -> Result<Self, Failure> {
         if !regex {
+            let needle = if sensitive {
+                query.encode_utf16().collect()
+            } else {
+                lower(&query.encode_utf16().collect::<Vec<_>>())
+            };
+            // KMP's failure links bound repeated-prefix literal searches by
+            // O(query + text), including large pasted keywords.
+            let mut fallback = vec![0; needle.len()];
+            let mut matched = 0;
+            for at in 1..needle.len() {
+                while matched > 0 && needle[at] != needle[matched] {
+                    matched = fallback[matched - 1];
+                }
+                if needle[at] == needle[matched] {
+                    matched += 1;
+                }
+                fallback[at] = matched;
+            }
             return Ok(Self::Literal {
-                needle: if sensitive {
-                    query.encode_utf16().collect()
-                } else {
-                    lower(&query.encode_utf16().collect::<Vec<_>>())
-                },
+                needle,
+                fallback,
                 sensitive,
             });
         }
+
         let invalid = |detail: &str| {
             Failure::Error(format!(
                 "Invalid regular expression: /{query}/{}: {detail}",
@@ -58,19 +81,32 @@ impl Matcher {
     }
     pub(super) fn find(&self, text: &Text) -> Result<Option<usize>, Failure> {
         match self {
-            Self::Literal { needle, sensitive } => {
+            Self::Literal {
+                needle,
+                fallback,
+                sensitive,
+            } => {
                 let haystack = if *sensitive {
                     text.0.units().to_vec()
                 } else {
                     lower(text.0.units())
                 };
-                Ok(if needle.is_empty() {
-                    Some(0)
-                } else {
-                    haystack
-                        .windows(needle.len())
-                        .position(|part| part == needle)
-                })
+                if needle.is_empty() {
+                    return Ok(Some(0));
+                }
+                let mut matched = 0;
+                for (at, value) in haystack.iter().enumerate() {
+                    while matched > 0 && *value != needle[matched] {
+                        matched = fallback[matched - 1];
+                    }
+                    if *value == needle[matched] {
+                        matched += 1;
+                    }
+                    if matched == needle.len() {
+                        return Ok(Some(at + 1 - matched));
+                    }
+                }
+                Ok(None)
             }
             Self::Regex { pattern, sensitive } => {
                 let subject: String = text
@@ -139,12 +175,12 @@ fn escaped_unit(value: u16, sensitive: bool) -> String {
     format!("\\x{{{:x}}}", u32::from(unit(value, sensitive)))
 }
 // Parse classes in JS code-unit order before canonicalizing: folding the
-// endpoints of [Z-a] first would reverse a valid range. Explicit sets also
+// endpoints of [Z-a] first would reverse a valid range. Explicit ranges also
 // prevent Rust's nested classes and &&/-- operators from changing JS grammar.
 enum Atom {
     Dash,
     Unit(u16),
-    Set(Vec<u16>),
+    Set(Vec<Range>),
     Syntax(String),
 }
 fn escape(
@@ -159,22 +195,29 @@ fn escape(
     };
     *index += 1;
     Ok(match c {
-        100 | 68 | 119 | 87 | 115 | 83 => Atom::Set(
-            (0..=u16::MAX)
-                .filter(|u| {
-                    let positive = match c {
-                        100 | 68 => (48..=57).contains(u),
-                        119 | 87 => matches!(*u, 48..=57 | 65..=90 | 97..=122 | 95),
-                        _ => super::space(*u),
-                    };
-                    if matches!(c, 68 | 87 | 83) {
-                        !positive
-                    } else {
-                        positive
-                    }
-                })
-                .collect(),
-        ),
+        100 | 68 | 119 | 87 | 115 | 83 => {
+            let ranges = match c {
+                100 | 68 => vec![(48, 57)],
+                119 | 87 => vec![(48, 57), (65, 90), (95, 95), (97, 122)],
+                _ => vec![
+                    (9, 13),
+                    (32, 32),
+                    (160, 160),
+                    (0x1680, 0x1680),
+                    (0x2000, 0x200a),
+                    (0x2028, 0x2029),
+                    (0x202f, 0x202f),
+                    (0x205f, 0x205f),
+                    (0x3000, 0x3000),
+                    (0xfeff, 0xfeff),
+                ],
+            };
+            Atom::Set(if matches!(c, 68 | 87 | 83) {
+                complement(&ranges)
+            } else {
+                ranges
+            })
+        }
         98 if class => Atom::Unit(8),
         98 | 66 if !class => {
             let word = "[A-Za-z0-9_]";
@@ -265,19 +308,90 @@ fn escape(
         _ => Atom::Unit(c),
     })
 }
-fn emit_set(values: impl Iterator<Item = u16>, sensitive: bool, negative: bool) -> String {
-    let values: std::collections::BTreeSet<_> =
-        values.map(|u| u32::from(unit(u, sensitive))).collect();
+type Range = (u32, u32);
+
+// Sort once per class, rather than inserting each atom into an ever-growing
+// set. Work and storage depend on input ranges, never their expanded lengths.
+fn union(mut ranges: Vec<Range>) -> Vec<Range> {
+    ranges.sort_unstable();
+    let mut merged: Vec<Range> = Vec::new();
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut()
+            && start <= last.1 + 1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+// Input is a sorted, disjoint union of UTF-16 code-unit intervals.
+fn complement(ranges: &[Range]) -> Vec<Range> {
+    let mut out = Vec::new();
+    let mut next = 0;
+    for &(start, end) in ranges {
+        if next < start {
+            out.push((next, start - 1));
+        }
+        next = end + 1;
+    }
+    if next <= u32::from(u16::MAX) {
+        out.push((next, u32::from(u16::MAX)));
+    }
+    out
+}
+
+fn emit_set(ranges: Vec<Range>, sensitive: bool, negative: bool) -> String {
+    // Describe canonicalization as affine runs over the code-unit domain. The
+    // fixed 65,536-unit scan happens once, not once per escape or class atom.
+    static FOLDED: std::sync::OnceLock<Vec<(u32, u32, u32)>> = std::sync::OnceLock::new();
+    let identity = [
+        (0, 0xd7ff, 0),
+        (0xd800, 0xdfff, 0xfd800),
+        (0xe000, 0xffff, 0xe000),
+    ];
+    let mapping = if sensitive {
+        identity.as_slice()
+    } else {
+        FOLDED.get_or_init(|| {
+            let mut runs = Vec::new();
+            let (mut start, mut mapped) = (0, u32::from(unit(0, false)));
+            for value in 1..=u16::MAX {
+                let value = u32::from(value);
+                let folded = u32::from(unit(value as u16, false));
+                if folded != mapped + value - start {
+                    runs.push((start, value - 1, mapped));
+                    start = value;
+                    mapped = folded;
+                }
+            }
+            runs.push((start, u32::from(u16::MAX), mapped));
+            runs
+        })
+    };
+    let mut values = Vec::new();
+    let mut at = 0;
+    for (start, end) in union(ranges) {
+        while at < mapping.len() && mapping[at].1 < start {
+            at += 1;
+        }
+        let mut run = at;
+        while let Some(&(from, to, mapped)) = mapping.get(run) {
+            if from > end {
+                break;
+            }
+            values.push((mapped + start.max(from) - from, mapped + end.min(to) - from));
+            run += 1;
+        }
+    }
+    let values = union(values);
     if values.is_empty() {
         return if negative { "[\\s\\S]" } else { "(?!)" }.into();
     }
     let mut out = if negative { "[^" } else { "[" }.to_owned();
-    let mut values = values.into_iter().peekable();
-    while let Some(start) = values.next() {
-        let mut end = start;
-        while values.peek() == Some(&(end + 1)) {
-            end = values.next().unwrap();
-        }
+    for (start, end) in values {
         out.push_str(&format!("\\x{{{start:x}}}"));
         if end > start {
             out.push_str(&format!("-\\x{{{end:x}}}"));
@@ -317,19 +431,19 @@ fn character_class(
                     if start > end {
                         return Err("Range out of order in character class");
                     }
-                    values.extend(start..=end);
+                    values.push((u32::from(start), u32::from(end)));
                     at += 3;
                     continue;
                 }
                 match &atoms[at] {
-                    Atom::Unit(u) => values.push(*u),
-                    Atom::Dash => values.push(45),
+                    Atom::Unit(u) => values.push((u32::from(*u), u32::from(*u))),
+                    Atom::Dash => values.push((45, 45)),
                     Atom::Set(set) => values.extend(set),
                     Atom::Syntax(_) => unreachable!(),
                 }
                 at += 1;
             }
-            return Ok(emit_set(values.into_iter(), sensitive, negative));
+            return Ok(emit_set(values, sensitive, negative));
         }
         atoms.push(if c == 92 {
             escape(units, index, true, 0, false)?
@@ -425,7 +539,7 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
                 match escape(&units, &mut index, false, captures, !names.is_empty())? {
                     Atom::Unit(u) => out.push_str(&escaped_unit(u, sensitive)),
                     Atom::Dash => unreachable!(),
-                    Atom::Set(set) => out.push_str(&emit_set(set.into_iter(), sensitive, false)),
+                    Atom::Set(set) => out.push_str(&emit_set(set, sensitive, false)),
                     Atom::Syntax(s) => out.push_str(&s),
                 }
                 repeated = false;
@@ -547,4 +661,57 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_failure_links_preserve_first_code_unit_offset() {
+        // Exhaust the short repeated-prefix alphabet, using the former naive
+        // search as an independent reference rather than copying KMP logic.
+        for needle_len in 0..=5 {
+            for bits in 0..1 << needle_len {
+                let needle: String = (0..needle_len)
+                    .map(|at| if bits & (1 << at) == 0 { 'a' } else { 'b' })
+                    .collect();
+                let matcher = Matcher::new(&needle, false, true).unwrap();
+                for text_len in 0..=8 {
+                    for bits in 0..1 << text_len {
+                        let text: String = (0..text_len)
+                            .map(|at| if bits & (1 << at) == 0 { 'a' } else { 'b' })
+                            .collect();
+                        assert_eq!(
+                            matcher.find(&Text(text.clone().into())).unwrap(),
+                            text.find(&needle)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn escape_intervals_preserve_ecmascript_membership() {
+        for code in [100, 68, 119, 87, 115, 83] {
+            let Atom::Set(ranges) = escape(&[code], &mut 0, true, 0, false).unwrap() else {
+                panic!("expected class intervals");
+            };
+            for value in 0..=u16::MAX {
+                let positive = match code {
+                    100 | 68 => (48..=57).contains(&value),
+                    119 | 87 => matches!(value, 48..=57 | 65..=90 | 97..=122 | 95),
+                    _ => super::super::space(value),
+                };
+                assert_eq!(
+                    ranges
+                        .iter()
+                        .any(|&(from, to)| (from..=to).contains(&u32::from(value))),
+                    positive != matches!(code, 68 | 87 | 83),
+                    "escape={code} unit={value}"
+                );
+            }
+        }
+    }
 }
