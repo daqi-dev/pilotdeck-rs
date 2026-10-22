@@ -137,21 +137,13 @@ pub(super) fn count_request(
         }
     };
     let anthropic = is(field(provider, "protocol"), "anthropic");
-    // TS TokenAccountingRuntime.ts:210-278 uses provider.url directly:
-    // Anthropic joinUrl calls .endsWith() (:456); other protocols normalize
-    // with raw.trim() (model/normalizeProviderBaseUrl.ts:5). Non-strings throw
-    // TypeError (Node 22.22.0 probe: 123 / {} / null). Direct Rust calls keep
-    // String(url) coercion: Anthropic builds a count URL, Responses returns
-    // None at the official-URL gate. Config-normalized runtime providers cannot
-    // reach this difference: parseModelConfig.ts:91 selects a string/catalog
-    // default, mirrored by config/snapshot.rs:644-671 (as_string + default).
-    let base = text(field(provider, "url"));
+    // TS normalizes every non-Anthropic URL before checking the protocol.
+    // Anthropic builds its body first, then joinUrl calls base.endsWith().
+    // Keep that error precedence for direct calls bypassing config validation.
     let url = if anthropic {
-        format!(
-            "{}/v1/messages/count_tokens",
-            base.strip_suffix('/').unwrap_or(&base)
-        )
+        None
     } else {
+        let base = count_base_url(provider, false)?;
         if !is(field(provider, "protocol"), "openai-responses") {
             return Ok(None);
         }
@@ -170,10 +162,10 @@ pub(super) fn count_request(
         ) {
             return Ok(None);
         }
-        format!(
+        Some(format!(
             "{}/v1/responses/input_tokens",
             parsed.origin().ascii_serialization()
-        )
+        ))
     };
     let request = JsValue::Object(request.clone());
     let thinking = thinking(&request, provider, model, anthropic)?;
@@ -181,6 +173,15 @@ pub(super) fn count_request(
         anthropic_body(&request, thinking, prototype)?
     } else {
         responses_body(&request, thinking, prototype)?
+    };
+    let url = if let Some(url) = url {
+        url
+    } else {
+        let base = count_base_url(provider, true)?;
+        format!(
+            "{}/v1/messages/count_tokens",
+            base.strip_suffix('/').unwrap_or(&base)
+        )
     };
     let mut headers = JsObject::new();
     headers.insert("content-type".into(), "application/json".into());
@@ -203,6 +204,30 @@ pub(super) fn count_request(
         );
     }
     Ok(Some(CountHttpRequest { url, headers, body }))
+}
+
+fn count_base_url(provider: &JsValue, anthropic: bool) -> Result<String, HostError> {
+    let value = field(provider, "url");
+    if value.as_string().is_some() {
+        return Ok(text(value));
+    }
+    let (receiver, method) = if anthropic {
+        ("base", "endsWith")
+    } else {
+        ("raw", "trim")
+    };
+    let message = match value {
+        JsValue::Undefined | JsValue::Null => format!(
+            "Cannot read properties of {} (reading '{method}')",
+            if value.is_undefined() {
+                "undefined"
+            } else {
+                "null"
+            }
+        ),
+        _ => format!("{receiver}.{method} is not a function"),
+    };
+    Err(ModuleError::new(message).into())
 }
 
 /// The thinking field of the count bodies, through the shared
@@ -802,37 +827,49 @@ mod tests {
     use super::*;
     use pilotdeck_protocol::parse_json;
 
-    /// Bypassing config normalization preserves the direct-call coercion;
-    /// the real TS countWithProvider instead throws TypeError (see above).
+    /// Includes malformed URL / tools combinations to pin exception precedence.
     #[test]
-    fn count_non_string_url_coerces_only_anthropic() {
-        let request = parse_json(r#"{"provider":"custom","model":"m","messages":[]}"#).unwrap();
-        for (source, coerced) in [("123", "123"), ("{}", "[object Object]"), ("null", "null")] {
-            for protocol in ["anthropic", "openai-responses", "openai"] {
-                let config = parse_json(&format!(
-                    r#"{{"providers":{{"custom":{{"id":"custom","protocol":"{protocol}","url":{source},"apiKey":"test","models":{{"m":{{"id":"m","capabilities":{{}}}}}}}}}}}}"#
-                )).unwrap();
-                let result =
-                    count_request(config.as_object().unwrap(), request.as_object().unwrap())
-                        .unwrap();
-                if protocol == "anthropic" {
-                    assert_eq!(
-                        result.unwrap().url,
-                        format!("{coerced}/v1/messages/count_tokens")
-                    );
-                } else {
-                    assert!(result.is_none(), "{protocol} url={source}");
-                }
+    fn count_urls_match_real_ts_including_error_precedence() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../tests/fixtures/diff-backfill/oracle.json"
+        ));
+        let cases = array(field(&oracle, "urlCases"));
+        assert_eq!(cases.len(), 48);
+        for case in cases {
+            let raw = text(field(case, "raw"));
+            let url = if raw == "undefined" {
+                String::new()
+            } else {
+                format!("\"url\":{raw},")
+            };
+            let protocol = text(field(case, "protocol"));
+            let config = parse_json(&format!(
+                r#"{{"providers":{{"p":{{"id":"p","protocol":"{protocol}",{url}"apiKey":"fixture","models":{{"m":{{"id":"m","capabilities":{{"maxOutputTokens":10}}}}}}}}}}}}"#
+            )).unwrap();
+            let bad_tools = field(case, "badTools").as_bool().unwrap();
+            let request = parse_json(if bad_tools {
+                r#"{"provider":"p","model":"m","messages":[],"tools":"x"}"#
+            } else {
+                r#"{"provider":"p","model":"m","messages":[]}"#
+            })
+            .unwrap();
+            let actual = count_request(config.as_object().unwrap(), request.as_object().unwrap());
+            if let Some(expected) = field(case, "error").as_string() {
+                assert_eq!(
+                    actual.unwrap_err().message,
+                    expected.to_utf8().unwrap(),
+                    "{case:?}"
+                );
+            } else {
+                let sent: Vec<_> = actual
+                    .unwrap()
+                    .into_iter()
+                    .map(|request| request.url)
+                    .collect();
+                let expected: Vec<_> = array(field(case, "sent")).iter().map(text).collect();
+                assert_eq!(sent, expected, "{case:?}");
             }
         }
-        let config = parse_json(r#"{"providers":{"custom":{"id":"custom","protocol":"openai-responses","url":"https://api.openai.com/v1","apiKey":"test","models":{"m":{"id":"m","capabilities":{}}}}}}"#).unwrap();
-        assert_eq!(
-            count_request(config.as_object().unwrap(), request.as_object().unwrap())
-                .unwrap()
-                .unwrap()
-                .url,
-            "https://api.openai.com/v1/responses/input_tokens"
-        );
     }
 
     /// node probe (pr7 `r2/probe-r2.out.txt`, `buildOpenAIResponsesRequest`):

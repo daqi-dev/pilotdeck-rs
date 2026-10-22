@@ -189,6 +189,7 @@ fn normalize(path: &Path) -> PathBuf {
 /// characters remain a documented gap because adding a normalizer crate is
 /// outside this change's dependency budget. Every other non-ASCII run becomes
 /// `-`, so the result stays inside `[a-zA-Z0-9._-]`.
+/// Ledger: specs/gateway-parity/accepted-diffs.md A7-LIFECYCLE-NFKC-001 (unapproved).
 fn path_segment(value: &JsString) -> String {
     let mut folded = Vec::with_capacity(value.units().len());
     for &unit in value.units() {

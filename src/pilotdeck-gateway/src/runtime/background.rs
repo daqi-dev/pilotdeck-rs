@@ -23,14 +23,16 @@
 //!
 //! Deliberate deviations (see the fixture README):
 //! - Disk spill and snapshot persistence are not ported; output lives in the
-//!   1 MB ring and restored `unknown` tasks cannot occur.
+//!   1 MB ring and restored `unknown` tasks cannot occur. Ledger:
+//!   specs/gateway-parity/accepted-diffs.md A6.5-BACKGROUND-PERSIST-001 (unapproved).
 //! - A spawn that Node reports asynchronously (ENOENT, EACCES, ...) never
 //!   emits `exit` in the baseline, so its task stays `running` with no pid
 //!   and `stop` / `dispose` wait forever (`probes/p1.out`). Here the visible
 //!   state is the same until it is stopped; `stop` (and so `dispose`) then
 //!   settles it at once as `cancelled` (interrupted, `endedAt` set, no exit
 //!   code), fires its completion event and releases its waiters. There is no
-//!   process to signal, so no grace period applies.
+//!   process to signal, so no grace period applies. Already human-approved:
+//!   specs/parity/accepted-diffs.md #5 (`background-task-async-spawn`, 2026-10-21).
 //!
 //! Cancellation: `stop` marks the task interrupted and sends SIGTERM before
 //! its first await; the grace → KILL escalation and the disposal body then

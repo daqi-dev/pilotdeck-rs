@@ -32,7 +32,9 @@
 //! Syntax V8 accepts is accepted here even when this port cannot evaluate it
 //! (lookarounds, backreferences, `\p{...}` values outside Rust's tables, ...);
 //! that gap is reported later as [`ValidationError::Unsupported`] when the
-//! pattern is actually used, never as a silent pass. Relative/remote `$ref`s
+//! pattern is actually used, never as a silent pass. Ledger:
+//! specs/gateway-parity/accepted-diffs.md A6.5-MCP-OUTSCHEMA-SUPPORT-001
+//! (unapproved). Relative/remote `$ref`s
 //! that need an `$id` base are reported as unresolvable; validation nesting
 //! exceeding [`MAX_VALIDATION_BUDGET`] in weighted units is conservatively reported
 //! as [`ValidationError::Threw`]. User patterns use the SDK's JavaScript `/u` character
@@ -63,7 +65,9 @@ use std::sync::OnceLock;
 /// this conservative support budget, not an exact V8 stack model. Deep value
 /// comparisons spend the same budget. Earlier rejections are explicit known
 /// differences; overflow uses the SDK RangeError result. Human-approved 2048
-/// units (2026-10-21): 深度预算差异已人批. The measured directory-tree recipe
+/// units (2026-10-21): 深度预算差异已人批. Ledger:
+/// specs/gateway-parity/accepted-diffs.md A6.5-MCP-OUTSCHEMA-DEPTH-001
+/// (regex budget: A6.5-MCP-OUTSCHEMA-REGEX-001). The measured directory-tree recipe
 /// still refuses >=107 edges and the query recipe >=169 columns, even at only
 /// three data levels. See the fixture README for residual support boundaries.
 const MAX_VALIDATION_BUDGET: usize = 2_048;

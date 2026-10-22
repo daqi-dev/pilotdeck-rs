@@ -11,7 +11,8 @@ use std::collections::HashMap;
 // repetitions. Node 22.22.0 succeeds at 2M work across the measured families in
 // real HookRuntime.run (+0/32 frames); 40M throws. See probe-resources.mts.
 // This is a conservative budget, not an exact model of V8's pattern-dependent
-// stack: [上界, V8 实际阈值) 这段属于已接受的不可判定带。
+// stack. Ledger: specs/gateway-parity/accepted-diffs.md
+// A6.7-HOOK-RESOURCE-001 (unapproved; the old decision was AI-only).
 const MAX_EMPTY_REPEAT_WORK: usize = 2_000_000;
 
 #[derive(Debug)]

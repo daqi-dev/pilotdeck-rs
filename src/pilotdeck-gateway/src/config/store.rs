@@ -41,7 +41,8 @@
 //!   identical between two samples trigger no reload, where `fs.watch` would
 //!   produce an identity reload (version+1, empty `changedPaths`). With
 //!   change-time sampling this needs a filesystem whose ctime granularity is
-//!   coarser than the burst.
+//!   coarser than the burst. Ledger: specs/gateway-parity/accepted-diffs.md
+//!   A6.3-CONFIG-POLL-001 (unapproved).
 //!
 //! Each sample reads at most [`CONTENT_SAMPLE_LIMIT`] bytes of a watched
 //! config file (the file itself, or the missing config file's name inside a

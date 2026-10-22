@@ -860,6 +860,7 @@ fn dropped_dispose_still_completes() {
     });
 }
 
+/// Human-approved: specs/parity/accepted-diffs.md #5 (2026-10-21).
 /// Repair round 1 P1-2 (deliberate deviation, see the module docs): a spawn
 /// Node reports asynchronously never exits in the baseline, so stop/dispose
 /// would hang there. Here stop settles it as cancelled at once, with the

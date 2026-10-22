@@ -582,6 +582,7 @@ impl TokenStatsCollector {
         if self.retention_ms.is_some() {
             // Human-approved safety deviation: never append to an inode that
             // compaction may replace after a lock timeout (issue #496).
+            // Ledger: specs/gateway-parity/accepted-diffs.md A6.4-STATS-SIDECAR-001.
             if let Some(lock) = self.acquire_retention_lock(&jsonl) {
                 if journal::recover(&jsonl).is_ok() {
                     let _ = append_bytes(&jsonl, line.as_bytes());
@@ -1299,6 +1300,7 @@ fn migrate_json_to_jsonl_with(
 /// Both ParseES5DateTime and its legacy continuation consume UTF-16, including
 /// lone surrogates in comments or after NUL. Unsupported local profiles keep
 /// the accounting row. See stats-dateparse/README.md for the admitted TZ data.
+/// Ledger: gateway accepted-diffs A6.4-STATS-RETENTION-001 (human-approved subset).
 pub(crate) fn parse_date_ms(value: &JsString) -> Option<f64> {
     pilotdeck_transport::system_clock::parse_node22_date_with_local(value, &stats_local_to_utc)
         .ok()

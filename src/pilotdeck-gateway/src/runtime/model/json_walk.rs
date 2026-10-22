@@ -7,8 +7,8 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 /// the same projected cache-key object: transform depth 1892 (schema depth
 /// 1890) succeeded and transform depth 1897 (schema depth 1895) failed 5/5
 /// times. 1800 keeps the guaranteed-success side exact, fails identically
-/// above the measured failure point, and treats 1801..=1897 as the accepted
-/// undecidable band.
+/// above the measured failure point. The early-rejection band is unapproved:
+/// specs/gateway-parity/accepted-diffs.md A6.4-COUNT-CACHE-DEPTH-001.
 pub(super) const CACHE_KEY_MAX_DEPTH: usize = 1800;
 
 pub(super) fn transform(

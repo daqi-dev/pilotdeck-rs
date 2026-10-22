@@ -56,6 +56,8 @@ impl ToolRuntime {
             // every concurrencySafe tool in the concurrent phase; here only
             // those that are also read-only do, so a sibling error, which
             // drops the concurrent batch, never cuts a write short. Other safe
+            // Ledger: specs/gateway-parity/accepted-diffs.md
+            // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
             // tools (e.g. agent) run in the sequential phase. isReadOnly is
             // asked only of concurrencySafe tools; a throw counts as false.
             let tool = self.registry.get(&call.name);
@@ -90,7 +92,8 @@ impl ToolRuntime {
             })
             .collect();
         // TS Promise.all rejects on the first error and lets the started
-        // siblings finish detached. Deliberate deviation: the rejection is
+        // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
+        // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
         // reported at the same moment, but the batch owns the siblings and
         // drops them. Only read-only concurrency-safe tools run here (see the
         // classification above), so no write is cut short, and a

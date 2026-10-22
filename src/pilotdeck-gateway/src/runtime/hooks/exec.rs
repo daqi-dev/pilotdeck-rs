@@ -6,7 +6,8 @@
 //! `http://` only, because adding a TLS crate is outside this change's
 //! dependency budget (a redirect to `https://` fails the same way). Redirects
 //! follow undici's default policy through `crate::fetch_redirect`. Prompt/agent execution needs a model runner (A7); this
-//! module keeps TS's explicit "not configured" result instead of inventing a
+//! TLS gap ledger: specs/gateway-parity/accepted-diffs.md A6.7-HOOK-HTTPS-001
+//! (unapproved). This module keeps TS's explicit "not configured" result instead of inventing a
 //! different failure mode.
 use crate::hooks::protocol::{
     HookAsyncOutput, HookDecision, HookOutput, HookSpecificOutput, HookSyncOutput,

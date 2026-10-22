@@ -11,6 +11,8 @@
 //! validated model/tool path sharing this writer), the session projection reducers beyond
 //! the shapes checked by `projection_supported`, the replacement transaction,
 //! fork-copy, file-history and tool-result artifact capabilities (pr4).
+//! Ledger for domain/projection refusals: gateway accepted-diffs
+//! A6.2-TRANSCRIPT-DOMAIN-001 (unapproved).
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,

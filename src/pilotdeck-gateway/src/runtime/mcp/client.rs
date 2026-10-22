@@ -41,10 +41,13 @@
 //! ## Not covered
 //!
 //! - `https:` URLs (not wired to the shared TLS connector): `mcp_unsupported_transport`.
+//!   Ledger: gateway accepted-diffs A6.5-MCP-HTTPS-001 (unapproved).
 //! - OAuth (`authProvider` is never set by the baseline).
 //! - Remaining output-schema gaps are listed in `output_schema.rs`.
 //!
 //! ## Intentional difference (gate2 P1-1, #361)
+//!
+//! Already human-approved: specs/parity/accepted-diffs.md #4 (`handshakeClose`, 2026-10-21).
 //!
 //! `close()` while a handshake is in flight: the baseline installs the late
 //! connection and reports `ready`, and a `start()` racing it opens a second

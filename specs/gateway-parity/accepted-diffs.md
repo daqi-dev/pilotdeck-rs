@@ -116,3 +116,296 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：只修 retention 压缩与降级追加交错的丢账窗口，及其必要的无锁重建、崩溃恢复、clear 清除旁路；账目内容、聚合输出、保留判断与压缩过滤不变。不按账目内容去重，相同内容的两次观察仍计两笔。既有实例继续沿用 TS 的内存缓存快照语义，新建/重开的无锁实例可看见已发布旁路；不增加跨实例实时刷新。沿用 best-effort IO 及既有锁重试/遗留锁处理，不扩展为显式 clear 并发语义或混用不同 retention 配置的协调重构。
 - **机器判据**：`runtime/model/stats_journal_tests.rs` 的 `sidecar_interleaved_compaction_and_independent_writers_never_lose_or_duplicate`（三个压缩阶段，各三轮，四个独立写实例，总计 32 行逐笔无丢无重）；`sidecar_crash_boundaries_recover_exactly_once`（发布前、准备后、提交后、删一条、全删、凭据退休六处恢复，同内容独立观察及晚到旁路）；`sidecar_recovery_precedes_a_locked_append`；`sidecar_snapshots_merge_and_clear_match_real_ts`（新建无锁读者的聚合、分时、模型、最近记录、session 与主文件字节对拍真实 TS 金样，含 clear）。每类行为负控及完整命令输出见 `_tmp/20261022-issue-496/RESULT.md`。
 - **批准记录**：用户本人 2026-10-22 选 B，明确「Rust 偏离 TS 修掉：抢锁失败时，降级追加先写到旁路文件；持锁压缩时把旁路文件合并回主文件。只修这个丢数据窗口，其他行为不变」。决策卡：主仓 `_tmp/20261022-loop/card-stats-race.md`；实现 issue #496。本条按该授权登记；独立评审由协调者续办。
+
+## #502 集中补登 · 已知未对齐（未批准）
+
+以下条目只披露现状，**均非已接受差异，不增加豁免，不改变判分语义**。旧决策卡的「AI 代批，待人复核」不等于人批。TS 根均为固定 `cc7c4e6` 的 `src/`；本单真实 Node 22 探针与源码绑定见 `src/pilotdeck-gateway/tests/fixtures/diff-backfill/`。在途 `runtime/turn/`、`runtime/memory/edgeclaw/` 只列总表，不改文件。完整扫描、误报分类、低成本对齐及证据见本单 RESULT。
+
+### A6-JSVALUE-DEPTH-001 · 固定 wire 值深度预算
+
+- **类别**：实现限制（用固定预算近似 V8 调用栈）。
+- **TS 依据**：`extension/skills/SkillManager.ts:199,207` 使用 JS String/JSON；`cli/ProjectRuntimeRegistry.ts:963` 使用 structuredClone；V8 断点随操作和栈变化。本单 `oracle.json.arrays` 原生 String 实测：2000、2001、2100 层成功为 `7`，3000 层为 RangeError；不沿用旧注释的 2516 为精确断点。克隆/序列化另见 `state/decisions-20261019.md:3-11` 的 structuredClone 探针，不把 String 探针当作其阈值证据。
+- **Rust 行为**：`js_value.rs` 的 `MAX_ARRAY_DEPTH=2000` 分别用于数组 String/Number 转换与 JSON/克隆深度检查，超限拒绝；`runtime/mcp/naming.rs` 的递归值变换也使用该常量。各操作计层方式以实现和边界测试为准，不声明共享同一 V8 阈值。
+- **范围**：仅触发这些检查的深 wire 值；String 存在 TS 成功而 Rust 报 RangeError 的区间，structuredClone 也可能 TS 先失败。正常浅值不豁免，不把所有深 JSON 一概忽略。
+- **机器判据**：`js_value::tests` 的深度边界测试、`tests/tool_runtime.rs::string_conversion_depth_bound_is_shared_js_value_limit`；TS `diff-backfill/oracle.json.arrays` 锁定本次 String 对照。将来对齐时须分别测真实入口与调用深度，不能仅抬高常量。
+- **批准记录**：无。2026-10-19 决策仅 AI 代批；状态为**已知未对齐（未批准）**。
+
+### A6.4-JSONREPAIR-DEPTH-001 · 工具参数修复深度 200
+
+- **类别**：实现限制（递归栈预算）。
+- **TS 依据**：`model/providers/anthropic/stream.ts` 导入基线安装的 jsonrepair 3.14.0；本单从该 import 解析真实依赖并校验既有 jsonrepair 金样登记的包哈希。`diff-backfill/oracle.json.repairs` 的 199/200/201/205/250 个未闭合 `[` 均成功修复，不把 V8 的栈断点写成固定数字。
+- **Rust 行为**：`runtime/model/jsonrepair.rs` 的 `MAX_DEPTH=200` 超限返回 RepairError；`providers/mod.rs::parse_tool_arguments` 在原始 JSON 也无法解析时返回 None，流调用方走各自失败分支。
+- **范围**：仅需要修复且达到 Rust 修复深度预算的参数；原本合法、可由迭代 JSON parser 直接解析的深 JSON 不经过 jsonrepair，不能声称也会被此预算拒绝。共享修复器被 Anthropic/OpenAI/Responses 使用，不限 Anthropic。
+- **机器判据**：`jsonrepair::tests::depth_limit_fails_instead_of_overflowing_the_stack` 及 `jsonrepair_tests.rs` 真实 TS 回放；追加 TS 深度探针在上述 oracle。精确边界按 parser 的 parse_value 计费，不能把 200 简称为所有形状都恰好能收 200 个容器。
+- **批准记录**：无。`state/decisions-20261020.md` 的移植选型不是本预算的人批；**已知未对齐（未批准）**。
+
+### A6.6-SNAPSHOT-IO-001 · 未覆盖 errno 的错误文案回退
+
+- **类别**：实现限制（Node 错误文案覆盖不全）。
+- **TS 依据**：`storage/workspaceSnapshot.ts:260-279` 将实际 Error.message 写入失败标记；Node 的 fs 错误由 libuv/运行平台生成。
+- **Rust 行为**：`storage/workspace_snapshot.rs::io_message` 对 `node_io` 已测量表内 errno 使用 Node 文案；表外回退 `io::Error::to_string()`，可能写入与 TS 不同的 `_FAILED.json.error`。
+- **范围**：仅 snapshot 捕获实际遇到表外 OS 错误时的失败文案；已测量 errno、成功 manifest、JSON 语法错误不在此差异中。不宣称当前平台必能制造每个表外错误。
+- **机器判据**：`tests/workspace_snapshot.rs::scenarios_match_ts_outcomes_and_trees` 覆盖现有错误表；表外差异的验收应对同一平台、同一可注入 errno 比较失败标记原始字节，**目前没有表外真实 OS 错误的完整对拍，不能当已通过**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+
+### A6.6-SNAPSHOT-COLLATION-001 · 孤代理 createdAt 排序拒绝
+
+- **类别**：实现限制（ICU4X 与 Node ICU 对 ill-formed UTF-16 权重不同）。
+- **TS 依据**：`storage/workspaceSnapshot.ts:106` 用 createdAt.localeCompare 降序；真实 TS 金样 `workspace-snapshot/oracle.json.hostBoundaryCases.unpairedSurrogateCollation` 给出含孤代理、U+FFFD、PUA 的 list 顺序。
+- **Rust 行为**：`storage/workspace_snapshot.rs` 仅在实际需要比较且 key 含孤代理时返回 requires_host 错误，文案 `Snapshot createdAt collation requires the Node host for unpaired surrogates.`，不返回错误顺序。
+- **范围**：多个 descriptor 的 createdAt 排序实际触发该比较；单项 list 不调用比较器，仍原样返回孤代理。当前 storage API 的错误不是已接线的自动 TS 回退，不能声称用户请求必能成功。
+- **机器判据**：`tests/workspace_snapshot.rs::unpaired_surrogate_collation_requires_host` 同时断言 TS 顺序、Rust 错误及单项例外。
+- **批准记录**：无；旧 R19 评审边界编号不是人批；**已知未对齐（未批准）**。
+
+### A6-COLLATION-PUA-001 · 孤代理与真实私用字符的权重碰撞
+
+- **类别**：实现限制（Unicode 排序近似）。
+- **TS 依据**：Node 22 的 localeCompare 为孤代理保留独立权重；本单 `diff-backfill/oracle.json.collation` 实测 U+D800 < U+E000、U+D801 < U+E001。
+- **Rust 行为**：`project_files.rs::node_collation_units` 将孤代理 U+D800..DFFF 映到 U+E000..E7FF，再交给 ICU4X。相应真实 PUA 与映射值碰撞，比较可能为 Equal，而 TS 非 Equal。
+- **范围**：所有使用 `node_compare_utf16` 的排序，在决定顺序的位置同时出现真实 PUA 和相应孤代理时；两个孤代理相互比较仍保持递增，合法 Unicode 对合法 Unicode不受该映射影响。snapshot 的显式拒绝另见上一条，不能混为一谈。
+- **机器判据**：`project_files::tests::node_compare_utf16_keeps_unpaired_surrogate_weights` 保障已有孤代理内部顺序；碰撞对照为上述 Node 探针与 `node_compare_utf16(collator, [D800], [E000]) == Equal`。完整跨 locale 碰撞矩阵尚未验证，不声明已对齐。
+- **批准记录**：无；A6.6-pr10a RESULT 的 trade-off 不是人批；**已知未对齐（未批准）**。
+
+### A7-ADMISSION-FENCE-001 · 相同 runId 的过期清理身份栅栏
+
+- **类别**：有意改进（代际身份防护，尚无人批）。
+- **TS 依据**：`gateway/SessionRouter.ts:241-245` 的 endTurn 只检查 runId 真值和字符串相等；旧消费者持相同 runId 可清理后来复用该字符串的 reservation。
+- **Rust 行为**：`runtime/session/admission.rs::end_turn` 对非空 runId 还要求 begin_turn 返回的 Arc 身份相同；None/空 ID 仍不受栅栏限制。end_identity 也按代际清理。
+- **范围**：close 后复用同一 runId 且旧消费者迟到清理；不改变正常当前身份的释放或无 ID/空 ID 的 TS 真值语义。
+- **机器判据**：`runtime::session::tests::exact_end_requires_original_admission_identity_but_empty_end_is_unfenced`，旧身份不得释放新 reservation，当前身份可释放。
+- **批准记录**：无；**已知未对齐（未批准）**。本单只补注释引用，不移除安全防护。
+
+### A6.2-TRANSCRIPT-LOCK-001 · Rust 单写者锁与硬链接别名
+
+- **类别**：有意改进及实现限制（单写者持久化契约）。
+- **TS 依据**：`session/persistence/JsonlSessionPersistence.ts:20-38` 的 append 不获取 Rust 的 `<canonical path>.lock`；它不会与 Rust advisory lock 协调。
+- **Rust 行为**：`storage/transcript.rs::JsonlLedgerStore` 持有 OS advisory lock 到 Drop，并以 sibling 文件原子替换。不同硬链接路径各有锁；替换一个路径后另一个仍指旧 inode，历史分叉，不支持别名协调。
+- **范围**：TS/Rust 混合并发写入，以及同 inode 的不同硬链接名；切换前须停止旧 writer。不能把 Rust 对 Rust 同路径锁保证外推为跨 TS 或硬链接安全。不涉及普通单写者的 JSONL 内容差异。
+- **机器判据**：现有 transcript 持久化和互续测试覆盖正常路径；混写/硬链接验收须两个独立 writer 持同 inode 的不同名字交错 append/replace，比较两名原始字节与锁结果，**该矩阵尚未完整对拍**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.3-CONFIG-POLL-001 · fs.watch 被轮询采样替代
+
+- **类别**：实现限制（宿主文件监视机制）。
+- **TS 依据**：`pilot/config/PilotConfigStore.ts:107-139` 对现存路径/缺失路径的 parent 使用 fs.watch，通知后 debounce（默认 250ms）。
+- **Rust 行为**：`config/store.rs` 默认每 20ms 采样 metadata 和至多 CONTENT_SAMPLE_LIMIT 的文件内容，再 debounce。采样额外延迟、跨真实 debounce 边界的合并和采样间净零变化遗漏，均见模块文档。
+- **范围**：仅 watcher 触发的 reload 次数、时机、version/changedPaths；手动 reload 不受影响。净零遗漏需内容和采样 metadata（含 ctime）均相同；大文件超出内容样本、目录其他项只按 metadata，不保证所有文件系统均能发现瞬态变化。
+- **机器判据**：`tests/config_store.rs::config_store_replays_real_typescript_oracle` 保障已覆盖 reload 行为；真实短突发验收须在同一文件系统记录 fs.watch 通知和 Rust 采样时间线，比较 version 和 changedPaths，**尚未穷举 tick 相位/ctime 粒度**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A7-PROJECT-DISPOSE-001 · 项目关闭等待所有租约代际
+
+- **类别**：有意改进（显式关闭契约）。
+- **TS 依据**：`cli/ProjectRuntimeRegistry.ts:391-411,1569-1588` dispose 遍历发布的 runtime，跳过 sessionLeases>0 的 runtime。
+- **Rust 行为**：`runtime/project.rs::dispose` 关闭 admission，排空包括 invalidate/reload 移出 cache 的所有仍存活 generation，等待租约释放和 disposal；取消调用方不取消清理。
+- **范围**：dispose 时有未释放租约或 retired generation；Rust 返回可能更晚，租约一直不释放可一直等待。正常无租约关闭的资源顺序仍按 TS，不据此豁免其错误或顺序。
+- **机器判据**：`runtime::project_tests::concurrent_acquire_and_dispose_drain_invalidated_generation_once`、`cancelled_release_and_dispose_are_idempotent_and_keep_cleanup_alive`。
+- **批准记录**：无；任务的实现契约不等于行为差异人批；**已知未对齐（未批准）**。
+
+### A6.5-MCP-DISPOSE-001 · MCP provider 关闭等待租约
+
+- **类别**：有意改进（资源所有权）。
+- **TS 依据**：`mcp/runtime/ProjectMcpRuntimeProvider.ts:125-129,150-174` stopAll 直接 stopEntry，stopEntry 等 ready 后即 stop，不等待 leases 变零。
+- **Rust 行为**：`runtime/mcp/registry.rs::ProjectMcpRuntimeProvider::dispose` 先 draining、拒绝新租约，已有租约清零后才 stop 各 generation。
+- **范围**：dispose 与已有 MCP 租约交错时，工具可使用时间与关闭完成时刻不同；不释放租约会延迟完成。无租约路径不在差异范围。
+- **机器判据**：`tests/mcp_runtime.rs::dispose_drains_all_existing_leases_before_stopping`、`lease_dropped_on_plain_thread_unblocks_dispose_once`。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-TOOLS-SCHEDULE-001 · 并发组额外要求只读
+
+- **类别**：有意改进（避免丢弃并发 future 截断写入）。
+- **TS 依据**：`tool/scheduler/ConcurrentToolScheduler.ts:34-53` 仅检查 isConcurrencySafe；真实 `tool-runtime/oracle.json` 的 `non-readonly-safe-*` 记录所有 safe 工具并发启动。
+- **Rust 行为**：`runtime/tools/scheduler.rs` 额外要求 isReadOnly 真值；只对 safe 工具查询 isReadOnly，查询抛错按 false。safe 但非只读的工具进串行组。
+- **范围**：多调用 Concurrent batch；单调用和 Sequential 不查询该分组谓词。不出错时结果去时间字段后相同，但执行交错和时间戳不同；并发组先失败时串行工具可能根本不启动。
+- **机器判据**：`tests/tool_runtime.rs::non_readonly_safe_tools_run_sequentially`；原 TS 输出不被覆盖，特殊场景走显式 Rust 期望而非通用相等回放。
+- **批准记录**：无；fixture README 的理由不是人批；**已知未对齐（未批准）**。
+
+### A6.5-TOOLS-CANCEL-001 · 首错后丢弃已启动兄弟
+
+- **类别**：有意改进（禁止脱离所有权的工具任务）。
+- **TS 依据**：`tool/scheduler/ConcurrentToolScheduler.ts:46-53` Promise.all 首错拒绝，兄弟仍后台完成；`tool-runtime/oracle.json` 的 `concurrent-error-lets-started-siblings-finish` 录下 settledAt 后的 end 事件。
+- **Rust 行为**：首错轮将各兄弟 poll 一次后丢弃未完成 future，立即返回错误；外层取消/deadline/Drop 同样回收。并发组只读约束见上一条。
+- **范围**：并发 batch 的失败/取消后的后续事件、副作用和资源存活；不改变成功 batch 的结果 slot 顺序。取消语义仅保证合作式 future 丢弃，不扩展到不受所有权约束的外部工作。
+- **机器判据**：`tests/tool_runtime.rs::concurrent_error_rejects_immediately_and_drops_started_siblings`、`dropping_batch_reclaims_all_noncooperative_tool_futures_immediately`，以及首错 TS 金样逐事件对照。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.4-MODEL-PROTOTYPE-001 · 模型请求校验忽略默认原型成员
+
+- **类别**：实现缺口（JS 属性查找）。
+- **TS 依据**：`model/request/validateModelRequest.ts:15-27` 用普通下标访问 providers/models；本单 `diff-backfill/oracle.json.validation`：provider=toString/__proto__/constructor 时读 models 后 TypeError；model 取同名值且无附加能力检查、messages=[] 时返回成功。
+- **Rust 行为**：`runtime/model/providers/mod.rs::own` 仅 own-property 查找，这些名字缺省时报 provider_not_found/model_not_found。
+- **范围**：绕过正常模型引用过滤、直接交给该校验器的默认 Object.prototype 成员名；同名自有属性仍按自身内容处理。与已修复的 token count 属性查找不同，不把 count 的对拍结论外推到生成请求校验。
+- **机器判据**：同一 oracle.validation 六例应经 validate_model_request 回放 TS 的异常/成功形状；**当前实现仍已知不等，未新增相等断言冒充通过**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.4-OPENAI-URL-001 · 直接 builder 非字符串 URL 的宽容处理
+
+- **类别**：实现缺口（JS 方法调用错误）。
+- **TS 依据**：`model/providers/openai/request.ts:370` 的 provider.url.trim()：非字符串抛 TypeError；null/undefined 为读取 trim 失败，数字/对象为 trim 非函数。正常配置由 `model/config/parseModelConfig.ts:91` 选字符串或 catalog 默认值。
+- **Rust 行为**：`runtime/model/providers/openai.rs::google_openai_compatible` 对非字符串先 String(url)，一般返回 false 而非 TS 异常；id=google 的提前返回与 TS 同路径，不列为差异。
+- **范围**：仅 protocol=openai、id!=google 且绕过配置规范化的直接 builder 调用；不影响本单已对齐的 TokenAccountingRuntime count URL 路径。修改该 bool API 需传播 builder 错误，未借本单扩写重构。
+- **机器判据**：现状由 `providers::openai::tests::google_compatible_non_string_url_is_false_not_panic` 钉住；对齐时用真实 TS builder 的同一 request/config 回放 TypeError（包括 null/undefined 文案），不得只改注释。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.7-HOOK-HTTPS-001 · HTTP hook 无 TLS 连接器
+
+- **类别**：未实现（HTTPS transport）。
+- **TS 依据**：`extension/hooks/execution/HttpHookExecutor.ts:9,18-26` 默认使用全局 fetch，可注入 fetchImpl；Node fetch 支持 HTTPS。
+- **Rust 行为**：`runtime/hooks/exec.rs` 使用 plain HTTP hyper client，HTTPS 初始 URL 或重定向到 HTTPS 报 `Unsupported HTTP hook URL scheme: https`，不能执行正常 TLS 请求。
+- **范围**：仅 HTTP hook 的 HTTPS 链路；普通 HTTP 的 redirect/headers/JSON 规则不豁免。model/web_fetch 已有 TLS 不代表 hooks 已接入。
+- **机器判据**：在受控本地 TLS 服务上回放同一 hook，TS 成功/Rust 当前失败；**本单未跑 TLS listener，不把源码核实当作该网络验收已通过**。后续 #345 接入时补真实 TS 金样与负控。
+- **批准记录**：无；#345 为实现跟进而非批准；**已知未对齐（未批准）**。
+
+### A6.7-HOOK-RESOURCE-001 · condition 序列化与空重复正则预算
+
+- **类别**：实现限制（固定预算近似 V8 栈）。
+- **TS 依据**：`extension/hooks/config/matchHookCondition.ts:23` JSON.stringify 后 includes；真实 `hooks-config/probe-resources.mts` 在 HookRuntime.run 的 +0/+32 帧上实测 condition 6500 层成功、7000 失败；动态空重复 2M 工作样本成功、40M 样本 RangeError 后 matcher false，原件见 fixture README。
+- **Rust 行为**：`hooks/config.rs::MAX_STRINGIFY_DEPTH=4000` 超限抛 RangeError；`hooks/regexp.rs::MAX_EMPTY_REPEAT_WORK=2_000_000` 超限整次 matcher false，负向断言不能翻转。两类计费与耗尽结果不同。
+- **范围**：实际走到的条件容器层数/空重复展开成本；Rust 首拒到 V8 首拒之间会提前失败，不声称所有表达式存在统一 V8 阈值；消费型回溯未加预算，不属于本条。
+- **机器判据**：`tests/hooks_config.rs` 的真实 TS oracle 回放与资源边界测试；`hooks-config/probe-resources.mts` 原生重测；两种预算必须分别检查上界/上界+1，不能混用单位。
+- **批准记录**：无。`state/decisions-20261017.md`「V8 资源耗尽边界怎么对齐」仅 AI 代批，夹具「已接受不可判定带」文字不是人批；**已知未对齐（未批准）**。
+
+### A6.5-MCP-OUTSCHEMA-SUPPORT-001 · 部分合法 JS pattern 不能求值
+
+- **类别**：未实现（JS 正则覆盖）。
+- **TS 依据**：SDK Ajv 对合法 `/u` lookaround/backreference 可编译并求值；既有 `output-schema/ajv-oracle.json` 与 output_schema 的真实 Ajv 回放提供普通行为依据，不能把预算批准扩为功能豁免。
+- **Rust 行为**：`runtime/mcp/output_schema.rs` 编译时先验合法 JS 语法，实际用到不能翻译的 pattern 才返回 ValidationError::Unsupported。无 base 的相对/远端 `$ref` 同 Ajv 报 unresolvable，不能另算差异。不静默判 valid。
+- **范围**：实际命中不支持语法、歧义字符类或 Unicode 属性的 schema；未命中的 pattern 不提前失败。预算上限另见已批 REGEX-001/DEPTH-001，本支持缺口未获其授权。
+- **机器判据**：`output_schema::tests::unsupported_patterns_fail_at_validation_instead_of_passing` 用 `^(?=a)` + `a` 钉住 TS 可判断而 Rust Unsupported；其余类别须按具体 schema 补齐真实 SDK 样本，当前不宣称全覆盖。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-BACKGROUND-PERSIST-001 · 后台输出 spill 与快照恢复缺失
+
+- **类别**：未实现（可选持久化能力）。
+- **TS 依据**：`task/storage/TaskOutputStore.ts:29-35,176-245` 接受可选 spillDir 并可恢复；`task/runtime/BackgroundTaskRuntime.ts:71-89,487` 接受 diskSpillDir/snapshotStore 并恢复历史任务。默认无这些选项时也是内存 ring。
+- **Rust 行为**：`runtime/background.rs` 只有默认 1,000,000 字节 ring，无 disk spill/snapshot storage 接口，不能产生恢复的 unknown 任务。
+- **范围**：仅启用可选 spill/snapshot 的宿主配置、超出 ring 的历史输出读取与重启恢复；**不能称默认 TS 有无限输出而 Rust 截断**。异步 spawn stop 修复已在 `specs/parity/accepted-diffs.md` #5 人批，不与本缺口合并。
+- **机器判据**：既有 `tests/background_tasks.rs` 回放只证明无持久化配置的正常路径；持久化验收须 TS 配置 spill/snapshot、写超 ring、重建 runtime 后比较读取/状态，**该能力未实现，尚无 Rust 对等通过证据**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A7-HOST-RESOURCE-001 · 宿主队列上限与本地 watchdog
+
+- **类别**：有意改进（有界宿主资源）。
+- **TS 依据**：`agent/modules/transport/agentLoopSidecarClient.ts:659-684` 的串行 async generator 依次应用事件；真实入口文件与行号见本单 RESULT，不把 TS ACK/resume 游标与 Rust 并发排队时的游标时刻混为一谈。
+- **Rust 行为**：`host/mod.rs` 声明事件应用队列/保留 NDJSON 字节预算，满时报 Limit；独立 execution_timeout（默认 300s）以及 terminal_drain_timeout 控制本地等待，合作式 callback 可与读取并发，结束时丢弃未完成 callback。
+- **范围**：停滞/极慢 consumer、长于本地 watchdog 的合法 turn、终态后未完成 callback；这些本地边界可能先于 TS 返回错误。不是 operationDeadline 的等价实现，也不是可忽略所有 timeout 的豁免。ACK/cancel 独立额度及不丢 event 的约束仍适用。
+- **机器判据**：现有 host budget/取消测试保障实现策略；同一 TS/Rust 慢消费者与超时配置矩阵仍须分别比较终态、事件和副作用，**本单未声称全边界相等**。
+- **批准记录**：无；#191 资源策略任务不作为人批差异证明；**已知未对齐（未批准）**。
+
+### A6.4-CLOCK-TIMECLIP-001 · 非法注入时钟未抛 Invalid time value
+
+- **类别**：实现缺口（Date TimeClip 错误传播）。
+- **TS 依据**：`router/RouterRuntime.ts:631,936,972` 调用 deps.now().toISOString()；本单 `diff-backfill/oracle.json.dates`：NaN、±Infinity、8.64e15+1 抛 RangeError: Invalid time value。范围内的扩展年份合法，本单已对齐，不算本条差异。
+- **Rust 行为**：`runtime/context/prompt.rs::iso_timestamp(f64) -> String` 将浮点 saturating cast 到 i64 后格式化；NaN 变 epoch，Infinity 饱和，超 TimeClip 范围仍输出字符串，router 可能继续写记录。
+- **范围**：仅注入的非法/超范围时钟；正常墙钟、范围内小数毫秒截断和合法扩展年份均不豁免。该函数不可失败的 API 需与 router 错误传播一起对齐，本单只复用共享 formatter 修正合法日期格式。
+- **机器判据**：`context::prompt::tests::extended_year_timestamps_match_real_ts` 对范围内真实 TS 日期逐值比较；非法时钟未来应在 router 三个采样点分别断言 TS 同形错误及记录副作用，**当前不声称非法输入已相等**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.4-COUNT-CACHE-DEPTH-001 · token count 缓存键深度 1800
+
+- **类别**：实现限制（固定预算近似 V8 sortValue 栈）。
+- **TS 依据**：`context/budget/TokenAccountingRuntime.ts:392-405,465` 的缓存键先 sortValue 再 JSON.stringify；既有 `tests/token_accounting.rs::cache_key_depth_matches_measured_v8_sort_boundary` 所引 Node 探针测得投影 transform 深度 1892 成功、1897 失败（schema 深度少 2）。
+- **Rust 行为**：`runtime/model/json_walk.rs::CACHE_KEY_MAX_DEPTH=1800` 超限报 Maximum call stack size exceeded，`token_accounting.rs::cache_key` 使用该独立预算，不是通用 js_value 的 2000。
+- **范围**：启用 provider count 时缓存键投影中实际保留的深值；禁用 provider count 不应访问仅用于缓存的深字段。1801 到 V8 首拒之间可提前拒绝，不声称此区间已获豁免。
+- **机器判据**：`tests/token_accounting.rs::cache_key_depth_matches_measured_v8_sort_boundary` 与 `disabled_provider_ignores_deep_cache_only_fields`；真实栈阈值须以对应投影入口重测，不用裸 JSON.stringify 代替。
+- **批准记录**：无；代码的 accepted undecidable band 是旧 AI 策略措辞，不是人批；**已知未对齐（未批准）**。
+
+### A6.2-TRANSCRIPT-COLLATION-001 · 同 sequence 的孤代理时间戳拒绝
+
+- **类别**：实现限制（ICU 排序权重）。
+- **TS 依据**：`session/transcript/TranscriptReader.ts:87-90` 对相同 sequence 用 createdAt.localeCompare 升序，Node 保留孤代理权重；本单 collation 探针与 snapshot 原件证明该运行时差别。
+- **Rust 行为**：`storage/transcript.rs::load` 如重复 sequence 组的任一 createdAt 含孤代理，返回 `Transcript timestamp collation requires the Node host for unpaired surrogates.`，不返回 TS 的已排序 entries。
+- **范围**：仅重复 sequence 的排序组；没有同 sequence 时不要求 collator，孤代理原样保存。此检查是整个重复组的预检，可能在具体排序实现尚未比较该元素之前拒绝，比 snapshot 的按实际 comparator 调用边界更宽。
+- **机器判据**：写两个合法同 sequence 的记录，其中 createdAt 分别为 U+D800/U+FFFD，再分别调用真实 readTranscript 与 Rust read_transcript；应记录 TS 顺序和 Rust 错误。**本单未新增该完整文件级金样，保留未对齐状态**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.6-SNAPSHOT-CLOCK-001 · pre-epoch 系统时钟捕获失败
+
+- **类别**：实现限制（系统时钟格式化）。
+- **TS 依据**：`storage/workspaceSnapshot.ts:251,277` 使用 new Date().toISOString()，Date 范围内的 1970 年前时间可正常表示。
+- **Rust 行为**：snapshot 的 created_at 调用 `storage/transcript.rs::timestamp`，SystemTime::duration_since(UNIX_EPOCH) 为负即失败；manifest 捕获转失败标记，标记自己的 createdAt 再失败时为空字符串。
+- **范围**：机器墙钟被设在 Unix epoch 前；另一个 router 浮点时钟 formatter 本单已对齐合法日期，不影响此独立函数。极端未来扩展年份仍用四位最小宽度，未保证 TS 的带符号六位年份格式。
+- **机器判据**：须在隔离可控时钟环境对同一 snapshot 捕获比较 manifest/failed marker 字节；**本单未更改系统时间，也未以当前正常墙钟测试冒充该边界通过**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.6-FILEHISTORY-IO-001 · 未测 errno 文案回退
+
+- **类别**：实现限制（Node 错误文案表外覆盖）。
+- **TS 依据**：`session/filesystem/FileHistoryStore.ts` rewind 及捕获返回 fs Error.message；Node 按实际 syscall/路径/errno 格式化。
+- **Rust 行为**：`storage/file_history.rs::node_fs_error` / node_read_error 对已测 errno 用 node_io，表外去掉 Rust `(os error N)` 后缀后保留 Rust reason，仍不保证 Node 的 code/syscall/path 文本。
+- **范围**：file history 实际遇到已测表以外的 OS 错误；已测路径和普通内容字节不在差异内。与 snapshot 的未经删后缀回退是两套入口，不共享文案承诺。
+- **机器判据**：现有 file_history 真实 TS 夹具只保障测量集；表外必须按 syscall 注入同 errno、比较公开 result.error，**当前无完整表外 OS 对拍**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A7-LIFECYCLE-NFKC-001 · work path segment 的不完整 NFKC
+
+- **类别**：未实现（Unicode normalization）。
+- **TS 依据**：`agent/turn/TurnEnvironment.ts:24-27` 对 session/turn 字符串做完整 normalize("NFKC") 后替换、trim、截 96 单元；如 U+2460 `①` 规范化为 ASCII `1`。
+- **Rust 行为**：`host/modules/lifecycle.rs::path_segment` 只折全角 ASCII 与 U+3000；其他字符走非 ASCII run 的 `-` 替换，① 这样的单字符最终成 unknown。
+- **范围**：work 目录中的 sessionId/turnId 路径段含未实现兼容折叠；全角 ASCII 等已覆盖。结果仍符合 ASCII 安全字符集，但可能对应不同目录名；不因此声称完整 Unicode 等价。
+- **机器判据**：真实 buildTurnEnvironment(含①) 与 Rust build_turn_environment 比较工作路径段；本单经 Git blob/import closure 守卫实际运行 TS，①/Ａ/Ⅳ 分别给出 `1/A/IV` 路径段（原始 `nfkc-probe.log` 见 RESULT）。Rust 未实现折叠的 ①/Ⅳ 按现有替换算法为 unknown；**未新增 Rust 此入口的完整相等金样**，未来接入完整 normalizer 时补。
+- **批准记录**：无；依赖预算限制不是差异人批；**已知未对齐（未批准）**。
+
+### A6.5-BASH-OS-001 · shell 会话和 stdio 类型
+
+- **类别**：实现限制（POSIX 进程创建原语）。
+- **TS 依据**：`tool/builtin/bash/commandRunner.ts:40-46` detached + pipe stdio；Node POSIX detached 使用 setsid，stdio pipe 在 Node/libuv 上为 socket pair，既有 `bash-tool/README.md` 保留该测量边界。
+- **Rust 行为**：`runtime/tools/builtin/bash/runner.rs` 使用 process_group(0)，仍在父 session，stdio 为 pipe(2) FIFO。信号重置的 pre_exec 例外没有执行 setsid。
+- **范围**：命令探查 session/tty/fd 类型时可观察；网关有 controlling tty 时打开 /dev/tty，TS detached 通常 ENXIO，Rust 可能成功并产生交互。通常 stdout/stderr 字节与整组信号清理不据此豁免。
+- **机器判据**：受控 PTY 下运行同一报告器，记录 getsid/getpgrp、/dev/tty open 和 fstat fd 类型；**现有 bash 字节回放不覆盖这组 tty 判据，本单未宣称已验**。
+- **批准记录**：无；批准 child signal 重置不等于批准会话差异；**已知未对齐（未批准）**。
+
+### A6.5-BASH-OUTPUT-001 · 输出超 V8 字符串上限不退出网关
+
+- **类别**：有意改进（避免未捕获异常结束服务）。
+- **TS 依据**：`tool/builtin/bash/commandRunner.ts` stdout/stderr data listener 的字符串追加超 V8 MAX_STRING_LENGTH 会抛未捕获 RangeError；`cli/pilotdeck.ts:267` 的 uncaughtException 处理关停网关。真实 TS 原件 `bash-tool/README.md`「输出上限」所引 oom-rule.out/oom-nohandler.out。
+- **Rust 行为**：`runner.rs::StreamText` 丢弃放不下的整块及其 progress callback，后续放得下的块继续追加，命令和网关继续运行；默认单流上限 0x1fffffe8 UTF-16 单元。
+- **范围**：单 stdout/stderr 累计长度越过 V8 上限的 chunk；测试缩小上限只是负控装置，不把 10 单元当产品限制。不改变普通大小输出，也不宣称流分块本身跨运行稳定。
+- **机器判据**：`tests/bash_tool.rs::stream_cap_drops_only_chunks_that_do_not_fit`、`stream_cap_defaults_to_v8_max_string_length`；网关存活差异仍需隔离真实 TS 子进程原件，不能只以缩小 cap 的 Rust 单测作两侧实效证明。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-BASH-WNOWAIT-001 · 不支持 WNOWAIT 时提前清理进程组
+
+- **类别**：实现限制（平台后备路径）。
+- **TS 依据**：`tool/builtin/bash/commandRunner.ts` 安排 termination 后 3 秒 SIGKILL，即使结果已经 settled；bash-tool 的 deferred-kill 原件覆盖此时序。
+- **Rust 行为**：正常 WNOWAIT 平台保留未回收 leader，按 3 秒再杀组；waitid(WNOWAIT) 不可用时退回收尾立即 SIGKILL。runtime 在延时任务期间整体停机时 GroupGuard 也立即杀组。
+- **范围**：仅 WNOWAIT 不支持或 runtime 提前整体退出的路径；普通 macOS/Linux 正常 deferred-kill 是对齐实现，不登记为差异。停机时 leader 僵尸回收需进程退出/后续 Tokio 回收，不承诺即时消失。
+- **机器判据**：注入 waitid 不支持并用继续写入/延迟退出的后代报告实际 SIGKILL 时刻；**该平台 fallback 尚无两侧完整断言**，不能用正常 deferred-kill 测试充当通过。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-MCP-HTTPS-001 · MCP HTTP transport 缺少 TLS
+
+- **类别**：未实现（HTTPS connector 接线）。
+- **TS 依据**：`mcp/client/McpClient.ts` 的 buildTransport 使用 SDK streamable HTTP / SSE（源码真实路径见本单 RESULT），Node fetch/EventSource 支持 HTTPS。
+- **Rust 行为**：`runtime/mcp/http.rs` 的 parse_endpoint 只接纳 http，https 直接报 mcp_unsupported_transport；`runtime/mcp/client.rs` 模块文档已披露。
+- **范围**：MCP streamable_http / sse 的 HTTPS 端点；与已存在的 model TLS connector 无自动共用保证。HTTP 普通消息和 SDK 协议版本不豁免。
+- **机器判据**：同一受控 TLS MCP server 对真实 SDK 与 Rust 执行 initialize/listTools/callTool，比较公开状态/错误；**本单未跑该 TLS listener，不把 HTTP 测试计为 HTTPS 通过**。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-MCP-HTTP-LIFETIME-001 · 连接后台生命周期与代理 dispatcher
+
+- **类别**：有意改进及未实现（连接所有权/宿主集成）。
+- **TS 依据**：SDK/EventSource transport 在关闭或首连失败后可能保留 body/3 秒重连任务；`network/fetch.ts` 与 `cli/proxy.ts` 负责 Node dispatcher。既有 `runtime/mcp/http.rs` 文档披露相关 SDK/undici 运行时事实，不作为「永远无可观察影响」保证。
+- **Rust 行为**：关闭时丢弃打开的事件流；legacy SSE 首连失败后停止而不后台每 3 秒重试；不读取 cli/proxy dispatcher。
+- **范围**：关闭后资源存活、失败后的后续请求/重连次数，以及需要代理才能连通的部署；未宣称每条协议消息均不同。与正常断线后的已实现 reconnect 机制分开，不能把所有重连概括为缺失。
+- **机器判据**：受控服务分别记录 close 后连接存活、首次拒绝后请求次数及代理访问日志，比较两侧；**本单仅保留现状披露，未完成这些网络时间线实测**。
+- **批准记录**：无；原文「no observable protocol effect」不是人批，也不排除网络副作用；**已知未对齐（未批准）**。
+
+### A4-MIXED-BATCH-ORDER-001 · 已就绪转发与本地请求的响应交错
+
+- **类别**：实现缺口（代理/本地应答调度时序）。
+- **TS 依据**：真实固定基线金样 `tests/fixtures/metadata/order.json` 两例：immediate-forward 先 forwarded 后 local；delayed-forward 先 local 后 forwarded。原始帧字节未归一排序。
+- **Rust 行为**：`pairing/tests.rs::mixed_batch_wire_goldens_document_immediate_gap_and_delayed_parity` 显式断言 immediate case 本地帧先出，与 TS 不等；delayed case 相等。
+- **范围**：同批 mixed local/forward 请求、上游 forwarded Promise 在本地调度时已就绪的交错；不是所有 mixed batch，也不影响每条应答 id/result 对应关系。此差异尚不构成透明代理分数豁免。
+- **机器判据**：上述 wire-golden 测试同时断言 immediate != TS 和 delayed == TS；后续修复须将 immediate 改成真实字节相等断言，不能按 id 排序掩盖时序。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.2-TRANSCRIPT-DOMAIN-001 · 尚未支持的域事件与恢复投影明确拒绝
+
+- **类别**：未实现（transcript 域校验/投影覆盖）。
+- **TS 依据**：`gateway/storage/AsyncTranscriptStorageAdapter.ts:120-414` 与 `session/events/SessionRuntime.ts:46-152` 接受 TS SessionDomainValidation 支持的完整域事件，真实 `transcript-adapter` 金样保留这些事件和存储调用。
+- **Rust 行为**：`storage/transcript_adapter.rs` 通过 domain_supported / projection_supported 对当前切片之外的域事件/恢复投影返回 HostRequired 或显式错误，在 store.append 前拒绝，不猜测接受；recorder 私有验证的 model/tool 路径可写。
+- **范围**：仅当前支持集合外的 turn/step/inbox 等域事件和恢复投影；模块当前未接线到 gateway 默认路由，不能表述为所有线上用户写入均失败，也不能将存储切片的正常测试外推为完整 session 支持。整项 fork-copy/事务等未来 API 建设不由本条豁免。
+- **机器判据**：`storage::transcript_adapter::tests::unported_domain_entries_fail_closed_before_the_store` 与 `real_ts_scenarios_match_outcomes_calls_and_bytes` 的 Declared gap 分支，要求首次不等明确拒绝而非写入错误数据；未来实现时须改成真实 TS 的完整结果/存储调用相等断言。
+- **批准记录**：无；既有测试的 Declared gap 注释不是批准；**已知未对齐（未批准）**。

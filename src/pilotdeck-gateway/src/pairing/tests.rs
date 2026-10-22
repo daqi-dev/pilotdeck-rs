@@ -999,6 +999,7 @@ async fn mixed_batch_wire_goldens_document_immediate_gap_and_delayed_parity() {
     // a forwarded promise that is already fulfilled and one released later.
     // This is a diagnostic of the known immediate-forward ordering gap, NOT
     // a claim that every mixed batch matches TS (nor an accepted ruler diff).
+    // Ledger: specs/gateway-parity/accepted-diffs.md A4-MIXED-BATCH-ORDER-001 (unapproved).
     let cases =
         crate::dispatch::parse(include_bytes!("../../tests/fixtures/metadata/order.json")).unwrap();
     let pilotdeck_protocol::JsValue::Array(cases) = &cases else {

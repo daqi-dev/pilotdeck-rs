@@ -110,6 +110,7 @@ fn own<'a>(object: &'a JsValue, key: &JsValue) -> Option<&'a JsValue> {
 ///
 /// Known gap: `config.providers[...]`/`provider.models[...]` are own-property
 /// lookups here; the baseline also sees `Object.prototype` members.
+/// Ledger: specs/gateway-parity/accepted-diffs.md A6.4-MODEL-PROTOTYPE-001 (unapproved).
 pub(crate) fn validate_model_request(
     request: &JsValue,
     config: &JsValue,
