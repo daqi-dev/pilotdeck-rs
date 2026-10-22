@@ -91,6 +91,10 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：`stats_tests.rs::retention_keeps_non_canonical_rows_the_baseline_deletes`（同一组 8 行 + 1 行规范过期控制行，断言 Rust 保留 8 行、删除控制行）；`parses_the_canonical_to_iso_string_shapes` 钉住两种规范形与拒绝集；`token_stats` 的 `retention-expanded-years` 金样由真实 TS 生成，钉住规范扩展年与越界行两侧一致的部分。
 - **批准记录**：无。决策卡 `state/decisions-20261022.md`「A6.4-pr9b」为「自决 · 待复核（AI 代批）」并选定 B；本条目按 gate3 P1 补登，`未批准，非已接受差异`。
 
+补实现（issue #494；PR 号待协调者创建后补记）：ISO 与 legacy 解析已接入共享的 V8 12.4 / Node v22.22.0 移植（`pilotdeck-transport/src/system_clock.rs`），保留完整 UTF-16，原先仅认两种规范形的限制已消除。真实 TS 的 `tests/fixtures/stats-dateparse/` 金样为 15,887 个输入 × UTC / America/New_York / Asia/Shanghai，覆盖历史 TZif 转换边界、春秋跳时、未来 400 年周期样本、扩展年份与 malformed 输入；三个时区逐值保留、边界、压缩字节和重开快照一致。原机器判据由 `stats_dateparse_tests.rs` 的真实 TS 回放取代，保留本条历史原文。
+
+仍保留为本条已接受差异的子集：**本地时间需要的 TZif 字节不在 `tests/fixtures/stats-dateparse/local-profiles.json` 的已对拍 SHA256 中**（含系统升级、更换未验证时区、POSIX TZ、自定义路径、数据不可读），以及共享 TZif 解析器无法确定转换的本地输入，一律保留。进程设置 TZ 时沿用该 TZ，未设置时读取 `/etc/localtime`；仅接纳三个已验证 TZ 标识与同名 TZif 的 SHA 配对；未设置 TZ 时，`/etc/localtime` 的规范链接须指向其中同名 profile 且字节匹配；未验证别名（如 Node 按 UTC 解释的 `TZ=localtime`）继续保留。显式时区、ISO date-only 不受该限制。Node ICU tzdata 为 2026a，生成机器系统为 2026d，因此不宣称任意系统规则与 ICU 一致；未知数据不猜 UTC/当前偏移，不误删。该子集沿用本条人批的向保留差异，尚未全量消除，故不追加虚构 PR 号或「全部差异消除」结论。
+
 ### A6.4-STATS-BASELINEMODEL-001 · `stats.baselineModel` 未知 ref 不报 fatal（未实现，待后续单）
 
 - **类别**：未实现（Rust 侧缺 `modelConfig` 输入），非有意语义豁免。

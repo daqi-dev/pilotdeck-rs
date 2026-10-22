@@ -1074,10 +1074,7 @@ fn is_retained_record(retention: Option<f64>, now: f64, record: &JsValue) -> boo
     let Some(retention) = retention else {
         return true;
     };
-    let Some(ended_at) = text(record, "endedAt")
-        .and_then(|value| value.to_utf8().ok())
-        .and_then(|value| parse_date_ms(&value))
-    else {
+    let Some(ended_at) = text(record, "endedAt").and_then(|value| parse_date_ms(&value)) else {
         // `!Number.isFinite(endedAt)`: keep malformed historical timestamps.
         return true;
     };
@@ -1298,139 +1295,91 @@ fn migrate_json_to_jsonl_with(
     }
 }
 
-/// `Date.parse` restricted to the timestamp shapes this collector writes.
-///
-/// `RouterRuntime.ts:936` and `:972` build `endedAt` with
-/// `(deps.now?.() ?? new Date()).toISOString()`. `toISOString()` has exactly two
-/// canonical shapes: `YYYY-MM-DDTHH:mm:ss.sssZ` (24 bytes, years 0000-9999)
-/// and `±YYYYYY-MM-DDTHH:mm:ss.sssZ` (27 bytes, every other year inside the
-/// `Date` range `-271821-04-20T00:00:00.000Z` ..
-/// `+275760-09-13T00:00:00.000Z`). Both are interpreted exactly.
-///
-/// Nothing else is interpreted here: ECMAScript's date parser also accepts
-/// local times, numeric offsets, RFC 2822, legacy forms and even non-canonical
-/// expanded years (`+000000`, or a variable number of fractional digits), none
-/// of which this collector writes. Approximating those branches can turn a
-/// malformed row into a finite old instant, after which retention deletes the
-/// accounting row. The chosen divergence is therefore "only the two canonical
-/// forms parse; everything else is kept", including values outside the `Date`
-/// range.
-///
-/// The canonical shapes are validated strictly, including the calendar: a
-/// canonical-looking but impossible date (`2023-02-29`) is not accepted.
-pub(crate) fn parse_date_ms(value: &str) -> Option<f64> {
-    let bytes = value.as_bytes();
-    let (year, month, day, hour, minute, second, millis) = match bytes.len() {
-        24 => {
-            if bytes[4] != b'-'
-                || bytes[7] != b'-'
-                || bytes[10] != b'T'
-                || bytes[13] != b':'
-                || bytes[16] != b':'
-                || bytes[19] != b'.'
-                || bytes[23] != b'Z'
-            {
-                return None;
-            }
-            (
-                ascii_field(bytes, 0..4)?,
-                ascii_field(bytes, 5..7)?,
-                ascii_field(bytes, 8..10)?,
-                ascii_field(bytes, 11..13)?,
-                ascii_field(bytes, 14..16)?,
-                ascii_field(bytes, 17..19)?,
-                ascii_field(bytes, 20..23)?,
-            )
+/// Node 22 / V8 12.4 Date.parse, shared with the production execution clock.
+/// Both ParseES5DateTime and its legacy continuation consume UTF-16, including
+/// lone surrogates in comments or after NUL. Unsupported local profiles keep
+/// the accounting row. See stats-dateparse/README.md for the admitted TZ data.
+pub(crate) fn parse_date_ms(value: &JsString) -> Option<f64> {
+    pilotdeck_transport::system_clock::parse_node22_date_with_local(value, &stats_local_to_utc)
+        .ok()
+        .flatten()
+}
+
+fn stats_local_to_utc(wall: i64) -> Result<i64, JsString> {
+    use std::io::Read;
+    let unsupported = || JsString::from("STATS_LOCAL_DATE_UNVERIFIED_TZIF");
+    let tz = std::env::var_os("TZ");
+    let zone = if let Some(tz) = tz.as_deref() {
+        let name = tz.to_str().ok_or_else(unsupported)?;
+        // An OS file name is not necessarily an ICU TZ identifier: Node uses
+        // UTC for TZ=localtime even when /etc/localtime contains Shanghai.
+        if !matches!(name, "UTC" | "America/New_York" | "Asia/Shanghai") {
+            return Err(unsupported());
         }
-        27 => {
-            let negative = match bytes[0] {
-                b'+' => false,
-                b'-' => true,
-                _ => return None,
-            };
-            if bytes[7] != b'-'
-                || bytes[10] != b'-'
-                || bytes[13] != b'T'
-                || bytes[16] != b':'
-                || bytes[19] != b':'
-                || bytes[22] != b'.'
-                || bytes[26] != b'Z'
-            {
-                return None;
-            }
-            let magnitude = ascii_field(bytes, 1..7)?;
-            // `toISOString()` uses the expanded form only outside 0000-9999:
-            // `+` starts at year 10000, `-` means a negative year (`-000000`
-            // is not a canonical year). `+000000` is likewise not canonical.
-            if (!negative && magnitude < 10_000) || (negative && magnitude == 0) {
-                return None;
-            }
-            let year = if negative { -magnitude } else { magnitude };
-            (
-                year,
-                ascii_field(bytes, 8..10)?,
-                ascii_field(bytes, 11..13)?,
-                ascii_field(bytes, 14..16)?,
-                ascii_field(bytes, 17..19)?,
-                ascii_field(bytes, 20..22)?,
-                ascii_field(bytes, 23..26)?,
-            )
-        }
-        _ => return None,
+        name.to_owned()
+    } else {
+        // For the unset-TZ host default, admit only a canonical system link to
+        // one of those same named profiles. A copied/unknown default is kept.
+        let default = fs::canonicalize("/etc/localtime").map_err(|_| unsupported())?;
+        ["UTC", "America/New_York", "Asia/Shanghai"]
+            .into_iter()
+            .find(|name| {
+                fs::canonicalize(Path::new("/usr/share/zoneinfo").join(name))
+                    .ok()
+                    .as_ref()
+                    == Some(&default)
+            })
+            .ok_or_else(unsupported)?
+            .to_owned()
     };
-    if !(1..=12).contains(&month)
-        || day < 1
-        || day > days_in_month(year, month)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let millis_since_epoch = civil_ms(year, month, day, hour, minute, second, millis);
-    // ECMAScript's TimeClip rejects instants outside ±8.64e15 ms. Those are
-    // never written by `toISOString()`, and `Date.parse` returns NaN for them.
-    if !(-8_640_000_000_000_000.0..=8_640_000_000_000_000.0).contains(&millis_since_epoch) {
-        return None;
-    }
-    Some(millis_since_epoch)
+    let path = pilotdeck_transport::system_clock::system_tzif_path(tz.as_deref())
+        .ok_or_else(unsupported)?;
+    // Bound reads even for an unexpected symlink under the system zone tree.
+    let mut bytes = Vec::new();
+    File::open(path)
+        .map_err(|_| unsupported())?
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unsupported())?;
+    stats_tzif_local(wall, &bytes, &zone)
 }
 
-fn ascii_field(bytes: &[u8], range: std::ops::Range<usize>) -> Option<i64> {
-    let digits = &bytes[range];
-    if !digits.iter().all(|byte| byte.is_ascii_digit()) {
-        return None;
+fn stats_tzif_local(wall: i64, bytes: &[u8], zone: &str) -> Result<i64, JsString> {
+    use sha2::{Digest, Sha256};
+    static VERIFIED: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    let hashes = VERIFIED.get_or_init(|| {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/stats-dateparse/local-profiles.json"
+        ))
+        .unwrap_or_default();
+        data.get("profiles")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|profile| {
+                Some((
+                    profile.get("tz")?.as_str()?.to_owned(),
+                    profile.get("sha256")?.as_str()?.to_owned(),
+                ))
+            })
+            .collect()
+    });
+    // Node embeds ICU tzdata; the OS may update independently. Bind BOTH the
+    // ICU identifier and the exact bytes exercised by the real TS profile.
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    let verified = hashes
+        .iter()
+        .any(|(name, sha)| name == zone && sha == &digest);
+    if bytes.len() > 1_048_576 || !verified {
+        return Err("STATS_LOCAL_DATE_UNVERIFIED_TZIF".into());
     }
-    std::str::from_utf8(digits).ok()?.parse().ok()
-}
-
-/// Days in a proleptic-Gregorian month (mirrors the calendar `Date` uses).
-fn days_in_month(year: i64, month: i64) -> i64 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        2 => 28,
-        _ => 0,
-    }
-}
-
-fn civil_ms(
-    year: i64,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    second: i64,
-    millis: i64,
-) -> f64 {
-    (crate::runtime::tools::builtin::time::days_from_civil(year, month, day) * 86_400_000
-        + hour * 3_600_000
-        + minute * 60_000
-        + second * 1_000
-        + millis) as f64
+    pilotdeck_transport::system_clock::resolve_tzif_local(wall, bytes)
 }
 
 #[cfg(test)]
 #[path = "stats_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stats_dateparse_tests.rs"]
+mod dateparse_tests;
