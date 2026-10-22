@@ -344,6 +344,7 @@ fn build_runtime(
             custom_routers,
             events: Arc::new(move |event: JsValue| events_sink.lock().expect("events").push(event)),
             clock,
+            stats: None,
             is_model_allowed: Arc::new(move |model: &RouterModelRef| {
                 let key = format!(
                     "{}/{}",

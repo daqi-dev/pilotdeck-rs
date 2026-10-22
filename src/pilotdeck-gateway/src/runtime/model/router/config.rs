@@ -146,6 +146,13 @@ pub struct AutoOrchestrateConfig {
 pub struct StatsConfig {
     pub enabled: bool,
     pub model_pricing: Option<PricingMap>,
+    /// `TokenStatsCollector` constructor-only override. The TS config parser
+    /// does not accept `filePath`; tests pass it directly.
+    pub file_path: Option<std::path::PathBuf>,
+    /// Opt-in durable retention window. `None` leaves the journal append-only.
+    pub retention_ms: Option<f64>,
+    /// Provider/model used as the "no-router" cost baseline.
+    pub baseline_model: Option<RouterModelRef>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -420,9 +427,19 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
             }
             map
         });
+    let baseline_model = object
+        .get("baselineModel")
+        .and_then(RouterModelRef::from_value);
+    let retention_ms = object
+        .get("retentionMs")
+        .and_then(JsValue::as_number)
+        .filter(|value| value.is_finite() && *value > 0.0 && value.fract() == 0.0);
     StatsConfig {
         enabled,
         model_pricing,
+        file_path: None,
+        retention_ms,
+        baseline_model,
     }
 }
 
