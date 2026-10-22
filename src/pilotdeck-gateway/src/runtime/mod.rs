@@ -14,6 +14,7 @@ pub mod permission;
 pub mod plugins;
 pub mod project;
 pub mod refresh;
+pub mod replacement;
 pub mod rewind;
 pub mod sdk_session;
 pub mod session;
