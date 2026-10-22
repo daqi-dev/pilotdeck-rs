@@ -19,21 +19,26 @@ struct RecordingStore {
 }
 
 impl GatewayToolResultArtifactStorePort for RecordingStore {
-    fn persist(&self, input: &GatewayToolResultArtifactInput) -> Option<String> {
+    fn persist(&self, input: &GatewayToolResultArtifactInput) -> ProjectionResult<Option<String>> {
         let bytes = utf8_len(input.text.units());
-        let returned = (bytes > DEFAULT_ARTIFACT_THRESHOLD_BYTES).then(|| {
-            format!(
+        // Mirrors the fixture stand-in in `generate.mts`: only the over-
+        // threshold branch touches `safePathPart`, which throws on a
+        // non-string path field before the call is recorded.
+        let returned = if bytes > DEFAULT_ARTIFACT_THRESHOLD_BYTES {
+            Some(format!(
                 "{}/{}/{}/{}.txt",
                 PERCENT,
-                safe_path_part(input.session_id.units()),
-                safe_path_part(input.turn_id.units()),
-                safe_path_part(input.tool_call_id.units()),
-            )
-        });
+                safe_path_part_js(&input.session_id)?,
+                safe_path_part_js(&input.turn_id)?,
+                safe_path_part_js(&input.tool_call_id)?,
+            ))
+        } else {
+            None
+        };
         let record = object([
-            ("sessionId", JsValue::String(input.session_id.clone())),
-            ("turnId", JsValue::String(input.turn_id.clone())),
-            ("toolCallId", JsValue::String(input.tool_call_id.clone())),
+            ("sessionId", input.session_id.clone()),
+            ("turnId", input.turn_id.clone()),
+            ("toolCallId", input.tool_call_id.clone()),
             ("text", JsValue::String(input.text.clone())),
             ("bytes", number(bytes as f64)),
             (
@@ -44,7 +49,7 @@ impl GatewayToolResultArtifactStorePort for RecordingStore {
             ),
         ]);
         self.calls.lock().unwrap().push(record);
-        returned
+        Ok(returned)
     }
 }
 
@@ -95,7 +100,7 @@ fn assert_range_error(result: ProjectionResult<Vec<JsValue>>, case: &str) {
 fn agent_event_projections_match_ts_oracle() {
     let oracle = crate::test_baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 127, "oracle case count");
+    assert_eq!(cases.len(), 192, "oracle case count");
 
     for case in cases {
         let name = field(case, "name")
@@ -324,13 +329,16 @@ fn advisory_persist_returns_before_the_write_completes() {
         Arc::new(|_path, _bytes| Ok(())),
     );
     let input = GatewayToolResultArtifactInput {
-        session_id: JsString::from("s"),
-        turn_id: JsString::from("t"),
-        tool_call_id: JsString::from("c"),
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text("c"),
         text: JsString::from("abcde"),
     };
     let began = Instant::now();
-    let path = store.persist(&input).expect("returned above threshold");
+    let path = store
+        .persist(&input)
+        .expect("persisted")
+        .expect("returned above threshold");
     let elapsed = began.elapsed();
     started_rx
         .recv_timeout(Duration::from_secs(5))
@@ -354,13 +362,16 @@ fn default_store_resolves_dot_segments_like_ts() {
         Arc::new(|_path, _bytes| Ok(())),
     );
     let input = GatewayToolResultArtifactInput {
-        session_id: JsString::from(".."),
-        turn_id: JsString::from("."),
-        tool_call_id: JsString::from(".."),
+        session_id: text(".."),
+        turn_id: text("."),
+        tool_call_id: text(".."),
         text: JsString::from("abcde"),
     };
     assert_eq!(
-        store.persist(&input).expect("persisted above threshold"),
+        store
+            .persist(&input)
+            .expect("persisted")
+            .expect("above threshold"),
         "/tmp/...txt"
     );
     store.wait_for_pending();
@@ -372,21 +383,84 @@ fn default_store_only_persists_above_the_byte_threshold() {
     let _ = std::fs::remove_dir_all(&root);
     let store = GatewayToolResultArtifactStore::new(&root, 4);
     let short = GatewayToolResultArtifactInput {
-        session_id: JsString::from("s"),
-        turn_id: JsString::from("t"),
-        tool_call_id: JsString::from("c"),
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text("c"),
         text: JsString::from("abcd"),
     };
-    assert_eq!(store.persist(&short), None);
+    assert_eq!(store.persist(&short).expect("persisted"), None);
     let long = GatewayToolResultArtifactInput {
         text: JsString::from("abcde"),
         ..short
     };
-    let path = store.persist(&long).expect("persisted above threshold");
+    let path = store
+        .persist(&long)
+        .expect("persisted")
+        .expect("above threshold");
     store.wait_for_pending();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "abcde");
     assert!(std::path::Path::new(&path).starts_with(root.join("s").join("t")));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Fix round 3: `persist` passes the path fields through unchanged below the
+/// threshold, but `safePathPart(...).trim()` throws above it for a non-string
+/// `sessionId`/`turnId`/`toolCallId` (TS evaluates them in that order).
+#[test]
+fn default_store_throws_on_non_string_path_part_like_ts() {
+    let store = GatewayToolResultArtifactStore::with_io(
+        "/tmp/pdrs-probe-root",
+        4,
+        Arc::new(|_path| Ok(())),
+        Arc::new(|_path, _bytes| Ok(())),
+    );
+    let short = GatewayToolResultArtifactInput {
+        session_id: number(123.0),
+        turn_id: JsValue::Bool(true),
+        tool_call_id: JsValue::Array(vec![number(1.0), number(2.0)]),
+        text: JsString::from("abcd"),
+    };
+    assert_eq!(
+        store.persist(&short).expect("below threshold"),
+        None,
+        "below the threshold the raw values are recorded and never trimmed"
+    );
+    for (field, value) in [
+        ("sessionId", number(123.0)),
+        ("turnId", JsValue::Bool(true)),
+        ("toolCallId", JsValue::Array(vec![number(1.0), number(2.0)])),
+    ] {
+        let input = GatewayToolResultArtifactInput {
+            session_id: text("s"),
+            turn_id: text("t"),
+            tool_call_id: text("c"),
+            text: JsString::from("abcde"),
+        };
+        let input = match field {
+            "sessionId" => GatewayToolResultArtifactInput {
+                session_id: value,
+                ..input
+            },
+            "turnId" => GatewayToolResultArtifactInput {
+                turn_id: value,
+                ..input
+            },
+            "toolCallId" => GatewayToolResultArtifactInput {
+                tool_call_id: value,
+                ..input
+            },
+            _ => unreachable!("known field"),
+        };
+        let error = store
+            .persist(&input)
+            .expect_err("non-string path part throws above the threshold");
+        assert_eq!(
+            error.to_string(),
+            "TypeError: value.trim is not a function",
+            "case {field}"
+        );
+    }
+    store.wait_for_pending();
 }
 
 /// A `tool_result` whose joined text is over the 4096-byte advisory threshold,
@@ -483,12 +557,15 @@ fn dropping_the_store_does_not_join_a_blocked_artifact_write() {
         }),
     );
     let input = GatewayToolResultArtifactInput {
-        session_id: JsString::from("s"),
-        turn_id: JsString::from("t"),
-        tool_call_id: JsString::from("c"),
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text("c"),
         text: JsString::from("abcde"),
     };
-    assert!(store.persist(&input).is_some(), "queued above threshold");
+    assert!(
+        store.persist(&input).expect("persisted").is_some(),
+        "queued above threshold"
+    );
     started_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("advisory write started");
@@ -547,12 +624,17 @@ fn every_advisory_write_is_eventually_persisted() {
     let mut paths = Vec::new();
     for index in 0..12 {
         let input = GatewayToolResultArtifactInput {
-            session_id: JsString::from("s"),
-            turn_id: JsString::from("t"),
-            tool_call_id: JsString::from(format!("c{index}")),
+            session_id: text("s"),
+            turn_id: text("t"),
+            tool_call_id: text(format!("c{index}")),
             text: JsString::from("abcde"),
         };
-        paths.push(store.persist(&input).expect("advisory write queued"));
+        paths.push(
+            store
+                .persist(&input)
+                .expect("persisted")
+                .expect("advisory write queued"),
+        );
     }
     {
         let (lock, condvar) = &*gate;
