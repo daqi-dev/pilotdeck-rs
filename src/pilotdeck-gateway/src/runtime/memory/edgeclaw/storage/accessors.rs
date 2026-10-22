@@ -1,0 +1,625 @@
+//! Repository accessors, external workspace discovery and readable catalogs.
+//! Source: fixed baseline `core/storage/sqlite.ts:592-909`.
+use crate::runtime::memory::edgeclaw::file_memory::{
+    EdgeClawFileStores, FileMemoryClock, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
+};
+use crate::{
+    metadata::js_trim,
+    project_files::{node_collator, node_compare_utf16, node_locale},
+};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use rusqlite::{Connection, OptionalExtension};
+use sha1::{Digest, Sha1};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+type Result<T> = std::result::Result<T, FileMemoryError>;
+
+pub(crate) struct RepositoryContext {
+    workspace: PathBuf,
+    general_workspace: PathBuf,
+    workspaces_root: PathBuf,
+    mode: String,
+    clock: FileMemoryClock,
+    external: Mutex<HashMap<String, Snapshot>>,
+}
+#[derive(Clone)]
+struct Snapshot {
+    workspace: PathBuf,
+    store: Arc<FileMemoryStore>,
+}
+impl RepositoryContext {
+    pub(crate) fn new(memory: &Path, mode: &str, clock: FileMemoryClock) -> Result<Self> {
+        let memory = absolute(memory)?;
+        let root = memory
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("/"))
+            .to_path_buf();
+        Ok(Self {
+            workspace: root.clone(),
+            general_workspace: general_workspace()?,
+            workspaces_root: root,
+            mode: mode.into(),
+            clock,
+            external: Mutex::default(),
+        })
+    }
+}
+fn absolute(path: &Path) -> Result<PathBuf> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => out.push(c.as_os_str()),
+        }
+    }
+    Ok(out)
+}
+fn general_workspace() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| FileMemoryError::Invalid("HOME is unavailable".into()))?;
+    absolute(&PathBuf::from(home).join(".pilotdeck"))
+}
+fn text(o: &JsObject, key: &str) -> String {
+    o.get(key)
+        .and_then(JsValue::as_string)
+        .map(|s| String::from_utf16_lossy(s.units()))
+        .unwrap_or_default()
+}
+fn s(v: impl AsRef<str>) -> JsValue {
+    JsValue::from(v.as_ref())
+}
+fn put(o: &mut JsObject, k: &str, v: JsValue) {
+    o.insert(k.into(), v);
+}
+fn objects(v: JsValue) -> Vec<JsObject> {
+    match &v {
+        JsValue::Array(a) => a.iter().filter_map(|v| v.as_object().cloned()).collect(),
+        _ => vec![],
+    }
+}
+fn values(v: Vec<JsObject>) -> JsValue {
+    JsValue::Array(v.into_iter().map(JsValue::Object).collect())
+}
+fn hash(v: &str) -> String {
+    format!("{:x}", Sha1::digest(v.as_bytes()))[..10].into()
+}
+fn path_text(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+fn external_id(workspace: &Path, project: &str) -> String {
+    format!(
+        "external-project:{}",
+        hash(&format!("{}::{project}", workspace.display()))
+    )
+}
+fn sort(entries: &mut [JsObject], time: impl Fn(&JsObject) -> String, tie: &str) -> Result<()> {
+    if entries.len() < 2 {
+        return Ok(());
+    }
+    let collator = node_collator(&node_locale(|k| std::env::var(k).ok()))
+        .map_err(|e| FileMemoryError::Collation(format!("{e:?}")))?;
+    entries.sort_by(|a, b| {
+        let at = time(a);
+        let bt = time(b);
+        if at != bt {
+            node_compare_utf16(&collator, &JsString::from(bt), &JsString::from(at))
+        } else {
+            let a = a
+                .get(tie)
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            let b = b
+                .get(tie)
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            node_compare_utf16(&collator, &a, &b)
+        }
+    });
+    Ok(())
+}
+fn map_global(mut o: JsObject) -> JsObject {
+    let path = text(&o, "relativePath").replace('\\', "/");
+    put(
+        &mut o,
+        "relativePath",
+        s(if path.starts_with("global/") {
+            path
+        } else {
+            format!("global/{path}")
+        }),
+    );
+    o
+}
+impl EdgeClawFileStores {
+    /// Repository constructor with TS path defaults and workspace mode detection.
+    pub fn open_repository(
+        db: impl AsRef<Path>,
+        memory: Option<&Path>,
+        global: Option<&Path>,
+        workspace: Option<&Path>,
+    ) -> Result<Self> {
+        let db = absolute(db.as_ref())?;
+        let memory = absolute(
+            &memory
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| db.parent().unwrap().join("memory")),
+        )?;
+        let root = memory
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(Path::new("/"));
+        let global = absolute(
+            &global
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| root.parent().unwrap_or(Path::new("/")).join("global")),
+        )?;
+        let workspace = absolute(workspace.unwrap_or(root))?;
+        let general = general_workspace()?;
+        Self::with_workspace_clock(
+            db,
+            memory,
+            global,
+            workspace,
+            general,
+            Arc::new(|| {
+                pilotdeck_transport::system_clock::format_epoch_iso(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                        .min(i64::MAX as u128) as i64,
+                )
+            }),
+        )
+    }
+    /// Explicit home/workspace and clock dependencies for isolated hosts and replay.
+    pub fn with_workspace_clock(
+        db: impl AsRef<Path>,
+        memory: impl AsRef<Path>,
+        global: impl AsRef<Path>,
+        workspace: impl AsRef<Path>,
+        general_workspace: impl AsRef<Path>,
+        clock: FileMemoryClock,
+    ) -> Result<Self> {
+        let workspace = absolute(workspace.as_ref())?;
+        let general_workspace = absolute(general_workspace.as_ref())?;
+        let mode = if workspace == general_workspace {
+            "general"
+        } else {
+            "single"
+        };
+        let mut repository = Self::with_clock(db, memory, global, mode, clock)?;
+        repository.repository.workspace = workspace;
+        repository.repository.general_workspace = general_workspace;
+        Ok(repository)
+    }
+    pub fn close(&self) -> Result<()> {
+        self.repository
+            .external
+            .lock()
+            .expect("external cache poisoned")
+            .clear();
+        self.storage.close()?;
+        Ok(())
+    }
+    pub fn get_file_memory_store(&self) -> &FileMemoryStore {
+        &self.workspace_memory
+    }
+    pub fn get_global_user_store(&self) -> &FileMemoryStore {
+        &self.global_user_memory
+    }
+    pub fn get_workspace_mode(&self) -> &str {
+        &self.repository.mode
+    }
+    fn current_workspace(&self) -> Result<PathBuf> {
+        let value = self.storage.get_pipeline_state("workspaceDir")?;
+        Ok(value
+            .and_then(|v| v.as_string().cloned())
+            .filter(|s| !js_trim(&String::from_utf16_lossy(s.units())).is_empty())
+            .map(|s| PathBuf::from(String::from_utf16_lossy(s.units())))
+            .unwrap_or_else(|| self.repository.workspace.clone()))
+    }
+    fn external_snapshots(&self) -> Result<Vec<Snapshot>> {
+        if self.get_workspace_mode() != "general" {
+            return Ok(vec![]);
+        }
+        let current = absolute(&self.current_workspace()?)?;
+        let memory = absolute(self.workspace_memory.get_root_dir())?;
+        let mut snapshots = vec![];
+        let mut cache = self
+            .repository
+            .external
+            .lock()
+            .expect("external cache poisoned");
+        let mut next = HashMap::new();
+        if self.repository.workspaces_root.exists() {
+            let mut dirs = fs::read_dir(&self.repository.workspaces_root)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            // Node readdir is in filename order on supported hosts; stable order
+            // also determines which of duplicate-workspace stores is cached.
+            dirs.sort_by_key(|e| e.file_name());
+            for dir in dirs {
+                if !dir.file_type()?.is_dir() {
+                    continue;
+                }
+                let memory_dir = dir.path().join("memory");
+                let db = dir.path().join("control.sqlite");
+                if !memory_dir.exists() || !db.exists() || absolute(&memory_dir)? == memory {
+                    continue;
+                }
+                let Some(workspace) = read_workspace(&db) else {
+                    continue;
+                };
+                if workspace == current || workspace == self.repository.general_workspace {
+                    continue;
+                }
+                let key = hash(&path_text(&workspace));
+                let snapshot =
+                    if let Some(cached) = cache.get(&key).filter(|s| s.workspace == workspace) {
+                        cached.clone()
+                    } else {
+                        Snapshot {
+                            workspace,
+                            store: Arc::new(FileMemoryStore::with_clock(
+                                memory_dir,
+                                FileMemoryStoreOptions {
+                                    workspace_mode: "single".into(),
+                                    manage_user_profile: false,
+                                    ..Default::default()
+                                },
+                                self.repository.clock.clone(),
+                            )?),
+                        }
+                    };
+                next.insert(key, snapshot.clone());
+                snapshots.push(snapshot);
+            }
+        }
+        *cache = next;
+        Ok(snapshots)
+    }
+    pub fn list_readable_project_catalog(&self) -> Result<JsValue> {
+        if self.get_workspace_mode() != "general" {
+            let meta = self.workspace_memory.get_project_meta(&JsObject::new())?;
+            let Some(meta) = meta.as_object() else {
+                return Ok(values(vec![]));
+            };
+            let workspace = self.current_workspace()?;
+            return Ok(values(vec![catalog_entry(
+                meta.clone(),
+                self.get_workspace_mode(),
+                &workspace,
+                "general_local",
+                &text(meta, "projectId"),
+                false,
+                false,
+                summary(&self.workspace_memory, &text(meta, "projectId"))?,
+            )]));
+        }
+        let workspace = self.current_workspace()?;
+        let locals = objects(self.workspace_memory.list_project_metas()?);
+        let mut mirrors = HashMap::new();
+        for meta in &locals {
+            if text(meta, "sourceKind") == "workspace_external_mirror"
+                && !text(meta, "sourceWorkspacePath").is_empty()
+                && !text(meta, "sourceProjectId").is_empty()
+            {
+                mirrors.insert(
+                    (
+                        absolute(Path::new(&text(meta, "sourceWorkspacePath")))?,
+                        text(meta, "sourceProjectId"),
+                    ),
+                    meta,
+                );
+            }
+        }
+        let mut catalog = vec![];
+        for snapshot in self.external_snapshots()? {
+            let meta = snapshot.store.get_project_meta(&JsObject::new())?;
+            let Some(meta) = meta.as_object() else {
+                continue;
+            };
+            let id = text(meta, "projectId");
+            let logical = external_id(&snapshot.workspace, &id);
+            let external_summary = summary(&snapshot.store, &id)?;
+            let mut entry = if let Some(mirror) = mirrors.get(&(snapshot.workspace.clone(), id)) {
+                let mirror_id = text(mirror, "projectId");
+                let local_summary = summary(&self.workspace_memory, &mirror_id)?;
+                let mut merged = external_summary;
+                for key in ["totalEntries", "projectEntries", "feedbackEntries"] {
+                    let n = |o: &JsObject| match o.get(key) {
+                        Some(JsValue::Number(n)) => *n,
+                        _ => 0.0,
+                    };
+                    let total = n(&merged) + n(&local_summary);
+                    put(&mut merged, key, JsValue::Number(total));
+                }
+                let latest = [
+                    text(&merged, "latestMemoryAt"),
+                    text(&local_summary, "latestMemoryAt"),
+                ]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .max_by_key(|s| s.encode_utf16().collect::<Vec<_>>());
+                put(
+                    &mut merged,
+                    "latestMemoryAt",
+                    latest.map(s).unwrap_or(JsValue::Undefined),
+                );
+                let mut e = catalog_entry(
+                    (*mirror).clone(),
+                    "general",
+                    &workspace,
+                    "workspace_external_mirror",
+                    &mirror_id,
+                    false,
+                    true,
+                    merged,
+                );
+                put(&mut e, "localMirrorProjectId", s(mirror_id));
+                e
+            } else {
+                catalog_entry(
+                    meta.clone(),
+                    "single",
+                    &snapshot.workspace,
+                    "workspace_external",
+                    &logical,
+                    true,
+                    false,
+                    external_summary,
+                )
+            };
+            put(&mut entry, "externalLogicalProjectId", s(logical));
+            catalog.push(entry);
+        }
+        for meta in locals
+            .into_iter()
+            .filter(|m| text(m, "sourceKind") != "workspace_external_mirror")
+        {
+            let id = text(&meta, "projectId");
+            let summary = summary(&self.workspace_memory, &id)?;
+            catalog.push(catalog_entry(
+                meta,
+                "general",
+                &workspace,
+                "general_local",
+                &id,
+                false,
+                false,
+                summary,
+            ));
+        }
+        sort(
+            &mut catalog,
+            |e| {
+                e.get("summary")
+                    .and_then(JsValue::as_object)
+                    .map(|o| text(o, "latestMemoryAt"))
+                    .unwrap_or_default()
+            },
+            "projectName",
+        )?;
+        Ok(values(catalog))
+    }
+    pub fn get_readable_project(&self, logical: &str) -> Result<JsValue> {
+        Ok(objects(self.list_readable_project_catalog()?)
+            .into_iter()
+            .find(|e| text(e, "logicalProjectId") == logical)
+            .map(JsValue::Object)
+            .unwrap_or(JsValue::Undefined))
+    }
+    pub fn list_readable_project_entries(
+        &self,
+        logical: &str,
+        options: &JsObject,
+    ) -> Result<JsValue> {
+        let project = self.get_readable_project(logical)?;
+        let Some(project) = project.as_object() else {
+            return Ok(values(vec![]));
+        };
+        let mut input = options.clone();
+        if !input.contains_key("kinds")
+            || matches!(input.get("kinds"), Some(JsValue::Undefined | JsValue::Null))
+        {
+            put(
+                &mut input,
+                "kinds",
+                JsValue::Array(vec![s("project"), s("feedback")]),
+            );
+        }
+        put(&mut input, "scope", s("project"));
+        put(&mut input, "projectId", s(text(project, "projectId")));
+        put(&mut input, "limit", JsValue::Number(5000.0));
+        put(&mut input, "offset", JsValue::Number(0.0));
+        let source = text(project, "sourceType");
+        let mut entries = vec![];
+        if source == "general_local" || source == "workspace_external_mirror" {
+            entries.extend(objects(self.workspace_memory.list_memory_entries(&input)?));
+        }
+        if !matches!(options.get("includeExternal"), Some(JsValue::Bool(false)))
+            && (source == "workspace_external" || source == "workspace_external_mirror")
+        {
+            let target = text(project, "sourceWorkspacePath");
+            let target = if target.is_empty() {
+                text(project, "workspacePath")
+            } else {
+                target
+            };
+            for snapshot in self.external_snapshots()? {
+                if snapshot.workspace != absolute(Path::new(&target))? {
+                    continue;
+                }
+                let source_id = text(project, "sourceProjectId");
+                if !source_id.is_empty() {
+                    put(&mut input, "projectId", s(source_id));
+                }
+                entries.extend(
+                    objects(snapshot.store.list_memory_entries(&input)?)
+                        .into_iter()
+                        .map(|mut e| {
+                            let path = text(&e, "relativePath").replace('\\', "/");
+                            put(
+                                &mut e,
+                                "relativePath",
+                                s(format!(
+                                    "external:{}:{path}",
+                                    hash(&path_text(&snapshot.workspace))
+                                )),
+                            );
+                            e
+                        }),
+                );
+                break;
+            }
+        }
+        sort(&mut entries, |o| text(o, "updatedAt"), "relativePath")?;
+        Ok(values(entries))
+    }
+    pub fn repair_workspace_manifest(&self) -> Result<JsValue> {
+        self.workspace_memory.repair_manifests()
+    }
+    pub fn get_user_summary(&self) -> Result<JsValue> {
+        let summary = self.global_user_memory.get_user_summary()?;
+        let mut summary = summary.as_object().cloned().unwrap_or_default();
+        let files = summary
+            .get("files")
+            .cloned()
+            .unwrap_or(JsValue::Array(vec![]));
+        put(
+            &mut summary,
+            "files",
+            values(objects(files).into_iter().map(map_global).collect()),
+        );
+        Ok(JsValue::Object(summary))
+    }
+    /// Internal TS helper, exposed for repository consumers needing the same filter.
+    pub fn list_global_memory_entries(&self, options: &JsObject) -> Result<JsValue> {
+        let kinds = options.get("kinds");
+        let user = kinds.and_then(|v| {
+            if let JsValue::Array(a) = v {
+                Some(a.iter().any(|v| v == &s("user")))
+            } else {
+                None
+            }
+        });
+        if text(options, "scope") == "project" || user == Some(false) {
+            return Ok(values(vec![]));
+        }
+        let mut input = options.clone();
+        put(&mut input, "kinds", JsValue::Array(vec![s("user")]));
+        put(&mut input, "scope", s("global"));
+        Ok(values(
+            objects(self.global_user_memory.list_memory_entries(&input)?)
+                .into_iter()
+                .map(map_global)
+                .collect(),
+        ))
+    }
+}
+fn read_workspace(db: &Path) -> Option<PathBuf> {
+    // Match TS: open without initializing/migrating and swallow all read errors.
+    let conn = Connection::open(db).ok()?;
+    conn.busy_timeout(std::time::Duration::ZERO).ok()?;
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT state_json FROM pipeline_state WHERE state_key = ?",
+            ["workspaceDir"],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()?;
+    let parsed = parse_json(value?.as_str()).ok()?;
+    let value = parsed.as_string()?;
+    let value = js_trim(&String::from_utf16_lossy(value.units())).to_string();
+    if value.is_empty() {
+        None
+    } else {
+        absolute(Path::new(&value)).ok()
+    }
+}
+fn summary(store: &FileMemoryStore, id: &str) -> Result<JsObject> {
+    let mut options = JsObject::new();
+    put(
+        &mut options,
+        "kinds",
+        JsValue::Array(vec![s("project"), s("feedback")]),
+    );
+    put(&mut options, "scope", s("project"));
+    put(&mut options, "projectId", s(id));
+    put(&mut options, "includeDeprecated", JsValue::Bool(false));
+    put(&mut options, "limit", JsValue::Number(5000.0));
+    put(&mut options, "offset", JsValue::Number(0.0));
+    let entries = objects(store.list_memory_entries(&options)?);
+    let mut out = JsObject::new();
+    for (key, n) in [
+        ("totalEntries", entries.len()),
+        (
+            "projectEntries",
+            entries
+                .iter()
+                .filter(|e| text(e, "type") == "project")
+                .count(),
+        ),
+        (
+            "feedbackEntries",
+            entries
+                .iter()
+                .filter(|e| text(e, "type") == "feedback")
+                .count(),
+        ),
+    ] {
+        put(&mut out, key, JsValue::Number(n as f64));
+    }
+    if let Some(latest) = entries.first().filter(|e| !text(e, "updatedAt").is_empty()) {
+        put(
+            &mut out,
+            "latestMemoryAt",
+            latest.get("updatedAt").unwrap().clone(),
+        );
+    }
+    Ok(out)
+}
+#[allow(clippy::too_many_arguments)]
+fn catalog_entry(
+    mut meta: JsObject,
+    mode: &str,
+    workspace: &Path,
+    source: &str,
+    logical: &str,
+    read_only: bool,
+    mirror: bool,
+    summary: JsObject,
+) -> JsObject {
+    for (k, v) in [
+        ("workspaceMode", s(mode)),
+        ("workspacePath", s(path_text(workspace))),
+        (
+            "workspaceName",
+            s(workspace.file_name().unwrap_or_default().to_string_lossy()),
+        ),
+        ("sourceType", s(source)),
+        ("logicalProjectId", s(logical)),
+        ("readOnly", JsValue::Bool(read_only)),
+        ("hasLocalMirror", JsValue::Bool(mirror)),
+        ("summary", JsValue::Object(summary)),
+    ] {
+        put(&mut meta, k, v);
+    }
+    meta
+}

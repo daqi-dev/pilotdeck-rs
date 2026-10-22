@@ -247,6 +247,7 @@ impl FileMemoryStore {
 /// File-store wiring from `sqlite.ts:523-540`, using only pr10a's public API.
 /// Repository-level snapshots, routing and retrieval remain separate work items.
 pub struct EdgeClawFileStores {
+    pub(super) repository: super::storage::accessors::RepositoryContext,
     pub storage: EdgeClawStorage,
     pub workspace_memory: FileMemoryStore,
     pub global_user_memory: Arc<FileMemoryStore>,
@@ -282,7 +283,7 @@ impl EdgeClawFileStores {
         )?);
         let provider = global_user_memory.clone();
         let workspace_memory = FileMemoryStore::with_clock(
-            memory,
+            &memory,
             FileMemoryStoreOptions {
                 workspace_mode: mode.into(),
                 manage_user_profile: false,
@@ -313,9 +314,14 @@ impl EdgeClawFileStores {
                 })),
                 ..Default::default()
             },
-            clock,
+            clock.clone(),
         )?;
         Ok(Self {
+            repository: super::storage::accessors::RepositoryContext::new(
+                memory.as_ref(),
+                mode,
+                clock.clone(),
+            )?,
             storage: EdgeClawStorage::open(db)?,
             workspace_memory,
             global_user_memory,

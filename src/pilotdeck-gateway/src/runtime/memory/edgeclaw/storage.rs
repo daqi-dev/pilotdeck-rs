@@ -69,6 +69,7 @@ const MIGRATE_PIPELINE_STATE_SQL: &str = "CREATE TABLE IF NOT EXISTS pipeline_st
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
+    Closed,
     Io(std::io::Error),
     /// JSON text that JS would accept but the shared codec rejects, or an
     /// explicit refusal to bind JS `undefined` as a JSON column value.
@@ -95,6 +96,7 @@ pub enum StorageError {
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Closed => write!(f, "database is not open"),
             Self::Sqlite(error) => write!(f, "sqlite: {error}"),
             Self::Io(error) => write!(f, "io: {error}"),
             Self::Json(error) => write!(f, "json: {error}"),
@@ -172,7 +174,15 @@ impl IndexingSettings {
 /// A `MemoryRepository` opened on one SQLite file (`sqlite.ts:490-600`).
 pub struct EdgeClawStorage {
     path: PathBuf,
-    conn: Mutex<Connection>,
+    conn: Mutex<Option<Connection>>,
+}
+
+struct ConnectionGuard<'a>(std::sync::MutexGuard<'a, Option<Connection>>);
+impl std::ops::Deref for ConnectionGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.0.as_ref().expect("checked open under lock")
+    }
 }
 
 impl EdgeClawStorage {
@@ -195,7 +205,7 @@ impl EdgeClawStorage {
         conn.execute_batch(INIT_SQL)?;
         let storage = Self {
             path,
-            conn: Mutex::new(conn),
+            conn: Mutex::new(Some(conn)),
         };
         storage.migrate_pipeline_state()?;
         Ok(storage)
@@ -205,14 +215,35 @@ impl EdgeClawStorage {
         &self.path
     }
 
-    /// Closing the last connection checkpoints and removes the WAL file, as
-    /// `MemoryRepository.close()` does before callers copy the `.db` file.
-    pub fn close(self) {}
-
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn
+    /// Close the SQLite handle, retaining the repository's file stores. SQLite
+    /// checkpoints the WAL only when this is the last connection. Node's
+    /// DatabaseSync.close() and later SQL operations report an already closed handle.
+    pub fn close(&self) -> Result<(), StorageError> {
+        let mut guard = self
+            .conn
             .lock()
-            .expect("edgeclaw storage connection mutex poisoned")
+            .expect("edgeclaw storage connection mutex poisoned");
+        if guard.is_none() {
+            return Err(StorageError::Closed);
+        }
+        if let Some(conn) = guard.take()
+            && let Err((conn, error)) = conn.close()
+        {
+            *guard = Some(conn);
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
+        let guard = self
+            .conn
+            .lock()
+            .expect("edgeclaw storage connection mutex poisoned");
+        if guard.is_none() {
+            return Err(StorageError::Closed);
+        }
+        Ok(ConnectionGuard(guard))
     }
 
     /// `sqlite.ts:567-590`: migrate only when `pipeline_state` still carries a
@@ -228,10 +259,10 @@ impl EdgeClawStorage {
     /// before re-checking the columns so the migration is all-or-nothing;
     /// the common already-v2 path stays a plain read.
     fn migrate_pipeline_state(&self) -> Result<(), StorageError> {
-        if !Self::pipeline_state_needs_migration(&self.conn())? {
+        if !Self::pipeline_state_needs_migration(&*self.conn()?)? {
             return Ok(());
         }
-        let conn = self.conn();
+        let conn = self.conn()?;
         conn.execute_batch("BEGIN IMMEDIATE;")?;
         let outcome = (|| -> Result<(), StorageError> {
             if !Self::pipeline_state_needs_migration(&conn)? {
@@ -270,7 +301,7 @@ impl EdgeClawStorage {
     /// `sqlite.ts:913-921`. Unparseable text falls back to `undefined`, like
     /// `parseJson(row.state_json, undefined)`.
     pub fn get_pipeline_state(&self, key: &str) -> Result<Option<JsValue>, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         Self::read_pipeline_state(&conn, key)
     }
 
@@ -294,7 +325,7 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:923-928`.
     pub fn set_pipeline_state(&self, key: &str, value: &JsValue) -> Result<(), StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         Self::write_pipeline_state(&conn, key, value)
     }
 
@@ -317,7 +348,7 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:930-932`.
     pub fn delete_pipeline_state(&self, key: &str) -> Result<(), StorageError> {
-        self.conn()
+        self.conn()?
             .execute("DELETE FROM pipeline_state WHERE state_key = ?1", [key])?;
         Ok(())
     }
@@ -339,7 +370,7 @@ impl EdgeClawStorage {
         } else {
             record.created_at.clone()
         };
-        self.conn().execute(
+        self.conn()?.execute(
             "INSERT INTO l0_sessions (
                l0_index_id,
                session_key,
@@ -380,7 +411,7 @@ impl EdgeClawStorage {
         let limit = limit.max(1);
         let preferred = preferred_keys(preferred_session_keys);
         if preferred.is_empty() {
-            let conn = self.conn();
+            let conn = self.conn()?;
             let mut statement = conn.prepare(
                 "SELECT DISTINCT session_key, MIN(timestamp) AS first_timestamp
                  FROM l0_sessions
@@ -401,7 +432,7 @@ impl EdgeClawStorage {
              GROUP BY session_key
              ORDER BY first_timestamp ASC"
         );
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(preferred.iter()), |row| {
             row.get::<_, String>(0).map(node_text)
@@ -417,7 +448,7 @@ impl EdgeClawStorage {
         preferred_session_keys: Option<&[String]>,
     ) -> Result<i64, StorageError> {
         let preferred = preferred_keys(preferred_session_keys);
-        let conn = self.conn();
+        let conn = self.conn()?;
         if preferred.is_empty() {
             return Ok(conn.query_row(
                 "SELECT COUNT(*) AS count FROM l0_sessions WHERE indexed = 0",
@@ -440,7 +471,7 @@ impl EdgeClawStorage {
         preferred_session_keys: Option<&[String]>,
     ) -> Result<Option<String>, StorageError> {
         let preferred = preferred_keys(preferred_session_keys);
-        let conn = self.conn();
+        let conn = self.conn()?;
         let timestamp: Option<String> = if preferred.is_empty() {
             conn.query_row(
                 "SELECT MIN(timestamp) AS first_timestamp
@@ -468,7 +499,7 @@ impl EdgeClawStorage {
         &self,
         session_key: &str,
     ) -> Result<Vec<L0SessionRecord>, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT * FROM l0_sessions
              WHERE session_key = ?1 AND indexed = 0
@@ -486,7 +517,7 @@ impl EdgeClawStorage {
         timestamp: &str,
         created_at: &str,
     ) -> Result<Option<L0SessionRecord>, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let record = conn
             .query_row(
                 "SELECT * FROM l0_sessions
@@ -512,7 +543,7 @@ impl EdgeClawStorage {
             "UPDATE l0_sessions SET indexed = 1 WHERE l0_index_id IN ({})",
             placeholders(ids.len())
         );
-        self.conn()
+        self.conn()?
             .execute(&sql, params_from_iter(ids.iter().copied()))?;
         Ok(())
     }
@@ -529,7 +560,7 @@ impl EdgeClawStorage {
              ORDER BY timestamp DESC, created_at DESC",
             placeholders(ids.len())
         );
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(&sql)?;
         let rows =
             statement.query_map(params_from_iter(ids.iter().copied()), l0_record_from_row)?;
@@ -543,7 +574,7 @@ impl EdgeClawStorage {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<L0SessionRecord>, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut statement = conn.prepare(
             "SELECT * FROM l0_sessions
              ORDER BY timestamp DESC, created_at DESC
@@ -556,7 +587,7 @@ impl EdgeClawStorage {
     /// `sqlite.ts:1075-1078`: every row, oldest first by
     /// `(timestamp, created_at)`.
     pub fn list_all_l0(&self) -> Result<Vec<L0SessionRecord>, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         Self::list_all_l0_with(&conn)
     }
 
@@ -586,7 +617,7 @@ impl EdgeClawStorage {
         // storage must not deadlock on the connection mutex. Mutations take
         // the lock per row, the same granularity as the other write methods.
         let rows = {
-            let conn = self.conn();
+            let conn = self.conn()?;
             Self::list_all_l0_with(&conn)?
         };
         let inspected = rows.len();
@@ -595,7 +626,7 @@ impl EdgeClawStorage {
         for row in &rows {
             let next_messages = transform(row);
             if next_messages.is_empty() {
-                self.conn().execute(
+                self.conn()?.execute(
                     "DELETE FROM l0_sessions WHERE l0_index_id = ?1",
                     [&row.l0_index_id],
                 )?;
@@ -612,7 +643,7 @@ impl EdgeClawStorage {
             if next_json == current_json {
                 continue;
             }
-            self.conn().execute(
+            self.conn()?.execute(
                 "UPDATE l0_sessions SET messages_json = ?1, indexed = 0 WHERE l0_index_id = ?2",
                 params![next_json, row.l0_index_id],
             )?;
@@ -733,7 +764,7 @@ impl EdgeClawStorage {
         limit: usize,
         kind: TraceKind,
     ) -> Result<(), StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         // `[record, ...readPipelineState(key, [])]`: a missing row or bad JSON
         // falls back to `[]`; a string is iterable (its characters are dropped
         // by the sanitizer); anything else throws a JS `TypeError` before the
@@ -784,7 +815,7 @@ impl EdgeClawStorage {
         partial: &JsValue,
         defaults: &IndexingSettings,
     ) -> Result<IndexingSettings, StorageError> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let stored = Self::read_pipeline_state(&conn, INDEXING_SETTINGS_STATE_KEY)?;
         let current = sanitize_indexing_settings(stored.as_ref(), defaults);
         let current_json = current.to_js();
@@ -1484,3 +1515,6 @@ mod tests {
         assert!(unique_non_blank_ids(&[" ".into(), "".into()]).is_empty());
     }
 }
+
+// Repository file accessors and readable project aggregation (sqlite.ts:592-909).
+pub(crate) mod accessors;
