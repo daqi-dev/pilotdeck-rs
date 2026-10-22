@@ -370,27 +370,21 @@ impl ArtifactWrites {''',
     # elements throw on the first property read, `String()` throws for an own
     # `toString`, `+` converts via ToPrimitive, and V8 prints the full
     # property-access expression for a non-array method receiver.
+    # (Round 5 unified both content-text join paths behind one `Deferred`
+    # branch in `join_content_texts`, so the former literal/canonical pair of
+    # nullish mutants is now a single mutant covering both paths.)
     (
         "join-nullish-literal",
         "projector.rs",
-        '''        let value = field(item, "text");
-        if !nullish(value) {
-            out.extend(checked_string_units(value)?);
-        }''',
-        '''        let value = field(item, "text");
-        out.extend(checked_string_units(value)?);''',
+        '''            ContentTextPart::Deferred(value) => {
+                if !nullish(&value) {
+                    out.extend(checked_string_units(&value)?);
+                }
+            }''',
+        '''            ContentTextPart::Deferred(value) => {
+                out.extend(checked_string_units(&value)?);
+            }''',
         "tool-result-text-nullish-values",
-    ),
-    (
-        "join-nullish-literal-canonical",
-        "projector.rs",
-        '''        let value = field(block, "text");
-        if !nullish(value) {
-            out.extend(checked_string_units(value)?);
-        }''',
-        '''        let value = field(block, "text");
-        out.extend(checked_string_units(value)?);''',
-        "tool-results-projected-fulltext-text-nullish",
     ),
     (
         "silent-null-call-timeline",
@@ -473,6 +467,52 @@ impl ArtifactWrites {''',
         'required_array(required(block, "content")?, "content.map")?',
         'required_array(required(block, "content")?, "map")?',
         "error-flatten-content-map-number",
+    ),
+    # Fix round 5: `contentToText`/`toolResultContentBlockToText` return the
+    # text field raw, so its conversion only happens in `join`, after the whole
+    # map — a later element's map-phase error must win. The facade's default
+    # path must also stay on the process-level projector (one bounded writer).
+    (
+        "eager-text-conversion",
+        "projector.rs",
+        '''        // `contentToText` returns `content.text` unchanged; the nullish check
+        // and ToString happen in `Array.prototype.join`, after the whole map.
+        return Ok(ContentTextPart::Deferred(field(item, "text").clone()));''',
+        '''        let value = field(item, "text");
+        if !nullish(value) {
+            return Ok(ContentTextPart::Converted(checked_string_units(value)?));
+        }
+        return Ok(ContentTextPart::Converted(Vec::new()));''',
+        "error-tool-result-join-after-null-item",
+    ),
+    (
+        "eager-text-conversion-canonical",
+        "projector.rs",
+        '''        // Join element like `tool_result_content_text`: the raw field comes
+        // back and only `Array.prototype.join` converts it, after the map.
+        return Ok(ContentTextPart::Deferred(field(block, "text").clone()));''',
+        '''        let value = field(block, "text");
+        if !nullish(value) {
+            return Ok(ContentTextPart::Converted(checked_string_units(value)?));
+        }
+        return Ok(ContentTextPart::Converted(Vec::new()));''',
+        "error-tool-results-projected-join-after-null-item",
+    ),
+    (
+        "per-call-default-projector",
+        "projector.rs",
+        '''        let projector = default_projector();
+        #[cfg(test)]
+        DEFAULT_FACADE_PROJECTOR_ADDR.store(
+            std::ptr::from_ref(projector).addr(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        projector.project(&input)''',
+        '''        let projector = GatewayAgentEventProjector::new(options);
+        #[cfg(test)]
+        DEFAULT_FACADE_PROJECTOR_ADDR.store(0, std::sync::atomic::Ordering::SeqCst);
+        projector.project(&input)''',
+        "map_agent_event_default_calls_share_one_artifact_writer",
     ),
     (
         "tampered-source-hash",

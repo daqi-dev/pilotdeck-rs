@@ -881,6 +881,49 @@ record('turn-failed-details-raw-own-to-string', {
   },
 });
 
+// Fix round 5: `contentToText`/`toolResultContentBlockToText` return the text
+// field raw, so its nullish check and ToString only run in `join`, after the
+// whole `map` visited every element. A later element that throws inside the
+// map (a nullish item, an image whose `data.length` is read) therefore wins
+// over an earlier element's deferred conversion error.
+record('error-tool-result-join-after-null-item', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'text', text: { toString: null } }, null]),
+});
+record('error-tool-result-join-after-image-data-null', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([
+    { type: 'text', text: { toString: null } },
+    { type: 'image', mimeType: 'image/png', data: null },
+  ]),
+});
+record('error-tool-result-join-throws-after-map', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'text', text: { toString: null } }, { type: 'text', text: 'b' }]),
+});
+record('error-subagent-tool-result-join-after-null-item', {
+  type: 'subagent_tool_result', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore',
+  result: successResult([{ type: 'text', text: { toString: null } }, null]),
+});
+record('error-tool-results-projected-join-after-null-item', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{
+    type: 'tool_result', toolCallId: 'call-t',
+    content: [{ type: 'text', text: { toString: null } }, null],
+  }]),
+});
+record('error-tool-results-projected-join-after-image-data-null', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{
+    type: 'tool_result', toolCallId: 'call-t',
+    content: [
+      { type: 'text', text: { toString: null } },
+      { type: 'image', mimeType: 'image/png', data: null },
+    ],
+  }]),
+});
+
 // Fix round 3 (gate3 P1): fields that are present but not strings. TS calls a
 // String method on some (`.trim()`, `.split()`, `.toLowerCase()` → TypeError
 // for number/boolean/array/object) and only reads `.length` on others (number

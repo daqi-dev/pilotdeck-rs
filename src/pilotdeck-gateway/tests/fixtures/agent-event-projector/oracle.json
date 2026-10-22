@@ -6474,6 +6474,191 @@
       "persist": []
     },
     {
+      "name": "error-tool-result-join-after-null-item",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "toString": null
+              }
+            },
+            null
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'type')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-join-after-image-data-null",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "toString": null
+              }
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": null
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'length')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-join-throws-after-map",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "toString": null
+              }
+            },
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "error-subagent-tool-result-join-after-null-item",
+      "event": {
+        "type": "subagent_tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "subagentId": "sub-1",
+        "subagentType": "explore",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "toString": null
+              }
+            },
+            null
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'type')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-results-projected-join-after-null-item",
+      "event": {
+        "type": "tool_results_projected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "call-t",
+              "content": [
+                {
+                  "type": "text",
+                  "text": {
+                    "toString": null
+                  }
+                },
+                null
+              ]
+            }
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'type')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-results-projected-join-after-image-data-null",
+      "event": {
+        "type": "tool_results_projected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "call-t",
+              "content": [
+                {
+                  "type": "text",
+                  "text": {
+                    "toString": null
+                  }
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'length')",
+      "persist": []
+    },
+    {
       "name": "type-tool-result-image-tool-name-number",
       "event": {
         "type": "tool_result",
