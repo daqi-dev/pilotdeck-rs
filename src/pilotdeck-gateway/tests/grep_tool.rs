@@ -6,9 +6,9 @@
 //! (`filesystem/ripgrep.ts:89-103`): `PILOTDECK_RIPGREP_PATH` is the only
 //! override. The replay therefore resolves a bundled engine directly, or — on a
 //! machine without the baseline module tree — finds a test-only system `rg` and
-//! feeds it through that override. Without either it prints a loud skip;
-//! `PDRS_REQUIRE_RG=1` or a CI environment (`CI=true`) turns that into a
-//! failure for parity runs. See `tests/fixtures/grep-tool/README.md`.
+//! feeds it through that override. Without either the replay fails; only an
+//! explicit `PDRS_ALLOW_NO_RG=1` turns it into a loud skip (CI never sets it).
+//! See `tests/fixtures/grep-tool/README.md`.
 #[path = "common/oracle_replay.rs"]
 mod oracle_replay;
 use oracle_replay::*;
@@ -119,17 +119,14 @@ fn env_context(env: &[(&str, &str)], cwd: &Path) -> ToolRunContext {
     ToolRunContext::new(Arc::new(host))
 }
 
-/// Whether a missing engine must fail instead of skip. CI sets `CI=true` on
-/// every runner, so the guard cannot depend on a workflow-file edit landing in
-/// the same commit as this test.
-fn ripgrep_required() -> bool {
-    fn flag(name: &str) -> bool {
-        std::env::var_os(name).is_some_and(|value| {
-            let value = value.to_string_lossy();
-            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
-        })
-    }
-    flag("PDRS_REQUIRE_RG") || flag("CI")
+/// A missing engine fails the parity replay by default, so a machine without
+/// `rg` can never report the 63 comparisons as passed. Skipping needs an
+/// explicit opt-out (`PDRS_ALLOW_NO_RG=1`), which CI never sets.
+fn ripgrep_skip_allowed() -> bool {
+    std::env::var_os("PDRS_ALLOW_NO_RG").is_some_and(|value| {
+        let value = value.to_string_lossy();
+        !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+    })
 }
 
 fn executable_file(path: &Path) -> bool {
@@ -167,12 +164,12 @@ fn grep_outputs_match_real_ts() {
     assert_eq!(scenarios.len(), 63, "scenario count");
     let ripgrep = parity_ripgrep_override();
     if ripgrep.is_none() && !pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available() {
-        let message = "grep fixture replay skipped: no ripgrep binary \
-            (set PILOTDECK_RIPGREP_PATH, install rg, or use CI=true)";
-        if ripgrep_required() {
+        let message = "grep fixture replay cannot run: no ripgrep binary \
+            (set PILOTDECK_RIPGREP_PATH or install rg; PDRS_ALLOW_NO_RG=1 skips explicitly)";
+        if !ripgrep_skip_allowed() {
             panic!("{message}");
         }
-        eprintln!("{message}");
+        eprintln!("SKIPPED (PDRS_ALLOW_NO_RG): {message}");
         return;
     }
     let mut calls = 0;

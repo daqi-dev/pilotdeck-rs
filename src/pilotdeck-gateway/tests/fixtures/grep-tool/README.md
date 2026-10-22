@@ -42,9 +42,9 @@ ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映
 本夹具用基线自带 ripgrep 15.0.0 录制；同一组场景在系统 ripgrep 15.2.0 下回放也
 逐字节一致。回放测试在「无 override、无 bundled」时会自己到 `PATH` 找 `rg`，再通过
 `PILOTDECK_RIPGREP_PATH` 显式传给工具——这只是测试侧的引擎供给，产品解析器仍然
-只认 override/bundled。没有 `rg` 的机器上 `grep_outputs_match_real_ts` 会打印跳过
-原因；`PDRS_REQUIRE_RG=1` 或 `CI=true` 时改为测试失败（GitHub Actions 默认设置
-`CI=true`，不依赖 ci.yml 的 hunk 与测试代码同批落库）。Rust 侧不会下载或内置任何
+只认 override/bundled。没有 `rg` 的机器上 `grep_outputs_match_real_ts` 直接失败，
+不会把 63 条未比较的对拍记为通过；只有显式设 `PDRS_ALLOW_NO_RG=1` 才改为醒目跳过
+（CI 不设，CI 由 ci.yml 从源码编译 ripgrep 15.0.0）。Rust 侧不会下载或内置任何
 ripgrep 二进制。
 
 ## 场景
