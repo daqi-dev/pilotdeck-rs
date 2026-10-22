@@ -1,7 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-22 14:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #422 | impl | doing | PR #467；修复轮 9 结构性 exactly-once 派 codex（wt-a71-pr2-p2，_tmp/20261022-issue-422/fix9.md）
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #458 | impl | blocked | 入站孤立代理（#421 拆出），前置于 A7.2
 - #150 | coord | human | draft PR,待人定
@@ -12,6 +13,11 @@ updated: 2026-10-22 12:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 14:00 · /loop 协调轮
+> **#467（#422）脱困**：修复轮 2/4/6/7 一直在调 `session.abort()` 在锁内还是锁外：放锁内，panic 会毒化 progress mutex；放锁外，abort 和 dispose 之间又有 TOCTOU。gate7 boundary 的 P1-2（并发 abort+dispose 两次派发）在修复轮 8 之后还在。同一处已修 3 次以上，不再挪位置，改用结构性修法：progress 加 abort 派发标志，锁内 check-and-set、锁外调用。先查 TS 基线，再补多线程并发测试和负控。实现方换成 codex（修复轮 9，`_tmp/20261022-issue-422/fix9.md`），看板 redispatch+1。gate8 是上一会话退出时连带中断的（jsonl 停在 thinking，没有 result），不算失败，作废；新 head 出来后用 --serial 重跑。
+> **#466** 与 main 冲突，内容（#422 READY 条目）并进本 PR 后关闭。**#468** 改了 `.42cog/real.md`，主仓工作区还有一份更新的、人手改过的 real.md 没提交，两份会冲突，留给人定（铁律 4），本轮不合。
+> **下一步**：codex 修复轮 9 回来后，协调者在沙箱外复核、提交（署名 Codex），然后 --serial 闸门 + GLM/DeepSeek 两家非作者评审，收敛后入队。
 
 > ## 2026-10-22 11:50 · /loop 协调轮
 > **合并**：#461（board 11:40 段落）合入 main（2ce465ce），邮箱 noreply ✅。#460 仍在合并队列。
