@@ -7,6 +7,7 @@ pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
 pub mod glob;
+pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
@@ -28,8 +29,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-/// Register the read-only builtin family on a registry. `grep` is intentionally
-/// absent from this slice (A6.5-pr4b).
+/// Register the read-only builtin family on a registry.
 pub fn register_read_only_tools(
     registry: &ToolRegistry,
 ) -> Result<Vec<ToolRegistration>, HostError> {
@@ -43,6 +43,7 @@ pub fn read_only_tools() -> Vec<Arc<dyn ExecutableTool>> {
     vec![
         Arc::new(read_file::ReadFileTool::new()),
         Arc::new(glob::GlobTool::new()),
+        Arc::new(grep::GrepTool::new()),
         Arc::new(time::GetCurrentTimeTool::new()),
     ]
 }

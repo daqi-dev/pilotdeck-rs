@@ -457,7 +457,7 @@ fn multimodal_success_branches_emit_model_visible_payloads() {
 fn builtin_family_registers_as_read_only_catalog_entries() {
     let registry = ToolRegistry::default();
     let registrations = register_read_only_tools(&registry).expect("register builtins");
-    assert_eq!(registrations.len(), 3);
+    assert_eq!(registrations.len(), 4);
     let names: Vec<String> = registry
         .list()
         .map(|tools| {
@@ -471,7 +471,7 @@ fn builtin_family_registers_as_read_only_catalog_entries() {
     names.sort();
     assert_eq!(
         names,
-        vec!["get_current_time", "glob", "read_file"],
+        vec!["get_current_time", "glob", "grep", "read_file"],
         "registered names"
     );
     assert!(registry.get(&JsString::from("Read")).is_some(), "alias");
