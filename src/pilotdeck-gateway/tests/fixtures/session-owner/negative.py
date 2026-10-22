@@ -8,6 +8,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
+
 
 def main():
     rust = Path(__file__).resolve().parents[4]
@@ -97,11 +100,10 @@ def main():
                     assert content.count(before) == 1, (name, content.count(before))
                     content = content.replace(before, after, 1)
                 (scratch / path).write_text(content)
-            gate = subprocess.run(['bash', '-c', 'until bash /Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh; do sleep 30; done'],
-                                  capture_output=True, text=True, check=True)
+            gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh')
             command = ['cargo', 'test', '--offline', '--manifest-path', str(scratch / 'Cargo.toml'),
                        '-p', 'pilotdeck-gateway', '--lib', module + test, '--', '--nocapture']
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=600 if name == 'baseline' else 240)
+            result = run_owned(command, env=env, timeout=600 if name == 'baseline' else 240)
             raw = result.stdout + result.stderr
             (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
             valid = marker in raw and (result.returncode == 0 if name == 'baseline' else

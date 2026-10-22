@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 
 
 def main():
@@ -78,22 +80,12 @@ def main():
                 if path == file:
                     content = content.replace(before, after, 1)
                 (scratch / path).write_text(content)
-            gate_logs = []
-            while True:
-                gate = subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'],
-                                      capture_output=True, text=True, check=False)
-                gate_logs.append(gate.stdout + gate.stderr)
-                if gate.returncode == 0:
-                    break
-                assert gate.returncode == 1, gate_logs[-1]
-                print('cargo slots full; waiting 30s', flush=True)
-                time.sleep(30)
+            gate = wait_for_slot(rust.parent / 'scripts/cargo-slots.sh')
             command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway',
                        '--lib', test, '--', '--exact', '--nocapture']
-            result = subprocess.run(command, cwd=scratch, env=env, capture_output=True,
-                                    text=True, timeout=600)
+            result = run_owned(command, cwd=scratch, env=env, timeout=600)
             raw = result.stdout + result.stderr
-            (output / f'negative-{name}.log').write_text(''.join(gate_logs) + raw + f'\nexit={result.returncode}\n')
+            (output / f'negative-{name}.log').write_text(gate.stdout + gate.stderr + raw + f'\nexit={result.returncode}\n')
             valid = ('1 passed; 0 failed' in raw and result.returncode == 0) if name == 'baseline' else (
                 result.returncode == 101 and marker in raw
                 and '0 passed; 1 failed' in raw and 'could not compile' not in raw)

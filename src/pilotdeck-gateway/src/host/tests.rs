@@ -701,9 +701,13 @@ async fn explicit_close_reaps_child() {
 async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
     // Test the grace deadlines themselves, while letting the external process
     // finish each observation before advancing virtual time. Python does not
-    // share Tokio's clock; real 50 ms grace periods race its scheduling (#308).
+    // share Tokio's clock; real grace periods race its scheduling (#308).
+    // close_timeout also bounds the final reap after SIGKILL, which is plain
+    // OS scheduling and cannot be driven by the paused clock. Two seconds keep
+    // that observation honest under load; the deadline value is otherwise
+    // symbolic because the manual clock drives every grace phase (#528).
     let mut bounded = protocol_limits();
-    bounded.close_timeout = Duration::from_millis(50);
+    bounded.close_timeout = Duration::from_secs(2);
     let (mut command, receipt) = peer("close-hang");
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
@@ -729,10 +733,11 @@ async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
     })
     .await;
     // Advancing once does not guarantee the timer driver has dispatched the
-    // deadline. Drive bounded millisecond ticks until the actual TERM attempt;
-    // then freeze again so Python gets its full event-observation window.
-    for _ in 0..100 {
-        tokio::time::advance(Duration::from_millis(1)).await;
+    // deadline. Drive bounded ticks until the actual TERM attempt; then freeze
+    // again so Python gets its full event-observation window.
+    let tick = Duration::from_millis(5);
+    for _ in 0..=(bounded.close_timeout.as_millis() / 5 + 2) as usize {
+        tokio::time::advance(tick).await;
         std::future::poll_fn(|cx| {
             assert!(std::future::Future::poll(close.as_mut(), cx).is_pending());
             std::task::Poll::Ready(())
@@ -785,8 +790,18 @@ async fn cancel_run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handle
     let clock = timed.then(ManualClock::start);
     let task = tokio::spawn(client.execute_cancellable(request(), handler.clone(), cancellation));
     if timed {
+        // Compare persisted text, not mere existence: Python's write_text is
+        // not atomic, so exists() can win the race against the content (#308).
+        let expected = if mode == "cancel-before-timeout" {
+            "module response received\n"
+        } else {
+            "ACK and cancel received\n"
+        };
         wait_for_event("cancel protocol ready", || {
-            receipt.0.with_extension("ready").exists()
+            std::fs::read_to_string(receipt.0.with_extension("ready"))
+                .ok()
+                .as_deref()
+                == Some(expected)
         })
         .await;
         assert!(

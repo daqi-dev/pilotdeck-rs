@@ -11,7 +11,11 @@ import re
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 
 
 def main():
@@ -106,9 +110,7 @@ def main():
                     content = content.replace(before, after)
                 destination = (fixture_copy if file == "oracle.json" else source_copy)
                 (destination / file).write_text(content)
-            gate = subprocess.run(
-                ["bash", "-c", 'until bash "$1"; do sleep 30; done', "cargo-slots", str(fixture.parents[4] / "scripts/cargo-slots.sh")],
-                capture_output=True, text=True, check=True)
+            gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
             test = ("runtime::session::tests::old_abort_never_targets_replacement_across_threads"
                     if name == "restore-original-abort" else
                     "runtime::session::tests::exact_end_requires_original_admission_identity_but_empty_end_is_unfenced"
@@ -117,7 +119,7 @@ def main():
                     "runtime::session::tests::real_ts_admission_completion_and_gateway_abort")
             command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "src/Cargo.toml"),
                        "-p", "pilotdeck-gateway", "--lib", test, "--", "--nocapture"]
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=600 if name == "baseline" else 120)
+            result = run_owned(command, env=env, timeout=600 if name == "baseline" else 120)
             raw = result.stdout + result.stderr
             (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
             passed = result.returncode == 0 if name == "baseline" else (
