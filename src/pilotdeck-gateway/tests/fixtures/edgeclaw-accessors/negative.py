@@ -13,6 +13,7 @@ root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/accessors.rs'
 helpers = source.parent.parent / 'file_memory' / 'helpers.rs'
 storage = source.parent.parent / 'storage.rs'
+file_memory = source.parent.parent / 'file_memory.rs'
 tests = root / 'src/pilotdeck-gateway/tests/edgeclaw_accessors.rs'
 replay = 'ts_databases_and_file_tree_replay_repository_accessors'
 home = 'repository_home_fallback_matches_ts_homedir'
@@ -57,6 +58,32 @@ cases = [
     # NaN is `typeof number` and must be forwarded; treating it as absent makes
     # the 6-entry probe return all entries instead of the oracle's [].
     ('global-limit-nan-drop', source, '    if let Some(JsValue::Number(limit)) = options.get("limit") {\n        put(&mut input, "limit", JsValue::Number(*limit));\n    }', '    if let Some(JsValue::Number(limit)) = options.get("limit").filter(|v| !v.as_number().is_some_and(f64::is_nan)) {\n        put(&mut input, "limit", JsValue::Number(*limit));\n    }', replay),
+    # A truthy non-string query must reach the store and throw from the eager
+    # normalizeWhitespace. Falling back to no query returns every entry instead.
+    ('query-typeerror', helpers, '''        Some(_) => {
+            return Err(FileMemoryError::Type(
+                "(value ?? \\"\\").replace is not a function".into(),
+            ));
+        }''', '        Some(_) => return Ok(None),', replay),
+    # includeDeprecated is a JS truthy OR on the caller option: 1/"yes"/[]/{}
+    # include deprecated entries. Boolean-only matching silently drops them.
+    ('include-deprecated', file_memory, 'truthy(input, "includeDeprecated")', 'flag(input, "includeDeprecated")', replay),
+    # The accessor drops only falsy query values. Forwarding 0 as well must now
+    # throw (not silently return entries) on both accessor paths.
+    ('project-query-raw', source, '''    if let Some(query) = options.get("query").filter(|v| js_truthy(v)) {
+        put(&mut input, "query", query.clone());
+    }
+    put(&mut input, "limit", JsValue::Number(5000.0));''', '''    if let Some(query) = options.get("query") {
+        put(&mut input, "query", query.clone());
+    }
+    put(&mut input, "limit", JsValue::Number(5000.0));''', replay),
+    ('global-query-raw', source, '''    if let Some(query) = options.get("query").filter(|v| js_truthy(v)) {
+        put(&mut input, "query", query.clone());
+    }
+    if let Some(JsValue::Number(limit)) = options.get("limit") {''', '''    if let Some(query) = options.get("query") {
+        put(&mut input, "query", query.clone());
+    }
+    if let Some(JsValue::Number(limit)) = options.get("limit") {''', replay),
     # Non-array kinds throws TypeError in TS before the scope check.
     ('kinds-typeerror', source, '        Some(_) => Err(FileMemoryError::Type(\n            "options.kinds?.filter is not a function".into(),\n        )),', '        Some(_) => Ok(None),', replay),
     # Project kinds is forwarded to the store's `new Set(...)`: numbers throw.

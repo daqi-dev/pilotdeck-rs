@@ -315,6 +315,22 @@
     {
       "repo": "main",
       "method": "workspace",
+      "action": "upsertCandidate",
+      "input": {
+        "type": "feedback",
+        "scope": "project",
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "summary": "mirror deprecated summary",
+        "profile": "mirror deprecated profile",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "projectId": "mirror"
+      }
+    },
+    {
+      "repo": "main",
+      "method": "workspace",
       "action": "upsertGeneralProjectMeta",
       "input": {
         "projectId": "orphan",
@@ -443,6 +459,41 @@
       }
     },
     {
+      "repo": "probe",
+      "method": "global",
+      "action": "upsertCandidate",
+      "input": {
+        "type": "user",
+        "scope": "global",
+        "name": "Probe seven",
+        "description": "Probe seven description",
+        "summary": "Probe seven summary",
+        "profile": "Probe seven profile",
+        "capturedAt": "2026-10-27T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe seven"
+      }
+    },
+    {
+      "repo": "main",
+      "method": "workspace",
+      "action": "markEntriesDeprecated",
+      "input": {
+        "relativePaths": [
+          "Feedback/mirror-deprecated-bd4437d4cf.md"
+        ]
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "global",
+      "action": "markEntriesDeprecated",
+      "input": {
+        "relativePaths": [
+          "UserIdentityNotes/probe-seven-f5e3bc0ca6.md"
+        ]
+      }
+    },
+    {
       "repo": "alpha",
       "method": "workspace",
       "action": "markEntriesDeprecated",
@@ -497,6 +548,10 @@
     {
       "relativePath": "global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md",
       "content": "---\nname: Probe one\ndescription: Probe one description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-21T00:00:00.000Z\nsource_session_key: session-Probe one\n---\n## 身份背景\n- Probe one profile\n"
+    },
+    {
+      "relativePath": "global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+      "content": "---\nname: Probe seven\ndescription: Probe seven description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-27T00:00:00.000Z\nsource_session_key: session-Probe seven\ndeprecated: true\n---\n## 身份背景\n- Probe seven profile\n"
     },
     {
       "relativePath": "global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md",
@@ -555,6 +610,10 @@
       "content": "---\nname: local feedback\ndescription: local feedback description\ntype: feedback\nscope: project\nproject_id: mirror\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-local feedback\n---\n## Rule\nlocal feedback description\n"
     },
     {
+      "relativePath": "workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md",
+      "content": "---\nname: mirror deprecated\ndescription: mirror deprecated description\ntype: feedback\nscope: project\nproject_id: mirror\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-mirror deprecated\ndeprecated: true\n---\n## Rule\nmirror deprecated description\n"
+    },
+    {
       "relativePath": "workspaces/main/memory/GeneralProjects/alpha-mirror-mirror.md",
       "content": "---\nname: Alpha mirror\ndescription: Alpha mirror\ntype: general_project_meta\nscope: project\nproject_id: mirror\nsource_kind: workspace_external_mirror\nsource_workspace_path: /fixture/Alpha/../Alpha\nsource_project_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nAlpha mirror\n\n## Status\nin_progress\n\n## Source\n- This project mirrors a read-only external workspace project.\n- Source workspace: /fixture/Alpha/../Alpha\n- Source project id: current_project\n"
     },
@@ -580,7 +639,7 @@
     },
     {
       "relativePath": "workspaces/main/memory/MEMORY.md",
-      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha mirror](GeneralProjects/alpha-mirror-mirror.md) — Alpha mirror\n- [apple](GeneralProjects/apple-a.md) — apple\n- [éclair](GeneralProjects/clair-e.md) — éclair\n- [Invisible orphan](GeneralProjects/invisible-orphan-orphan.md) — Invisible orphan\n- [Zebra](GeneralProjects/zebra-z.md) — Zebra\n- [中文](GeneralProjects/中文-c.md) — 中文\n\n## Project Memory\n- [apple](Project/apple-bc31bea4bf.md) — apple description\n- [éclair](Project/clair-a76ea6a5a1.md) — éclair description\n- [Zebra](Project/zebra-58d0a4bd9e.md) — Zebra description\n- [中文](Project/中文-7f567875e9.md) — 中文 description\n\n## Feedback Memory\n- [local feedback](Feedback/local-feedback-33ca421a17.md) — local feedback description\n"
+      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha mirror](GeneralProjects/alpha-mirror-mirror.md) — Alpha mirror\n- [apple](GeneralProjects/apple-a.md) — apple\n- [éclair](GeneralProjects/clair-e.md) — éclair\n- [Invisible orphan](GeneralProjects/invisible-orphan-orphan.md) — Invisible orphan\n- [Zebra](GeneralProjects/zebra-z.md) — Zebra\n- [中文](GeneralProjects/中文-c.md) — 中文\n\n## Project Memory\n- [apple](Project/apple-bc31bea4bf.md) — apple description\n- [éclair](Project/clair-a76ea6a5a1.md) — éclair description\n- [Zebra](Project/zebra-58d0a4bd9e.md) — Zebra description\n- [中文](Project/中文-7f567875e9.md) — 中文 description\n\n## Feedback Memory\n- [local feedback](Feedback/local-feedback-33ca421a17.md) — local feedback description\n\n## User Memory\n- [Second](../../../global/UserIdentityNotes/second-0ae65c1a62.md) — Second description\n- [User😀](../../../global/UserIdentityNotes/user-19a3957c6a.md) — User😀 description\n\n## Deprecated\n- [mirror deprecated](Feedback/mirror-deprecated-bd4437d4cf.md) — mirror deprecated description\n"
     },
     {
       "relativePath": "workspaces/main/memory/Project/apple-bc31bea4bf.md",
@@ -1189,6 +1248,166 @@
       "method": "listReadableProjectCatalog"
     },
     {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": true
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": 1
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": {}
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": []
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": 0
+        }
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": true
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": 1
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": {}
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": []
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": 0
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeDeprecated": 1
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeDeprecated": "yes"
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeDeprecated": []
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeDeprecated": {}
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeDeprecated": 0
+        }
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "includeDeprecated": 1
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "includeDeprecated": "yes"
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "includeDeprecated": []
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "includeDeprecated": {}
+      }
+    },
+    {
+      "repo": "probe",
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "includeDeprecated": 0
+      }
+    },
+    {
       "method": "remove",
       "input": {
         "path": "workspaces/beta/memory"
@@ -1677,6 +1896,20 @@
         "file": "local-feedback-33ca421a17.md",
         "relativePath": "Feedback/local-feedback-33ca421a17.md",
         "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      },
+      {
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "deprecated": true,
+        "file": "mirror-deprecated-bd4437d4cf.md",
+        "relativePath": "Feedback/mirror-deprecated-bd4437d4cf.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md"
       }
     ],
     [],
@@ -3009,12 +3242,12 @@
     {
       "changed": 1,
       "summary": "Rebuilt workspace memory manifest.",
-      "memoryFileCount": 11
+      "memoryFileCount": 12
     },
     {
       "changed": 0,
       "summary": "Workspace memory manifest already up to date.",
-      "memoryFileCount": 11
+      "memoryFileCount": 12
     },
     null,
     [
@@ -3430,6 +3663,892 @@
         }
       }
     ],
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "(value ?? \"\").replace is not a function"
+    },
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "deprecated",
+        "description": "deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-deprecated",
+        "deprecated": true,
+        "file": "deprecated-9258ea5c89.md",
+        "relativePath": "external:bb9103a9bd:Feedback/deprecated-9258ea5c89.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/deprecated-9258ea5c89.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      },
+      {
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "deprecated": true,
+        "file": "mirror-deprecated-bd4437d4cf.md",
+        "relativePath": "Feedback/mirror-deprecated-bd4437d4cf.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "deprecated",
+        "description": "deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-deprecated",
+        "deprecated": true,
+        "file": "deprecated-9258ea5c89.md",
+        "relativePath": "external:bb9103a9bd:Feedback/deprecated-9258ea5c89.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/deprecated-9258ea5c89.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      },
+      {
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "deprecated": true,
+        "file": "mirror-deprecated-bd4437d4cf.md",
+        "relativePath": "Feedback/mirror-deprecated-bd4437d4cf.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "deprecated",
+        "description": "deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-deprecated",
+        "deprecated": true,
+        "file": "deprecated-9258ea5c89.md",
+        "relativePath": "external:bb9103a9bd:Feedback/deprecated-9258ea5c89.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/deprecated-9258ea5c89.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      },
+      {
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "deprecated": true,
+        "file": "mirror-deprecated-bd4437d4cf.md",
+        "relativePath": "Feedback/mirror-deprecated-bd4437d4cf.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "deprecated",
+        "description": "deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-deprecated",
+        "deprecated": true,
+        "file": "deprecated-9258ea5c89.md",
+        "relativePath": "external:bb9103a9bd:Feedback/deprecated-9258ea5c89.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/deprecated-9258ea5c89.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      },
+      {
+        "name": "mirror deprecated",
+        "description": "mirror deprecated description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-mirror deprecated",
+        "deprecated": true,
+        "file": "mirror-deprecated-bd4437d4cf.md",
+        "relativePath": "Feedback/mirror-deprecated-bd4437d4cf.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe seven",
+        "description": "Probe seven description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-27T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe seven",
+        "deprecated": true,
+        "file": "probe-seven-f5e3bc0ca6.md",
+        "relativePath": "global/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe seven",
+        "description": "Probe seven description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-27T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe seven",
+        "deprecated": true,
+        "file": "probe-seven-f5e3bc0ca6.md",
+        "relativePath": "global/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe seven",
+        "description": "Probe seven description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-27T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe seven",
+        "deprecated": true,
+        "file": "probe-seven-f5e3bc0ca6.md",
+        "relativePath": "global/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe seven",
+        "description": "Probe seven description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-27T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe seven",
+        "deprecated": true,
+        "file": "probe-seven-f5e3bc0ca6.md",
+        "relativePath": "global/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
+    [
+      {
+        "name": "Probe five",
+        "description": "Probe five description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-25T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe five",
+        "file": "probe-five-d081b9d1b9.md",
+        "relativePath": "global/UserIdentityNotes/probe-five-d081b9d1b9.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-five-d081b9d1b9.md"
+      },
+      {
+        "name": "Probe four",
+        "description": "Probe four description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-24T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe four",
+        "file": "probe-four-aa3047cb4e.md",
+        "relativePath": "global/UserIdentityNotes/probe-four-aa3047cb4e.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-four-aa3047cb4e.md"
+      },
+      {
+        "name": "Probe one",
+        "description": "Probe one description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-21T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe one",
+        "file": "probe-one-bad2fcb1ec.md",
+        "relativePath": "global/UserIdentityNotes/probe-one-bad2fcb1ec.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-one-bad2fcb1ec.md"
+      },
+      {
+        "name": "Probe six",
+        "description": "Probe six description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-26T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe six",
+        "file": "probe-six-e6d55e3d66.md",
+        "relativePath": "global/UserIdentityNotes/probe-six-e6d55e3d66.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md"
+      },
+      {
+        "name": "Probe three",
+        "description": "Probe three description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-23T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe three",
+        "file": "probe-three-59e88f8ae8.md",
+        "relativePath": "global/UserIdentityNotes/probe-three-59e88f8ae8.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-three-59e88f8ae8.md"
+      },
+      {
+        "name": "Probe two",
+        "description": "Probe two description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Probe two",
+        "file": "probe-two-ecce31a263.md",
+        "relativePath": "global/UserIdentityNotes/probe-two-ecce31a263.md",
+        "absolutePath": "$ROOT/global-probe/UserIdentityNotes/probe-two-ecce31a263.md"
+      }
+    ],
     null,
     [
       {
@@ -3614,7 +4733,7 @@
     {
       "changed": 0,
       "summary": "Workspace memory manifest already up to date.",
-      "memoryFileCount": 11
+      "memoryFileCount": 12
     },
     {
       "error": "ERR_INVALID_STATE",
@@ -3774,6 +4893,10 @@
       "content": "---\nname: Probe one\ndescription: Probe one description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-21T00:00:00.000Z\nsource_session_key: session-Probe one\n---\n## 身份背景\n- Probe one profile\n"
     },
     {
+      "relativePath": "global-probe/UserIdentityNotes/probe-seven-f5e3bc0ca6.md",
+      "content": "---\nname: Probe seven\ndescription: Probe seven description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-27T00:00:00.000Z\nsource_session_key: session-Probe seven\ndeprecated: true\n---\n## 身份背景\n- Probe seven profile\n"
+    },
+    {
       "relativePath": "global-probe/UserIdentityNotes/probe-six-e6d55e3d66.md",
       "content": "---\nname: Probe six\ndescription: Probe six description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-26T00:00:00.000Z\nsource_session_key: session-Probe six\n---\n## 身份背景\n- Probe six profile\n"
     },
@@ -3810,6 +4933,10 @@
       "content": "---\nname: local feedback\ndescription: local feedback description\ntype: feedback\nscope: project\nproject_id: mirror\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-local feedback\n---\n## Rule\nlocal feedback description\n"
     },
     {
+      "relativePath": "workspaces/main/memory/Feedback/mirror-deprecated-bd4437d4cf.md",
+      "content": "---\nname: mirror deprecated\ndescription: mirror deprecated description\ntype: feedback\nscope: project\nproject_id: mirror\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-mirror deprecated\ndeprecated: true\n---\n## Rule\nmirror deprecated description\n"
+    },
+    {
       "relativePath": "workspaces/main/memory/GeneralProjects/alpha-mirror-mirror.md",
       "content": "---\nname: Alpha mirror\ndescription: Alpha mirror\ntype: general_project_meta\nscope: project\nproject_id: mirror\nsource_kind: workspace_external_mirror\nsource_workspace_path: /fixture/Alpha/../Alpha\nsource_project_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n## Summary\nAlpha mirror\n\n## Status\nin_progress\n\n## Source\n- This project mirrors a read-only external workspace project.\n- Source workspace: /fixture/Alpha/../Alpha\n- Source project id: current_project\n"
     },
@@ -3835,7 +4962,7 @@
     },
     {
       "relativePath": "workspaces/main/memory/MEMORY.md",
-      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha mirror](GeneralProjects/alpha-mirror-mirror.md) — Alpha mirror\n- [apple](GeneralProjects/apple-a.md) — apple\n- [éclair](GeneralProjects/clair-e.md) — éclair\n- [Invisible orphan](GeneralProjects/invisible-orphan-orphan.md) — Invisible orphan\n- [Zebra](GeneralProjects/zebra-z.md) — Zebra\n- [中文](GeneralProjects/中文-c.md) — 中文\n\n## Project Memory\n- [apple](Project/apple-bc31bea4bf.md) — apple description\n- [Zebra](Project/zebra-58d0a4bd9e.md) — Zebra description\n- [中文](Project/中文-7f567875e9.md) — 中文 description\n- [éclair](Project/clair-a76ea6a5a1.md) — éclair description\n\n## Feedback Memory\n- [local feedback](Feedback/local-feedback-33ca421a17.md) — local feedback description\n\n## User Memory\n- [Second](../../../global/UserIdentityNotes/second-0ae65c1a62.md) — Second description\n- [User😀](../../../global/UserIdentityNotes/user-19a3957c6a.md) — User😀 description\n"
+      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## General Projects\n- [Alpha mirror](GeneralProjects/alpha-mirror-mirror.md) — Alpha mirror\n- [apple](GeneralProjects/apple-a.md) — apple\n- [éclair](GeneralProjects/clair-e.md) — éclair\n- [Invisible orphan](GeneralProjects/invisible-orphan-orphan.md) — Invisible orphan\n- [Zebra](GeneralProjects/zebra-z.md) — Zebra\n- [中文](GeneralProjects/中文-c.md) — 中文\n\n## Project Memory\n- [apple](Project/apple-bc31bea4bf.md) — apple description\n- [Zebra](Project/zebra-58d0a4bd9e.md) — Zebra description\n- [中文](Project/中文-7f567875e9.md) — 中文 description\n- [éclair](Project/clair-a76ea6a5a1.md) — éclair description\n\n## Feedback Memory\n- [local feedback](Feedback/local-feedback-33ca421a17.md) — local feedback description\n\n## User Memory\n- [Second](../../../global/UserIdentityNotes/second-0ae65c1a62.md) — Second description\n- [User😀](../../../global/UserIdentityNotes/user-19a3957c6a.md) — User😀 description\n\n## Deprecated\n- [mirror deprecated](Feedback/mirror-deprecated-bd4437d4cf.md) — mirror deprecated description\n"
     },
     {
       "relativePath": "workspaces/main/memory/Project/apple-bc31bea4bf.md",

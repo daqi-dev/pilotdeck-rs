@@ -29,15 +29,25 @@ for(const [repo,name] of [['alpha','éclair'],['beta','Zebra']] as const) {
   seed.push(ws(repo,'upsertProjectMeta',{projectName:name}),ws(repo,'upsertCandidate',candidate('project',`${name} project`)),ws(repo,'upsertCandidate',candidate('feedback',`${name} feedback`)),ws(repo,'upsertCandidate',candidate('feedback','deprecated',{status:'deprecated'})));
 }
 for(const [id,name] of [['z','Zebra'],['e','éclair'],['a','apple'],['c','中文']]) seed.push(ws('main','upsertGeneralProjectMeta',{projectId:id,projectName:name}),ws('main','upsertCandidate',candidate('project',name,{projectId:id})));
-seed.push(ws('main','upsertGeneralProjectMeta',{projectId:'mirror',projectName:'Alpha mirror',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Alpha/../Alpha',sourceProjectId:'current_project'}),ws('main','upsertCandidate',candidate('feedback','local feedback',{projectId:'mirror'})),ws('main','upsertGeneralProjectMeta',{projectId:'orphan',projectName:'Invisible orphan',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Missing',sourceProjectId:'current_project'}));
+seed.push(ws('main','upsertGeneralProjectMeta',{projectId:'mirror',projectName:'Alpha mirror',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Alpha/../Alpha',sourceProjectId:'current_project'}),ws('main','upsertCandidate',candidate('feedback','local feedback',{projectId:'mirror'})),ws('main','upsertCandidate',candidate('feedback','mirror deprecated',{projectId:'mirror'})),ws('main','upsertGeneralProjectMeta',{projectId:'orphan',projectName:'Invisible orphan',sourceKind:'workspace_external_mirror',sourceWorkspacePath:'/fixture/Missing',sourceProjectId:'current_project'}));
 seed.push({method:'global',action:'upsertCandidate',input:candidate('user','User😀')},{method:'global',action:'upsertCandidate',input:candidate('user','Second')});
 // The shared global store keeps two entries (existing observations unchanged).
-// A dedicated `probe` store gets six users so limits below the entry count are
-// discriminating: six entries require both a dropped and a forwarded limit to
-// produce different observations.
-for(const [i,name] of ['Probe one','Probe two','Probe three','Probe four','Probe five','Probe six'].entries())
+// A dedicated `probe` store gets seven users (one later deprecated for the
+// includeDeprecated probes) so limits below the entry count are discriminating:
+// six active entries require both a dropped and a forwarded limit to produce
+// different observations.
+for(const [i,name] of ['Probe one','Probe two','Probe three','Probe four','Probe five','Probe six','Probe seven'].entries())
   seed.push({repo:'probe',method:'global',action:'upsertCandidate',input:candidate('user',name,{capturedAt:`2026-10-2${i+1}T00:00:00.000Z`})});
 for(const op of seed) {const result=invoke(repos,op,root);assert.ok(!result?.error,JSON.stringify(result));}
+// Deprecate one entry in each store that the includeDeprecated probes use. The
+// default view stays unchanged; JS truthiness of the *option* is what flips.
+for(const [repoId,storeId,name] of [['main','workspace','mirror deprecated'],['probe','global','Probe seven']] as const) {
+  const store=storeId==='workspace'?repos[repoId].getFileMemoryStore():repos[repoId].getGlobalUserStore();
+  const entry=store.listMemoryEntries({includeDeprecated:true}).find((e:any)=>e.name===name);
+  assert.ok(entry,`missing ${name}`);
+  const op={repo:repoId,method:storeId,action:'markEntriesDeprecated',input:{relativePaths:[entry.relativePath]}};
+  seed.push(op);const result=invoke(repos,op,root);assert.ok(!result?.error,JSON.stringify(result));
+}
 for(const id of ['alpha','beta']) {
   const entries=repos[id].getFileMemoryStore().listMemoryEntries({includeDeprecated:true});
   const op=ws(id,'markEntriesDeprecated',{relativePaths:entries.filter((e:any)=>e.name==='deprecated').map((e:any)=>e.relativePath)});
@@ -89,7 +99,7 @@ const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',
 {method:'listGlobalMemoryEntries',input:{query:'',limit:'2',offset:null,includeTmp:true,projectId:'x'}},
 // Six-entry global store: `limit`/`offset` are forwarded only when
 // `typeof === "number"` (NaN included), `query` only when truthy. Strings,
-// booleans and null are dropped and therefore return all six; 2.5 is forwarded
+// booleans and null are dropped and therefore return all six active entries; 2.5 is forwarded
 // and slices to two; NaN is forwarded and slices to none. `$number` encodes NaN
 // because JSON cannot (decoded by observe.mts and edgeclaw_accessors.rs).
 ...[{}, {limit:'2'},{limit:true},{limit:null},{limit:2.5},{limit:2},{limit:0},{limit:{$number:'NaN'}},
@@ -103,6 +113,31 @@ const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',
 {method:'state',input:'/fixture/Beta'},{method:'listReadableProjectCatalog'},{method:'state',input:'$ROOT/home/.pilotdeck'},
 {repo:'alpha',method:'state',input:'/fixture/AlphaChanged'},{method:'listReadableProjectCatalog'},
 {repo:'alpha',method:'state',input:'/fixture/Alpha'}, {method:'listReadableProjectCatalog'},
+// Non-string truthy query: both accessors forward it (JS truthiness), then the
+// TS store's eager normalizeWhitespace throws `(value ?? "").replace is not a
+// function`. Falsy 0 is dropped by the accessor, so it still returns entries.
+{method:'entries',input:{id:'mirror',options:{query:true}}},
+{method:'entries',input:{id:'mirror',options:{query:1}}},
+{method:'entries',input:{id:'mirror',options:{query:{}}}},
+{method:'entries',input:{id:'mirror',options:{query:[]}}},
+{method:'entries',input:{id:'mirror',options:{query:0}}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{query:true}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{query:1}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{query:{}}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{query:[]}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{query:0}},
+// includeDeprecated is a JS truthy OR on the caller option; the entry's own
+// deprecated field stays boolean. One deprecated entry exists in each store.
+{method:'entries',input:{id:'mirror',options:{includeDeprecated:1}}},
+{method:'entries',input:{id:'mirror',options:{includeDeprecated:'yes'}}},
+{method:'entries',input:{id:'mirror',options:{includeDeprecated:[]}}},
+{method:'entries',input:{id:'mirror',options:{includeDeprecated:{}}}},
+{method:'entries',input:{id:'mirror',options:{includeDeprecated:0}}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{includeDeprecated:1}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{includeDeprecated:'yes'}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{includeDeprecated:[]}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{includeDeprecated:{}}},
+{repo:'probe',method:'listGlobalMemoryEntries',input:{includeDeprecated:0}},
 {method:'remove',input:{path:'workspaces/beta/memory'}},{method:'listReadableProjectCatalog'},
 {repo:'empty',method:'close'},{repo:'empty',method:'listReadableProjectCatalog'},{repo:'alpha',method:'close'},{repo:'alpha',method:'listReadableProjectCatalog'},
 {method:'close'},{method:'close'},{method:'mode'},{method:'roots'},{method:'accessorIdentity'},{repo:'defaults',method:'mode'},{repo:'defaults',method:'roots'},{repo:'defaults',method:'listReadableProjectCatalog'},{method:'getUserSummary'},

@@ -1204,8 +1204,9 @@ fn js_parse_int_prefix(value: &JsString) -> Option<f64> {
     Some(if negative { -number } else { number })
 }
 
-/// JS truthiness (`if (record.outcome.profileUpdated)`).
-fn js_truthy(value: &JsValue) -> bool {
+/// JS truthiness (`if (record.outcome.profileUpdated)`). Shared with the file
+/// store for caller options such as `includeDeprecated`.
+pub(super) fn js_truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(value) => *value,
