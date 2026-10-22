@@ -698,3 +698,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 ## A7.2 turn replay 条目状态更新（A7.2-pr5，10-23）
 
 - **A7.2-REPLAY-RETENTION-TIMER-001 当前状态（追加，不改原条目）**：在新的生产 TurnGateway 宿主内**已消除**。`src/pilotdeck-gateway/src/runtime/turn/gateway.rs` 实现宿主串行计时器：终态回收到期只排队，宿主处理完当前步骤后再回收（人批 10-22 选 B）。机器判据：`src/pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:631` `serial_retention_matches_real_ts_host_steps_and_dispose`、`:741` `serial_timer_cancels_queued_callbacks_and_replacements`（对真实 TS 宿主步骤金样）；负控 `expiry-runs-on-clock-thread`（让到期在时钟线程直接回收）转红，见 `tests/fixtures/turn-gateway/`。**适用范围**：仅经 TurnGateway 宿主的回收；裸 `TurnReplayStore` 默认 `ThreadTimer` 保持原库级行为，脱离宿主时原条目描述的差异仍在，不能宣称库本身已有 JS 步骤边界。
+
+## 已知未对齐（未批准，待人批）· A6.6 EdgeClaw memory entries
+
+### A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 · entry id 不得越出 store 根（向安全偏离）
+
+- **类别**：向安全偏离（基线允许路径穿越 → 拒绝越界）。
+- **TS 依据**（cc7c4e6）：`src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts:665-668` 的首个判断放行规范化后的 `../`，PR #537 Grok r1 实测可删改 store 根外文件；缺条目时的错误见 `:1224-1225`。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs` 对 entry id 拒绝 `..` 段、绝对路径与解析后越出对应 store 根的符号链接，返回 `Memory entry not found: <relative>`（:397），整批 mutation 先预检。
+- **范围**：workspace / global / 外部 workspace store 的读、写、edit、delete、deprecate、restore 与 repository 对应入口；不改变 store 根本身的可信身份；合法 id 的行为与 TS 对拍不变。
+- **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_entries.rs:723` `entry_paths_reject_escape_without_touching_outside_files`（各入口 × 越界形式，断言根外文件与全树原样）；负控：去掉校验 / 去掉符号链接检查 / 去掉批量预检均转红。
+- **批准记录**：无；协调者按决策卡 `_tmp/20261023-loop/card-edgeclaw-entry-traversal.md` 选 A 自决（依据人批先例 #496），AI 代批、待人复核；**已知未对齐（未批准）**。与 #508（MCP 读图越出 cwd）同类，#508 仍待人定。
