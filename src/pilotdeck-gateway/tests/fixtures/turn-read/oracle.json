@@ -1,0 +1,1597 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37",
+    "src/gateway/client/GatewayTurnReplayStore.ts": "ff3f8206be88afac0336f0aede66c084ce40eef5ea6318d1e751c3902bc135ce",
+    "src/gateway/client/GatewayTurnEventCoordinator.ts": "48c8b51b02003f47b2eb682dc9d058be79cb5304937dc915135354bf500bee1e",
+    "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c"
+  },
+  "readCases": [
+    {
+      "name": "read-stable-active-merges-history-and-stream",
+      "setup": {
+        "input": {
+          "sessionKey": "s",
+          "limit": 50
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          },
+          {
+            "type": "model_event",
+            "runId": "r1",
+            "text": "hi"
+          }
+        ]
+      },
+      "history": [
+        {
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 1,
+        "seenInputs": [
+          {
+            "sessionKey": "s",
+            "limit": 50
+          }
+        ],
+        "resultKeys": [
+          "messages",
+          "total",
+          "session",
+          "stream"
+        ],
+        "result": {
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "hello"
+            },
+            {
+              "id": "m2",
+              "role": "assistant",
+              "text": "hi"
+            }
+          ],
+          "total": 2,
+          "session": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "title": "fixture"
+          },
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              },
+              {
+                "type": "model_event",
+                "runId": "r1",
+                "text": "hi"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "read-stable-missing-turn",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        }
+      },
+      "history": [
+        {
+          "history": {
+            "messages": [],
+            "total": 0,
+            "session": {
+              "sessionKey": "s"
+            }
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 1,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "resultKeys": [
+          "messages",
+          "total",
+          "session",
+          "stream"
+        ],
+        "result": {
+          "messages": [],
+          "total": 0,
+          "session": {
+            "sessionKey": "s"
+          },
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      }
+    },
+    {
+      "name": "read-terminal-during-read-retries-then-merges-terminal-stream",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          }
+        ]
+      },
+      "history": [
+        {
+          "mutate": [
+            "retain"
+          ],
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        },
+        {
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 2,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          },
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "resultKeys": [
+          "messages",
+          "total",
+          "session",
+          "stream"
+        ],
+        "result": {
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "hello"
+            },
+            {
+              "id": "m2",
+              "role": "assistant",
+              "text": "hi"
+            }
+          ],
+          "total": 2,
+          "session": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "title": "fixture"
+          },
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      }
+    },
+    {
+      "name": "read-replaced-run-during-read-retries",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          }
+        ]
+      },
+      "history": [
+        {
+          "mutate": [
+            {
+              "start": "r2"
+            },
+            {
+              "record": {
+                "type": "agent_status",
+                "runId": "r2",
+                "event": "restarted"
+              }
+            }
+          ],
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        },
+        {
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 2,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          },
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "resultKeys": [
+          "messages",
+          "total",
+          "session",
+          "stream"
+        ],
+        "result": {
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "text": "hello"
+            },
+            {
+              "id": "m2",
+              "role": "assistant",
+              "text": "hi"
+            }
+          ],
+          "total": 2,
+          "session": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "title": "fixture"
+          },
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": [
+              {
+                "type": "agent_status",
+                "runId": "r2",
+                "event": "restarted"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "read-epoch-never-settles-error",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          }
+        ]
+      },
+      "history": [
+        {
+          "mutate": [
+            {
+              "start": "r2"
+            }
+          ],
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        },
+        {
+          "mutate": [
+            {
+              "start": "r3"
+            }
+          ],
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        },
+        {
+          "mutate": [
+            {
+              "start": "r4"
+            }
+          ],
+          "history": {
+            "messages": [
+              {
+                "id": "m1",
+                "role": "user",
+                "text": "hello"
+              },
+              {
+                "id": "m2",
+                "role": "assistant",
+                "text": "hi"
+              }
+            ],
+            "total": 2,
+            "session": {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "title": "fixture"
+            }
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 3,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          },
+          {
+            "sessionKey": "s"
+          },
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "error": {
+          "name": "Error",
+          "message": "Session changed during transcript synchronization; retry the snapshot."
+        }
+      }
+    },
+    {
+      "name": "read-history-error-propagates-without-retry",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          }
+        ]
+      },
+      "history": [
+        {
+          "mutate": [
+            {
+              "start": "r2"
+            }
+          ],
+          "error": {
+            "name": "Error",
+            "message": "injected history failure"
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 1,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "error": {
+          "name": "Error",
+          "message": "injected history failure"
+        }
+      }
+    },
+    {
+      "name": "read-not-configured",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "configured": false
+      },
+      "history": [],
+      "outcome": {
+        "historyCalls": 0,
+        "seenInputs": [],
+        "error": {
+          "name": "Error",
+          "message": "read_session_messages is not configured. Wire `readSessionMessages` via createLocalGateway."
+        }
+      }
+    },
+    {
+      "name": "read-history-stream-key-replaced-in-place",
+      "setup": {
+        "input": {
+          "sessionKey": "s"
+        },
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          }
+        ]
+      },
+      "history": [
+        {
+          "history": {
+            "stream": "stale",
+            "messages": [],
+            "total": 0
+          }
+        }
+      ],
+      "outcome": {
+        "historyCalls": 1,
+        "seenInputs": [
+          {
+            "sessionKey": "s"
+          }
+        ],
+        "resultKeys": [
+          "stream",
+          "messages",
+          "total"
+        ],
+        "result": {
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              }
+            ]
+          },
+          "messages": [],
+          "total": 0
+        }
+      }
+    }
+  ],
+  "snapshotCases": [
+    {
+      "name": "snapshot-delegation-events-and-states",
+      "setup": {
+        "startRun": "r1",
+        "events": [
+          {
+            "type": "input_accepted",
+            "runId": "r1"
+          },
+          {
+            "type": "model_event",
+            "runId": "r1",
+            "text": "hi"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "sessionKey": "s"
+        },
+        {
+          "sessionKey": "s",
+          "includeEvents": false
+        },
+        {
+          "sessionKey": "missing"
+        }
+      ],
+      "results": [
+        {
+          "keys": [
+            "active",
+            "sessionKey",
+            "runId",
+            "events"
+          ],
+          "result": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              },
+              {
+                "type": "model_event",
+                "runId": "r1",
+                "text": "hi"
+              }
+            ]
+          }
+        },
+        {
+          "keys": [
+            "active",
+            "sessionKey",
+            "runId",
+            "events"
+          ],
+          "result": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          }
+        },
+        {
+          "keys": [
+            "active",
+            "sessionKey",
+            "events"
+          ],
+          "result": {
+            "active": false,
+            "sessionKey": "missing",
+            "events": []
+          }
+        }
+      ]
+    }
+  ],
+  "runCases": [
+    {
+      "name": "run-get-maps-durable-records",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              },
+              {
+                "type": "model_event",
+                "runId": "r1",
+                "text": "hi"
+              },
+              {
+                "type": "turn_completed",
+                "runId": "r1",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            ]
+          },
+          {
+            "sessionKey": "s",
+            "runId": "r2",
+            "material": "m2",
+            "events": []
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "runId": "r2"
+          }
+        },
+        {
+          "method": "runReattach",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "keys": [
+            "sessionKey",
+            "projectKey",
+            "runId",
+            "state",
+            "revision",
+            "lastSeq",
+            "acceptedAt",
+            "updatedAt",
+            "result"
+          ],
+          "result": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "state": "completed",
+            "revision": 4,
+            "lastSeq": 3,
+            "acceptedAt": "<date>",
+            "updatedAt": "<date>",
+            "result": {
+              "type": "turn_completed",
+              "runId": "r1",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          }
+        },
+        {
+          "keys": [
+            "sessionKey",
+            "runId",
+            "state",
+            "revision",
+            "lastSeq",
+            "acceptedAt",
+            "updatedAt"
+          ],
+          "result": {
+            "sessionKey": "s",
+            "runId": "r2",
+            "state": "accepted",
+            "revision": 1,
+            "lastSeq": 0,
+            "acceptedAt": "<date>",
+            "updatedAt": "<date>"
+          }
+        },
+        {
+          "keys": [
+            "sessionKey",
+            "projectKey",
+            "runId",
+            "state",
+            "revision",
+            "lastSeq",
+            "acceptedAt",
+            "updatedAt",
+            "result"
+          ],
+          "result": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "state": "completed",
+            "revision": 4,
+            "lastSeq": 3,
+            "acceptedAt": "<date>",
+            "updatedAt": "<date>",
+            "result": {
+              "type": "turn_completed",
+              "runId": "r1",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "r1"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "model_event",
+                  "runId": "r1",
+                  "text": "hi"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "r1",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ],
+            "nextSeq": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-get-missing-cross-session-and-cross-project",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": []
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "missing"
+          }
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s2",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p2",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runReattach",
+          "input": {
+            "sessionKey": "s2",
+            "runId": "r1"
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "keys": null
+        },
+        {
+          "keys": null
+        },
+        {
+          "keys": null
+        },
+        {
+          "keys": null
+        },
+        {
+          "keys": null
+        }
+      ]
+    },
+    {
+      "name": "run-events-paging",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": [
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e1"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e2"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e3"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e4"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e5"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 2,
+            "limit": 2
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 4
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 5
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": 1
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 0,
+            "limit": 500
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e1"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e2"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e3"
+                }
+              },
+              {
+                "seq": 4,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e4"
+                }
+              },
+              {
+                "seq": 5,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e5"
+                }
+              }
+            ],
+            "nextSeq": 5
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 3,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e3"
+                }
+              },
+              {
+                "seq": 4,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e4"
+                }
+              }
+            ],
+            "nextSeq": 4
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 5,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e5"
+                }
+              }
+            ],
+            "nextSeq": 5
+          }
+        },
+        {
+          "keys": [
+            "events"
+          ],
+          "result": {
+            "events": []
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq",
+            "gap"
+          ],
+          "result": {
+            "events": [],
+            "nextSeq": 5,
+            "gap": true
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e1"
+                }
+              }
+            ],
+            "nextSeq": 1
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e1"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e2"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e3"
+                }
+              },
+              {
+                "seq": 4,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e4"
+                }
+              },
+              {
+                "seq": 5,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e5"
+                }
+              }
+            ],
+            "nextSeq": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-events-validation-and-not-found",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r1"
+              }
+            ]
+          },
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "empty",
+            "material": "m2",
+            "events": []
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": -1
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 1.5
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": "3"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 9007199254740992
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": 0
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": 501
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": 2.5
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": "10"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "ghost",
+            "afterSeq": -1
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "ghost"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "empty"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 1,
+            "limit": 1
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "limit": 1
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_CURSOR",
+            "message": "afterSeq must be a non-negative safe integer."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_CURSOR",
+            "message": "afterSeq must be a non-negative safe integer."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_CURSOR",
+            "message": "afterSeq must be a non-negative safe integer."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_CURSOR",
+            "message": "afterSeq must be a non-negative safe integer."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_LIMIT",
+            "message": "limit must be an integer between 1 and 500."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_LIMIT",
+            "message": "limit must be an integer between 1 and 500."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_LIMIT",
+            "message": "limit must be an integer between 1 and 500."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_LIMIT",
+            "message": "limit must be an integer between 1 and 500."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_RUN_CURSOR",
+            "message": "afterSeq must be a non-negative safe integer."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "RUN_NOT_FOUND",
+            "message": "Run ghost is not registered."
+          }
+        },
+        {
+          "keys": [
+            "events"
+          ],
+          "result": {
+            "events": []
+          }
+        },
+        {
+          "keys": [
+            "events"
+          ],
+          "result": {
+            "events": []
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "r1"
+                }
+              }
+            ],
+            "nextSeq": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-capability-unavailable",
+      "setup": {
+        "noRegistry": true
+      },
+      "calls": [
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runReattach",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Persistent run registry is unavailable."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Persistent run registry is unavailable."
+          }
+        },
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Persistent run registry is unavailable."
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-registry-failure-propagates",
+      "setup": {
+        "registryFailure": {
+          "code": "terminal",
+          "message": "injected registry failure"
+        }
+      },
+      "calls": [
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "error": {
+            "name": "RunRegistryError",
+            "code": "terminal",
+            "message": "injected registry failure"
+          }
+        },
+        {
+          "error": {
+            "name": "RunRegistryError",
+            "code": "terminal",
+            "message": "injected registry failure"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -60,7 +60,7 @@ impl FileRegistry {
             })?;
         Ok(Self { jobs })
     }
-    fn call<T: Send + 'static>(
+    pub(crate) fn call<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&FileRunRegistry) -> RegistryResult<T> + Send + 'static,
     ) -> RegistryFuture<T> {
