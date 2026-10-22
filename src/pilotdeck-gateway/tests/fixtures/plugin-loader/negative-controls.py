@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Temporarily mutate the Rust implementation, require red tests, restore bytes.
+Run from any directory: python3 <this-file> <evidence-directory> [mutation-id ...].
+No expectation values are generated here; tests replay the real TS oracle.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[5]
+OUTPUT = Path(sys.argv[1]).resolve()
+OUTPUT.mkdir(parents=True, exist_ok=True)
+LOADER = 'src/pilotdeck-gateway/src/runtime/plugins/loader.rs'
+CONFIG = 'src/pilotdeck-gateway/src/runtime/plugins/loader/config.rs'
+MARKDOWN = 'src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs'
+# Each replacement is unique and compiles; a compiler error is never a kill.
+CASES = [
+    ('disk-loading', LOADER, 'let discovered = discover_plugin_paths(&[', 'let discovered = discover_plugin_paths(&[', 'plugin_loader_staging_oracle'),
+    ('discovery-order', LOADER, 'names.sort();', 'names.sort(); names.reverse();', 'plugin_loader_order'),
+    ('follow-symlinks', LOADER, 'fs::metadata(&path)', 'fs::symlink_metadata(&path)', 'plugin_loader_staging_oracle'),
+    ('unreadable-directory', LOADER, 'sorted_entries(directory).unwrap_or_default()', 'sorted_entries(directory).expect("negative-control: unreadable directory")', 'plugin_loader_staging_oracle'),
+    ('manifest-object-diagnostic', CONFIG, 'Plugin manifest must be an object.', 'negative-control object diagnostic', 'plugin_loader_manifest_oracle'),
+    ('manifest-name-diagnostic', CONFIG, 'Plugin manifest must contain a name.', 'negative-control name diagnostic', 'plugin_loader_manifest_oracle'),
+    ('manifest-trim-name', CONFIG, '!js_trim(&String::from_utf16_lossy(s.units())).is_empty()', '!String::from_utf16_lossy(s.units()).is_empty()', 'plugin_loader_manifest_oracle'),
+    ('manifest-optional-types', CONFIG, 'a.iter().all(|v| v.as_string().is_some())', 'a.len() < usize::MAX', 'plugin_loader_manifest_oracle'),
+    ('manifest-marketplace-source', CONFIG, 'key != "source"', 'key == "source"', 'plugin_loader_manifest_oracle'),
+    ('configured-markdown', LOADER, 'get("commands"), "commands"', 'get("notCommands"), "commands"', 'plugin_loader_contributions'),
+    ('directory-namespace', LOADER, 'let plugin_name = basename(path);', 'let plugin_name = string(get("name")).unwrap();', 'plugin_loader_contributions'),
+    ('frontmatter-fence', MARKDOWN, 'raw.starts_with("---\\n")', 'raw.starts_with("---\\r\\n")', 'plugin_loader_contributions'),
+    ('frontmatter-scalar', MARKDOWN, '"true" => Value::Bool(true)', '"true" => Value::Bool(false)', 'plugin_loader_contributions'),
+    ('skill-filter', LOADER, '.filter(|c| fallback != "skills" || c.is_skill)', '.filter(|c| fallback != "skills" || !c.is_skill)', 'plugin_loader_contributions'),
+    ('skill-unicode-case', MARKDOWN, '.replace(\'\\u{212a}\', "k")', '.replace(\'\\u{212a}\', "x")', 'plugin_loader_contributions'),
+    ('standalone-root-only', MARKDOWN, '.find(|p| is_skill(p))', '.find(|p| !is_skill(p))', 'plugin_loader_skills'),
+    ('inline-hooks', LOADER, 'Some(crate::hooks::config::parse_hooks_config(hooks).settings)', 'Some(Vec::new())', 'plugin_loader_contributions'),
+    ('file-hooks', LOADER, 'string(hooks).unwrap_or_else(|| "hooks/hooks.json".into())', 'String::from("hooks/hooks.json")', 'plugin_loader_hooks_paths'),
+    ('mcp-servers', LOADER, 'mcp_servers: servers("mcpServers")?', 'mcp_servers: None', 'plugin_loader_contributions'),
+    ('lsp-servers', LOADER, 'lsp_servers: servers("lspServers")?', 'lsp_servers: None', 'plugin_loader_contributions'),
+    ('builtin-disk-reload', LOADER, 'load_plugin_from_path(&p.path, PluginSource::Builtin)', 'Err::<LoadedPlugin, PluginRuntimeError>(PluginRuntimeError::new("negative-control"))', 'plugin_loader_builtins'),
+    ('builtin-fallback', LOADER, '.unwrap_or_else(|_| Arc::clone(p))', '.unwrap_or_else(|_| panic!("negative-control: no builtin fallback"))', 'plugin_loader_staging_oracle'),
+    ('builtin-disable', LOADER, '.get(&p.name)', '.get("negative-control-never-disabled")', 'plugin_loader_builtins'),
+    ('builtin-skills', LOADER, 'skill_dirs.push((path.clone(), PluginSource::Builtin));', 'let _ = path;', 'plugin_loader_skills'),
+    ('duplicates-retained', LOADER, 'plugins.push(Arc::new(plugin));', 'if !plugins.iter().any(|p| p.name == plugin.name && p.source == plugin.source) { plugins.push(Arc::new(plugin)); }', 'plugin_loader_staging_oracle'),
+    ('source-identity', LOADER, '(paths.project_plugins_dir, PluginSource::Project)', '(paths.project_plugins_dir, PluginSource::Global)', 'plugin_loader_staging_oracle'),
+    ('staged-failures', LOADER, 'staged_failures: failures,', 'staged_failures: Vec::new(),', 'plugin_loader_staging_oracle'),
+    ('node-join-absolute', CONFIG, 'PathBuf::from(format!("{}/{}", base.display(), part))', 'base.join(part)', 'plugin_loader_hooks_paths'),
+    ('source-path-boundary', CONFIG, '.starts_with(&format!("{}/", root.display()))', '.starts_with(&format!("{}", root.display()))', 'plugin_loader_validation_oracle'),
+    ('marketplace-name', CONFIG, '|| OFFICIAL.is_match(name)', '|| (OFFICIAL.is_match(name) && false)', 'plugin_loader_validation_oracle'),
+    ('marketplace-deferred', CONFIG, '["git", "zip", "mcpb"].iter().any(|v| s.equals_str(v))', '["unused", "unused", "unused"].iter().any(|v| s.equals_str(v))', 'plugin_loader_validation_oracle'),
+]
+CASES += [
+    ('output-styles', LOADER, 'get("outputStyles"), "output-styles"', 'get("notOutputStyles"), "output-styles"', 'plugin_loader_contributions'),
+    ('style-only-config', LOADER, '&configured,\n            "output-styles",', '&JsValue::Undefined,\n            "output-styles",', 'plugin_loader_contributions'),
+    ('node-json-diagnostic', LOADER, 'json_syntax::parse_error(&text).unwrap_or(e.message)', 'e.message', 'plugin_loader_invalid'),
+    ('configured-trailing-slash', CONFIG, 'out.push("");', 'let _ = path;', 'plugin_loader_contributions'),
+    ('server-depth', LOADER, 'server_value::server_value(get(key)).map(Some)', 'serde_json::from_str(&pilotdeck_protocol::stringify_json(get(key)).unwrap().unwrap()).map(Some).map_err(|e| PluginRuntimeError::new(e.to_string()))', 'plugin_loader_server_values_oracle'),
+    ('configured-directory-read-error', MARKDOWN,
+     'output.push(load_markdown(\n                &path,\n                get_plugin_command_name(plugin_name, &path, base),\n            )?);',
+     'if let Ok(command) = load_markdown(&path, get_plugin_command_name(plugin_name, &path, base)) { output.push(command); }',
+     'plugin_loader_hooks_paths'),
+]
+# Discovery unchanged but drop all loaded disk plugins, exercising the old stub.
+CASES[0] = ('disk-loading', LOADER, 'plugins.push(Arc::new(plugin));', 'let _ = plugin;', 'plugin_loader_staging_oracle')
+selected = set(sys.argv[2:])
+if selected:
+    assert selected <= {c[0] for c in CASES}, selected
+    CASES = [c for c in CASES if c[0] in selected]
+originals = {p:(ROOT/p).read_bytes() for p in {c[1] for c in CASES}}
+assert all(originals[p].decode().count(old) == 1 for _,p,old,_,_ in CASES), 'mutation anchor must be unique'
+env = dict(os.environ)
+# The generator's guard was already run twice; replay metadata validation stays
+# enabled, but avoid 650 baseline git subprocesses after every recompilation.
+env.pop('PDRS_BASELINE', None)
+summary = []
+try:
+    for name, relative, old, new, test in CASES:
+        path = ROOT/relative
+        assert path.read_bytes() == originals[relative], f'concurrent modification: {relative}'
+        slots = ROOT/'scripts/cargo-slots.sh'
+        with (OUTPUT/(name+'.slots.log')).open('w') as log:
+            while True:
+                code = subprocess.run([str(slots)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT).returncode
+                assert code in (0,1), f'cargo-slots failed: {code}'
+                if code == 0:
+                    break
+                time.sleep(5)
+        path.write_text(originals[relative].decode().replace(old,new))
+        try:
+            with (OUTPUT/(name+'.log')).open('w') as log:
+                result = subprocess.run(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','plugin_loader',test,'--','--exact'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=180)
+            output = (OUTPUT/(name+'.log')).read_text()
+            killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output
+            row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
+            summary.append(row)
+            print(json.dumps(row), flush=True)
+            assert killed, f'{name}: negative control did not cause an assertion/test failure; inspect log'
+        finally:
+            path.write_bytes(originals[relative])
+finally:
+    assert all((ROOT/p).read_bytes() == b for p,b in originals.items()), 'implementation bytes not restored'
+    (OUTPUT/'summary.json').write_text(json.dumps({'results':summary,'restoredSha256':{p:hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')

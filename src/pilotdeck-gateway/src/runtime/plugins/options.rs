@@ -26,10 +26,12 @@ impl PilotExtensionPaths {
     pub fn resolve(project_root: &std::path::Path, pilot_home: &std::path::Path) -> Self {
         let pilotdeck = ".pilotdeck";
         Self {
-            global_plugins_dir: pilot_home.join("plugins"),
-            global_skills_dir: pilot_home.join("skills"),
-            project_plugins_dir: project_root.join(pilotdeck).join("plugins"),
-            project_skills_dir: project_root.join(pilotdeck).join("skills"),
+            global_plugins_dir: super::loader::resolve_directory(pilot_home, "plugins"),
+            global_skills_dir: super::loader::resolve_directory(pilot_home, "skills"),
+            project_plugins_dir: super::loader::resolve_directory(project_root, pilotdeck)
+                .join("plugins"),
+            project_skills_dir: super::loader::resolve_directory(project_root, pilotdeck)
+                .join("skills"),
         }
     }
 }
