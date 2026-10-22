@@ -1,0 +1,8 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {readFileSync,realpathSync,writeFileSync} from 'node:fs';
+import {join,resolve,dirname} from 'node:path';
+import {pathToFileURL,fileURLToPath} from 'node:url';
+import {bindSourceTree,sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import {source,freezeClock,observe,disk,open,clean} from './observe.mts';
+assert.ok(process.env.PDRS_BASELINE);const root=resolve(process.argv[2]!);const output=resolve(process.argv[3]!);const baseline=resolve(process.env.PDRS_BASELINE!);const git=realpathSync(process.env.PDRS_GIT||execFileSync('which',['git'],{encoding:'utf8'}).trim());const commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';bindSourceTree(baseline,commit,git);const oracle=JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)),'oracle.json'),'utf8'));assert.deepEqual(sourceClosureSha256(baseline,commit,git,[source]),oracle.sourceSha256);process.env.HOME=join(root,'home');freezeClock();const {MemoryRepository}=await import(pathToFileURL(join(baseline,source)).href);const result=oracle.cases.map((c:any)=>{const p=join(root,c.name);if(process.argv[4]==='inspect'){const r=open(MemoryRepository,p);const read=(f:any)=>{try{return clean(f(),p);}catch(e:any){return e.code?{error:e.code}:{error:e.name,message:e.message};}};const snapshot=read(()=>r.captureCurrentMemorySnapshot());const overview=read(()=>r.getLastDreamSnapshotOverview());r.close();return {snapshot,overview,disk:disk(p)};}return observe(MemoryRepository,p,c.ops);});writeFileSync(output,JSON.stringify(result,null,2)+'\n');

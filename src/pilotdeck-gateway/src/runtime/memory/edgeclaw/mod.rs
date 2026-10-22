@@ -13,8 +13,8 @@
 //!
 //! [`file_memory`] adds A6.6-pr10b FileMemoryStore, manifest, profile, metadata
 //! and file export APIs, plus workspace/global file-store wiring. Repository
-//! snapshot capture and root swaps, retrieval, extraction and heartbeat belong
-//! to the remaining work packages.
+//! snapshot capture, dream rollback and root swaps live in [`storage::snapshots`].
+//! Retrieval, extraction and heartbeat belong to the remaining work packages.
 pub mod file_memory;
 pub mod storage;
 
