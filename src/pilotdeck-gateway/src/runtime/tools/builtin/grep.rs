@@ -8,13 +8,14 @@
 //! ordering, pagination and error mapping. If no binary is found the tool
 //! raises the same `unsupported_tool` message instead of fabricating matches.
 //!
-//! Binary resolution differences from the TS baseline (documented in
-//! `tests/fixtures/grep-tool/README.md`):
-//! - `PILOTDECK_RIPGREP_PATH` may name the binary explicitly (same operational
-//!   knob as `PILOTDECK_SHELL_PATH` for `bash`), so deployments and parity
-//!   fixtures can pin the exact engine;
-//! - otherwise the first executable `rg` (`rg.exe` on Windows) on `PATH` wins;
-//! - otherwise the tool fails with the TS `unsupported_tool` wording.
+//! Binary resolution follows the TS contract
+//! (`filesystem/ripgrep.ts:84-103`): the bundled
+//! `@vscode/ripgrep-<platform>-<arch>/bin/rg` package is resolved with Node's
+//! `node_modules` walk (pnpm's virtual store included) from the runtime root
+//! and the gateway executable's ancestors. `PILOTDECK_RIPGREP_PATH` is an
+//! explicit deployment/parity override; only when no bundled package exists
+//! does `rg` on `PATH` act as a fallback. Without any engine the tool raises
+//! the TS `unsupported_tool` wording.
 //!
 //! No ripgrep binary is downloaded or bundled by this crate.
 use super::{
@@ -23,17 +24,22 @@ use super::{
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
+    metadata::{js_space, js_trim, js_trim_end, js_trim_start},
+    project_files::{node_collator, node_locale},
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use regex::Regex;
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::OnceLock,
     time::Duration,
 };
-use tokio::{io::AsyncReadExt, process::Command, time::timeout};
+use tokio::{
+    io::AsyncReadExt,
+    process::Command,
+    time::{Instant, sleep_until, timeout},
+};
 
 const DEFAULT_HEAD_LIMIT: f64 = 250.0;
 const MAX_COLUMNS: usize = 500;
@@ -265,11 +271,11 @@ fn add_context_args(args: &mut Vec<String>, input: &JsValue) {
     }
 }
 
-/// `splitGlobPatterns`: whitespace separates patterns, brace groups stay
+/// `splitGlobPatterns`: JS `/\s+/` separates patterns, brace groups stay
 /// intact, and a bare comma separates alternatives (ripgrep accepts both).
 fn split_glob_patterns(glob: &str) -> Vec<String> {
     let mut patterns = Vec::new();
-    for raw in glob.split_whitespace().filter(|part| !part.is_empty()) {
+    for raw in glob.split(js_space).filter(|part| !part.is_empty()) {
         if raw.contains('{') && raw.contains('}') {
             patterns.push(raw.to_owned());
             continue;
@@ -287,9 +293,45 @@ fn split_glob_patterns(glob: &str) -> Vec<String> {
 // ripgrep execution
 // ---------------------------------------------------------------------------
 
-fn resolve_ripgrep() -> Result<PathBuf, ToolError> {
-    if let Some(configured) = std::env::var_os("PILOTDECK_RIPGREP_PATH") {
-        let path = PathBuf::from(configured);
+fn resolve_ripgrep(context: &ToolRunContext) -> Result<PathBuf, ToolError> {
+    let environment = context.fields.get("env").and_then(JsValue::as_object);
+    let get = |key: &str| -> Option<String> {
+        environment
+            .and_then(|entries| entries.get(key))
+            .and_then(JsValue::as_string)
+            .map(text)
+            .or_else(|| std::env::var(key).ok())
+    };
+    // An empty override means "unset" (the same convention as
+    // `PILOTDECK_SHELL_PATH`); it never names a directory or a command.
+    let override_path = get("PILOTDECK_RIPGREP_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let roots = default_roots(get("PILOTDECK_DESKTOP_RUNTIME_ROOT"));
+    resolve_ripgrep_with(override_path, get("PATH"), &roots)
+}
+
+/// Whether the tool can resolve a ripgrep engine in this process. Shared with
+/// the parity replay so its skip guard cannot drift from the real resolution.
+pub fn ripgrep_available() -> bool {
+    let override_path = std::env::var_os("PILOTDECK_RIPGREP_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let roots = default_roots(std::env::var("PILOTDECK_DESKTOP_RUNTIME_ROOT").ok());
+    resolve_ripgrep_with(override_path, std::env::var("PATH").ok(), &roots).is_ok()
+}
+
+/// Resolution order: explicit `PILOTDECK_RIPGREP_PATH` (deployment/parity
+/// pin) -> the bundled `@vscode/ripgrep-<platform>-<arch>/bin/rg` package ->
+/// `rg` on `PATH` -> the TS `unsupported_tool` error. The middle step is the
+/// TS contract (`filesystem/ripgrep.ts:84-103`); `PATH` only keeps deployments
+/// without a JS module tree usable and never outranks the bundled engine.
+fn resolve_ripgrep_with(
+    override_path: Option<PathBuf>,
+    path: Option<String>,
+    roots: &[PathBuf],
+) -> Result<PathBuf, ToolError> {
+    if let Some(path) = override_path {
         if is_executable(&path) {
             return Ok(path);
         }
@@ -298,7 +340,12 @@ fn resolve_ripgrep() -> Result<PathBuf, ToolError> {
             path.display()
         )));
     }
-    if let Some(paths) = std::env::var_os("PATH") {
+    match bundled_ripgrep(roots) {
+        Ok(Some(path)) => return Ok(path),
+        Ok(None) => {}
+        Err(cause) => return Err(ripgrep_unavailable(&cause)),
+    }
+    if let Some(paths) = path {
         for directory in std::env::split_paths(&paths) {
             for name in ["rg", "rg.exe"] {
                 let candidate = directory.join(name);
@@ -308,7 +355,84 @@ fn resolve_ripgrep() -> Result<PathBuf, ToolError> {
             }
         }
     }
-    Err(ripgrep_unavailable("no executable rg found on PATH"))
+    Err(ripgrep_unavailable("Cannot find module '@vscode/ripgrep'"))
+}
+
+fn default_roots(runtime_root: Option<String>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(root) = runtime_root.filter(|value| !value.is_empty()) {
+        roots.push(PathBuf::from(root));
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(parent) = executable.parent()
+    {
+        roots.push(parent.to_path_buf());
+    }
+    roots
+}
+
+/// Node's `require.resolve("@vscode/ripgrep-<platform>-<arch>/bin/rg")`:
+/// walk `node_modules` from every root's ancestors, and for a found
+/// `@vscode/ripgrep` package continue from its real path so pnpm's virtual
+/// store (`node_modules/.pnpm/@vscode+ripgrep.../node_modules`) resolves too.
+fn bundled_ripgrep(roots: &[PathBuf]) -> Result<Option<PathBuf>, String> {
+    let (platform, arch) = platform_arch();
+    let package = format!("@vscode/ripgrep-{platform}-{arch}");
+    let binary = if cfg!(windows) { "rg.exe" } else { "rg" };
+    let mut saw_package = false;
+    for root in roots {
+        for ancestor in root.ancestors() {
+            for modules in [
+                ancestor.join("node_modules"),
+                ancestor
+                    .join("resources")
+                    .join("PilotDeck")
+                    .join("node_modules"),
+            ] {
+                let package_dir = modules.join("@vscode").join("ripgrep");
+                if !package_dir.is_dir() {
+                    continue;
+                }
+                saw_package = true;
+                if let Ok(real) = package_dir.canonicalize() {
+                    for base in real.ancestors() {
+                        if let Some(found) =
+                            platform_binary(&base.join("node_modules"), &package, binary)
+                        {
+                            return Ok(Some(found));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if saw_package {
+        Err(format!(
+            "Could not find {package}. Ensure optionalDependencies are installed for this platform ({platform}-{arch})."
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+fn platform_binary(modules: &Path, package: &str, binary: &str) -> Option<PathBuf> {
+    let candidate = modules.join(package).join("bin").join(binary);
+    is_executable(&candidate).then_some(candidate)
+}
+
+fn platform_arch() -> (&'static str, &'static str) {
+    let platform = match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        "x86" => "ia32",
+        other => other,
+    };
+    (platform, arch)
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -330,17 +454,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn ripgrep_unavailable(cause: &str) -> ToolError {
-    let platform = match std::env::consts::OS {
-        "macos" => "darwin",
-        "windows" => "win32",
-        other => other,
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        "x86" => "ia32",
-        other => other,
-    };
+    let (platform, arch) = platform_arch();
     ToolError {
         code: "unsupported_tool".to_owned(),
         message: JsString::from(format!(
@@ -355,9 +469,34 @@ async fn run_ripgrep(
     cwd: &JsString,
     context: &ToolRunContext,
 ) -> Result<String, ToolError> {
-    let executable = resolve_ripgrep()?;
+    run_ripgrep_with_timeout(
+        args,
+        cwd,
+        context,
+        Duration::from_millis(RIPGREP_TIMEOUT_MS),
+    )
+    .await
+}
+
+/// TS `SubprocessPort.executeFile` signals the whole process group (TERM, then
+/// KILL after one second) and resolves when the child's stdio closes. The loop
+/// below keeps draining both pipes through that window, so a descendant that
+/// inherited a pipe cannot leave the tool waiting forever.
+const KILL_GRACE: Duration = Duration::from_millis(1_000);
+/// Last-resort bound for an escaped descendant that survived the group KILL
+/// and still holds a pipe. TS would simply never resolve in that pathological
+/// case; a tool call must stay bounded.
+const FORCE_RESOLVE: Duration = Duration::from_secs(3);
+
+async fn run_ripgrep_with_timeout(
+    args: &[String],
+    cwd: &JsString,
+    context: &ToolRunContext,
+    limit: Duration,
+) -> Result<String, ToolError> {
+    let executable = resolve_ripgrep(context)?;
     if context.is_aborted() {
-        return Err(tool_error("tool_aborted", "grep search aborted."));
+        return Err(tool_aborted());
     }
     let mut command = Command::new(&executable);
     command
@@ -367,6 +506,13 @@ async fn run_ripgrep(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // `spawn(..., { detached: true })` on every platform TS supports a group
+    // for, plus libuv's child-init signal reset. The reset matters when the
+    // gateway itself inherited ignored/blocked signals.
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(unix)]
+    pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     // The TS baseline hands `context.env` to `spawn` as the child environment
     // (Node replaces, it does not merge), so mirror that when the host
     // supplies one.
@@ -380,7 +526,16 @@ async fn run_ripgrep(
     }
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            ripgrep_unavailable(&format!("spawn {}: {error}", executable.display()))
+            // Node's async spawn error text: `spawn <path> ENOENT`.
+            ripgrep_unavailable(&format!("spawn {} ENOENT", executable.display()))
+        } else if let Some((code, _)) = crate::node_io::lookup(&error) {
+            tool_error(
+                "tool_execution_failed",
+                format!(
+                    "ripgrep grep search failed: spawn {} {code}",
+                    executable.display()
+                ),
+            )
         } else {
             tool_error(
                 "tool_execution_failed",
@@ -388,44 +543,124 @@ async fn run_ripgrep(
             )
         }
     })?;
+    #[cfg(unix)]
+    let group = child
+        .id()
+        .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
+    #[cfg(not(unix))]
+    let group: Option<rustix::process::Pid> = None;
+
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let stdout_task = tokio::spawn(read_all(stdout));
-    let stderr_task = tokio::spawn(read_all(stderr));
-    let wait = async {
-        tokio::select! {
-            status = child.wait() => Some(status),
-            _ = context.cancelled() => None,
-        }
-    };
-    let mut aborted = false;
+    let mut out_task = tokio::spawn(read_all(stdout));
+    let mut err_task = tokio::spawn(read_all(stderr));
+    let mut out_bytes = Vec::new();
+    let mut err_bytes = Vec::new();
+    let mut out_done = false;
+    let mut err_done = false;
+
+    // Observe the leader without reaping it (`WNOWAIT`), so its PGID stays
+    // reserved until the final timeout/abort group signal has been sent.
+    let (leader_tx, mut leader_rx) = tokio::sync::oneshot::channel();
+    if let Some(group) = group {
+        tokio::spawn(async move {
+            let _ = leader_tx.send(crate::process_group::wait_exit_unreaped(group).await);
+        });
+    } else {
+        let _ = leader_tx.send(Ok(None));
+    }
+    let mut leader_done = group.is_none();
+    let mut leader_exit: Option<crate::process_group::LeaderExit> = None;
+
     let mut timed_out = false;
-    let status = match timeout(Duration::from_millis(RIPGREP_TIMEOUT_MS), wait).await {
-        Ok(Some(Ok(status))) => Some(status),
-        Ok(Some(Err(error))) => {
-            let _ = child.kill().await;
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
+    let mut aborted = false;
+    let mut forced = false;
+    let mut kill_sent = false;
+    let mut timeout_sleep = Box::pin(sleep_until(Instant::now() + limit));
+    let mut kill_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut force_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+
+    loop {
+        if leader_done && out_done && err_done {
+            break;
+        }
+        tokio::select! {
+            result = &mut leader_rx, if !leader_done => {
+                leader_done = true;
+                if let Ok(Ok(Some(exit))) = result {
+                    leader_exit = Some(exit);
+                }
+            }
+            result = &mut out_task, if !out_done => {
+                out_bytes = result.unwrap_or_default();
+                out_done = true;
+            }
+            result = &mut err_task, if !err_done => {
+                err_bytes = result.unwrap_or_default();
+                err_done = true;
+            }
+            _ = &mut timeout_sleep, if !timed_out && !aborted => {
+                timed_out = true;
+                signal_group(group, &mut child, rustix::process::Signal::TERM);
+                kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
+                force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
+            }
+            _ = context.cancelled(), if !timed_out && !aborted => {
+                aborted = true;
+                signal_group(group, &mut child, rustix::process::Signal::TERM);
+                kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
+                force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
+            }
+            _ = async {
+                if let Some(sleep) = kill_sleep.as_mut() {
+                    sleep.as_mut().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            }, if kill_sleep.is_some() => {
+                kill_sleep = None;
+                kill_sent = true;
+                signal_group(group, &mut child, rustix::process::Signal::KILL);
+            }
+            _ = async {
+                if let Some(sleep) = force_sleep.as_mut() {
+                    sleep.as_mut().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            }, if force_sleep.is_some() => {
+                forced = true;
+                break;
+            }
+        }
+    }
+
+    if forced {
+        out_task.abort();
+        err_task.abort();
+        let _ = out_task.await;
+        let _ = err_task.await;
+    }
+    // A pending deferred KILL is issued before the leader is reaped, so the
+    // group id cannot be reused underneath us.
+    if (timed_out || aborted) && !kill_sent {
+        signal_group(group, &mut child, rustix::process::Signal::KILL);
+    }
+    let status = match timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(status)) => Some(status),
+        Ok(Err(error)) => {
             return Err(tool_error(
                 "tool_execution_failed",
                 format!("ripgrep grep search failed: {error}"),
             ));
         }
-        Ok(None) => {
-            aborted = true;
-            let _ = child.kill().await;
-            None
-        }
         Err(_) => {
-            timed_out = true;
-            let _ = child.kill().await;
+            signal_group(group, &mut child, rustix::process::Signal::KILL);
             None
         }
     };
-    let out = stdout_task.await.unwrap_or_default();
-    let err = stderr_task.await.unwrap_or_default();
     if aborted || context.is_aborted() {
-        return Err(tool_error("tool_aborted", "grep search aborted."));
+        return Err(tool_aborted());
     }
     if timed_out {
         return Err(tool_error(
@@ -433,24 +668,37 @@ async fn run_ripgrep(
             format!("grep search timed out after {RIPGREP_TIMEOUT_MS}ms."),
         ));
     }
-    let status = status.expect("status for completed ripgrep run");
-    #[cfg(unix)]
-    let exit_signal = {
-        use std::os::unix::process::ExitStatusExt;
-        status.signal()
+    let Some(status) = status else {
+        return Err(tool_error(
+            "tool_execution_failed",
+            "ripgrep grep search failed: process did not exit.".to_owned(),
+        ));
     };
-    #[cfg(not(unix))]
-    let exit_signal = None;
-    let code = status.code();
+    let (code, exit_signal) = match leader_exit {
+        Some(exit) => (exit.code, exit.signal),
+        None => {
+            #[cfg(unix)]
+            let signal = {
+                use std::os::unix::process::ExitStatusExt;
+                status.signal()
+            };
+            #[cfg(not(unix))]
+            let signal = None;
+            (status.code(), signal)
+        }
+    };
     if code == Some(0) || code == Some(1) {
-        return Ok(String::from_utf8_lossy(&out).into_owned());
+        return Ok(String::from_utf8_lossy(&out_bytes).into_owned());
     }
-    let error_text = String::from_utf8_lossy(&err);
+    let error_text = String::from_utf8_lossy(&err_bytes);
     let trimmed = js_trim(&error_text);
     if let Some(signal) = exit_signal {
         return Err(tool_error(
             "tool_execution_failed",
-            format!("ripgrep grep search exited via signal {signal}."),
+            format!(
+                "ripgrep grep search exited via signal {}.",
+                node_signal_name(signal)
+            ),
         ));
     }
     let exit_code = code.unwrap_or(-1);
@@ -467,6 +715,100 @@ async fn run_ripgrep(
         }),
         details: Some(details),
     })
+}
+
+fn tool_aborted() -> ToolError {
+    tool_error("tool_aborted", "grep search aborted.")
+}
+
+fn signal_group(
+    group: Option<rustix::process::Pid>,
+    child: &mut tokio::process::Child,
+    signal: rustix::process::Signal,
+) {
+    #[cfg(unix)]
+    if group.is_some() {
+        crate::process_group::kill(group, signal);
+        return;
+    }
+    #[cfg(not(unix))]
+    let _ = (group, signal);
+    let _ = child.start_kill();
+}
+
+/// `os.constants.signals[signo]`, the value Node exposes as `exitSignal`.
+fn node_signal_name(signal: i32) -> String {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let name = match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        3 => Some("SIGQUIT"),
+        4 => Some("SIGILL"),
+        5 => Some("SIGTRAP"),
+        6 => Some("SIGABRT"),
+        8 => Some("SIGFPE"),
+        9 => Some("SIGKILL"),
+        10 => Some("SIGBUS"),
+        11 => Some("SIGSEGV"),
+        12 => Some("SIGSYS"),
+        13 => Some("SIGPIPE"),
+        14 => Some("SIGALRM"),
+        15 => Some("SIGTERM"),
+        16 => Some("SIGURG"),
+        17 => Some("SIGSTOP"),
+        18 => Some("SIGTSTP"),
+        19 => Some("SIGCONT"),
+        20 => Some("SIGCHLD"),
+        21 => Some("SIGTTIN"),
+        22 => Some("SIGTTOU"),
+        23 => Some("SIGIO"),
+        24 => Some("SIGXCPU"),
+        25 => Some("SIGXFSZ"),
+        26 => Some("SIGVTALRM"),
+        27 => Some("SIGPROF"),
+        28 => Some("SIGWINCH"),
+        29 => Some("SIGINFO"),
+        30 => Some("SIGUSR1"),
+        31 => Some("SIGUSR2"),
+        _ => None,
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    let name = match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        3 => Some("SIGQUIT"),
+        4 => Some("SIGILL"),
+        5 => Some("SIGTRAP"),
+        6 => Some("SIGABRT"),
+        7 => Some("SIGBUS"),
+        8 => Some("SIGFPE"),
+        9 => Some("SIGKILL"),
+        10 => Some("SIGUSR1"),
+        11 => Some("SIGSEGV"),
+        12 => Some("SIGUSR2"),
+        13 => Some("SIGPIPE"),
+        14 => Some("SIGALRM"),
+        15 => Some("SIGTERM"),
+        16 => Some("SIGSTKFLT"),
+        17 => Some("SIGCHLD"),
+        18 => Some("SIGCONT"),
+        19 => Some("SIGSTOP"),
+        20 => Some("SIGTSTP"),
+        21 => Some("SIGTTIN"),
+        22 => Some("SIGTTOU"),
+        23 => Some("SIGURG"),
+        24 => Some("SIGXCPU"),
+        25 => Some("SIGXFSZ"),
+        26 => Some("SIGVTALRM"),
+        27 => Some("SIGPROF"),
+        28 => Some("SIGWINCH"),
+        29 => Some("SIGIO"),
+        30 => Some("SIGPWR"),
+        31 => Some("SIGSYS"),
+        _ => None,
+    };
+    name.map(str::to_owned)
+        .unwrap_or_else(|| signal.to_string())
 }
 
 async fn read_all(mut reader: impl tokio::io::AsyncRead + Unpin) -> Vec<u8> {
@@ -569,11 +911,15 @@ fn count_mode(
         .into_iter()
         .filter_map(parse_count_entry)
         .filter(|(file, _)| !is_ignored_path(file))
-        .map(|(file, count)| (to_workspace_file(&file, &target.workspace_base_dir), count))
         .collect();
+    // TS sorts the raw rg paths before rebasing them onto `workspaceBaseDir`.
     entries.sort_by(|left, right| locale_compare(&left.0, &right.0));
     let total_matches: i64 = entries.iter().map(|(_, count)| *count).sum();
-    let rendered: Vec<(String, String)> = entries
+    let mapped: Vec<(String, i64)> = entries
+        .iter()
+        .map(|(file, count)| (to_workspace_file(file, &target.workspace_base_dir), *count))
+        .collect();
+    let rendered: Vec<(String, String)> = mapped
         .iter()
         .map(|(file, count)| (file.clone(), format!("{file}:{count}")))
         .collect();
@@ -684,10 +1030,12 @@ async fn sort_files_by_modified_time(files: &mut [String], cwd: &JsString) {
 }
 
 fn metadata_modified_ms(metadata: &std::fs::Metadata) -> f64 {
+    // Node's `fs.stat().mtimeMs` keeps the sub-millisecond fraction; truncating
+    // to whole milliseconds would change `sortFilesByModifiedTime` ties.
     match metadata.modified() {
         Ok(modified) => match modified.duration_since(std::time::UNIX_EPOCH) {
-            Ok(duration) => duration.as_millis() as f64,
-            Err(error) => -(error.duration().as_millis() as f64),
+            Ok(duration) => duration.as_secs_f64() * 1_000.0,
+            Err(error) => -(error.duration().as_secs_f64() * 1_000.0),
         },
         Err(_) => 0.0,
     }
@@ -711,25 +1059,58 @@ fn parse_content_line(line: String) -> Result<ParsedLine, ToolError> {
     if line == "--" {
         return Ok(ParsedLine::Separator(line));
     }
-    static CONTENT: OnceLock<Regex> = OnceLock::new();
-    let regex = CONTENT.get_or_init(|| {
-        Regex::new(r"^(.*?)([:-])(\d+)([:-])(.*)$").expect("valid content-line regex")
-    });
-    let Some(captures) = regex.captures(&line) else {
-        return Err(tool_error(
-            "tool_execution_failed",
-            format!("Unexpected ripgrep content output: {line}"),
-        ));
-    };
-    let separator = captures[2].chars().next().expect("separator");
-    let line_separator = captures[4].chars().next().expect("line separator");
-    Ok(ParsedLine::Content(ContentLine {
-        file: normalize_relative_path(&captures[1]),
-        separator,
-        line_number: captures[3].parse().unwrap_or(0),
-        line_separator,
-        content: captures[5].to_owned(),
-    }))
+    // JS `/^(.*?)([:-])(\d+)([:-])(.*)$/` without flags: `.` stops at every
+    // LineTerminator, `\d` is ASCII-only, and `$` also matches immediately
+    // before a final LineTerminator.
+    let units: Vec<char> = line.chars().collect();
+    let mut end = units.len();
+    if units.last().is_some_and(|unit| is_line_terminator(*unit)) {
+        end -= 1;
+    }
+    let mut index = 0;
+    while index < end {
+        let separator = units[index];
+        if is_line_terminator(separator) {
+            break;
+        }
+        if separator != ':' && separator != '-' {
+            index += 1;
+            continue;
+        }
+        let digits_start = index + 1;
+        let mut cursor = digits_start;
+        while cursor < end && units[cursor].is_ascii_digit() {
+            cursor += 1;
+        }
+        if cursor > digits_start && cursor < end {
+            let line_separator = units[cursor];
+            if (line_separator == ':' || line_separator == '-')
+                && !units[cursor + 1..end]
+                    .iter()
+                    .any(|unit| is_line_terminator(*unit))
+            {
+                let file: String = units[..index].iter().collect();
+                let digits: String = units[digits_start..cursor].iter().collect();
+                let content: String = units[cursor + 1..end].iter().collect();
+                return Ok(ParsedLine::Content(ContentLine {
+                    file: normalize_relative_path(&file),
+                    separator,
+                    line_number: digits.parse().unwrap_or(0),
+                    line_separator,
+                    content,
+                }));
+            }
+        }
+        index += 1;
+    }
+    Err(tool_error(
+        "tool_execution_failed",
+        format!("Unexpected ripgrep content output: {line}"),
+    ))
+}
+
+fn is_line_terminator(unit: char) -> bool {
+    matches!(unit, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
 fn parse_count_entry(line: String) -> Option<(String, i64)> {
@@ -745,7 +1126,7 @@ fn parse_count_entry(line: String) -> Option<(String, i64)> {
 /// `Number.parseInt(value, 10)`: leading whitespace and sign accepted, the
 /// parse stops at the first non-digit, and no digits means `NaN`.
 fn js_parse_int(value: &str) -> Option<i64> {
-    let value = value.trim_start();
+    let value = js_trim_start(value);
     let mut chars = value.chars().peekable();
     let mut sign = 1i64;
     if let Some(first) = chars.peek() {
@@ -925,32 +1306,435 @@ fn js_compare(left: &str, right: &str) -> std::cmp::Ordering {
     left.encode_utf16().cmp(right.encode_utf16())
 }
 
-/// Node's `String#localeCompare` with the en-US ICU collation (the fixture
-/// locale asserted by the generators).
+/// Node's `String#localeCompare` with the process default locale
+/// (`LC_ALL`/`LC_MESSAGES`/`LANG`, the same `node_locale`/`node_collator`
+/// calibration used by `project_files`).
 fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
-    static COLLATOR: OnceLock<icu_collator::CollatorBorrowed<'static>> = OnceLock::new();
+    static COLLATOR: OnceLock<Option<icu_collator::CollatorBorrowed<'static>>> = OnceLock::new();
     let collator = COLLATOR.get_or_init(|| {
-        let locale: icu_locale_core::Locale = "en-US".parse().expect("valid locale");
-        icu_collator::Collator::try_new(locale.into(), Default::default())
-            .expect("bundled collation data")
+        let locale = node_locale(|key| std::env::var(key).ok());
+        node_collator(&locale).ok()
     });
+    let Some(collator) = collator else {
+        return js_compare(left, right);
+    };
     let left: Vec<u16> = left.encode_utf16().collect();
     let right: Vec<u16> = right.encode_utf16().collect();
     collator.compare_utf16(&left, &right)
 }
 
-fn js_trim(value: &str) -> &str {
-    value.trim()
-}
-
-fn js_trim_end(value: &str) -> &str {
-    value.trim_end()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::tools::builtin::is_absolute;
+    use crate::{
+        host::modules::{
+            capability::RuntimeContext,
+            tool_context::{HostToolCheckpoint, ToolRuntimeContext},
+        },
+        runtime::network::Cancellation,
+        runtime::tools::builtin::is_absolute,
+    };
+    use std::{
+        os::unix::fs::PermissionsExt,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration as StdDuration, UNIX_EPOCH},
+    };
+
+    static SCRATCH: AtomicUsize = AtomicUsize::new(0);
+
+    struct Scratch {
+        root: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let base = std::fs::canonicalize(std::env::temp_dir()).expect("temp dir");
+            let root = base.join(format!(
+                "pdrs-grep-unit-{label}-{}-{}",
+                std::process::id(),
+                SCRATCH.fetch_add(1, Ordering::SeqCst)
+            ));
+            std::fs::create_dir(&root).expect("create scratch");
+            Self { root }
+        }
+
+        fn script(&self, name: &str, body: &str) -> PathBuf {
+            let path = self.root.join(name);
+            std::fs::write(&path, body).expect("write script");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod script");
+            path
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn context(env: &[(&str, &str)], abort: Option<Cancellation>, cwd: &Path) -> ToolRunContext {
+        let mut environment = JsObject::new();
+        for (key, value) in env {
+            environment.insert((*key).into(), JsValue::from(*value));
+        }
+        let fields = object([
+            ("cwd", JsValue::from(cwd.to_string_lossy().as_ref())),
+            ("env", JsValue::Object(environment)),
+        ]);
+        let host = ToolRuntimeContext {
+            fields,
+            files: HostToolCheckpoint::default().tool_context_state(),
+            abort_signal: abort.map(|signal| Arc::new(signal) as RuntimeContext),
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo: None,
+            goal: None,
+            plan_directory: None,
+        };
+        ToolRunContext::new(Arc::new(host))
+    }
+
+    fn futures_block<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(future)
+    }
+
+    fn cwd_string(root: &Path) -> JsString {
+        JsString::from(root.to_string_lossy().as_ref())
+    }
+
+    fn set_mtime(path: &Path, millis: f64) {
+        let taken = UNIX_EPOCH + StdDuration::from_secs_f64(millis / 1_000.0);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open for mtime")
+            .set_modified(taken)
+            .expect("set mtime");
+    }
+
+    /// Raw filesystem precision, independent of `metadata_modified_ms`, so a
+    /// truncating regression cannot turn the test into a skip.
+    fn raw_mtime_ms(path: &Path) -> f64 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .modified()
+            .expect("mtime")
+            .duration_since(UNIX_EPOCH)
+            .expect("after epoch")
+            .as_secs_f64()
+            * 1_000.0
+    }
+
+    #[test]
+    fn content_lines_follow_js_regex_dot_and_digit_semantics() {
+        assert!(parse_content_line("cr.txt:1:foo\rbar".to_owned()).is_err());
+        assert!(parse_content_line("ls.txt:1:foo\u{2028}bar".to_owned()).is_err());
+        let parsed = parse_content_line("trail.txt:1:foo\u{2028}".to_owned()).expect("trailing LT");
+        let ParsedLine::Content(line) = parsed else {
+            panic!("expected content")
+        };
+        assert_eq!(line.content, "foo");
+        assert_eq!(line.file, "trail.txt");
+
+        let parsed =
+            parse_content_line("a:\u{0661}:note.txt:1:foo".to_owned()).expect("unicode digits");
+        let ParsedLine::Content(line) = parsed else {
+            panic!("expected content")
+        };
+        assert_eq!(line.file, "a:\u{0661}:note.txt");
+        assert_eq!(line.line_number, 1);
+        assert_eq!(line.content, "foo");
+    }
+
+    #[test]
+    fn js_whitespace_covers_bom_and_line_terminators_but_not_nel() {
+        assert_eq!(js_trim_end("foo\u{feff}"), "foo");
+        assert_eq!(js_trim_end("foo\u{0085}"), "foo\u{0085}");
+        assert_eq!(
+            split_ripgrep_lines("a\u{feff}\nb\u{0085}\n"),
+            vec!["a".to_owned(), "b\u{0085}".to_owned()]
+        );
+        assert_eq!(
+            split_glob_patterns("*.ts\u{feff}*.md"),
+            vec!["*.ts", "*.md"]
+        );
+        assert_eq!(
+            split_glob_patterns("*.ts\u{0085}*.md"),
+            vec!["*.ts\u{0085}*.md"]
+        );
+        assert_eq!(js_parse_int("\u{feff} 12"), Some(12));
+        assert_eq!(js_parse_int("\u{0085}12"), None);
+    }
+
+    #[test]
+    fn files_sort_keeps_submillisecond_mtime_precision() {
+        let scratch = Scratch::new("mtime");
+        let z = scratch.root.join("z.ts");
+        let a = scratch.root.join("a.ts");
+        std::fs::write(&z, "foo\n").expect("write z");
+        std::fs::write(&a, "foo\n").expect("write a");
+        set_mtime(&z, 1_700_000_000_100.8);
+        set_mtime(&a, 1_700_000_000_100.2);
+        let z_ms = raw_mtime_ms(&z);
+        let a_ms = raw_mtime_ms(&a);
+        if (a_ms - z_ms).abs() < 0.05 {
+            eprintln!("skip: filesystem did not preserve sub-millisecond mtimes");
+            return;
+        }
+        let mut files = vec!["z.ts".to_owned(), "a.ts".to_owned()];
+        futures_block(sort_files_by_modified_time(
+            &mut files,
+            &cwd_string(&scratch.root),
+        ));
+        assert_eq!(files, vec!["z.ts".to_owned(), "a.ts".to_owned()]);
+    }
+
+    #[test]
+    fn bundled_ripgrep_wins_over_path_and_matches_the_ts_lookup() {
+        let scratch = Scratch::new("bundled");
+        let (platform, arch) = platform_arch();
+        let app = scratch.root.join("app");
+        let bin = app
+            .join("node_modules")
+            .join(format!("@vscode/ripgrep-{platform}-{arch}"))
+            .join("bin");
+        std::fs::create_dir_all(&bin).expect("bundle bin");
+        let package_dir = app.join("node_modules").join("@vscode").join("ripgrep");
+        std::fs::create_dir_all(&package_dir).expect("wrapper package");
+        std::fs::write(package_dir.join("package.json"), "{}").expect("wrapper manifest");
+        let bundled = bin.join("rg");
+        std::fs::write(&bundled, "#!/bin/sh\nprintf 'x.txt:1:hit\\n'\n").expect("write bundled");
+        std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod bundled");
+
+        let path_dir = scratch.root.join("path-bin");
+        std::fs::create_dir(&path_dir).expect("path bin");
+        let on_path = path_dir.join("rg");
+        std::fs::write(&on_path, "#!/bin/sh\nexit 0\n").expect("write path rg");
+        std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod path rg");
+
+        let resolved = resolve_ripgrep_with(
+            None,
+            Some(path_dir.to_string_lossy().into_owned()),
+            std::slice::from_ref(&app),
+        )
+        .expect("bundled resolution");
+        assert_eq!(resolved, bundled, "bundled engine must outrank PATH");
+
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_DESKTOP_RUNTIME_ROOT",
+                    app.to_str().expect("utf8 app"),
+                ),
+                ("PILOTDECK_RIPGREP_PATH", ""),
+                ("PATH", ""),
+            ],
+            None,
+            &scratch.root,
+        );
+        let output = futures_block(run_ripgrep_with_timeout(
+            &[],
+            &cwd_string(&scratch.root),
+            &context,
+            StdDuration::from_secs(5),
+        ))
+        .expect("bundled engine runs");
+        assert_eq!(output, "x.txt:1:hit\n");
+    }
+
+    #[test]
+    fn missing_bundled_ripgrep_reports_the_ts_unsupported_tool_error() {
+        let error = resolve_ripgrep_with(None, Some(String::new()), &[]).expect_err("missing");
+        assert_eq!(error.code, "unsupported_tool");
+        assert_eq!(
+            error.message.to_utf8().unwrap(),
+            format!(
+                "grep requires the bundled ripgrep binary from @vscode/ripgrep, but it is not available for {}-{}. Reinstall dependencies with optional dependencies enabled.",
+                platform_arch().0,
+                platform_arch().1
+            )
+        );
+        let cause = error
+            .details
+            .expect("details")
+            .get("cause")
+            .and_then(JsValue::as_string)
+            .map(text)
+            .expect("cause");
+        assert_eq!(cause, "Cannot find module '@vscode/ripgrep'");
+    }
+
+    #[test]
+    fn timeout_kills_a_descendant_that_holds_the_stdout_pipe() {
+        let scratch = Scratch::new("timeout");
+        let script = scratch.script(
+            "rg-hold",
+            "#!/bin/sh\n( /bin/sleep 30 ) &\nprintf 'partial\\n'\nexit 0\n",
+        );
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let started = std::time::Instant::now();
+        let error = futures_block(run_ripgrep_with_timeout(
+            &[],
+            &cwd_string(&scratch.root),
+            &context,
+            StdDuration::from_millis(200),
+        ))
+        .expect_err("timeout");
+        assert_eq!(error.code, "tool_timeout");
+        assert!(
+            started.elapsed() < StdDuration::from_secs(5),
+            "timeout must bound pipe draining: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn cancellation_during_drain_after_leader_exit_aborts_the_run() {
+        let scratch = Scratch::new("cancel");
+        let script = scratch.script(
+            "rg-hold",
+            "#!/bin/sh\n( /bin/sleep 30 ) &\nprintf 'partial\\n'\nexit 0\n",
+        );
+        let signal = Cancellation::new();
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            Some(signal.clone()),
+            &scratch.root,
+        );
+        let started = std::time::Instant::now();
+        let error = futures_block(async move {
+            let trigger = tokio::spawn(async move {
+                tokio::time::sleep(StdDuration::from_millis(300)).await;
+                signal.cancel();
+            });
+            let result = run_ripgrep_with_timeout(
+                &[],
+                &cwd_string(&scratch.root),
+                &context,
+                StdDuration::from_secs(10),
+            )
+            .await;
+            let _ = trigger.await;
+            result
+        })
+        .expect_err("aborted");
+        assert_eq!(error.code, "tool_aborted");
+        assert!(
+            started.elapsed() < StdDuration::from_secs(5),
+            "cancellation must bound pipe draining: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn signal_exit_uses_the_node_signal_name() {
+        let scratch = Scratch::new("signal");
+        let script = scratch.script("rg-term", "#!/bin/sh\nkill -TERM $$\n");
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let error = futures_block(run_ripgrep_with_timeout(
+            &[],
+            &cwd_string(&scratch.root),
+            &context,
+            StdDuration::from_secs(5),
+        ))
+        .expect_err("signalled");
+        assert_eq!(
+            error.message.to_utf8().unwrap(),
+            "ripgrep grep search exited via signal SIGTERM."
+        );
+    }
+
+    #[test]
+    fn nonzero_exit_carries_exit_code_and_stderr_details() {
+        let scratch = Scratch::new("nonzero");
+        let script = scratch.script("rg-fail", "#!/bin/sh\nprintf 'boom' >&2\nexit 2\n");
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let error = futures_block(run_ripgrep_with_timeout(
+            &[],
+            &cwd_string(&scratch.root),
+            &context,
+            StdDuration::from_secs(5),
+        ))
+        .expect_err("failed");
+        assert_eq!(error.code, "tool_execution_failed");
+        assert_eq!(
+            error.message.to_utf8().unwrap(),
+            "ripgrep grep search failed: boom"
+        );
+        let details = error.details.expect("details");
+        assert_eq!(
+            details.get("exitCode").and_then(JsValue::as_number),
+            Some(2.0)
+        );
+        assert_eq!(
+            details
+                .get("stderr")
+                .and_then(JsValue::as_string)
+                .map(text)
+                .as_deref(),
+            Some("boom")
+        );
+    }
+
+    #[test]
+    fn locale_compare_uses_the_icu_collator() {
+        // Default JS sort would put "B" before "a"; ICU en-US puts "a" first.
+        assert_eq!(locale_compare("a", "B"), std::cmp::Ordering::Less);
+    }
 
     #[test]
     fn glob_patterns_follow_the_ts_split_rules() {

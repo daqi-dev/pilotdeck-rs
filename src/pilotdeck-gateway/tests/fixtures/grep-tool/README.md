@@ -11,7 +11,7 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次输出字节一致才更新
-正本。场景 51 个、调用 51 次。`sourceSha256` 由 `sourceClosureSha256` 覆盖
+正本。场景 61 个、调用 61 次。`sourceSha256` 由 `sourceClosureSha256` 覆盖
 `src/tool/builtin/grep.ts` 的相对 import 闭包（含 `filesystem/ripgrep.ts`、
 `pathSafety.ts`、`NodeFsPort`、`SubprocessPort`、`bash/commandRunner` 等 650 个
 文件），`generatedFrom` 绑定基线工作树。
@@ -27,25 +27,35 @@ TS 的 `grep` 不自己匹配内容：`filesystem/ripgrep.ts:89` 用
 `node_modules/.pnpm/@vscode+ripgrep-darwin-arm64@1.18.0/…/bin/rg`（ripgrep 15.0.0）。
 
 Rust 侧同样不自带匹配引擎，行为按 TS 拆分：`grep.rs` 生成同一参数向量并执行
-ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映射。二进制定位顺序：
+ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映射。二进制定位顺序按
+`filesystem/ripgrep.ts:84-103` 的 TS 契约：
 
-1. `PILOTDECK_RIPGREP_PATH`（运维/测试固定引擎，类比 `bash` 的
-   `PILOTDECK_SHELL_PATH`）；
-2. `PATH` 上第一个可执行的 `rg`（Windows 为 `rg.exe`）；
-3. 都没有 → 与 TS 同文案的 `unsupported_tool`，不伪造结果。
+1. `PILOTDECK_RIPGREP_PATH`（运维/测试固定引擎，空值视为未设置）；
+2. `@vscode/ripgrep` 解析出的
+   `<...>/@vscode/ripgrep-<platform>-<arch>/bin/rg`：从
+   `PILOTDECK_DESKTOP_RUNTIME_ROOT` 与网关可执行文件祖先做 Node 的
+   `node_modules` 查找（含 pnpm `.pnpm` 虚拟仓和
+   `<ancestor>/resources/PilotDeck/node_modules`）；
+3. 没有可解析的打包依赖时，才退回 `PATH` 上第一个可执行的 `rg`（Windows 为
+   `rg.exe`）；
+4. 都没有 → 与 TS 同文案的 `unsupported_tool`，不伪造结果。
 
 本夹具用基线自带 ripgrep 15.0.0 录制；同一组场景在系统 ripgrep 15.2.0 下回放也
 逐字节一致。没有 `rg` 的机器上 `grep_outputs_match_real_ts` 会打印跳过原因；
-`PDRS_REQUIRE_RG=1` 时改为测试失败，避免对拍假绿。
+`PDRS_REQUIRE_RG=1` 时改为测试失败，CI 已设置该变量，避免对拍假绿。Rust 侧不会
+下载或内置任何 ripgrep 二进制。
 
 ## 场景
 
 - content：单文件匹配、`-n:false`、`-C`/`context`/`-B`/`-A` 与优先级、`--`
   分隔、正则、`-i`、多行、超长行省略、`-` 开头 pattern、Unicode、文件目标路径
-  重定基、offset/head_limit（含 0、负数、越界）、无匹配、二进制目标报错。
+  重定基、offset/head_limit（含 0、负数、越界）、无匹配、二进制目标报错；
+  另覆盖 JS `trimEnd` 的 BOM/NEL/U+2028 行尾、行内 CR/U+2028 的解析错误，以及
+  文件名中的 Unicode 数字（`\d` 只认 ASCII）。
 - files_with_matches（默认）：mtime 倒序、glob（`*.ts`、`*.{ts,js}`、逗号、
-  空白分隔、无匹配）、`type`（ts/js/py）、隐藏文件、ignored 目录、目录/尾斜杠
-  路径、二进制目标、head_limit/offset。
+  空白/JS `\s` 分隔——含 BOM、不含 NEL、无匹配）、`type`（ts/js/py）、隐藏文
+  件、ignored 目录、目录/尾斜杠路径、二进制目标、head_limit/offset；另覆盖亚
+  毫秒 `mtimeMs` 排序及其与 `head_limit` 的组合。
 - count：全树计数、glob 过滤、head_limit、二进制、无匹配。
 - 路径与错误：不存在路径、工作区外绝对路径、工作区内绝对路径、非法正则。
 
@@ -57,8 +67,12 @@ ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映
 - **`isIgnoredPath` 过滤是防御分支**：ripgrep 的 `--glob '!dist'`/`!node_modules`
   会先剪枝，正常输出不会含这些段；夹具无法从真实 TS 触发该分支，改由
   `grep.rs` 单测 `workspace_paths_rebase_and_ignore_baseline_segments` 钉住。
-- **超时/abort**：TS 固定 20 s 超时与 `tool_aborted` 分支无法在夹具里稳定制造，
-  未纳入 oracle；Rust 按 `ripgrep.ts` 的 code/文案实现，未做真实计时对拍。
+- **超时/abort/信号**：TS 固定 20 s 超时与 `tool_aborted` 分支无法在夹具里稳定
+  制造，未纳入 oracle；Rust 用持有 stdout 管道的后代进程做单测，覆盖超时、leader
+  退出后取消、整组 TERM→KILL、Node 信号名与 stderr/exitCode 详情。继承信号重置
+  由 `child_signals` 探针在独立 worker 中实测。
+- **mtime**：生成器用 `utimes(path, ms/1000, ...)` 写入，保留 `mtimeMs` 的亚毫秒
+  小数；回放用 `Duration::from_secs_f64` 复原。
 - **环境变量**：TS 把 `context.env` 整体作为子进程 env（Node 是替换而非合并），
   Rust 在 host 提供 `env` 时同样 `env_clear` 后逐项设置；夹具因此只注入
   `HOME`/`PILOT_HOME`。

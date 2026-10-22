@@ -20,8 +20,8 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 
 ## 范围切分
 
-本 PR 只做 `read_file`、`glob`、`get_current_time`；`grep` 留 A6.5-pr4b。任务书
-允许按估算切分，grep.ts（454 行）的上下文/多行/二进制匹配需要单独的对拍预算。
+本夹具只覆盖 `read_file`、`glob`、`get_current_time`；`grep` 已在 A6.5-pr4b
+落地，其真实 TS 金样与边界见 `tests/fixtures/grep-tool/`。
 
 ## 已知边界
 

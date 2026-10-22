@@ -49,7 +49,8 @@ async function apply(step: Step): Promise<void> {
         ? step.repeat.unit.repeat(step.repeat.count)
         : step.content;
     await writeFile(target, content);
-    if (step.mtime !== undefined) await utimes(target, new Date(step.mtime), new Date(step.mtime));
+    // Numeric seconds keep sub-millisecond `mtimeMs`; `new Date(ms)` truncates.
+    if (step.mtime !== undefined) await utimes(target, step.mtime / 1000, step.mtime / 1000);
   } else if (step.op === 'dir') {
     await mkdir(target, { recursive: true });
   } else if (step.op === 'chmod') {
@@ -287,6 +288,50 @@ await scenario('grep-invalid-regex', [content({ pattern: '[', path: 'src/a.ts' }
 await scenario('grep-empty-file', [content({ pattern: 'foo', path: 'empty.txt' })], {
   files: [...standardFiles(), { path: 'empty.txt', content: '' }],
 });
+
+// ---------- JS `trimEnd`, regex `.`/`\d`, glob `\s`, and raw mtime edges ----------
+await scenario('grep-content-trailing-bom', [content({ pattern: 'foo', path: 'bom.txt' })], {
+  files: [{ path: 'bom.txt', content: 'foo\uFEFF\n' }],
+});
+await scenario('grep-content-trailing-nel', [content({ pattern: 'foo', path: 'nel.txt' })], {
+  files: [{ path: 'nel.txt', content: 'foo\u0085\n' }],
+});
+await scenario('grep-content-inline-cr', [content({ pattern: 'foo', path: 'cr.txt' })], {
+  files: [{ path: 'cr.txt', content: 'foo\rbar\n' }],
+});
+await scenario('grep-content-inline-u2028', [content({ pattern: 'foo', path: 'ls.txt' })], {
+  files: [{ path: 'ls.txt', content: 'foo\u2028bar\n' }],
+});
+await scenario('grep-content-trailing-u2028', [content({ pattern: 'foo', path: 'trail-ls.txt' })], {
+  files: [{ path: 'trail-ls.txt', content: 'foo\u2028\n' }],
+});
+await scenario(
+  'grep-content-unicode-digit-name',
+  [content({ pattern: 'foo', path: 'a:\u0661:note.txt' })],
+  { files: [{ path: 'a:\u0661:note.txt', content: 'foo\n' }] },
+);
+await scenario(
+  'grep-files-glob-split-bom',
+  [files({ pattern: 'foo', path: '.', glob: '*.md\uFEFF*.ts' })],
+  { files: [{ path: 'a.md', content: 'foo\n' }, { path: 'b.ts', content: 'foo\n' }] },
+);
+await scenario(
+  'grep-files-glob-split-nel',
+  [files({ pattern: 'foo', path: '.', glob: '*.md\u0085*.ts' })],
+  { files: [{ path: 'a.md', content: 'foo\n' }, { path: 'b.ts', content: 'foo\n' }] },
+);
+const submillisecondFiles = (): FileSpec[] => [
+  { path: 'z.ts', content: 'foo\n', mtime: BASE_MTIME + 100.8 },
+  { path: 'a.ts', content: 'foo\n', mtime: BASE_MTIME + 100.2 },
+];
+await scenario('grep-files-submillisecond-mtime', [files({ pattern: 'foo', path: '.' })], {
+  files: submillisecondFiles(),
+});
+await scenario(
+  'grep-files-submillisecond-head-limit',
+  [files({ pattern: 'foo', path: '.', head_limit: 1 })],
+  { files: submillisecondFiles() },
+);
 
 const oracle = {
   sourceCommit: commit,
