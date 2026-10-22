@@ -28,7 +28,7 @@ TS 的 `grep` 不自己匹配内容：`filesystem/ripgrep.ts:89` 用
 
 Rust 侧同样不自带匹配引擎，行为按 TS 拆分：`grep.rs` 生成同一参数向量并执行
 ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映射。二进制定位顺序按
-`filesystem/ripgrep.ts:84-103` 的 TS 契约：
+`filesystem/ripgrep.ts:89-103` 的 TS 契约：
 
 1. `PILOTDECK_RIPGREP_PATH`（运维/测试固定引擎，空值视为未设置）；
 2. `@vscode/ripgrep` 解析出的
@@ -36,14 +36,16 @@ ripgrep，再复刻 TS 的解析、忽略段过滤、排序、分页与错误映
    `PILOTDECK_DESKTOP_RUNTIME_ROOT` 与网关可执行文件祖先做 Node 的
    `node_modules` 查找（含 pnpm `.pnpm` 虚拟仓和
    `<ancestor>/resources/PilotDeck/node_modules`）；
-3. 没有可解析的打包依赖时，才退回 `PATH` 上第一个可执行的 `rg`（Windows 为
-   `rg.exe`）；
-4. 都没有 → 与 TS 同文案的 `unsupported_tool`，不伪造结果。
+3. 没有可解析的打包依赖 → 与 TS 同文案的 `unsupported_tool`。TS 的
+   `require("@vscode/ripgrep")` 失败后不会回退 `PATH`，这里也不回退。
 
 本夹具用基线自带 ripgrep 15.0.0 录制；同一组场景在系统 ripgrep 15.2.0 下回放也
-逐字节一致。没有 `rg` 的机器上 `grep_outputs_match_real_ts` 会打印跳过原因；
-`PDRS_REQUIRE_RG=1` 时改为测试失败，CI 已设置该变量，避免对拍假绿。Rust 侧不会
-下载或内置任何 ripgrep 二进制。
+逐字节一致。回放测试在「无 override、无 bundled」时会自己到 `PATH` 找 `rg`，再通过
+`PILOTDECK_RIPGREP_PATH` 显式传给工具——这只是测试侧的引擎供给，产品解析器仍然
+只认 override/bundled。没有 `rg` 的机器上 `grep_outputs_match_real_ts` 会打印跳过
+原因；`PDRS_REQUIRE_RG=1` 或 `CI=true` 时改为测试失败（GitHub Actions 默认设置
+`CI=true`，不依赖 ci.yml 的 hunk 与测试代码同批落库）。Rust 侧不会下载或内置任何
+ripgrep 二进制。
 
 ## 场景
 

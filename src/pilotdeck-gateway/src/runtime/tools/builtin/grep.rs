@@ -13,9 +13,10 @@
 //! `@vscode/ripgrep-<platform>-<arch>/bin/rg` package is resolved with Node's
 //! `node_modules` walk (pnpm's virtual store included) from the runtime root
 //! and the gateway executable's ancestors. `PILOTDECK_RIPGREP_PATH` is an
-//! explicit deployment/parity override; only when no bundled package exists
-//! does `rg` on `PATH` act as a fallback. Without any engine the tool raises
-//! the TS `unsupported_tool` wording.
+//! explicit deployment/parity override; it is the only way to run an engine
+//! outside the bundled package. Without a bundled engine the tool raises the
+//! TS `unsupported_tool` wording, exactly like `require("@vscode/ripgrep")`
+//! failing in `filesystem/ripgrep.ts:89-103` (no `PATH` fallback in TS).
 //!
 //! No ripgrep binary is downloaded or bundled by this crate.
 use super::{
@@ -295,6 +296,23 @@ fn split_glob_patterns(glob: &str) -> Vec<String> {
 
 fn resolve_ripgrep(context: &ToolRunContext) -> Result<PathBuf, ToolError> {
     let environment = context.fields.get("env").and_then(JsValue::as_object);
+    resolve_ripgrep_in(environment, executable_parent())
+}
+
+fn executable_parent() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+}
+
+/// Split from [`resolve_ripgrep`] so a test can pin the module-walk roots
+/// without inheriting the real test binary's ancestors. The signature has no
+/// `PATH` input on purpose: TS's `require("@vscode/ripgrep")` failure is
+/// terminal and never falls back to a system `rg`.
+fn resolve_ripgrep_in(
+    environment: Option<&JsObject>,
+    executable_parent: Option<PathBuf>,
+) -> Result<PathBuf, ToolError> {
     let get = |key: &str| -> Option<String> {
         environment
             .and_then(|entries| entries.get(key))
@@ -307,28 +325,30 @@ fn resolve_ripgrep(context: &ToolRunContext) -> Result<PathBuf, ToolError> {
     let override_path = get("PILOTDECK_RIPGREP_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    let roots = default_roots(get("PILOTDECK_DESKTOP_RUNTIME_ROOT"));
-    resolve_ripgrep_with(override_path, get("PATH"), &roots)
+    let roots = default_roots_in(get("PILOTDECK_DESKTOP_RUNTIME_ROOT"), executable_parent);
+    resolve_ripgrep_with(override_path, &roots)
 }
 
-/// Whether the tool can resolve a ripgrep engine in this process. Shared with
-/// the parity replay so its skip guard cannot drift from the real resolution.
+/// Whether the tool can resolve a ripgrep engine in this process. Mirrors the
+/// production resolver exactly (override or bundled package); parity harnesses
+/// that may use a system `rg` must add their own test-only lookup. Without an
+/// engine the tool fails with `unsupported_tool`, so replaying the oracle
+/// would otherwise test nothing.
 pub fn ripgrep_available() -> bool {
     let override_path = std::env::var_os("PILOTDECK_RIPGREP_PATH")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
     let roots = default_roots(std::env::var("PILOTDECK_DESKTOP_RUNTIME_ROOT").ok());
-    resolve_ripgrep_with(override_path, std::env::var("PATH").ok(), &roots).is_ok()
+    resolve_ripgrep_with(override_path, &roots).is_ok()
 }
 
 /// Resolution order: explicit `PILOTDECK_RIPGREP_PATH` (deployment/parity
 /// pin) -> the bundled `@vscode/ripgrep-<platform>-<arch>/bin/rg` package ->
-/// `rg` on `PATH` -> the TS `unsupported_tool` error. The middle step is the
-/// TS contract (`filesystem/ripgrep.ts:84-103`); `PATH` only keeps deployments
-/// without a JS module tree usable and never outranks the bundled engine.
+/// the TS `unsupported_tool` error. This is the TS contract
+/// (`filesystem/ripgrep.ts:89-103`): `require("@vscode/ripgrep")` failure is
+/// terminal and never falls back to `PATH`.
 fn resolve_ripgrep_with(
     override_path: Option<PathBuf>,
-    path: Option<String>,
     roots: &[PathBuf],
 ) -> Result<PathBuf, ToolError> {
     if let Some(path) = override_path {
@@ -341,32 +361,26 @@ fn resolve_ripgrep_with(
         )));
     }
     match bundled_ripgrep(roots) {
-        Ok(Some(path)) => return Ok(path),
-        Ok(None) => {}
-        Err(cause) => return Err(ripgrep_unavailable(&cause)),
+        Ok(Some(path)) => Ok(path),
+        Ok(None) => Err(ripgrep_unavailable("Cannot find module '@vscode/ripgrep'")),
+        Err(cause) => Err(ripgrep_unavailable(&cause)),
     }
-    if let Some(paths) = path {
-        for directory in std::env::split_paths(&paths) {
-            for name in ["rg", "rg.exe"] {
-                let candidate = directory.join(name);
-                if is_executable(&candidate) {
-                    return Ok(candidate);
-                }
-            }
-        }
-    }
-    Err(ripgrep_unavailable("Cannot find module '@vscode/ripgrep'"))
 }
 
 fn default_roots(runtime_root: Option<String>) -> Vec<PathBuf> {
+    default_roots_in(runtime_root, executable_parent())
+}
+
+fn default_roots_in(
+    runtime_root: Option<String>,
+    executable_parent: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(root) = runtime_root.filter(|value| !value.is_empty()) {
         roots.push(PathBuf::from(root));
     }
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(parent) = executable.parent()
-    {
-        roots.push(parent.to_path_buf());
+    if let Some(parent) = executable_parent {
+        roots.push(parent);
     }
     roots
 }
@@ -576,6 +590,7 @@ async fn run_ripgrep_with_timeout(
     let mut aborted = false;
     let mut forced = false;
     let mut kill_sent = false;
+    let mut kill_deadline: Option<Instant> = None;
     let mut timeout_sleep = Box::pin(sleep_until(Instant::now() + limit));
     let mut kill_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
     let mut force_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
@@ -602,12 +617,14 @@ async fn run_ripgrep_with_timeout(
             _ = &mut timeout_sleep, if !timed_out && !aborted => {
                 timed_out = true;
                 signal_group(group, &mut child, rustix::process::Signal::TERM);
+                kill_deadline = Some(Instant::now() + KILL_GRACE);
                 kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
             }
             _ = context.cancelled(), if !timed_out && !aborted => {
                 aborted = true;
                 signal_group(group, &mut child, rustix::process::Signal::TERM);
+                kill_deadline = Some(Instant::now() + KILL_GRACE);
                 kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
             }
@@ -619,6 +636,7 @@ async fn run_ripgrep_with_timeout(
                 }
             }, if kill_sleep.is_some() => {
                 kill_sleep = None;
+                kill_deadline = None;
                 kill_sent = true;
                 signal_group(group, &mut child, rustix::process::Signal::KILL);
             }
@@ -641,10 +659,37 @@ async fn run_ripgrep_with_timeout(
         let _ = out_task.await;
         let _ = err_task.await;
     }
-    // A pending deferred KILL is issued before the leader is reaped, so the
-    // group id cannot be reused underneath us.
-    if (timed_out || aborted) && !kill_sent {
-        signal_group(group, &mut child, rustix::process::Signal::KILL);
+    // On timeout/abort TS sends TERM immediately, resolves at `close`, and lets
+    // its 1 s KILL timer run on (`SubprocessPort.ts:83-92`). The loop can break
+    // at pipe EOF long before that timer fires (a leader whose stdio is closed
+    // exits while a descendant is still cleaning up). Returning at that point
+    // must not SIGKILL early; hand the deferred KILL and the reap to a
+    // background task so the leader stays an unreaped zombie and the PGID
+    // cannot be reused before the final group signal.
+    if timed_out || aborted {
+        let deferred =
+            !kill_sent && kill_deadline.is_some_and(|deadline| Instant::now() < deadline);
+        if deferred {
+            let deadline = kill_deadline.expect("deferred kill has a deadline");
+            tokio::spawn(async move {
+                sleep_until(deadline).await;
+                signal_group(group, &mut child, rustix::process::Signal::KILL);
+                let _ = timeout(Duration::from_secs(5), child.wait()).await;
+                crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+            });
+        } else {
+            if !kill_sent {
+                signal_group(group, &mut child, rustix::process::Signal::KILL);
+            }
+            let _ = timeout(Duration::from_secs(5), child.wait()).await;
+        }
+        if aborted || context.is_aborted() {
+            return Err(tool_aborted());
+        }
+        return Err(tool_error(
+            "tool_timeout",
+            format!("grep search timed out after {RIPGREP_TIMEOUT_MS}ms."),
+        ));
     }
     let status = match timeout(Duration::from_secs(5), child.wait()).await {
         Ok(Ok(status)) => Some(status),
@@ -659,14 +704,8 @@ async fn run_ripgrep_with_timeout(
             None
         }
     };
-    if aborted || context.is_aborted() {
+    if context.is_aborted() {
         return Err(tool_aborted());
-    }
-    if timed_out {
-        return Err(tool_error(
-            "tool_timeout",
-            format!("grep search timed out after {RIPGREP_TIMEOUT_MS}ms."),
-        ));
     }
     let Some(status) = status else {
         return Err(tool_error(
@@ -1060,13 +1099,13 @@ fn parse_content_line(line: String) -> Result<ParsedLine, ToolError> {
         return Ok(ParsedLine::Separator(line));
     }
     // JS `/^(.*?)([:-])(\d+)([:-])(.*)$/` without flags: `.` stops at every
-    // LineTerminator, `\d` is ASCII-only, and `$` also matches immediately
-    // before a final LineTerminator.
+    // LineTerminator, `\d` is ASCII-only, and `$` matches only at the very end
+    // of the input. It does NOT accept a trailing LineTerminator; the oracle's
+    // trailing-U+2028 case succeeds because `splitRipgrepLines().trimEnd()` has
+    // already removed it (`filesystem/ripgrep.ts:117-122`), not because `$`
+    // matches before it.
     let units: Vec<char> = line.chars().collect();
-    let mut end = units.len();
-    if units.last().is_some_and(|unit| is_line_terminator(*unit)) {
-        end -= 1;
-    }
+    let end = units.len();
     let mut index = 0;
     while index < end {
         let separator = units[index];
@@ -1414,6 +1453,33 @@ mod tests {
             .block_on(future)
     }
 
+    fn read_pid(path: &Path) -> rustix::process::Pid {
+        let raw: i32 = std::fs::read_to_string(path)
+            .expect("descendant pid file")
+            .trim()
+            .parse()
+            .expect("descendant pid");
+        rustix::process::Pid::from_raw(raw).expect("valid pid")
+    }
+
+    /// Poll under the caller's runtime so a deferred background cleanup task
+    /// can run; a blocking sleep would starve the current-thread runtime.
+    async fn wait_process_gone(pid: rustix::process::Pid, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if rustix::process::test_kill_process(pid).is_err() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    fn kill_descendant_if_alive(pid: rustix::process::Pid) {
+        // Keep a failing negative control from leaving `sleep 30` behind.
+        crate::process_group::kill(Some(pid), rustix::process::Signal::KILL);
+    }
+
     fn cwd_string(root: &Path) -> JsString {
         JsString::from(root.to_string_lossy().as_ref())
     }
@@ -1445,12 +1511,26 @@ mod tests {
     fn content_lines_follow_js_regex_dot_and_digit_semantics() {
         assert!(parse_content_line("cr.txt:1:foo\rbar".to_owned()).is_err());
         assert!(parse_content_line("ls.txt:1:foo\u{2028}bar".to_owned()).is_err());
-        let parsed = parse_content_line("trail.txt:1:foo\u{2028}".to_owned()).expect("trailing LT");
-        let ParsedLine::Content(line) = parsed else {
-            panic!("expected content")
-        };
-        assert_eq!(line.content, "foo");
-        assert_eq!(line.file, "trail.txt");
+        // JS `$` without `m` does not match before a trailing LineTerminator.
+        for terminator in ['\n', '\r', '\u{2028}', '\u{2029}'] {
+            let line = format!("trail.txt:1:foo{terminator}");
+            assert!(
+                parse_content_line(line.clone()).is_err(),
+                "JS $ must reject a trailing {terminator:?}"
+            );
+            // The product path trims it first; that (not `$`) is why the
+            // trailing-U+2028 oracle scenario succeeds.
+            let mut stdout = line;
+            stdout.push('\n');
+            let trimmed = split_ripgrep_lines(&stdout);
+            let parsed =
+                parse_content_line(trimmed[0].clone()).expect("trimmed trailing terminator");
+            let ParsedLine::Content(line) = parsed else {
+                panic!("expected content")
+            };
+            assert_eq!(line.content, "foo");
+            assert_eq!(line.file, "trail.txt");
+        }
 
         let parsed =
             parse_content_line("a:\u{0661}:note.txt:1:foo".to_owned()).expect("unicode digits");
@@ -1506,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_ripgrep_wins_over_path_and_matches_the_ts_lookup() {
+    fn bundled_ripgrep_resolves_to_the_platform_binary_and_matches_the_ts_lookup() {
         let scratch = Scratch::new("bundled");
         let (platform, arch) = platform_arch();
         let app = scratch.root.join("app");
@@ -1523,20 +1603,9 @@ mod tests {
         std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755))
             .expect("chmod bundled");
 
-        let path_dir = scratch.root.join("path-bin");
-        std::fs::create_dir(&path_dir).expect("path bin");
-        let on_path = path_dir.join("rg");
-        std::fs::write(&on_path, "#!/bin/sh\nexit 0\n").expect("write path rg");
-        std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod path rg");
-
-        let resolved = resolve_ripgrep_with(
-            None,
-            Some(path_dir.to_string_lossy().into_owned()),
-            std::slice::from_ref(&app),
-        )
-        .expect("bundled resolution");
-        assert_eq!(resolved, bundled, "bundled engine must outrank PATH");
+        let resolved =
+            resolve_ripgrep_with(None, std::slice::from_ref(&app)).expect("bundled resolution");
+        assert_eq!(resolved, bundled, "bundled package platform binary");
 
         let context = context(
             &[
@@ -1545,7 +1614,6 @@ mod tests {
                     app.to_str().expect("utf8 app"),
                 ),
                 ("PILOTDECK_RIPGREP_PATH", ""),
-                ("PATH", ""),
             ],
             None,
             &scratch.root,
@@ -1562,7 +1630,7 @@ mod tests {
 
     #[test]
     fn missing_bundled_ripgrep_reports_the_ts_unsupported_tool_error() {
-        let error = resolve_ripgrep_with(None, Some(String::new()), &[]).expect_err("missing");
+        let error = resolve_ripgrep_with(None, &[]).expect_err("missing");
         assert_eq!(error.code, "unsupported_tool");
         assert_eq!(
             error.message.to_utf8().unwrap(),
@@ -1583,11 +1651,54 @@ mod tests {
     }
 
     #[test]
+    fn missing_bundled_ripgrep_never_falls_back_to_path() {
+        let scratch = Scratch::new("no-path-fallback");
+        let path_dir = scratch.root.join("path-bin");
+        std::fs::create_dir(&path_dir).expect("path bin");
+        let on_path = path_dir.join("rg");
+        std::fs::write(&on_path, "#!/bin/sh\nexit 0\n").expect("write path rg");
+        std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod path rg");
+        assert!(is_executable(&on_path), "precondition: rg is on PATH");
+        // Drive the same entry point the tool uses, with only a scratch root
+        // and a pinned executable parent so the real machine's module tree
+        // cannot answer the lookup. `PATH` names an executable rg, yet
+        // `require("@vscode/ripgrep")` failure is terminal in TS
+        // (`filesystem/ripgrep.ts:89-103`), so resolution must still fail; a
+        // reintroduced PATH fallback would return `Ok`.
+        let environment = object([
+            ("PILOTDECK_RIPGREP_PATH", JsValue::from("")),
+            (
+                "PILOTDECK_DESKTOP_RUNTIME_ROOT",
+                JsValue::from(scratch.root.to_string_lossy().as_ref()),
+            ),
+            ("PATH", JsValue::from(path_dir.to_string_lossy().as_ref())),
+        ]);
+        let fake_executable = scratch.root.join("fake-exe");
+        std::fs::create_dir(&fake_executable).expect("fake exe dir");
+        let error = resolve_ripgrep_in(Some(&environment), Some(fake_executable))
+            .expect_err("bundled-only resolution");
+        assert_eq!(error.code, "unsupported_tool");
+        let cause = error
+            .details
+            .expect("details")
+            .get("cause")
+            .and_then(JsValue::as_string)
+            .map(text)
+            .expect("cause");
+        assert_eq!(cause, "Cannot find module '@vscode/ripgrep'");
+    }
+
+    #[test]
     fn timeout_kills_a_descendant_that_holds_the_stdout_pipe() {
         let scratch = Scratch::new("timeout");
+        let pid_file = scratch.root.join("descendant.pid");
         let script = scratch.script(
             "rg-hold",
-            "#!/bin/sh\n( /bin/sleep 30 ) &\nprintf 'partial\\n'\nexit 0\n",
+            &format!(
+                "#!/bin/sh\n( /bin/sleep 30 ) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                pid_file.display()
+            ),
         );
         let context = context(
             &[
@@ -1600,28 +1711,144 @@ mod tests {
             None,
             &scratch.root,
         );
-        let started = std::time::Instant::now();
-        let error = futures_block(run_ripgrep_with_timeout(
-            &[],
-            &cwd_string(&scratch.root),
-            &context,
-            StdDuration::from_millis(200),
-        ))
-        .expect_err("timeout");
+        let cwd = cwd_string(&scratch.root);
+        let (error, elapsed) = futures_block(async move {
+            let started = std::time::Instant::now();
+            let error =
+                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(3000))
+                    .await
+                    .expect_err("timeout");
+            let elapsed = started.elapsed();
+            let pid = read_pid(&pid_file);
+            if !wait_process_gone(pid, StdDuration::from_secs(3)).await {
+                kill_descendant_if_alive(pid);
+                panic!("descendant {pid:?} survived the timeout");
+            }
+            (error, elapsed)
+        });
         assert_eq!(error.code, "tool_timeout");
         assert!(
-            started.elapsed() < StdDuration::from_secs(5),
-            "timeout must bound pipe draining: {:?}",
-            started.elapsed()
+            elapsed < StdDuration::from_secs(5),
+            "timeout must bound pipe draining: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn timeout_keeps_the_ts_grace_when_the_pipes_close_early() {
+        let scratch = Scratch::new("grace");
+        let marker = scratch.root.join("descendant-cleaned");
+        // The descendant keeps stdout open, so the loop cannot finish before
+        // the 3 s timeout fires. On TERM it closes the pipes immediately
+        // (the Rust loop then breaks at pipe EOF) but keeps cleaning up for
+        // 0.35 s. TS's 1 s KILL timer must not cut that short; the deferred
+        // group KILL fires at ~4 s, after the marker is written.
+        let script = scratch.script(
+            "rg-grace",
+            &format!(
+                "#!/bin/sh\n(\n  trap 'exec 1>&- 2>&-; sleep 0.35; printf done > \"{}\"; exit 0' TERM\n  while :; do sleep 0.05; done\n) &\nprintf 'partial\\n'\nexit 0\n",
+                marker.display()
+            ),
+        );
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let cwd = cwd_string(&scratch.root);
+        let marker_for_check = marker.clone();
+        let (error, elapsed) = futures_block(async move {
+            let started = std::time::Instant::now();
+            let error =
+                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(3000))
+                    .await
+                    .expect_err("timeout");
+            let elapsed = started.elapsed();
+            // The deferred group KILL runs in the background one second after
+            // TERM (limit + 1 s); this 0.35 s cleanup must finish before it.
+            let deadline = Instant::now() + StdDuration::from_secs(2);
+            while !marker_for_check.exists() && Instant::now() < deadline {
+                tokio::time::sleep(StdDuration::from_millis(10)).await;
+            }
+            (error, elapsed)
+        });
+        assert_eq!(error.code, "tool_timeout");
+        assert!(
+            elapsed < StdDuration::from_millis(3_900),
+            "pipe EOF should return before the grace timer: {elapsed:?}"
+        );
+        assert!(
+            marker.exists(),
+            "descendant was SIGKILLed before its 0.35 s cleanup finished"
+        );
+    }
+
+    #[test]
+    fn deferred_kill_still_fires_after_the_pipe_eof_return() {
+        let scratch = Scratch::new("grace-kill");
+        let pid_file = scratch.root.join("descendant.pid");
+        // The descendant survives TERM (closes the pipes, then keeps running),
+        // so only the deferred group KILL can end it. The tool must return at
+        // pipe EOF while the descendant is still alive, then the background
+        // task must still fire the KILL one second after TERM.
+        let script = scratch.script(
+            "rg-grace-kill",
+            &format!(
+                "#!/bin/sh\n(\n  trap 'exec 1>&- 2>&-; while :; do sleep 0.05; done' TERM\n  while :; do sleep 0.05; done\n) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                pid_file.display()
+            ),
+        );
+        let context = context(
+            &[
+                (
+                    "PILOTDECK_RIPGREP_PATH",
+                    script.to_str().expect("utf8 script"),
+                ),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let cwd = cwd_string(&scratch.root);
+        let (error, alive_at_return, gone) = futures_block(async move {
+            let error =
+                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_millis(2000))
+                    .await
+                    .expect_err("timeout");
+            let pid = read_pid(&pid_file);
+            let alive_at_return = rustix::process::test_kill_process(pid).is_ok();
+            let gone = wait_process_gone(pid, StdDuration::from_secs(3)).await;
+            if !gone {
+                kill_descendant_if_alive(pid);
+            }
+            (error, alive_at_return, gone)
+        });
+        assert_eq!(error.code, "tool_timeout");
+        assert!(
+            alive_at_return,
+            "the 1 s grace was cut short: descendant was already gone at return"
+        );
+        assert!(
+            gone,
+            "the deferred group KILL never fired; the descendant survived"
         );
     }
 
     #[test]
     fn cancellation_during_drain_after_leader_exit_aborts_the_run() {
         let scratch = Scratch::new("cancel");
+        let pid_file = scratch.root.join("descendant.pid");
         let script = scratch.script(
             "rg-hold",
-            "#!/bin/sh\n( /bin/sleep 30 ) &\nprintf 'partial\\n'\nexit 0\n",
+            &format!(
+                "#!/bin/sh\n( /bin/sleep 30 ) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                pid_file.display()
+            ),
         );
         let signal = Cancellation::new();
         let context = context(
@@ -1635,28 +1862,36 @@ mod tests {
             Some(signal.clone()),
             &scratch.root,
         );
-        let started = std::time::Instant::now();
-        let error = futures_block(async move {
+        let cwd = cwd_string(&scratch.root);
+        let pid_file_for_trigger = pid_file.clone();
+        let (error, elapsed) = futures_block(async move {
+            let started = std::time::Instant::now();
             let trigger = tokio::spawn(async move {
-                tokio::time::sleep(StdDuration::from_millis(300)).await;
+                // Cancel only after the shell has started and recorded the
+                // descendant; a fixed delay raced with process startup (>200 ms
+                // in this sandbox) and sometimes cancelled before the fork.
+                let deadline = Instant::now() + StdDuration::from_secs(8);
+                while !pid_file_for_trigger.exists() && Instant::now() < deadline {
+                    tokio::time::sleep(StdDuration::from_millis(10)).await;
+                }
+                tokio::time::sleep(StdDuration::from_millis(100)).await;
                 signal.cancel();
             });
-            let result = run_ripgrep_with_timeout(
-                &[],
-                &cwd_string(&scratch.root),
-                &context,
-                StdDuration::from_secs(10),
-            )
-            .await;
+            let result =
+                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_secs(10)).await;
             let _ = trigger.await;
-            result
-        })
-        .expect_err("aborted");
+            let elapsed = started.elapsed();
+            let pid = read_pid(&pid_file);
+            if !wait_process_gone(pid, StdDuration::from_secs(3)).await {
+                kill_descendant_if_alive(pid);
+                panic!("descendant {pid:?} survived cancellation");
+            }
+            (result.expect_err("aborted"), elapsed)
+        });
         assert_eq!(error.code, "tool_aborted");
         assert!(
-            started.elapsed() < StdDuration::from_secs(5),
-            "cancellation must bound pipe draining: {:?}",
-            started.elapsed()
+            elapsed < StdDuration::from_secs(5),
+            "cancellation must bound pipe draining: {elapsed:?}"
         );
     }
 
