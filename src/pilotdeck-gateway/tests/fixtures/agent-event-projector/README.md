@@ -16,12 +16,12 @@ Node 22（基线根已含 `node_modules/tsx`）。
 并把每次 `persist` 入参和返回值记入金样。投影本身的排序、截断、附件、错误和
 budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报错的 Proxy 隔离。
 
-221 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
+227 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
 与未知/缺 type 的 default 分支）、`model_event`/`subagent_model_event` 的各子类型、
 `forwardSubagentText` 真假、timeline/streamBoundary 传播、tool_result 的 bytes/UTF-16
 截断边界、4 种 mime 扩展名与 `value` 回退、providerError 的 raw 截断
 （在代理对中间切开）、`??` 与 `!== undefined` 的 null/缺失差异，以及 persist 阈值。
-另有 79 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
+另有 85 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
 `TypeError: Cannot read properties of undefined (reading 'content')`；其中 7 条钉住
 附件/media 路径缺字段时 `reading 'trim'/'split'/'toLowerCase'/'length'` 的抛错与
 「附件循环先于 errorCode」的求值顺序）与 4 个 `__proto__` 工具数据 case（TS 的属性
@@ -59,6 +59,17 @@ budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报�
 - **`+` 的 ToPrimitive**：数组转串拼接（`[1,2]+20` → `"1,220"`）、字符串拼接
   （`"5"+20` → `"520"`）、`null+20` → 20、`undefined+20` → NaN；
 - 字符串 `content` 在 for-of 中逐字符迭代，无一有 `type`，产出 0 帧。
+
+修复轮 5 追加 6 个 case，钉住「map 回调里转换 vs 外层统一转换」的时机：
+`contentToText`/`toolResultContentBlockToText` 的 text 分支**原样返回字段值**，
+nullish 判断与 `ToString` 都发生在整个 `map` 结束后的 `Array.prototype.join` 里——
+所以后续元素的 map 期抛错（nullish 元素的 `reading 'type'`、image `data:null` 的
+`reading 'length'`）先于前项 text 的 `Cannot convert object to primitive value`；
+text 转换错误本身仍在 join 期抛（前项抛、后项正常）。三条路径
+（`tool_result`、`subagent_tool_result`、`tool_results_projected`）各至少一条。
+另：`mapAgentEvent` 门面默认路径改为进程级单例 projector（对齐 TS `DEFAULT_PROJECTOR`，
+`GatewayAgentEventProjector.ts:50/:63`），由单测
+`map_agent_event_default_calls_share_one_artifact_writer` 守护。
 
 已知覆盖边界：金样回放注入的是不会抛错的确定性 `RecordingStore`，默认
 `GatewayToolResultArtifactStore` 超阈值时对非字符串路径字段的抛错由单测

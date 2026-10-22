@@ -331,19 +331,51 @@ impl Default for GatewayAgentEventProjector {
     }
 }
 
+/// TS's `mapAgentEvent` facade projects through one process-level default
+/// projector (`GatewayAgentEventProjector.ts:50`), so default-store advisory
+/// writes all serialize through a single writer thread; only an injected
+/// store builds a per-call projector (`GatewayAgentEventProjector.ts:63`).
+fn default_projector() -> &'static GatewayAgentEventProjector {
+    static DEFAULT_PROJECTOR: std::sync::OnceLock<GatewayAgentEventProjector> =
+        std::sync::OnceLock::new();
+    DEFAULT_PROJECTOR.get_or_init(GatewayAgentEventProjector::default)
+}
+
 /// `mapAgentEvent` compatibility facade.
 pub fn map_agent_event(
     event: &JsValue,
     run_id: &str,
     options: GatewayAgentEventProjectorOptions,
 ) -> ProjectionResult<Vec<JsValue>> {
-    let forward_subagent_text = options.forward_subagent_text;
-    let projector = GatewayAgentEventProjector::new(options);
-    projector.project(&GatewayAgentEventProjectionInput {
+    let input = GatewayAgentEventProjectionInput {
         event,
         run_id,
-        forward_subagent_text,
-    })
+        forward_subagent_text: options.forward_subagent_text,
+    };
+    if options.tool_result_artifacts.is_some() {
+        GatewayAgentEventProjector::new(options).project(&input)
+    } else {
+        let projector = default_projector();
+        #[cfg(test)]
+        DEFAULT_FACADE_PROJECTOR_ADDR.store(
+            std::ptr::from_ref(projector).addr(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        projector.project(&input)
+    }
+}
+
+/// Address of the process-level default projector the facade's default path
+/// last projected through; `0` until such a call happens. Pins the facade to
+/// TS's shared `DEFAULT_PROJECTOR` (one artifact store, one bounded writer
+/// thread) instead of a throwaway per-call store.
+#[cfg(test)]
+static DEFAULT_FACADE_PROJECTOR_ADDR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn default_facade_projector_addr() -> usize {
+    DEFAULT_FACADE_PROJECTOR_ADDR.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,13 +1187,12 @@ fn tool_result_frames(
 ) -> ProjectionResult<Vec<JsValue>> {
     let result = field(event, "result");
     let content = required_array(required(result, "content")?, "event.result.content.map")?;
-    let full_text = join_units(
-        &content
+    let full_text = join_content_texts(
+        content
             .iter()
             .map(tool_result_content_text)
             .collect::<ProjectionResult<Vec<_>>>()?,
-        u16::from(b'\n'),
-    );
+    )?;
     let result_preview = limit_tool_result_preview(&full_text);
     let result_line_count = line_count(&full_text);
     let result_bytes = utf8_len(&full_text);
@@ -1297,17 +1328,6 @@ fn tool_result_frames(
     Ok(frames)
 }
 
-fn join_units(parts: &[Vec<u16>], separator: u16) -> Vec<u16> {
-    let mut out = Vec::new();
-    for (index, part) in parts.iter().enumerate() {
-        if index > 0 {
-            out.push(separator);
-        }
-        out.extend_from_slice(part);
-    }
-    out
-}
-
 fn line_count(units: &[u16]) -> usize {
     units
         .iter()
@@ -1369,19 +1389,47 @@ fn push_units(out: &mut Vec<u16>, value: &JsValue) -> ProjectionResult<()> {
     Ok(())
 }
 
+/// One element of `content.map(...).join("\n")`.
+enum ContentTextPart {
+    /// The `text` branch returns the field raw; `Array.prototype.join` renders
+    /// a nullish element as the empty string and converts anything else via
+    /// ToString, both only after the whole `map` has visited every element.
+    Deferred(JsValue),
+    /// The template-literal branches interpolate (ToString) inside the map
+    /// callback, like TS.
+    Converted(Vec<u16>),
+}
+
+/// `Array.prototype.join` over the mapped content texts: elements convert in
+/// order, so a later element's map-phase error (a nullish item, a
+/// `data.length` read) wins over an earlier element's deferred ToString error.
+fn join_content_texts(parts: Vec<ContentTextPart>) -> ProjectionResult<Vec<u16>> {
+    let mut out = Vec::new();
+    for (index, part) in parts.into_iter().enumerate() {
+        if index > 0 {
+            out.push(u16::from(b'\n'));
+        }
+        match part {
+            ContentTextPart::Converted(units) => out.extend(units),
+            ContentTextPart::Deferred(value) => {
+                if !nullish(&value) {
+                    out.extend(checked_string_units(&value)?);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// `contentToText` (PilotDeckToolResultContent). Built from UTF-16 units so
 /// lone surrogates in string fields survive template interpolation.
-fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
+fn tool_result_content_text(item: &JsValue) -> ProjectionResult<ContentTextPart> {
     let kind = required(item, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        // The return value is an `Array.prototype.join` element, so a nullish
-        // `text` renders as the empty string; any other value converts via
-        // `ToString` (an own `toString` throws there).
-        let value = field(item, "text");
-        if !nullish(value) {
-            out.extend(checked_string_units(value)?);
-        }
+        // `contentToText` returns `content.text` unchanged; the nullish check
+        // and ToString happen in `Array.prototype.join`, after the whole map.
+        return Ok(ContentTextPart::Deferred(field(item, "text").clone()));
     } else if is_type(kind, "json") {
         // `JSON.stringify(undefined)` is undefined and `Array.prototype.join`
         // renders that element as the empty string; a deep value throws.
@@ -1426,20 +1474,17 @@ fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
         }
         push_str(&mut out, "]");
     }
-    Ok(out)
+    Ok(ContentTextPart::Converted(out))
 }
 
 /// Canonical `toolResultContentBlockToText`.
-fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
+fn canonical_content_text(block: &JsValue) -> ProjectionResult<ContentTextPart> {
     let kind = required(block, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        // Join element like `tool_result_content_text`: nullish renders as the
-        // empty string, everything else converts via `ToString`.
-        let value = field(block, "text");
-        if !nullish(value) {
-            out.extend(checked_string_units(value)?);
-        }
+        // Join element like `tool_result_content_text`: the raw field comes
+        // back and only `Array.prototype.join` converts it, after the map.
+        return Ok(ContentTextPart::Deferred(field(block, "text").clone()));
     } else if is_type(kind, "image") {
         push_str(&mut out, "[Image: ");
         push_units(&mut out, field(block, "mimeType"))?;
@@ -1464,18 +1509,17 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
         }
         push_str(&mut out, "]");
     }
-    Ok(out)
+    Ok(ContentTextPart::Converted(out))
 }
 
 fn flatten_tool_result_block_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
     let content = required_array(required(block, "content")?, "content.map")?;
-    Ok(join_units(
-        &content
+    join_content_texts(
+        content
             .iter()
             .map(canonical_content_text)
             .collect::<ProjectionResult<Vec<_>>>()?,
-        u16::from(b'\n'),
-    ))
+    )
 }
 
 fn sanitize_tool_data(value: &JsValue) -> ProjectionResult<JsValue> {
@@ -2008,13 +2052,12 @@ fn map_subagent_model_event(
 fn subagent_tool_result_frames(event: &JsValue) -> ProjectionResult<Vec<JsValue>> {
     let result = field(event, "result");
     let content = required_array(required(result, "content")?, "event.result.content.map")?;
-    let full_text = join_units(
-        &content
+    let full_text = join_content_texts(
+        content
             .iter()
             .map(tool_result_content_text)
             .collect::<ProjectionResult<Vec<_>>>()?,
-        u16::from(b'\n'),
-    );
+    )?;
     let result_preview = limit_tool_result_preview(&full_text);
     let preview = limit_tool_result_preview(&first_lines(&full_text, 3));
     let mut detail = JsObject::new();

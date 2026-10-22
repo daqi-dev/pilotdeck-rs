@@ -100,7 +100,7 @@ fn assert_range_error(result: ProjectionResult<Vec<JsValue>>, case: &str) {
 fn agent_event_projections_match_ts_oracle() {
     let oracle = crate::test_baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 221, "oracle case count");
+    assert_eq!(cases.len(), 227, "oracle case count");
 
     for case in cases {
         let name = field(case, "name")
@@ -531,6 +531,80 @@ fn map_agent_event_returns_before_a_blocked_artifact_write() {
         returned.ok(),
         Some(true),
         "the facade must return before the advisory write completes"
+    );
+}
+
+/// gate5 P1: TS's facade keeps one process-level default projector
+/// (`GatewayAgentEventProjector.ts:50`), so facade calls with default options
+/// must share one artifact store and its single bounded writer thread instead
+/// of lazily spawning a writer per call (an injected store still builds a
+/// per-call projector, TS:63).
+#[test]
+fn map_agent_event_default_calls_share_one_artifact_writer() {
+    let event = object([
+        ("type", text("tool_result")),
+        ("sessionId", text("pdrs-projector-shared")),
+        ("turnId", text("t")),
+        (
+            "result",
+            object([
+                ("type", text("success")),
+                ("toolCallId", text("shared-a")),
+                ("toolName", text("bash")),
+                (
+                    "content",
+                    JsValue::Array(vec![object([
+                        ("type", text("text")),
+                        ("text", JsValue::String(JsString::from("x".repeat(5_000)))),
+                    ])]),
+                ),
+            ]),
+        ),
+    ]);
+    let frames = map_agent_event(
+        &event,
+        "run-1",
+        GatewayAgentEventProjectorOptions::default(),
+    )
+    .expect("tool result projects");
+    assert!(
+        frames
+            .iter()
+            .any(|frame| is_type(field(frame, "type"), "tool_call_finished")),
+        "the persistable tool result projects"
+    );
+    let first = default_facade_projector_addr();
+    assert_ne!(first, 0, "the default path records the shared projector");
+    let second = object([
+        ("type", text("tool_result")),
+        ("sessionId", text("pdrs-projector-shared")),
+        ("turnId", text("t")),
+        (
+            "result",
+            object([
+                ("type", text("success")),
+                ("toolCallId", text("shared-b")),
+                ("toolName", text("bash")),
+                (
+                    "content",
+                    JsValue::Array(vec![object([
+                        ("type", text("text")),
+                        ("text", JsValue::String(JsString::from("x".repeat(5_000)))),
+                    ])]),
+                ),
+            ]),
+        ),
+    ]);
+    map_agent_event(
+        &second,
+        "run-1",
+        GatewayAgentEventProjectorOptions::default(),
+    )
+    .expect("tool result projects");
+    assert_eq!(
+        default_facade_projector_addr(),
+        first,
+        "default-option facade calls must share the process-level projector"
     );
 }
 
