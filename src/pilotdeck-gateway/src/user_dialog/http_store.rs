@@ -14,26 +14,42 @@
 
 use super::{
     DialogAnswer, DialogError, FileGatewayUserDialogStore, LeaseClaim, OwnerClaim, Result,
-    StoreKey, StoredAnswer, StoredDialog,
+    StoreKey, StoredAnswer, StoredDialog, UserDialogStore,
 };
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode, body::Incoming, header, server::conn::http1,
     service::service_fn,
 };
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
-    rt::{TokioExecutor, TokioIo},
+    rt::{TokioExecutor, TokioIo, TokioTimer},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{convert::Infallible, fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Semaphore};
 use url::Url;
 
 pub const HTTP_STORE_VERSION: f64 = 1.0;
 pub const DEFAULT_TIMEOUT_MS: f64 = 10_000.0;
 pub const STORE_PATH_PREFIX: &str = "/v1/gateway-user-dialog-store/";
+
+/// Node `http.createServer` default `headersTimeout` (v22.22.0: 60000 ms).
+const DEFAULT_HEADERS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Node `http.createServer` default `requestTimeout` (v22.22.0: 300000 ms).
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Node `http.maxHeaderSize` default (v22.22.0: 16384 bytes). hyper's
+/// `max_buf_size` is also its read-buffer cap and replays Node's 431.
+const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
+/// The TS server has no body cap (`serveNodeRequest` collects every chunk), so
+/// this is a deliberate resource bound rather than a parity value; it is
+/// registered as an unapproved difference. 2 MiB clears the real TS fixture's
+/// largest legitimate request (`huge-valid-json`, 1_048_709 bytes) with room to
+/// spare while still bounding one connection's memory.
+const DEFAULT_MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Node itself has no connection cap; this only bounds per-process resources.
+const DEFAULT_MAX_CONNECTIONS: usize = 64;
 
 const CONTENT_TYPE: &str = "application/json; charset=utf-8";
 const TIMEOUT_REASON: &str = "gateway_user_dialog_store_timeout";
@@ -97,10 +113,14 @@ impl Operation {
 /// Synchronous store boundary required by the HTTP service. TS checks that every
 /// method exists when the handler is created; a Rust trait object always has all
 /// twelve, so construction cannot fail on a partial implementation.
-pub trait LiveGatewayUserDialogStore: Send + Sync {
-    fn put(&self, key: &StoreKey, dialog: &StoredDialog) -> Result<()>;
+///
+/// This is the same TS `GatewayUserDialogStore` interface as the channel's
+/// [`UserDialogStore`], with every optional method required (`Required<...>`).
+/// The two shared methods live on the supertrait instead of being forwarded
+/// twice, so a `LiveGatewayUserDialogStore` can be handed to the channel
+/// directly.
+pub trait LiveGatewayUserDialogStore: UserDialogStore {
     fn list(&self, key: &StoreKey) -> Result<Vec<StoredDialog>>;
-    fn remove(&self, key: &StoreKey, request_id: &JsString) -> Result<()>;
     fn clear(&self, key: &StoreKey) -> Result<()>;
     fn list_live(&self, key: &StoreKey) -> Result<Vec<StoredDialog>>;
     fn claim_live(
@@ -151,14 +171,8 @@ pub trait LiveGatewayUserDialogStore: Send + Sync {
 }
 
 impl LiveGatewayUserDialogStore for FileGatewayUserDialogStore {
-    fn put(&self, key: &StoreKey, dialog: &StoredDialog) -> Result<()> {
-        FileGatewayUserDialogStore::put(self, key, dialog)
-    }
     fn list(&self, key: &StoreKey) -> Result<Vec<StoredDialog>> {
         FileGatewayUserDialogStore::list(self, key)
-    }
-    fn remove(&self, key: &StoreKey, request_id: &JsString) -> Result<()> {
-        FileGatewayUserDialogStore::remove(self, key, request_id)
     }
     fn clear(&self, key: &StoreKey) -> Result<()> {
         FileGatewayUserDialogStore::clear(self, key)
@@ -540,15 +554,30 @@ pub struct HttpStoreTransportResponse {
 }
 /// Raw fetch failure text: `fetch failed` for network errors, an abort reason
 /// such as `gateway_user_dialog_store_timeout`, or any injected message.
+/// `invalid_response` carries the TS `response.json().catch(() => undefined)`
+/// path for a body over `MAX_STRING_LENGTH` back to `call`, which is the layer
+/// that knows the operation name for the exact `returned an invalid response.`
+/// text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpStoreTransportError {
     pub message: String,
+    invalid_response: bool,
 }
 impl HttpStoreTransportError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            invalid_response: false,
         }
+    }
+    fn invalid_response() -> Self {
+        Self {
+            message: String::new(),
+            invalid_response: true,
+        }
+    }
+    fn is_invalid_response(&self) -> bool {
+        self.invalid_response
     }
 }
 
@@ -576,6 +605,7 @@ pub trait HttpStoreTransport: Send + Sync {
 #[derive(Clone)]
 pub struct HyperHttpStoreTransport {
     client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>,
+    max_body_bytes: usize,
 }
 impl Default for HyperHttpStoreTransport {
     fn default() -> Self {
@@ -583,6 +613,19 @@ impl Default for HyperHttpStoreTransport {
         Self {
             client: Client::builder(TokioExecutor::new())
                 .build(crate::runtime::model::http::https_connector(config)),
+            max_body_bytes: crate::fetch_redirect::MAX_STRING_LENGTH,
+        }
+    }
+}
+impl HyperHttpStoreTransport {
+    /// The production decoder keeps Node's `MAX_STRING_LENGTH` ceiling. Tests
+    /// substitute a small bound so the over-limit branch is reachable without
+    /// allocating half a gigabyte.
+    #[cfg(test)]
+    fn with_max_body_bytes(max_body_bytes: usize) -> Self {
+        Self {
+            max_body_bytes,
+            ..Self::default()
         }
     }
 }
@@ -633,16 +676,27 @@ impl HttpStoreTransport for HyperHttpStoreTransport {
             )
             .await?;
             let status = response.status().as_u16();
-            let body = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|_| failed())?
-                .to_bytes();
-            Ok(HttpStoreTransportResponse {
-                status,
-                body: body.to_vec(),
-            })
+            // `response.json()` goes through `text()`, which rejects a body over
+            // `buffer.constants.MAX_STRING_LENGTH`; TS catches that rejection as
+            // `undefined` and reports an invalid response. Read frame by frame
+            // so an endless/oversized body cannot grow memory without bound.
+            let body = match crate::fetch_redirect::read_body(
+                response.into_body(),
+                self.max_body_bytes,
+                None,
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(crate::fetch_redirect::BodyError::TooLong) => {
+                    return Err(HttpStoreTransportError::invalid_response());
+                }
+                Err(
+                    crate::fetch_redirect::BodyError::Terminated
+                    | crate::fetch_redirect::BodyError::Aborted,
+                ) => return Err(failed()),
+            };
+            Ok(HttpStoreTransportResponse { status, body })
         })
     }
 }
@@ -931,6 +985,12 @@ impl HttpGatewayUserDialogStore {
         let response = match tokio::time::timeout(self.timeout, self.transport.post(request)).await
         {
             Ok(Ok(response)) => response,
+            Ok(Err(error)) if error.is_invalid_response() => {
+                return Err(DialogError::Invalid(format!(
+                    "Gateway user-dialog store {} returned an invalid response.",
+                    operation.name()
+                )));
+            }
             Ok(Err(error)) => return Err(DialogError::Invalid(error.message)),
             Err(_) => return Err(DialogError::Invalid(TIMEOUT_REASON.into())),
         };
@@ -1251,33 +1311,60 @@ enum ServiceError {
 
 impl GatewayUserDialogStoreHttpHandler {
     pub fn handle(&self, request: HttpStoreHttpRequest) -> HttpStoreHttpResponse {
+        match self.precheck(&request.method, &request.url, &request.headers) {
+            Ok(operation) => self.dispatch_request(operation, request),
+            Err(response) => response,
+        }
+    }
+
+    /// The checks Node performs before it consumes the request body. The server
+    /// runs them first so an unauthenticated or oversized request never makes it
+    /// read (and buffer) a body it is going to reject.
+    fn precheck(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> std::result::Result<Operation, HttpStoreHttpResponse> {
         // TS checks the method before it even looks at the URL or the token.
-        if request.method != "POST" {
-            return error_response(405, "method_not_allowed", "Only POST is supported.");
+        if method != "POST" {
+            return Err(error_response(
+                405,
+                "method_not_allowed",
+                "Only POST is supported.",
+            ));
         }
         // `operationFromRequest` runs outside the handler's try/catch; an
         // unparseable Request URL becomes a 500 via `serveNodeRequest`.
-        let operation = match operation_from_request(&request.url) {
+        let operation = match operation_from_request(url) {
             Ok(Some(operation)) => operation,
             Ok(None) => {
-                return error_response(
+                return Err(error_response(
                     404,
                     "not_found",
                     "Unknown Gateway user-dialog store operation.",
-                );
+                ));
             }
-            Err(message) => return error_response(500, "server_failure", &message),
+            Err(message) => return Err(error_response(500, "server_failure", &message)),
         };
         if !tokens_match(
-            header(&request.headers, "authorization").as_deref(),
+            header(headers, "authorization").as_deref(),
             &self.authorization_token,
         ) {
-            return error_response(
+            return Err(error_response(
                 401,
                 "unauthorized",
                 "Gateway user-dialog store authorization failed.",
-            );
+            ));
         }
+        Ok(operation)
+    }
+
+    fn dispatch_request(
+        &self,
+        operation: Operation,
+        request: HttpStoreHttpRequest,
+    ) -> HttpStoreHttpResponse {
         let text = decode_body(&request.body);
         let Ok(value) = parse_json(&text) else {
             return error_response(400, "invalid_json", "Request body must be JSON.");
@@ -1600,11 +1687,51 @@ impl GatewayUserDialogStoreHttpServer {
     }
 }
 
+/// Node-compatible read limits. Defaults mirror `http.createServer` on Node
+/// v22.22.0; tests substitute short timers and small caps so the branches are
+/// reachable deterministically.
+#[derive(Clone, Copy, Debug)]
+struct ServeLimits {
+    headers_timeout: Duration,
+    request_timeout: Duration,
+    max_header_bytes: usize,
+    max_body_bytes: usize,
+    max_connections: usize,
+}
+impl Default for ServeLimits {
+    fn default() -> Self {
+        Self {
+            headers_timeout: DEFAULT_HEADERS_TIMEOUT,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_header_bytes: DEFAULT_MAX_HEADER_BYTES,
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
+        }
+    }
+}
+
 pub async fn start_gateway_user_dialog_store_http_server(
     store: Arc<dyn LiveGatewayUserDialogStore>,
     authorization_token: &str,
     host: Option<&str>,
     port: Option<u16>,
+) -> Result<GatewayUserDialogStoreHttpServer> {
+    start_gateway_user_dialog_store_http_server_with_limits(
+        store,
+        authorization_token,
+        host,
+        port,
+        ServeLimits::default(),
+    )
+    .await
+}
+
+async fn start_gateway_user_dialog_store_http_server_with_limits(
+    store: Arc<dyn LiveGatewayUserDialogStore>,
+    authorization_token: &str,
+    host: Option<&str>,
+    port: Option<u16>,
+    limits: ServeLimits,
 ) -> Result<GatewayUserDialogStoreHttpServer> {
     let handler = create_gateway_user_dialog_store_http_handler(store, authorization_token)?;
     let host = host.unwrap_or("127.0.0.1").to_string();
@@ -1613,6 +1740,9 @@ pub async fn start_gateway_user_dialog_store_http_server(
         .map_err(DialogError::Io)?;
     let address = listener.local_addr().map_err(DialogError::Io)?;
     let handler = Arc::new(handler);
+    // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum.
+    let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
+    let connections = Arc::new(Semaphore::new(limits.max_connections));
     let (shutdown, mut closed) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
         loop {
@@ -1620,13 +1750,34 @@ pub async fn start_gateway_user_dialog_store_http_server(
                 _ = &mut closed => break,
                 accepted = listener.accept() => {
                     let Ok((stream, _)) = accepted else { continue };
+                    // Node has no connection cap; this semaphore only bounds the
+                    // resources one process can pin down. A full server stops
+                    // accepting until a connection finishes.
+                    let permit = tokio::select! {
+                        _ = &mut closed => break,
+                        permit = connections.clone().acquire_owned() => match permit {
+                            Ok(permit) => permit,
+                            Err(_) => break,
+                        },
+                    };
                     let handler = handler.clone();
                     tokio::spawn(async move {
+                        let _permit = permit;
                         let service = service_fn(move |request: Request<Incoming>| {
                             let handler = handler.clone();
-                            async move { Ok::<_, Infallible>(serve(handler, request).await) }
+                            async move { Ok::<_, Infallible>(serve(handler, request, limits).await) }
                         });
-                        let _ = http1::Builder::new()
+                        let mut builder = http1::Builder::new();
+                        builder
+                            .timer(TokioTimer::new())
+                            .header_read_timeout(limits.headers_timeout)
+                            // Node's `maxHeaderSize` (16 KiB) rejects with 431.
+                            // hyper's own default caps at 100 fields; Node's
+                            // `maxHeadersCount` is unlimited, so allow the
+                            // most fields 16 KiB can hold.
+                            .max_headers(4096)
+                            .max_buf_size(max_header_bytes);
+                        let _ = builder
                             .serve_connection(TokioIo::new(stream), service)
                             .await;
                     });
@@ -1641,9 +1792,39 @@ pub async fn start_gateway_user_dialog_store_http_server(
     })
 }
 
+#[derive(Debug)]
+enum RequestBodyError {
+    TooLarge,
+    Failed(String),
+}
+
+async fn read_request_body(
+    body: Incoming,
+    limit: usize,
+) -> std::result::Result<Vec<u8>, RequestBodyError> {
+    match Limited::new(body, limit).collect().await {
+        Ok(collected) => Ok(collected.to_bytes().to_vec()),
+        Err(error) => {
+            if error
+                .downcast_ref::<http_body_util::LengthLimitError>()
+                .is_some()
+            {
+                Err(RequestBodyError::TooLarge)
+            } else {
+                Err(RequestBodyError::Failed(error.to_string()))
+            }
+        }
+    }
+}
+
+fn payload_too_large() -> HttpStoreHttpResponse {
+    error_response(413, "payload_too_large", "Request body is too large.")
+}
+
 async fn serve(
     handler: Arc<GatewayUserDialogStoreHttpHandler>,
     request: Request<Incoming>,
+    limits: ServeLimits,
 ) -> Response<Full<Bytes>> {
     let method = request.method().as_str().to_string();
     let path = request
@@ -1659,6 +1840,19 @@ async fn serve(
         .get(header::HOST)
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
         .unwrap_or_else(|| "localhost".into());
+    // Node's `maxHeaderSize` is a byte count over every raw header field line
+    // (duplicates included). hyper's `max_buf_size` only backstops the read
+    // buffer, so enforce the observable 16 KiB ceiling here, before the handler
+    // runs, and answer like Node's 431.
+    let header_bytes: usize = request
+        .headers()
+        .iter()
+        .map(|(name, value)| name.as_str().len() + 2 + value.as_bytes().len() + 2)
+        .sum();
+    if header_bytes > limits.max_header_bytes {
+        // Node's parser answers 431 with an empty body and `Connection: close`.
+        return empty_response(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+    }
     // Node's `createServer` defaults to `joinDuplicateHeaders: false`: the
     // `IncomingMessage.headers` object keeps only the first value of a repeated
     // header (verified for `authorization`; a 1 MB body is not affected). The
@@ -1675,19 +1869,54 @@ async fn serve(
         }
         headers.push((name, String::from_utf8_lossy(value.as_bytes()).into_owned()));
     }
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes().to_vec(),
-        Err(error) => {
-            return build(error_response(500, "server_failure", &error.to_string()));
+    let url = format!("http://{host}{path}");
+    // Method -> operation -> token, exactly the handler's order, before a byte
+    // of the body is read. 405/404/401 must not wait for (or buffer) the body.
+    let operation = match handler.precheck(&method, &url, &headers) {
+        Ok(operation) => operation,
+        Err(response) => return build(response),
+    };
+    // An honest Content-Length lets us refuse before reading; a lying or absent
+    // one is still caught by `Limited`.
+    if let Some(length) = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        && length > limits.max_body_bytes as u64
+    {
+        return build(payload_too_large());
+    }
+    let body = match tokio::time::timeout(
+        limits.request_timeout,
+        read_request_body(request.into_body(), limits.max_body_bytes),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(RequestBodyError::TooLarge)) => return build(payload_too_large()),
+        Ok(Err(RequestBodyError::Failed(error))) => {
+            return build(error_response(500, "server_failure", &error));
+        }
+        Err(_) => {
+            // `requestTimeout` in Node also answers with an empty body and
+            // closes the connection.
+            return empty_response(StatusCode::REQUEST_TIMEOUT);
         }
     };
-    let response = handler.handle(HttpStoreHttpRequest {
+    let request = HttpStoreHttpRequest {
         method,
-        url: format!("http://{host}{path}"),
+        url,
         headers,
         body,
-    });
-    build(response)
+    };
+    // `FileGatewayUserDialogStore` is synchronous by contract and may sleep on
+    // its 5 s lock retry; keep it off the async executor's worker threads.
+    let handler = Arc::clone(&handler);
+    match tokio::task::spawn_blocking(move || handler.dispatch_request(operation, request)).await {
+        Ok(response) => build(response),
+        Err(error) => build(error_response(500, "server_failure", &error.to_string())),
+    }
 }
 
 fn build(response: HttpStoreHttpResponse) -> Response<Full<Bytes>> {
@@ -1695,6 +1924,15 @@ fn build(response: HttpStoreHttpResponse) -> Response<Full<Bytes>> {
         .status(StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
         .header(header::CONTENT_TYPE, response.content_type)
         .body(Full::new(Bytes::from(response.body)))
+        .expect("static response parts are valid")
+}
+
+/// Node's parser-level 431/408 responses carry no body and close the socket.
+fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header(header::CONNECTION, "close")
+        .body(Full::new(Bytes::new()))
         .expect("static response parts are valid")
 }
 
