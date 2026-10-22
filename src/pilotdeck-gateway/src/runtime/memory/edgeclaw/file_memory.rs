@@ -86,6 +86,7 @@ impl FileMemoryError {
     pub fn js_message(&self) -> JsString {
         match self {
             Self::InvalidUtf16(s) => s.clone(),
+            Self::Storage(StorageError::Sqlite(e)) => e.to_string().into(),
             _ => self.to_string().into(),
         }
     }
@@ -1543,9 +1544,7 @@ impl Core {
             }
             "exportSnapshotFiles" => objects(self.snapshot()?),
             "clearAllData" => {
-                if self.root.exists() {
-                    fs::remove_dir_all(&self.root)?;
-                }
+                super::node_fs::rm_sync(&self.root)?;
                 self.ensure_layout()?;
                 if !matches!(input.get("rebuildManifest"), Some(JsValue::Bool(false))) {
                     self.repair()?;
