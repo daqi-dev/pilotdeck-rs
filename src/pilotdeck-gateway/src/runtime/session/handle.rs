@@ -105,22 +105,23 @@ impl LiveSessionHandle {
     }
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
-        // session.abort() is called inside the lock so the state check and the
-        // call are atomic. session.abort() is synchronous and must not acquire
-        // the progress lock itself.
-        let result = {
+        // Set cancelled inside the lock; call session.abort() outside so that
+        // a panic in session.abort() does not poison the progress mutex.
+        // Callers in Draining/Disposed are no-ops: the drain task owns teardown.
+        {
             let mut progress = self.0.progress.lock().unwrap();
-            // In Draining the drain task owns session teardown (called session.abort
-            // itself from dispose()). In Disposed abort is a no-op.
             let is_active = progress.state == HandleState::Active;
             if !is_active {
                 return Ok(());
             }
             progress.cancelled.get_or_insert_with(|| reason.clone());
-            self.0.session.abort(reason)
-        };
+        }
         self.0.changed.send_modify(|version| *version += 1);
-        result
+        // session.abort() called after lock release; at this point state is
+        // Active and dispose() has not started (dispose() sets Draining under
+        // the same lock before calling session.abort, so only one of the two
+        // can win the Active→Draining transition).
+        self.0.session.abort(reason)
     }
 
     /// Cross the cutoff synchronously; the spawned drain survives cancellation
@@ -130,24 +131,24 @@ impl LiveSessionHandle {
         if let Some(completion) = &progress.disposal {
             return Box::pin(wait_result(completion.clone()));
         }
+        // Transition to Draining before releasing the lock; any concurrent
+        // abort() that reads state == Active must have already released its
+        // lock, meaning it will call session.abort() after this dispose() does.
+        // That concurrent call is therefore a benign duplicate, not a race with
+        // the drain task (which runs only after the lock is dropped and the
+        // spawn is queued).
         progress.state = HandleState::Draining;
         let active = progress.activity && !progress.maintenance;
-        if progress.maintenance {
+        if active || progress.maintenance {
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
-        // Call session.abort() while the lock is held so it happens before the
-        // drain task can start executing (no TOCTOU between state check and
-        // abort call). session.abort() is synchronous and must not re-acquire
-        // the progress lock.
-        let abort_error = if active {
-            progress.cancelled.get_or_insert_with(|| reason.clone());
-            self.0.session.abort(&reason).err()
-        } else {
-            None
-        };
         let (result, completion) = watch::channel(None);
         progress.disposal = Some(completion.clone());
         drop(progress);
+        // Call session.abort() outside the lock so a panic does not poison it.
+        let abort_error = active
+            .then(|| self.0.session.abort(&reason).err())
+            .flatten();
         let handle = self.clone();
         tokio::spawn(async move {
             // Use a guard to guarantee result.send_replace is called even if
