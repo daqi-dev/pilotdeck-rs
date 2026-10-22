@@ -69,6 +69,21 @@ const specs: any[] = [
   { name: 'stale_timeout_failure_preserves_new_claim', steps: [replace(), op('gate', { name: 'finalize' }), fail('finalize'), op('expire'), op('dispose'), replace({ input: input({ replacementTurnId: 'newer' }) }), claim('newer'), op('ungate', { name: 'finalize' }), claim('newer'), op('commit', { run: 'newer' })] },
   { name: 'optional_project', steps: [replace({ input: { sessionKey: 's', expectedTurnId: 'old', replacementTurnId: ' new ' } }), claim(' new '), op('commit', { run: ' new ' })] },
 ];
+// #518: all observations below still come from the unmodified TS modules.
+specs.push(
+  { name: 'abandoned_submit_claim', steps: [replace(), claim(), op('expire'), op('reserve'), claim(), op('release', { run: 'new' }), op('expire'), op('reserve'), op('releaseWrite')] },
+  ...['finalize', 'commit', 'timeout'].map(kind => ({ name: `stale_${kind}_success_clears_new_pending`, steps: [replace(), ...(kind === 'commit' ? [claim()] : []), op('gate', { name: 'finalize' }), ...(kind === 'timeout' ? [op('expire')] : kind === 'commit' ? [op('commit', { run: 'new', start: 'old' })] : [finalize({ input: final('commit'), start: 'old' })]), op('dispose'), replace({ input: input({ replacementTurnId: 'newer' }) }), claim('newer'), op('ungate', { name: 'finalize' }), ...(kind === 'timeout' ? [] : [op('await', { id: 'old' })]), claim('newer'), op('reserve'), op('releaseWrite')] })),
+  ...[false, true].map(failed => ({ name: `stale_replace_${failed ? 'failure_clears' : 'success_overwrites'}_new_pending`, steps: [op('gate', { name: 'replace' }), replace({ start: 'old' }), op('dispose'), op('bypassGate', { name: 'replace' }), replace({ input: input({ replacementTurnId: 'newer' }) }), claim('newer'), ...(failed ? [fail('replace')] : []), op('ungate', { name: 'old-replace' }), op('await', { id: 'old' }), claim('newer'), claim(), op('dispose'), op('reserve'), op('releaseWrite')] })),
+  { name: 'panic_active_getter', steps: [op('panic', { name: 'active', sync: true }), replace(), op('panic'), op('reserve'), op('releaseWrite'), replace(), finalize()] },
+  { name: 'panic_finalize_getter', steps: [replace(), op('panic', { name: 'hasActive', sync: true }), finalize(), op('panic'), claim(), op('release', { run: 'new' }), finalize(), op('reserve'), op('releaseWrite')] },
+  ...[false, true].flatMap(sync => [
+    ...['abort', 'close', 'replace'].map(name => ({ name: `panic_replace_${name}_${sync ? 'sync' : 'poll'}`, steps: [op('active', { run: 'old' }), op('panic', { name, sync }), replace(), op('has'), op('panic'), op('active'), op('reserve'), op('releaseWrite'), replace(), finalize()] })),
+    ...['close', 'finalize'].map(name => ({ name: `panic_rollback_${name}_${sync ? 'sync' : 'poll'}`, steps: [replace(), op('panic', { name, sync }), finalize(), op('panic'), claim(), op('release', { run: 'new' }), finalize(), op('reserve'), op('releaseWrite')] })),
+    { name: `panic_commit_${sync ? 'sync' : 'poll'}`, steps: [replace(), claim(), op('panic', { name: 'finalize', sync }), op('commit', { run: 'new' }), op('panic'), op('reserve'), op('releaseWrite'), replace(), finalize()] },
+    ...['close', 'finalize'].map(name => ({ name: `panic_timeout_${name}_${sync ? 'sync' : 'poll'}`, steps: [replace(), op('panic', { name, sync }), op('expire'), op('panic'), op('expire'), op('reserve'), op('releaseWrite'), replace(), finalize()] })),
+    { name: `panic_fork_${sync ? 'sync' : 'poll'}`, steps: [op('panic', { name: 'fork', sync }), op('fork', { input: input() }), op('panic'), op('fork', { input: input() }), op('reserve'), op('releaseWrite')] },
+  ]),
+);
 const settle = async () => { for (let n = 0; n < 80; n++) await Promise.resolve(); };
 const outcome = async (p: any) => { try { const value = await p; return { ok: value ?? null }; }
   catch (e: any) { return { error: e.code ?? null, message: e.message, details: e.details ?? null }; } };
@@ -78,16 +93,21 @@ for (const spec of specs) {
   const events: any[] = [], values: any[] = [], waiting = new Map<string, Promise<any>>();
   const gates = new Map<string, { promise: Promise<void>, open: () => void }>();
   let active: string | undefined, failure: string | undefined;
-  const call = async (name: string, arg: any) => {
+  let panic: { name: string, sync: boolean } | undefined;
+  const call = (name: string, arg: any) => {
+    if (panic?.name === name && panic.sync) throw new Error(`${name} failed`);
+    return (async () => {
     events.push({ call: name, input: arg });
     await gates.get(name)?.promise;
-    if (failure === name) throw new Error(`${name} failed`);
+    if (failure === name || panic?.name === name) throw new Error(`${name} failed`);
     if (name === 'replace') return { transactionId: `tx-${arg.sessionKey}`, persisted: true };
     if (name === 'fork') return { forked: arg };
     if (name === 'finalize') return { finalized: arg.action, transactionId: arg.transactionId };
+    })();
   };
   const storage: any = { replaceLastTurn: (arg: any) => call('replace', arg), finalizeLastTurnReplacement: (arg: any) => call('finalize', arg) };
-  const session = { activeTurnRunId: () => active, hasActiveTurn: () => active !== undefined,
+  const getter = (name: string) => { if (panic?.name === name) throw new Error(`${name} failed`); };
+  const session = { activeTurnRunId: () => { getter('active'); return active; }, hasActiveTurn: () => { getter('hasActive'); return active !== undefined; },
     abortExpectedTurn: (sessionKey: string, runId: string) => call('abort', { sessionKey, runId }),
     closeSession: (sessionKey: string) => call('close', { sessionKey }) };
   const c = new GatewayTurnReplacementCoordinator({ storage, session, timeoutMs: 10,
@@ -103,6 +123,8 @@ for (const spec of specs) {
         gateway.options.forkSession = step.name === 'none' ? undefined : (arg: any) => call('fork', arg); break;
       case 'active': active = step.run; break;
       case 'fail': failure = step.name; break;
+      case 'panic': panic = step.name ? { name: step.name, sync: step.sync } : undefined; break;
+      case 'bypassGate': gates.set(`old-${step.name}`, gates.get(step.name)!); gates.delete(step.name); break;
       case 'gate': { let open!: () => void; const promise = new Promise<void>(r => { open = r; }); gates.set(step.name, { promise, open }); break; }
       case 'ungate': gates.get(step.name)!.open(); gates.delete(step.name); break;
       case 'replace': operation = gateway.replaceLastTurn(step.input); break;
@@ -138,8 +160,40 @@ for (const stopped of [false, true]) {
   router.inFlightMaintenance = new Set();
   maintenance.push(await outcome(router.compact('s')));
 }
+// An actual gateway submit iterator is abandoned while its preflight port is
+// gated. JS return() queues behind next(); it cannot cancel an awaited promise.
+timers = new Map();
+let releaseSubmit!: () => void;
+const submitGate = new Promise<void>(r => { releaseSubmit = r; });
+let enteredSubmit = false;
+const submitCoordinator = new GatewayTurnReplacementCoordinator({
+  storage: { replaceLastTurn: async () => ({ transactionId: 'submit-tx' }), finalizeLastTurnReplacement: async () => ({}) },
+  session: { activeTurnRunId: () => undefined, hasActiveTurn: () => false, abortExpectedTurn: async () => {}, closeSession: async () => {} },
+  timeoutMs: 10,
+});
+await submitCoordinator.replaceLastTurn(input());
+const submitGateway = Object.create(InProcessGateway.prototype);
+submitGateway.options = { clearRecoveredUserDialogs: async () => { enteredSubmit = true; await submitGate; throw new Error('preflight released'); } };
+submitGateway.turnReplacementCoordinator = submitCoordinator;
+submitGateway.dialogProjectKeys = new Map();
+submitGateway.router = { beginTurn: () => true, endTurn: () => {} };
+submitGateway.turnCompletionFence = { begin: () => ({ signal: new AbortController().signal }), complete: () => {} };
+const iterator = submitGateway.submitTurn({ sessionKey: 's', projectKey: 'p', runId: 'new', message: 'hello' });
+const nextSubmit = iterator.next();
+await settle();
+assert.ok(enteredSubmit, 'real submitTurn reached its gated preflight port');
+let returnedSubmit = false;
+const abandonedSubmit = iterator.return().then(() => { returnedSubmit = true; });
+await settle();
+const submitAbandonment = { returnSettledWhileGated: returnedSubmit, timerCount: timers.size,
+  claimWhileGated: submitCoordinator.claimForSubmit('s', 'new') };
+releaseSubmit();
+await nextSubmit;
+await abandonedSubmit;
+Object.assign(submitAbandonment, { claimAfterRelease: submitCoordinator.claimForSubmit('s', 'new') });
+submitCoordinator.dispose();
 assertBaseline(baseline);
 assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);
 await mkdir(resolve(process.argv[2]), { recursive: true });
-await writeFile(join(resolve(process.argv[2]), 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, maintenance }, null, 2) + '\n');
+await writeFile(join(resolve(process.argv[2]), 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, maintenance, submitAbandonment }, null, 2) + '\n');
 console.log(`recorded ${cases.length} real TS coordinator/gateway cases plus maintenance precedence`);

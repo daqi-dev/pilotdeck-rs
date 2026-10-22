@@ -8,10 +8,18 @@ struct Probe {
     events: Mutex<Vec<Value>>,
     active: Mutex<Option<JsString>>,
     failure: Mutex<Option<String>>,
+    panic: Mutex<Option<(String, bool)>>,
     gates: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 impl Probe {
     fn call(self: &Arc<Self>, name: &str, input: JsValue) -> BoxFuture<ReplacementResult> {
+        let panic = self.panic.lock().unwrap().clone();
+        if panic
+            .as_ref()
+            .is_some_and(|(port, sync)| port == name && *sync)
+        {
+            panic!("{name} failed");
+        }
         self.events
             .lock()
             .unwrap()
@@ -26,6 +34,10 @@ impl Probe {
         Box::pin(async move {
             if let Some(mut gate) = gate {
                 let _ = gate.wait_for(|open| *open).await;
+            }
+            let panic = probe.panic.lock().unwrap().clone();
+            if panic.as_ref().is_some_and(|(port, _)| port == &name) {
+                panic!("{name} failed");
             }
             if probe.failure.lock().unwrap().as_ref() == Some(&name) {
                 return Err(ReplacementError::new(format!("{name} failed")));
@@ -69,9 +81,19 @@ impl Probe {
 }
 impl ReplacementSession for Arc<Probe> {
     fn active_turn_run_id(&self, _: &JsString) -> Option<JsString> {
+        let panic = self.panic.lock().unwrap().clone();
+        assert!(
+            !panic.is_some_and(|(name, _)| name == "active"),
+            "active failed"
+        );
         self.active.lock().unwrap().clone()
     }
     fn has_active_turn(&self, _: &JsString) -> bool {
+        let panic = self.panic.lock().unwrap().clone();
+        assert!(
+            !panic.is_some_and(|(name, _)| name == "hasActive"),
+            "hasActive failed"
+        );
         self.active.lock().unwrap().is_some()
     }
     fn abort_expected_turn(
@@ -135,6 +157,8 @@ async fn replay(name: &str) {
             "config" => { coordinator.dispose(); coordinator = probe.coordinator(step["name"].as_str().unwrap()); }
             "active" => *probe.active.lock().unwrap() = step["run"].as_str().map(Into::into),
             "fail" => *probe.failure.lock().unwrap() = step["name"].as_str().map(Into::into),
+            "panic" => *probe.panic.lock().unwrap() = step["name"].as_str().map(|name| (name.into(), step["sync"].as_bool().unwrap())),
+            "bypassGate" => { let name = step["name"].as_str().unwrap(); let mut gates = probe.gates.lock().unwrap(); let old = gates.remove(name).unwrap(); gates.insert(format!("old-{name}"), old); }
             "gate" => { probe.gates.lock().unwrap().insert(step["name"].as_str().unwrap().into(), watch::channel(false).0); }
             "ungate" => { probe.gates.lock().unwrap().remove(step["name"].as_str().unwrap()).unwrap().send_replace(true); }
             "replace" => operation = Some(coordinator.replace_last_turn(js(step["input"].clone()))),
@@ -284,4 +308,165 @@ async fn dropped_caller_does_not_strand_reservation() {
     );
     assert!(!coordinator.has_transcript_write_reservation(&"s".into()));
     coordinator.dispose();
+}
+
+#[test]
+#[ignore = "requires PDRS_BASELINE and Node v22 with baseline dependencies"]
+fn replacement_fixture_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("replacement");
+}
+
+cases!(
+    panic_active_getter,
+    panic_finalize_getter,
+    abandoned_submit_claim,
+    stale_finalize_success_clears_new_pending,
+    stale_commit_success_clears_new_pending,
+    stale_timeout_success_clears_new_pending,
+    stale_replace_failure_clears_new_pending,
+    stale_replace_success_overwrites_new_pending,
+    panic_replace_abort_sync,
+    panic_replace_close_sync,
+    panic_replace_replace_sync,
+    panic_rollback_close_sync,
+    panic_rollback_finalize_sync,
+    panic_commit_sync,
+    panic_timeout_close_sync,
+    panic_timeout_finalize_sync,
+    panic_fork_sync,
+    panic_replace_abort_poll,
+    panic_replace_close_poll,
+    panic_replace_replace_poll,
+    panic_rollback_close_poll,
+    panic_rollback_finalize_poll,
+    panic_commit_poll,
+    panic_timeout_close_poll,
+    panic_timeout_finalize_poll,
+    panic_fork_poll,
+);
+
+// Tokio cancellation and executor panics have no JS future-drop equivalent.
+// Exercise these Rust ownership boundaries separately from the TS replays.
+async fn panic_after_dispose_with_dropped_waiter(kind: &str) {
+    let probe = Arc::new(Probe::default());
+    let coordinator = probe.coordinator("all");
+    let key = JsString::from("s");
+    let request = || js(json!({"sessionKey":"s", "replacementTurnId":"new"}));
+    if kind != "replace" {
+        coordinator.replace_last_turn(request()).await.unwrap();
+    }
+    let name = if kind == "replace" {
+        "replace"
+    } else {
+        "finalize"
+    };
+    let gate = watch::channel(false).0;
+    probe
+        .gates
+        .lock()
+        .unwrap()
+        .insert(name.into(), gate.clone());
+    *probe.panic.lock().unwrap() = Some((name.into(), false));
+    match kind {
+        "replace" => drop(coordinator.replace_last_turn(request())),
+        "finalize" => drop(coordinator.finalize_last_turn_replacement(js(json!({
+            "sessionKey":"s", "transactionId":"tx-s", "action":"commit"
+        })))),
+        "commit" => {
+            assert_eq!(
+                coordinator.claim_for_submit(&key, &"new".into()),
+                SubmitClaim::Claimed
+            );
+            drop(coordinator.commit_accepted_input(&key, &"new".into()));
+        }
+        _ => unreachable!(),
+    }
+    settle().await;
+    gate.send_replace(true);
+    settle().await;
+    {
+        let state = coordinator.0.state.lock().unwrap();
+        assert!(state.reservations.is_empty());
+        if kind == "finalize" {
+            assert!(state.pending[&key].phase == Phase::Prepared);
+            assert!(state.pending[&key].timer.is_some());
+        } else {
+            assert!(state.pending.is_empty());
+        }
+    }
+    coordinator.dispose();
+    *probe.panic.lock().unwrap() = None;
+    coordinator.reserve_transcript_write(&key, "edit").unwrap();
+    coordinator.release_transcript_write(&key);
+    coordinator.replace_last_turn(request()).await.unwrap();
+    coordinator.dispose();
+    // With a dropped waiter a task panic has no JoinHandle observer; a normal
+    // error continuation is visible through the accepted-input warning.
+    if kind == "commit" {
+        assert!(
+            probe
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["warn"]
+                    == "[pilotdeck] failed to remove accepted replacement backup:")
+        );
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn panic_disposed_dropped_replace() {
+    panic_after_dispose_with_dropped_waiter("replace").await;
+}
+#[tokio::test(start_paused = true)]
+async fn panic_disposed_dropped_finalize() {
+    panic_after_dispose_with_dropped_waiter("finalize").await;
+}
+#[tokio::test(start_paused = true)]
+async fn panic_disposed_dropped_commit() {
+    panic_after_dispose_with_dropped_waiter("commit").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn panic_timeout_getter_rearms_without_poisoning_state() {
+    let probe = Arc::new(Probe::default());
+    let coordinator = probe.coordinator("all");
+    let key = JsString::from("s");
+    coordinator
+        .replace_last_turn(js(json!({"sessionKey":"s", "replacementTurnId":"new"})))
+        .await
+        .unwrap();
+    *probe.panic.lock().unwrap() = Some(("hasActive".into(), true));
+    tokio::time::advance(Duration::from_millis(10)).await;
+    settle().await;
+    *probe.panic.lock().unwrap() = None;
+    assert_eq!(
+        coordinator.claim_for_submit(&key, &"new".into()),
+        SubmitClaim::Claimed
+    );
+    coordinator.release_submit_claim(&key, &"new".into());
+    tokio::time::advance(Duration::from_millis(10)).await;
+    settle().await;
+    coordinator.reserve_transcript_write(&key, "edit").unwrap();
+    coordinator.release_transcript_write(&key);
+    assert!(
+        probe
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["warn"]
+                == "[pilotdeck] failed to roll back expired replacement transaction:")
+    );
+    coordinator.dispose();
+}
+
+#[tokio::test]
+async fn unexpected_task_panic_returns_error_to_waiter() {
+    let error = running(async {
+        panic!("unexpected task panic");
+    })
+    .await
+    .unwrap_err();
+    assert!(error.message.contains("unexpected task panic"));
 }

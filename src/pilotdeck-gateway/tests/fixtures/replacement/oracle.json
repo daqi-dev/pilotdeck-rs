@@ -3069,6 +3069,3586 @@
           }
         }
       ]
+    },
+    {
+      "name": "abandoned_submit_claim",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "error": "SESSION_BUSY",
+            "message": "Cannot edit while another transcript update is pending.",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "conflict"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_finalize_success_clears_new_pending",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "gate",
+          "name": "finalize"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "commit"
+          },
+          "start": "old"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "ungate",
+          "name": "finalize"
+        },
+        {
+          "op": "await",
+          "id": "old"
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "commit"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "await",
+          "id": "old",
+          "result": {
+            "ok": {
+              "finalized": "commit",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "none"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_commit_success_clears_new_pending",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "gate",
+          "name": "finalize"
+        },
+        {
+          "op": "commit",
+          "run": "new",
+          "start": "old"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "ungate",
+          "name": "finalize"
+        },
+        {
+          "op": "await",
+          "id": "old"
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "commit"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "await",
+          "id": "old",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "none"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_timeout_success_clears_new_pending",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "gate",
+          "name": "finalize"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "ungate",
+          "name": "finalize"
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "claim",
+          "value": "none"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_replace_success_overwrites_new_pending",
+      "steps": [
+        {
+          "op": "gate",
+          "name": "replace"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          },
+          "start": "old"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "bypassGate",
+          "name": "replace"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "ungate",
+          "name": "old-replace"
+        },
+        {
+          "op": "await",
+          "id": "old"
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "await",
+          "id": "old",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "conflict"
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_replace_failure_clears_new_pending",
+      "steps": [
+        {
+          "op": "gate",
+          "name": "replace"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          },
+          "start": "old"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "bypassGate",
+          "name": "replace"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "fail",
+          "name": "replace"
+        },
+        {
+          "op": "ungate",
+          "name": "old-replace"
+        },
+        {
+          "op": "await",
+          "id": "old"
+        },
+        {
+          "op": "claim",
+          "run": "newer"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "newer",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "await",
+          "id": "old",
+          "result": {
+            "error": null,
+            "message": "replace failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "none"
+        },
+        {
+          "op": "claim",
+          "value": "none"
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_active_getter",
+      "steps": [
+        {
+          "op": "panic",
+          "name": "active",
+          "sync": true
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "active failed",
+            "details": null
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_finalize_getter",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "hasActive",
+          "sync": true
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "error": null,
+            "message": "hasActive failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_abort_poll",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "abort",
+          "sync": false
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "abort",
+          "input": {
+            "sessionKey": "s",
+            "runId": "old"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "abort failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_close_poll",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": false
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "abort",
+          "input": {
+            "sessionKey": "s",
+            "runId": "old"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "close failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_replace_poll",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "replace",
+          "sync": false
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "abort",
+          "input": {
+            "sessionKey": "s",
+            "runId": "old"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "replace failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_rollback_close_poll",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": false
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "error": null,
+            "message": "close failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_rollback_finalize_poll",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": false
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "error": null,
+            "message": "finalize failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_commit_poll",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": false
+        },
+        {
+          "op": "commit",
+          "run": "new"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "commit"
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to remove accepted replacement backup:",
+          "error": "finalize failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "commit",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_timeout_close_poll",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": false
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to roll back expired replacement transaction:",
+          "error": "close failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_timeout_finalize_poll",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": false
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to roll back expired replacement transaction:",
+          "error": "finalize failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_fork_poll",
+      "steps": [
+        {
+          "op": "panic",
+          "name": "fork",
+          "sync": false
+        },
+        {
+          "op": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "fork",
+          "result": {
+            "error": null,
+            "message": "fork failed",
+            "details": null
+          }
+        },
+        {
+          "op": "fork",
+          "result": {
+            "ok": {
+              "forked": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "expectedTurnId": "old",
+                "replacementTurnId": "new",
+                "extra": 7
+              }
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_abort_sync",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "abort",
+          "sync": true
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "abort failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_close_sync",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": true
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "abort",
+          "input": {
+            "sessionKey": "s",
+            "runId": "old"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "close failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_replace_replace_sync",
+      "steps": [
+        {
+          "op": "active",
+          "run": "old"
+        },
+        {
+          "op": "panic",
+          "name": "replace",
+          "sync": true
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "has"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "active"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "abort",
+          "input": {
+            "sessionKey": "s",
+            "runId": "old"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "error": null,
+            "message": "replace failed",
+            "details": null
+          }
+        },
+        {
+          "op": "has",
+          "value": false
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_rollback_close_sync",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": true
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "error": null,
+            "message": "close failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_rollback_finalize_sync",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": true
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "release",
+          "run": "new"
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "error": null,
+            "message": "finalize failed",
+            "details": null
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_commit_sync",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "claim",
+          "run": "new"
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": true
+        },
+        {
+          "op": "commit",
+          "run": "new"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to remove accepted replacement backup:",
+          "error": "finalize failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "value": "claimed"
+        },
+        {
+          "op": "commit",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_timeout_close_sync",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "close",
+          "sync": true
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to roll back expired replacement transaction:",
+          "error": "close failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_timeout_finalize_sync",
+      "steps": [
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic",
+          "name": "finalize",
+          "sync": true
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "expire"
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        },
+        {
+          "op": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "events": [
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "warn": "[pilotdeck] failed to roll back expired replacement transaction:",
+          "error": "finalize failed"
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "replace",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "call": "close",
+          "input": {
+            "sessionKey": "s"
+          }
+        },
+        {
+          "call": "finalize",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "transactionId": "tx-s",
+            "action": "rollback"
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        },
+        {
+          "op": "replace",
+          "result": {
+            "ok": {
+              "transactionId": "tx-s",
+              "persisted": true
+            }
+          }
+        },
+        {
+          "op": "finalize",
+          "result": {
+            "ok": {
+              "finalized": "rollback",
+              "transactionId": "tx-s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "panic_fork_sync",
+      "steps": [
+        {
+          "op": "panic",
+          "name": "fork",
+          "sync": true
+        },
+        {
+          "op": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "panic"
+        },
+        {
+          "op": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        },
+        {
+          "op": "reserve"
+        },
+        {
+          "op": "releaseWrite"
+        }
+      ],
+      "events": [
+        {
+          "call": "fork",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "expectedTurnId": "old",
+            "replacementTurnId": "new",
+            "extra": 7
+          }
+        }
+      ],
+      "values": [
+        {
+          "op": "fork",
+          "result": {
+            "error": null,
+            "message": "fork failed",
+            "details": null
+          }
+        },
+        {
+          "op": "fork",
+          "result": {
+            "ok": {
+              "forked": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "expectedTurnId": "old",
+                "replacementTurnId": "new",
+                "extra": 7
+              }
+            }
+          }
+        },
+        {
+          "op": "reserve",
+          "result": {
+            "ok": null
+          }
+        }
+      ]
     }
   ],
   "maintenance": [
@@ -3082,5 +6662,11 @@
       "message": "Session router is shut down.",
       "details": null
     }
-  ]
+  ],
+  "submitAbandonment": {
+    "returnSettledWhileGated": false,
+    "timerCount": 0,
+    "claimWhileGated": "conflict",
+    "claimAfterRelease": "claimed"
+  }
 }
