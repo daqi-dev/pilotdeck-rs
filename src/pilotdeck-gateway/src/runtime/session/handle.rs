@@ -10,9 +10,10 @@ use tokio::sync::watch;
 pub trait LiveSession: Send + Sync {
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
-    /// future has completed: the handle remains Draining while releasing its
-    /// project lease. Implementations must make cancellation idempotent and
-    /// must not panic, including after session resources have been disposed.
+    /// future has completed: the handle remains Draining through the project
+    /// lease release and its own session disposal. Implementations must make
+    /// cancellation idempotent and must not panic, including after session
+    /// resources have been disposed.
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
@@ -188,13 +189,18 @@ impl LiveSessionHandle {
                 }
                 let _ = changed.changed().await;
             }
+            // Production order (TS createAgentSession.ts:223-241 via
+            // disposeAgentSessionLifecycle): the gateway bundle's release —
+            // the project runtime lease, composed by ProjectSessionFactory
+            // composeDisposer inside configuredDisposer — runs before the
+            // session-owned runtime resources are disposed.
             let mut disposal_failures = Vec::new();
-            if let Err(error) = handle.0.session.dispose().await {
-                disposal_failures.push(error);
-            }
             if let Some(mut lease) = guard.lease.take()
                 && let Err(error) = lease.release().await
             {
+                disposal_failures.push(error);
+            }
+            if let Err(error) = handle.0.session.dispose().await {
                 disposal_failures.push(error);
             }
             if let Err(error) = aggregate("Failed to dispose agent session.", disposal_failures) {

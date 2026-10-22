@@ -147,7 +147,9 @@ async fn record(active: bool) -> Value {
     let activity = active.then(|| handle.begin_activity().unwrap());
     let mut disposal = handle.dispose("dispose".into());
     drop(activity);
-    dispose_gate.entered().await;
+    // Production order: the project lease is released before the session's own
+    // resources are disposed (TS createAgentSession.ts:229,234).
+    lease_gate.entered().await;
     let mut checkpoints = Vec::new();
     // Poll the real shared completion future at every checkpoint. A premature
     // completion (even without a state change) must differ from the TS trace.
@@ -166,17 +168,17 @@ async fn record(active: bool) -> Value {
             checkpoints.push(checkpoint($phase, &handle, &runtime, &trace, done));
         }};
     }
-    capture!("dispose_pending");
-    handle.abort(&"during-dispose".into()).unwrap();
-    handle.abort(&"during-dispose".into()).unwrap();
-    capture!("dispose_aborts");
-    dispose_gate.open();
-    lease_gate.entered().await;
     capture!("lease_pending");
     handle.abort(&"during-lease".into()).unwrap();
     handle.abort(&"during-lease".into()).unwrap();
     capture!("lease_aborts");
     lease_gate.open();
+    dispose_gate.entered().await;
+    capture!("session_pending");
+    handle.abort(&"during-session".into()).unwrap();
+    handle.abort(&"during-session".into()).unwrap();
+    capture!("session_aborts");
+    dispose_gate.open();
     disposal.await.unwrap();
     checkpoints.push(checkpoint("disposed", &handle, &runtime, &trace, true));
     handle.abort(&"after-disposed".into()).unwrap();
@@ -186,7 +188,7 @@ async fn record(active: bool) -> Value {
 }
 
 #[tokio::test]
-async fn abort_at_dispose_and_lease_windows_matches_ts() {
+async fn abort_at_lease_and_dispose_windows_matches_ts() {
     const ORACLE: &str = include_str!("../../../tests/fixtures/session-abort-contract/oracle.json");
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
@@ -197,7 +199,13 @@ async fn abort_at_dispose_and_lease_windows_matches_ts() {
             .expect("controlled dispose/lease interleaving hung");
         assert_eq!(
             actual, *expected,
-            "dispose/lease abort trace; active={active}"
+            "lease/dispose abort trace; active={active}"
         );
     }
+}
+
+#[test]
+#[ignore = "requires fixed TS checkout and its existing tsx loader"]
+fn real_ts_abort_contract_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("session-abort-contract");
 }
