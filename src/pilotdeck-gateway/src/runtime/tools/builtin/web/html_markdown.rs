@@ -3,7 +3,7 @@
 //! walks. No GFM plugin is installed by urlFetcher.ts (tables are plain blocks,
 //! code blocks are indented, and script/style text is retained).
 use super::{
-    fetcher::HtmlToMarkdown,
+    fetcher::{HtmlToMarkdown, MarkdownOutput},
     html_dom::{Dom, Id, Kind, parse_document},
 };
 use crate::{
@@ -275,12 +275,7 @@ impl<'a> Render<'a> {
         let (leading, trailing) = self.flanks(id);
         let mut content = content;
         if !leading.is_empty() || !trailing.is_empty() {
-            let mut text = rope.flatten_and_release(content)?;
-            let start = text.len() - text.trim_start_matches(js_space).len();
-            let end = text.trim_end_matches(js_space).len();
-            text.truncate(end.max(start));
-            text.drain(..start);
-            content = rope.text_owned(text)?;
+            content = rope.trim_content(content)?;
         }
         let wrap_block = |rope: &Rope, content: Content| rope.check(content.wrap_block());
         // Domino's getElementsByTagName("IMG"/"A"/...) folds case only on
@@ -399,8 +394,7 @@ impl<'a> Render<'a> {
                             && node.prev.is_none()
                             && node.next.is_none()) =>
                 {
-                    let text = rope.flatten_and_release(content)?;
-                    rope.text_owned(inline_code(text)?)?
+                    rope.inline_code(content)?
                 }
                 "img" => {
                     let src = self.dom.attr(id, "src").unwrap_or("");
@@ -548,13 +542,33 @@ fn inline_code(mut content: String) -> Result<String, String> {
 
 impl HtmlToMarkdown for Turndown {
     fn convert(&self, html: &str) -> Result<String, String> {
-        convert(html, &mut Rope::default())
+        convert_markdown(html, &mut Rope::default(), usize::MAX).map(|output| output.text)
+    }
+
+    fn convert_bounded(&self, html: &str, prefix_units: usize) -> Result<MarkdownOutput, String> {
+        convert_markdown(html, &mut Rope::default(), prefix_units)
     }
 }
 
+#[cfg(test)]
 fn convert(html: &str, rope: &mut Rope) -> Result<String, String> {
+    convert_markdown(html, rope, usize::MAX).map(|output| output.text)
+}
+
+fn convert_markdown(
+    html: &str,
+    rope: &mut Rope,
+    prefix_units: usize,
+) -> Result<MarkdownOutput, String> {
+    // Replacements materialize only the prefix a bounded caller may need.
+    rope.set_prefix_units(prefix_units);
     if html.is_empty() {
-        return Ok(String::new());
+        return Ok(MarkdownOutput {
+            text: String::new(),
+            utf16_length: 0,
+            byte_length: 0,
+            complete: true,
+        });
     }
     // Match the baseline's document parsing wrapper, including HTML input
     // that closes it early. Parsing a fragment/body changes malformed input.
@@ -587,17 +601,20 @@ fn convert(html: &str, rope: &mut Rope) -> Result<String, String> {
         };
         output[id] = value;
     }
-    let mut output = rope.flatten(output[root])?;
-    let start = output.len() - output.trim_start_matches(['\t', '\r', '\n']).len();
-    let end = output.trim_end_matches(js_space).len();
-    output.truncate(end.max(start));
-    output.drain(..start);
-    Ok(output)
+    let (text, utf16_length, byte_length, complete) =
+        rope.flatten_bounded(output[root], prefix_units)?;
+    Ok(MarkdownOutput {
+        text,
+        utf16_length,
+        byte_length,
+        complete,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::tools::builtin::web::fetcher::MAX_MARKDOWN_LENGTH;
 
     #[test]
     fn heading_budget_includes_replacement_newlines_and_utf16_surrogates() {
@@ -656,5 +673,164 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("; "));
+    }
+
+    #[test]
+    fn bounded_inline_code_and_flank_trim_keep_nested_output_symbolic() {
+        // Real TS at n=16: `<code>` around this shape is 655,357 units (334
+        // bytes of HTML). Both wrappers must stop at the truncation prefix
+        // instead of flattening the whole subtree first (codex r1 P1-2).
+        let nested = format!("{}x{}", "<h1><div>".repeat(16), "</div></h1>".repeat(16));
+        for (name, html) in [
+            ("code", format!("<code>{nested}</code>")),
+            ("span", format!("<span> <code>{nested}</code></span>")),
+        ] {
+            let full = convert(&html, &mut Rope::default()).unwrap();
+            let full_units = full.encode_utf16().count();
+            assert_eq!(full_units, 655_357, "{name}: real TS length");
+            let mut rope = Rope::default();
+            let output = convert_markdown(&html, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+            assert_eq!(output.utf16_length, full_units, "{name}: full length");
+            assert!(!output.complete, "{name}: truncated");
+            assert_eq!(
+                output.text.encode_utf16().collect::<Vec<_>>(),
+                full.encode_utf16()
+                    .take(MAX_MARKDOWN_LENGTH + 1)
+                    .collect::<Vec<_>>(),
+                "{name}: prefix"
+            );
+            assert!(
+                rope.peak_flatten_bytes() <= (MAX_MARKDOWN_LENGTH + 16) * 4,
+                "{name}: flattened {} bytes",
+                rope.peak_flatten_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_code_sees_backticks_beyond_a_trimmed_tail() {
+        // Oracle `trimmed-span-code-tail-backtick` (real TS): the unmaterialized
+        // tail backtick still selects the two-backtick delimiter.
+        let nested = format!("{}x{}", "<h1><div>".repeat(16), "</div></h1>".repeat(16));
+        let html = format!("<code><span>{nested}` </span>x</code>");
+        let full = convert(&html, &mut Rope::default()).unwrap();
+        let mut rope = Rope::default();
+        let output = convert_markdown(&html, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+        let want: Vec<u16> = full.encode_utf16().take(20).collect();
+        let got: Vec<u16> = output.text.encode_utf16().take(20).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn bounded_code_pads_when_a_trimmed_tail_backtick_follows() {
+        // Oracle `trimmed-span-code-tail-backtick-sibling` (real TS): the
+        // reinserted span whitespace separates two backticks, so padding is
+        // chosen from the full content after a `TextPartial` merge.
+        let nested = format!("{}x{}", "<h1><div>".repeat(16), "</div></h1>".repeat(16));
+        let html = format!("<code><span>{nested}` </span>`</code>");
+        let full = convert(&html, &mut Rope::default()).unwrap();
+        let mut rope = Rope::default();
+        let output = convert_markdown(&html, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+        let want: Vec<u16> = full.encode_utf16().take(20).collect();
+        let got: Vec<u16> = output.text.encode_utf16().take(20).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn bounded_conversion_matches_full_and_does_not_materialize_the_tail() {
+        let build = |lines: usize| {
+            let mut html = "<blockquote>".repeat(250);
+            for _ in 0..lines {
+                html.push_str("a<br>");
+            }
+            html.push_str(&"</blockquote>".repeat(250));
+            html
+        };
+        // Complete result: bounded and full conversion must be byte-identical.
+        let small = build(40);
+        let full = convert(&small, &mut Rope::default()).unwrap();
+        let mut rope = Rope::default();
+        let bounded = convert_markdown(&small, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+        assert!(bounded.complete);
+        assert_eq!(bounded.text, full);
+        assert_eq!(bounded.utf16_length, full.encode_utf16().count());
+        assert_eq!(bounded.byte_length, full.len());
+
+        // Truncated result: only the prefix plus one unit is flattened.
+        let large = build(2_000);
+        let mut rope = Rope::default();
+        let output = convert_markdown(&large, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+        assert!(!output.complete);
+        assert!(output.utf16_length > 1_000_000);
+        assert_eq!(output.text.encode_utf16().count(), MAX_MARKDOWN_LENGTH + 1);
+        assert!(
+            rope.peak_flatten_bytes() <= (MAX_MARKDOWN_LENGTH + 3) * 4,
+            "flattened {} bytes",
+            rope.peak_flatten_bytes()
+        );
+    }
+
+    #[test]
+    fn bounded_work_is_bounded_by_the_prefix() {
+        // Grok r3 P1: the deterministic contract also has to bound *traversal*.
+        // This is the `tests/html_markdown.rs` performance shape: the logical
+        // output is tens of MiB, so a flatten pass that keeps walking after the
+        // prefix (output unchanged) must be caught without wall-clock time.
+        let depth = (MAX_DOM_DEPTH - 3) / 2;
+        let payload = format!("{}x", "<br>".repeat(90_000));
+        for (open, close) in [
+            ("<ul><li>", "</li></ul>"),
+            ("<ol start=9007199254740991><li>", "</li></ol>"),
+        ] {
+            let html = format!("{}{payload}{}", open.repeat(depth), close.repeat(depth));
+            let mut rope = Rope::default();
+            let output = convert_markdown(&html, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+            assert!(output.utf16_length > 40_000_000);
+            assert!(!output.complete);
+            assert!(output.text.encode_utf16().count() <= MAX_MARKDOWN_LENGTH + 1);
+            // A CR LF pair costs two input chars per output unit.
+            assert!(
+                rope.peak_span_visits() <= 2 * (MAX_MARKDOWN_LENGTH + 1) + 8,
+                "visited {} chars for a {} unit output",
+                rope.peak_span_visits(),
+                output.utf16_length
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_code_with_cr_stops_at_the_prefix() {
+        // GLM r3 P2 #2 / gate3 concurrency P2 #1: a `<code>` containing a lone
+        // CR used to bypass the bounded assembly and flatten the whole subtree.
+        // 250 nested blockquotes around 2,000 `a<br>` lines are ~500 units per
+        // line, far beyond the truncation prefix.
+        let mut html = String::from("<pre>x<code>");
+        html.push_str(&"<blockquote>".repeat(250));
+        for _ in 0..2_000 {
+            html.push_str("a<br>");
+        }
+        html.push_str(&"</blockquote>".repeat(250));
+        html.push_str("&#13;z</code></pre>");
+        let full = convert(&html, &mut Rope::default()).unwrap();
+        let mut rope = Rope::default();
+        let output = convert_markdown(&html, &mut rope, MAX_MARKDOWN_LENGTH + 1).unwrap();
+        assert!(output.utf16_length > 1_000_000);
+        assert!(!output.complete);
+        assert_eq!(
+            output.text.encode_utf16().collect::<Vec<_>>(),
+            full.encode_utf16()
+                .take(MAX_MARKDOWN_LENGTH + 1)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            rope.peak_flatten_bytes() <= (MAX_MARKDOWN_LENGTH + 16) * 4,
+            "flattened {} bytes",
+            rope.peak_flatten_bytes()
+        );
+        assert!(
+            rope.peak_span_visits() <= 2 * (MAX_MARKDOWN_LENGTH + 1) + 8,
+            "visited {} chars",
+            rope.peak_span_visits()
+        );
     }
 }

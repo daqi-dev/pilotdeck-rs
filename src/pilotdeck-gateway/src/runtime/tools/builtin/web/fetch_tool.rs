@@ -7,11 +7,7 @@
 use super::{
     super::{field, object, schema, string},
     ask_permission,
-    fetcher::{
-        FetchError, FetchResult, MAX_MARKDOWN_LENGTH, UrlFetcher, WebFetchHttpError,
-        truncate_markdown,
-    },
-    js_length,
+    fetcher::{FetchError, FetchResult, UrlFetcher, WebFetchHttpError, truncate_entry},
     preapproved_hosts::is_preapproved_url,
     url_validation::validate_url,
 };
@@ -458,9 +454,7 @@ async fn execute(
         FetchResult::Fetched { entry, from_cache } => (entry, from_cache),
     };
 
-    let truncated = truncate_markdown(&entry.content);
-    let raw_length = js_length(&entry.content);
-    let source_truncated = raw_length > MAX_MARKDOWN_LENGTH;
+    let (truncated, raw_length, source_truncated) = truncate_entry(&entry);
     let preapproved = is_preapproved_url(&url);
     let base = |llm_used: bool| {
         vec![

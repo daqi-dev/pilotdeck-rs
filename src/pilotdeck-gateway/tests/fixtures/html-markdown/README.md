@@ -77,7 +77,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 未取得 Grok 原 40 条输入，不把这 40 条冒充为它们的原样回放。
 
 `generate-depth.mts` 同样先跑固定提交的只读 Git 溯源守卫，再走真实 TS 入口。
-`regenerates_twice_identically` 分别运行四套生成器两次，逐字节匹配已提交金样。
+`regenerates_twice_identically` 分别运行五套生成器两次，逐字节匹配已提交金样。
 
 性能回归在深度预算内构造 126 层 ul/li、126 层长序号 ol/li（各 9 万 BR），
 再转换 10 MiB 平坦 HTML；release 的总预算 1 秒，debug 放宽为 20 秒。
@@ -174,3 +174,72 @@ span 和纯文本两例一致，原值仅记工作区 RESULT「修复轮 9」。
 `reparented_wide_four_mib_succeeds` 仅断言 Rust 转换成功。
 4 / 8 MiB 的 TS `Invalid array length` 仍是未批准的向宽差异，
 不新增豁免，也不改变深度批准或判分语义。
+
+## pr9c：截断投影与 #409 / #454 内存实测
+
+`generate-truncate.mts` 走真实 `getURLMarkdownContent`、真实 `createWebFetchTool`
+（只注入 HTTP 字节，不替换 turndown）和两次 raw 调用，录制 18 条输入：
+99999 / 100000 / 100001 单元边界、CJK 与代理对切点、悬空 Markdown 转义、
+250 层 blockquote 的行前缀切点、CJK h1 下划线、宽段落页、尾部空白 trim、
+trim 后 `rawLength=0` 的全空白页、NBSP-only blockquote（真实 TS `">"`），
+以及 `<code>` / `<span> <code>` 包住 16 层嵌套标题（真实 TS 655,357 单元）、
+被 flank trim 成前缀的 `<span>` 尾部的反引号（真实 TS 655,358 单元，决定
+`<code>` 的两反引号定界符），以及同一形状后跟兄弟反引号的合并边界
+（真实 TS 655,360 单元，决定 padding 是否可见）。
+另有 `code-closing-wrapper-window`：内容 99,994 单元、定界符 5 反引号 + pad
+（wrapper=6），逻辑长度 100,006；物化前缀必须包含闭合 wrapper，否则
+100,001 的 take 会短 1 个单元（真实 TS 100,006，带截断后缀 100,038）。
+输入用重复配方保存，展开后先核对 `htmlSha256`；期望值全部是真实 TS 输出，
+只存 UTF-16 长度和 SHA256（代理对切断后是孤立代理，不能按 UTF-8 哈希）。
+每条还存完整 trimmed 文本前 100,001 单元的 `prefix.utf16Length` / `sha256`；
+Rust 的 bounded 前缀按此回放（切在代理对中间时允许 1 个单元的额外低代理）。
+`windows` 另录 9 个短输入、22 个任意 k 切点（Grok r2 的 3 个输入 / 6 个 k：
+39、40、80–82、10；gate2 的闭合 wrapper 小窗口 k=24；`<pre>` 内 `&#13;` +
+flank-trim partial 的 k=10；GLM r3 P1 的 CRLF / 单 CR / 单 LF 混排 3 个输入 /
+10 个 k；GLM r4 P1 的 CRLF 接缝窗口 k=19、20、22、28），期望值是真实 TS
+`content.slice(0, k)`。生成器实际运行两次，输出：
+
+```text
+ae9dbb6285a0e9b782b774f49d106444cbebf77738a067993632b40cb3b47e42  truncate-oracle.json
+ae9dbb6285a0e9b782b774f49d106444cbebf77738a067993632b40cb3b47e42  truncate-oracle.json  (second run)
+```
+
+Rust 的 `Turndown::convert_bounded(html, MAX_MARKDOWN_LENGTH + 1)` 只把
+`min(trimmed, 100001)` 个单元落到 `String`；完整 trimmed UTF-16 / UTF-8 长度由
+rope 的 `Size` 组合算出，尾部空白由 `measure` 的 O(1) 前缀栈算术得出。行内
+替换（`<code>` 与 flank trim）也只物化到窗口为止，不会先 flatten 整个子树；
+flank trim 按行内 code 的折叠单位计数，CR LF 对折成一个单元，所以它物化到折叠后
+至少 `prefix_units + 4` 个单元（原始单元数最多翻倍）；`<code>` 的 inner 不足窗口
+时连闭合定界符/pad 一起物化，保证物化量至少是 `min(逻辑长度, prefix_units + 4)`
+（否则闭合 wrapper 会让 take 短几个单元）。`FetchedEntry::raw_markdown_length` 保留完整长度，
+`rawLength`、`truncated`、100 KB 后缀和 50 MiB 缓存预算仍按完整 Markdown
+计算。边界回放 `bounded_prefix_and_truncation_match_real_ts` 对 18 条逐条比较
+完整长度、前缀 SHA256、`truncated`、`returnedLength`、UTF-16 SHA256 和
+第二次缓存命中；`bounded_code_windows_match_real_ts` 回放 22 个任意 k 切点。
+`web_tools.rs` 另有两次端到端 `WebFetchTool` 调用（缓存
+命中、rawLength/returnedLength）和 335 M 单元超预算不缓存的用例。
+
+release 实测（`tests/html_budget_probe.rs` + `rss-probe.sh`，`/usr/bin/time -l`）：
+
+| 输入 | 路径 | 峰值 RSS | 耗时 | 输出 |
+|---|---|---|---|---|
+| 250 层 blockquote + 2.5 MiB `a<br>` | 全量 `convert` | 1,234,714,624 B | 0.92 s | 264.2 M 单元 |
+| 同上 | `convert_bounded` | 1,008,091,136 B | 0.44 s | 前缀 100,001 单元 |
+| 250 层 blockquote + 10 MiB `a<br>` | `convert_bounded` | 3,456,286,720 B | 1.56 s | 推断 V8 `Invalid string length`（未对 10 MiB 输入单独跑 TS） |
+| 10 MiB `<br>`（宽页） | `convert_bounded` | 1,922,695,168 B | 1.57 s | trim 后 0 |
+| 10 MiB `a<br>`（平铺） | `convert_bounded` | 3,996,598,272 B | 1.98 s | 8.4 M 单元 |
+
+RSS 数字由 `rss-probe.sh` 单进程测量；脚本先取探针子进程状态再 grep 证据行，
+探针 panic 时打印完整输出并以 1 退出，不会把崩溃进程的 `real`/RSS 行当成通过证据。
+`html_budget_probe.rs` 的
+`bounded_peak_rss_is_lower_than_full` 和 2.5 MiB 深层 prefix 用例标了
+`#[ignore]`（进程级 RSS 在并行测试下不稳定，后者 debug 约 1 GB），需要时用
+`cargo test --release -p pilotdeck-gateway --test html_budget_probe -- --ignored`
+或 `rss-probe.sh` 手动跑。
+
+因此提前停止只解决“输出/UTF-16 副本”放大：2.5 MiB 深嵌套少约 227 MB、
+耗时减半，`flatten` 容量由 264 MB 降到 400 KB（单测断言）。
+10 MiB 宽页/平铺页的 RSS 仍由 DOM + rope 每节点成本决定（约 2–4 GB），
+不是截断投影能覆盖的。评估候选节点/内存预算见
+`_tmp/20261022-a65-pr9c/RESULT.md`「#454：实测、评估与候选」；本轮未改
+`specs/`、`accepted-diffs.md` 或解析器语义，也未新增节点门槛。
