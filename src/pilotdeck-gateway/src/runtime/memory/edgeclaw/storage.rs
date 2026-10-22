@@ -1,9 +1,10 @@
 //! SQLite-backed EdgeClaw memory storage.
 //!
-//! The SQL text, statement order, conflict clauses, pending-session ordering
-//! and trace sanitation mirror `core/storage/sqlite.ts:541-590,916-1020,
-//! 1105-1176` one-for-one; `sqlite_master.sql` is compared verbatim against
-//! the real TS-created database by `tests/edgeclaw_storage.rs`.
+//! The SQL text, statement order, conflict clauses, pending-session ordering,
+//! L0 read/repair semantics and trace sanitation mirror
+//! `core/storage/sqlite.ts:541-590,916-1020,1028-1176` one-for-one;
+//! `sqlite_master.sql` is compared verbatim against the real TS-created
+//! database by `tests/edgeclaw_storage.rs`.
 //!
 //! JSON columns are JS-owned values, so they use
 //! [`pilotdeck_protocol::parse_json`] / [`pilotdeck_protocol::stringify_json`]
@@ -120,6 +121,8 @@ impl From<std::io::Error> for StorageError {
 
 /// One `l0_sessions` row (`types.ts:175-184`). `messages` is the raw JS array;
 /// `created_at` empty takes `nowIso()` like `record.createdAt || nowIso()`.
+/// Reads produce `normalizeL0Row` output: TEXT stops at the first NUL and
+/// `messages` is filtered/normalized by [`normalize_messages`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct L0SessionRecord {
     pub l0_index_id: String,
@@ -129,6 +132,15 @@ pub struct L0SessionRecord {
     pub source: String,
     pub indexed: bool,
     pub created_at: String,
+}
+
+/// `sqlite.ts:122-127` (`RepairMemoryResult`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepairMemoryResult {
+    pub inspected: usize,
+    pub updated: usize,
+    pub removed: usize,
+    pub rebuilt: bool,
 }
 
 /// `types.ts:196-200` (`IndexingSettings`).
@@ -450,6 +462,170 @@ impl EdgeClawStorage {
         Ok(timestamp.filter(|value| !js_trim(value).is_empty()))
     }
 
+    /// `sqlite.ts:1028-1034`: pending rows of one session, oldest first by
+    /// `(timestamp, created_at)`.
+    pub fn list_unindexed_l0_by_session(
+        &self,
+        session_key: &str,
+    ) -> Result<Vec<L0SessionRecord>, StorageError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT * FROM l0_sessions
+             WHERE session_key = ?1 AND indexed = 0
+             ORDER BY timestamp ASC, created_at ASC",
+        )?;
+        let rows = statement.query_map([session_key], l0_record_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// `sqlite.ts:1036-1045`: the newest row strictly before
+    /// `(timestamp, created_at)`, comparing both columns lexicographically.
+    pub fn get_latest_l0_before(
+        &self,
+        session_key: &str,
+        timestamp: &str,
+        created_at: &str,
+    ) -> Result<Option<L0SessionRecord>, StorageError> {
+        let conn = self.conn();
+        let record = conn
+            .query_row(
+                "SELECT * FROM l0_sessions
+                 WHERE session_key = ?1
+                   AND (timestamp < ?2 OR (timestamp = ?2 AND created_at < ?3))
+                 ORDER BY timestamp DESC, created_at DESC
+                 LIMIT 1",
+                params![session_key, timestamp, created_at],
+                l0_record_from_row,
+            )
+            .optional()?;
+        Ok(record)
+    }
+
+    /// `sqlite.ts:1047-1053`: filter blank ids, dedupe keeping first
+    /// occurrence, then one `IN (...)` update.
+    pub fn mark_l0_indexed(&self, ids: &[String]) -> Result<(), StorageError> {
+        let ids = unique_non_blank_ids(ids);
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let sql = format!(
+            "UPDATE l0_sessions SET indexed = 1 WHERE l0_index_id IN ({})",
+            placeholders(ids.len())
+        );
+        self.conn()
+            .execute(&sql, params_from_iter(ids.iter().copied()))?;
+        Ok(())
+    }
+
+    /// `sqlite.ts:1055-1064`: filtered/deduped ids, newest first.
+    pub fn get_l0_by_ids(&self, ids: &[String]) -> Result<Vec<L0SessionRecord>, StorageError> {
+        let ids = unique_non_blank_ids(ids);
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT * FROM l0_sessions
+             WHERE l0_index_id IN ({})
+             ORDER BY timestamp DESC, created_at DESC",
+            placeholders(ids.len())
+        );
+        let conn = self.conn();
+        let mut statement = conn.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(ids.iter().copied()), l0_record_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// `sqlite.ts:1066-1073`: newest first with the TS `Math.max` clamps
+    /// (`limit >= 1`, `offset >= 0`).
+    pub fn list_recent_l0(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<L0SessionRecord>, StorageError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT * FROM l0_sessions
+             ORDER BY timestamp DESC, created_at DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = statement.query_map(params![limit.max(1), offset.max(0)], l0_record_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// `sqlite.ts:1075-1078`: every row, oldest first by
+    /// `(timestamp, created_at)`.
+    pub fn list_all_l0(&self) -> Result<Vec<L0SessionRecord>, StorageError> {
+        let conn = self.conn();
+        Self::list_all_l0_with(&conn)
+    }
+
+    fn list_all_l0_with(conn: &Connection) -> Result<Vec<L0SessionRecord>, StorageError> {
+        let mut statement =
+            conn.prepare("SELECT * FROM l0_sessions ORDER BY timestamp ASC, created_at ASC")?;
+        let rows = statement.query_map([], l0_record_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// `sqlite.ts:1080-1104`: walk every row in ascending order, delete rows
+    /// whose transform result is empty, and reset `indexed` for rewritten
+    /// messages. `rebuilt` reports whether any row was touched.
+    ///
+    /// The TS callback returns `MemoryMessage[]`; the Rust callback returns
+    /// the JSON values directly, stringified with the same JS-semantics
+    /// serializer for the `JSON.stringify` comparison and the write.
+    pub fn repair_l0_sessions<F>(
+        &self,
+        mut transform: F,
+    ) -> Result<RepairMemoryResult, StorageError>
+    where
+        F: FnMut(&L0SessionRecord) -> Vec<JsValue>,
+    {
+        // Snapshot the rows like `this.listAllL0()`, then release the lock
+        // before invoking the caller's transform: a callback that reads this
+        // storage must not deadlock on the connection mutex. Mutations take
+        // the lock per row, the same granularity as the other write methods.
+        let rows = {
+            let conn = self.conn();
+            Self::list_all_l0_with(&conn)?
+        };
+        let inspected = rows.len();
+        let mut updated = 0;
+        let mut removed = 0;
+        for row in &rows {
+            let next_messages = transform(row);
+            if next_messages.is_empty() {
+                self.conn().execute(
+                    "DELETE FROM l0_sessions WHERE l0_index_id = ?1",
+                    [&row.l0_index_id],
+                )?;
+                removed += 1;
+                continue;
+            }
+            let next = JsValue::Array(next_messages);
+            let next_json = stringify_json(&next)
+                .map_err(|error| StorageError::Json(error.to_string()))?
+                .ok_or(StorageError::Unstringifiable("l0_sessions.messages_json"))?;
+            let current_json = stringify_json(&row.messages)
+                .map_err(|error| StorageError::Json(error.to_string()))?
+                .ok_or(StorageError::Unstringifiable("l0_sessions.messages_json"))?;
+            if next_json == current_json {
+                continue;
+            }
+            self.conn().execute(
+                "UPDATE l0_sessions SET messages_json = ?1, indexed = 0 WHERE l0_index_id = ?2",
+                params![next_json, row.l0_index_id],
+            )?;
+            updated += 1;
+        }
+        Ok(RepairMemoryResult {
+            inspected,
+            updated,
+            removed,
+            rebuilt: updated > 0 || removed > 0,
+        })
+    }
+
     // -- traces -----------------------------------------------------------
 
     /// `sqlite.ts:1105-1112`.
@@ -658,6 +834,84 @@ fn node_text(value: String) -> String {
         Some(index) => value[..index].to_owned(),
         None => value,
     }
+}
+
+/// `sqlite.ts:1053,1062`: `Array.from(new Set(ids.filter(...)))` — drop
+/// blank ids while keeping the first occurrence of each.
+fn unique_non_blank_ids(ids: &[String]) -> Vec<&str> {
+    let mut seen = HashSet::new();
+    ids.iter()
+        .map(String::as_str)
+        .filter(|id| !js_trim(id).is_empty())
+        .filter(|id| seen.insert(*id))
+        .collect()
+}
+
+/// `sqlite.ts:138-154` (`normalizeMessages`): keep record items, drop a blank
+/// `msgId`, default a blank/non-string `role` to `"user"` and a non-string
+/// `content` to `""`. Property order matches the TS object literal.
+fn normalize_messages(value: &JsValue) -> JsValue {
+    let JsValue::Array(items) = value else {
+        return JsValue::Array(Vec::new());
+    };
+    let mut messages = Vec::new();
+    for item in items {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let mut message = JsObject::new();
+        if let Some(JsValue::String(msg_id)) = object.get("msgId")
+            && !js_trim_units(msg_id.units()).is_empty()
+        {
+            message.insert("msgId".into(), JsValue::String(msg_id.clone()));
+        }
+        let role = match object.get("role") {
+            Some(JsValue::String(role)) if !js_trim_units(role.units()).is_empty() => role.clone(),
+            _ => JsString::from("user"),
+        };
+        message.insert("role".into(), JsValue::String(role));
+        let content = match object.get("content") {
+            Some(JsValue::String(content)) => content.clone(),
+            _ => JsString::from(""),
+        };
+        message.insert("content".into(), JsValue::String(content));
+        messages.push(JsValue::Object(message));
+    }
+    JsValue::Array(messages)
+}
+
+/// `sqlite.ts:156-166` (`normalizeL0Row`) over the `SELECT *` column order.
+fn l0_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<L0SessionRecord> {
+    let text = |index: usize| -> rusqlite::Result<String> {
+        Ok(row
+            .get::<_, Option<String>>(index)?
+            .map(node_text)
+            .unwrap_or_else(|| "null".to_owned()))
+    };
+    let messages = row
+        .get::<_, Option<String>>(3)?
+        .map(node_text)
+        .and_then(|raw| parse_json(&raw).ok())
+        .map(|value| normalize_messages(&value))
+        .unwrap_or_else(|| JsValue::Array(Vec::new()));
+    let indexed = match row.get::<_, SqlValue>(5)? {
+        SqlValue::Null => false,
+        SqlValue::Integer(value) => value != 0,
+        SqlValue::Real(value) => value != 0.0,
+        _ => true,
+    };
+    Ok(L0SessionRecord {
+        l0_index_id: text(0)?,
+        session_key: text(1)?,
+        timestamp: text(2)?,
+        messages,
+        source: row
+            .get::<_, Option<String>>(4)?
+            .map(node_text)
+            .unwrap_or_default(),
+        indexed,
+        created_at: text(6)?,
+    })
 }
 
 /// `Array#sort` on trace records uses `String#localeCompare` (default locale,
@@ -1193,5 +1447,40 @@ mod tests {
             normalize_trace(record, TraceKind::Dream),
             Err(StorageError::InvalidTrace(_))
         ));
+    }
+
+    #[test]
+    fn normalize_messages_filters_and_defaults_like_ts() {
+        // `sqlite.ts:138-154`: non-records are dropped, a blank `msgId` is
+        // omitted, a blank/non-string `role` becomes "user", a non-string
+        // `content` becomes "", and extra keys are discarded.
+        let value = parse_json(
+            r#"[1,null,{"msgId":"  ","role":"  ","content":"x","extra":1},{"msgId":"m","role":"assistant","content":5},{"msgId":" m2 ","content":"ok"}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            stringify_json(&normalize_messages(&value))
+                .unwrap()
+                .unwrap(),
+            r#"[{"role":"user","content":"x"},{"msgId":"m","role":"assistant","content":""},{"msgId":" m2 ","role":"user","content":"ok"}]"#
+        );
+        // A non-array JSON value normalizes to an empty array.
+        assert_eq!(
+            stringify_json(&normalize_messages(&JsValue::from("nope")))
+                .unwrap()
+                .unwrap(),
+            "[]"
+        );
+    }
+
+    #[test]
+    fn unique_ids_filter_blank_and_keep_first_occurrence() {
+        // `sqlite.ts:1049-1052` / `:1057-1060`.
+        let ids = ["a", " ", "", "b", "a", "b"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(unique_non_blank_ids(&ids), ["a", "b"]);
+        assert!(unique_non_blank_ids(&[" ".into(), "".into()]).is_empty());
     }
 }

@@ -1,4 +1,4 @@
-# EdgeClaw sqlite 存储金样（A6.6-pr10a）
+# EdgeClaw sqlite 存储金样（A6.6-pr10a / pr10d）
 
 由固定 TS 基线 `resources/PilotDeck`（commit `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`）
 的未修改 `MemoryRepository` 在 Node 22 的 `node:sqlite` 上真实执行生成。基线
@@ -9,11 +9,11 @@ RESULT「依赖与 SQLite 版本」）。
 
 - `generate.mts`：生成器。先用 `baseline_source_guard.mjs` 校验基线 HEAD、
   工作区干净、`sqlite.ts` 及其相对导入闭包与提交 blob 一致，再执行 TS。
-- `observe.mts`：TS / Rust 共用的观察面（pipeline、会话、三类 trace、settings），
-  另含 `sqlite_master`、`PRAGMA table_info`、原始行文本的导出。
+- `observe.mts`：TS / Rust 共用的观察面（pipeline、会话、三类 trace、settings、
+  L0 读取），另含 `sqlite_master`、`PRAGMA table_info`、原始行文本的导出。
 - `verify.mts`：反向验证器。Rust 写入的 `.db` 交给真实 TS `MemoryRepository`
   重新打开，输出同形状观察面，供 Rust→TS 对拍。
-- `oracle.json`：唯一入库的金样。含五个场景的观察值、schema、行文本和
+- `oracle.json`：唯一入库的金样。含六个场景的观察值、schema、行文本和
   `.db` 的 base64。`.db` 文件本身不在此目录、不入库。
 
 ## 场景
@@ -25,6 +25,7 @@ RESULT「依赖与 SQLite 版本」）。
 | `migration` | TS 旧 schema（`state_value` 列）库；Rust 打开后迁移结果与 TS 的 schema/行一致（含 `COALESCE`） |
 | `rustWrites` | 同一操作脚本由 Rust 重放；两份快照分别覆盖操作后与 save 侧 `limit` 截断后 |
 | `errors` | TS 会抛 `TypeError` 的 trace 写入；记录真实错误文本、抛错后的 pipeline 状态，Rust 必须同样失败且不写库（字符串状态可迭代，仍成功） |
+| `repair` | L0 repair 前后：TS 写库后导出修复前 `.db` 与观察面，依次跑 `filterContent` / `rewriteContent` / `identity` 三个 transform 并记录每步结果；Rust 从同一 `.db` 重放，行文本逐字一致。反向由 `verify.mts` 在 Rust 修复前后各读一次 |
 
 脚本还固定了这些边界：
 
@@ -37,6 +38,13 @@ RESULT「依赖与 SQLite 版本」）。
 - `insertL0Session` 的空 `source`（→ `"openclaw"`）与空 `createdAt`（→ `nowIso()`）；
   后者在 Rust 重放时按约定 mask `created_at`，由单测单独校验写侧默认值。
 - 空白 `MIN(timestamp)` 经 `.trim()` 后返回 `undefined`。
+- L0 读取（`sqlite.ts:1028-1078`）：`listUnindexedL0BySession` 的 `indexed = 0`
+  过滤与 `(timestamp, created_at)` 升序；`getLatestL0Before` 的两列严格 `<`
+  边界（同一 timestamp 用 `created_at` 破平，精确键返回 `undefined`）；
+  `markL0Indexed` 的空/重复/不存在 id；`getL0ByIds` 的过滤、去重与降序；
+  `listRecentL0` 的 `limit >= 1`、`offset >= 0` 钳制与越界；`listAllL0` 升序。
+  `messages_json` 覆盖 NUL 后缀、非法 JSON、非数组 JSON 与
+  `normalizeMessages` 的字段缺省。
 - `normalizeIndexTraceRecord` / `normalizeDreamTraceRecord` 的短路与非数组
   `storedResults` / 原始类型 `outcome` 形状。
 
@@ -59,6 +67,8 @@ A6.6-pr10a 修复轮 1 记录为
 `sha256 0274519e489a5611a50162be77b5faf1670e1400d7db897e7b0c093d1990e202`，
 修复轮 2 加入孤立代理记录后为
 `sha256 bc1e7a4aadb8e028fa9d0ad362a9de57b0c653924844659e91733cb0e234a845`。
+A6.6-pr10d 加入 L0 读取与 `repair` 场景后，两次独立生成均为
+`sha256 31b0fefdd97d1828af6b7a7cd4b2eeee9c60445db19c2065b60a781f801de7a4`。
 
 ## 回放
 

@@ -86,6 +86,69 @@ export function observe(repo: any): any {
       first: firstDream === undefined ? null : repo.getDreamTrace(firstDream) ?? null,
       missing: repo.getDreamTrace('missing') ?? null,
     },
+    l0: observeL0(repo),
+  };
+}
+
+/**
+ * Read-only L0 surface added by A6.6-pr10d (`sqlite.ts:1028-1078`). Kept
+ * separate from `observe` so the repair scenario can snapshot it before and
+ * after each transform without duplicating the trace corpus.
+ */
+export function observeL0(repo: any): any {
+  const tieTs = '2026-10-20T13:00:00.000Z';
+  return {
+    unindexedS1: repo.listUnindexedL0BySession('s1'),
+    unindexedS2: repo.listUnindexedL0BySession('s2'),
+    unindexedSTie: repo.listUnindexedL0BySession('s-tie'),
+    unindexedSRaw: repo.listUnindexedL0BySession('s-raw'),
+    unindexedSIdx: repo.listUnindexedL0BySession('s-idx'),
+    unindexedMissing: repo.listUnindexedL0BySession('missing'),
+    unindexedNulKey: repo.listUnindexedL0BySession('a\0b'),
+    unindexedTruncatedKey: repo.listUnindexedL0BySession('a'),
+
+    latestS2BeforeFirst:
+      repo.getLatestL0Before(
+        's2',
+        '2026-10-20T09:55:00.000Z',
+        '2026-10-20T09:54:00.000Z',
+      ) ?? null,
+    latestS2AtSecond:
+      repo.getLatestL0Before(
+        's2',
+        '2026-10-20T10:05:00.000Z',
+        '2026-10-20T10:04:00.000Z',
+      ) ?? null,
+    latestExactKey:
+      repo.getLatestL0Before(
+        's-idx',
+        '2026-10-20T15:00:00.000Z',
+        '2026-10-20T14:59:00.000Z',
+      ) ?? null,
+    latestSTieMid:
+      repo.getLatestL0Before('s-tie', tieTs, '2026-10-20T13:00:00.500Z') ?? null,
+    latestSTieHigh:
+      repo.getLatestL0Before('s-tie', tieTs, '2026-10-20T13:00:01.000Z') ?? null,
+    latestSTieAfterAll:
+      repo.getLatestL0Before(
+        's-tie',
+        '2026-10-20T13:00:01.000Z',
+        '2099-01-01T00:00:00.000Z',
+      ) ?? null,
+    latestMissing: repo.getLatestL0Before('missing', tieTs, tieTs) ?? null,
+
+    byIds: repo.getL0ByIds(['l0-a', 'l0-a', ' ', 'l0-missing', 'l0-tie-2']),
+    byIdsEmpty: repo.getL0ByIds([]),
+    byIdsBlank: repo.getL0ByIds(['', ' ']),
+    byIdsNulKey: repo.getL0ByIds(['l0-nul-key']),
+
+    recent0: repo.listRecentL0(0),
+    recentNeg: repo.listRecentL0(-5, -1),
+    recent2: repo.listRecentL0(2),
+    recentOffset1: repo.listRecentL0(3, 1),
+    recentOffsetPastEnd: repo.listRecentL0(5, 1000),
+    recentAll: repo.listRecentL0(1000, 0),
+    all: repo.listAllL0(),
   };
 }
 

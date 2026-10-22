@@ -317,6 +317,98 @@ const OPERATIONS: any[] = [
     kind: 'insertL0Session',
     record: session('l0-blank-ts', 's-blank', ' ', '2026-10-20T04:30:00.000Z'),
   },
+  // Same timestamp, three distinct `created_at` values: `getLatestL0Before`
+  // must use the strict `created_at < ?` tie-break, so the exact first key
+  // returns nothing and the middle key returns only the oldest tied row.
+  {
+    kind: 'insertL0Session',
+    record: session('l0-tie-1', 's-tie', T('13:00'), '2026-10-20T13:00:00.000Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-tie-2', 's-tie', T('13:00'), '2026-10-20T13:00:01.000Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-tie-3', 's-tie', T('13:00'), '2026-10-20T13:00:00.500Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-tie-4', 's-tie', T('12:59'), '2026-10-20T23:59:59.000Z'),
+  },
+  // One indexed and one pending row in the same session: the unindexed read
+  // must keep only the pending one.
+  {
+    kind: 'insertL0Session',
+    record: session('l0-idx-1', 's-idx', T('15:00'), '2026-10-20T14:59:00.000Z', {
+      indexed: true,
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-idx-2', 's-idx', T('15:01'), '2026-10-20T15:00:00.000Z'),
+  },
+  // Raw TEXT rows: invalid JSON, a non-array JSON value, a NUL suffix (read
+  // stops at the first NUL), and `normalizeMessages` shapes (non-record items,
+  // blank msgId/role, non-string content, extra keys).
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'l0-raw-nul',
+      sessionKey: 's-raw',
+      timestamp: T('14:00'),
+      messagesJson: '[{"role":"user","content":"nul"}]\0garbage',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T13:59:00.000Z',
+    },
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'l0-raw-bad',
+      sessionKey: 's-raw',
+      timestamp: T('14:01'),
+      messagesJson: '{not json',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T14:00:30.000Z',
+    },
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'l0-raw-object',
+      sessionKey: 's-raw',
+      timestamp: T('14:02'),
+      messagesJson: '{"role":"user","content":"object"}',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T14:01:30.000Z',
+    },
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'l0-raw-normalize',
+      sessionKey: 's-raw',
+      timestamp: T('14:03'),
+      messagesJson:
+        '[1,null,{"msgId":"  ","role":"  ","content":"x","extra":1},{"msgId":"m","role":"assistant","content":5},{"msgId":" m2 ","content":"ok"}]',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T14:02:30.000Z',
+    },
+  },
+  // `markL0Indexed`: duplicate/blank/missing ids are filtered or deduped; the
+  // empty and blank-only calls are no-ops. Marking `l0-a` leaves `s1` with no
+  // pending rows because `l0-d` is already indexed.
+  {
+    kind: 'markL0Indexed',
+    ids: ['l0-a', 'l0-a', ' ', 'l0-missing', ''],
+  },
+  { kind: 'markL0Indexed', ids: [] },
+  { kind: 'markL0Indexed', ids: [' ', ''] },
 
   // Cases: stable descending sort, duplicate id keeps the newest, entries that
   // are not objects / lack a string id or startedAt / have an empty id are
@@ -574,6 +666,116 @@ const LIMIT_OPERATIONS: any[] = [
   },
 ];
 
+// -- repair corpus and transform script ------------------------------------
+//
+// `repairL0Sessions` compares `JSON.stringify(nextMessages)` with the row it
+// read, so the corpus covers: unchanged rows, a partial filter (update), a
+// filter that empties the array (remove), a rewrite, an already-indexed row
+// (the update must reset `indexed`), invalid/non-array JSON, a NUL suffix, and
+// `normalizeMessages` defaults inside the callback input.
+const REPAIR_OPERATIONS: any[] = [
+  {
+    kind: 'insertL0Session',
+    record: session('r-keep', 's-repair', T('10:00'), '2026-10-20T09:59:00.000Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-drop', 's-repair', T('10:01'), '2026-10-20T10:00:30.000Z', {
+      messages: [{ msgId: 'm-drop', role: 'user', content: 'drop-me' }],
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-rewrite', 's-repair', T('10:02'), '2026-10-20T10:01:30.000Z', {
+      messages: [{ msgId: 'm-rw', role: 'assistant', content: 'rewrite-me' }],
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-partial', 's-repair', T('10:03'), '2026-10-20T10:02:30.000Z', {
+      messages: [{ content: 'keep' }, { content: 'drop-me' }],
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-other', 's-other', T('10:04'), '2026-10-20T10:03:30.000Z', {
+      messages: [
+        { role: 'user', content: 'alpha' },
+        { role: 'assistant', content: 'beta' },
+      ],
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-empty', 's-repair', T('10:05'), '2026-10-20T10:04:30.000Z', {
+      messages: [],
+    }),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('r-indexed', 's-repair', T('10:06'), '2026-10-20T10:05:30.000Z', {
+      messages: [{ role: 'user', content: 'rewrite-me' }],
+      indexed: true,
+    }),
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'r-raw-nul',
+      sessionKey: 's-repair',
+      timestamp: T('10:07'),
+      messagesJson: '[{"role":"user","content":"drop-me"}]\0tail',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T10:06:30.000Z',
+    },
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'r-raw-bad',
+      sessionKey: 's-repair',
+      timestamp: T('10:08'),
+      messagesJson: '{not json',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T10:07:30.000Z',
+    },
+  },
+  {
+    kind: 'rawL0Insert',
+    record: {
+      l0IndexId: 'r-raw-normalize',
+      sessionKey: 's-repair',
+      timestamp: T('10:09'),
+      messagesJson: '[1,null,{"msgId":" ","role":" ","content":"keep","x":1}]',
+      source: 'cli',
+      indexed: 0,
+      createdAt: '2026-10-20T10:08:30.000Z',
+    },
+  },
+];
+
+const REPAIR_STEPS: any[] = [
+  { kind: 'filterContent', content: 'drop-me' },
+  { kind: 'rewriteContent', from: 'rewrite-me', to: 'rewritten' },
+  { kind: 'identity' },
+];
+
+function repairTransform(step: any, record: any): any[] {
+  if (step.kind === 'identity') return record.messages;
+  if (step.kind === 'filterContent') {
+    return record.messages.filter((message: any) => message.content !== step.content);
+  }
+  if (step.kind === 'rewriteContent') {
+    return record.messages.map((message: any) =>
+      message.content === step.from ? { ...message, content: step.to } : message,
+    );
+  }
+  throw new Error(`unknown repair transform ${step.kind}`);
+}
+
+
 function applyOperations(repo: any, operations: any[], dbPath: string): void {
   for (const operation of operations) {
     switch (operation.kind) {
@@ -586,6 +788,31 @@ function applyOperations(repo: any, operations: any[], dbPath: string): void {
       case 'insertL0Session':
         repo.insertL0Session(operation.record);
         break;
+      case 'markL0Indexed':
+        repo.markL0Indexed(operation.ids);
+        break;
+      case 'rawL0Insert': {
+        const record = operation.record;
+        const db = new DatabaseSync(dbPath);
+        try {
+          db.prepare(
+            `INSERT INTO l0_sessions
+               (l0_index_id, session_key, timestamp, messages_json, source, indexed, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            record.l0IndexId,
+            record.sessionKey,
+            record.timestamp,
+            record.messagesJson,
+            record.source,
+            record.indexed,
+            record.createdAt,
+          );
+        } finally {
+          db.close();
+        }
+        break;
+      }
       case 'saveCaseTrace':
         repo.saveCaseTrace(operation.record, operation.limit);
         break;
@@ -783,12 +1010,104 @@ withRepo(errorsPath, (repo) => {
 });
 const errors = { attempts: errorAttempts };
 
+// -- scenario: repair before/after ------------------------------------------
+//
+// The pre-repair database is exported as base64 so the Rust suite starts from
+// bytes a real TS process wrote; the same insert script is also replayed by
+// Rust and handed back to `verify.mts` for the reverse direction.
+const repairPath = join(scenarioDir('repair'), 'memory.db');
+withRepo(repairPath, (repo) => {
+  applyOperations(repo, REPAIR_OPERATIONS, repairPath);
+});
+const repairBeforeArtifacts = readArtifacts(repairPath);
+let repairBefore: any;
+const repairAfterSteps: any[] = [];
+withRepo(repairPath, (repo) => {
+  repairBefore = observe(repo);
+  for (const step of REPAIR_STEPS) {
+    const result = repo.repairL0Sessions((record: any) => repairTransform(step, record));
+    repairAfterSteps.push({ step, result, observations: observe(repo) });
+  }
+});
+const repairAfterArtifacts = readArtifacts(repairPath);
+const repair = {
+  operations: REPAIR_OPERATIONS,
+  steps: REPAIR_STEPS,
+  beforeBase64: repairBeforeArtifacts.dbBase64,
+  before: repairBefore,
+  beforeRows: repairBeforeArtifacts.rows,
+  afterSteps: repairAfterSteps,
+  schema: repairAfterArtifacts.schema,
+  columns: repairAfterArtifacts.columns,
+  rows: repairAfterArtifacts.rows,
+};
+
+assert.deepEqual(
+  repairAfterSteps.map((entry) => entry.result),
+  [
+    { inspected: 10, updated: 1, removed: 4, rebuilt: true },
+    { inspected: 6, updated: 2, removed: 0, rebuilt: true },
+    { inspected: 6, updated: 0, removed: 0, rebuilt: false },
+  ],
+);
+assert.equal(repairBefore.l0.all.length, 10);
+assert.equal(repairAfterSteps[2].observations.l0.all.length, 6);
+assert.equal(
+  repairAfterSteps[1].observations.l0.all.find((row: any) => row.l0IndexId === 'r-indexed')
+    .indexed,
+  false,
+  'a repaired row must be marked unindexed again',
+);
+
 // The save-side truncation must have actually truncated, otherwise the fixture
 // would pass even if `limit` were ignored.
 assert.equal(rustWritesLimitedObservations.caseTraces.recent30.length, 2);
 assert.equal(rustWritesLimitedObservations.caseTraces.recent30[0].caseId, 'case-limit');
 assert.equal(rustWritesLimitedObservations.indexTraces.recent30.length, 1);
 assert.equal(rustWritesLimitedObservations.dreamTraces.recent30.length, 1);
+
+// L0 read corpus: the oracle must actually distinguish unindexed filtering,
+// ordering, the strict tie-break, clamps, and `normalizeMessages`.
+const tsL0 = tsReadObservations.l0;
+assert.equal(tsL0.unindexedS1.length, 0);
+assert.equal(tsL0.unindexedS2.length, 2);
+assert.deepEqual(
+  tsL0.unindexedS2.map((record: any) => record.l0IndexId),
+  ['l0-c', 'l0-b'],
+);
+assert.equal(tsL0.unindexedSTie.length, 4);
+assert.equal(tsL0.unindexedSRaw.length, 4);
+assert.equal(tsL0.unindexedSIdx.length, 1);
+assert.equal(tsL0.unindexedMissing.length, 0);
+assert.equal(tsL0.latestExactKey, null);
+assert.equal(tsL0.latestSTieMid.l0IndexId, 'l0-tie-1');
+assert.equal(tsL0.latestSTieHigh.l0IndexId, 'l0-tie-3');
+assert.equal(tsL0.latestSTieAfterAll.l0IndexId, 'l0-tie-2');
+assert.equal(tsL0.byIds.length, 2);
+assert.equal(tsL0.recent0.length, 1);
+assert.equal(tsL0.recentNeg.length, 1);
+assert.equal(tsL0.recentOffsetPastEnd.length, 0);
+assert.equal(tsL0.all.length, 22);
+assert.equal(tsL0.recentAll.length, 22);
+assert.equal(tsL0.recentOffset1.length, 3);
+assert.deepEqual(
+  tsL0.all.find((record: any) => record.l0IndexId === 'l0-raw-normalize').messages,
+  [
+    { role: 'user', content: 'x' },
+    { msgId: 'm', role: 'assistant', content: '' },
+    { msgId: ' m2 ', role: 'user', content: 'ok' },
+  ],
+);
+assert.deepEqual(
+  tsL0.all.find((record: any) => record.l0IndexId === 'l0-raw-nul').messages,
+  [{ role: 'user', content: 'nul' }],
+);
+assert.equal(
+  tsL0.all.find((record: any) => record.l0IndexId === 'l0-raw-bad').messages.length,
+  0,
+);
+assert.equal(tsL0.unindexedNulKey[0].sessionKey, 'a');
+assert.equal(tsL0.unindexedTruncatedKey.length, 0);
 
 const oracle = {
   sourceCommit: provenance.ref,
@@ -800,6 +1119,7 @@ const oracle = {
   migration,
   rustWrites,
   errors,
+  repair,
 };
 
 mkdirSync(output, { recursive: true });
@@ -809,7 +1129,7 @@ writeFileSync(oraclePath, text);
 const sha256 = createHash('sha256').update(text).digest('hex');
 console.log(`wrote ${oraclePath}`);
 console.log(`oracle sha256 ${sha256}`);
-console.log('scenarios: tsRead, empty, migration, rustWrites, errors');
+console.log('scenarios: tsRead, empty, migration, rustWrites, errors, repair');
 // Only cleaned up after every assertion passed; a failure keeps the temp
 // databases around for inspection.
 rmSync(root, { recursive: true, force: true });

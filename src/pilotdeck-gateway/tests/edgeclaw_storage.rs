@@ -17,7 +17,7 @@
 //! file to `verify.mts`, which reopens it through the real `MemoryRepository`.
 
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
-    EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError,
+    EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError, storage::RepairMemoryResult,
 };
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use rusqlite::{Connection, params};
@@ -392,6 +392,46 @@ fn journal_mode(conn: &Connection) -> String {
         .expect("read journal_mode")
 }
 
+/// The observation surface exposes `l0_sessions.created_at`, so the same
+/// frozen-clock correction as [`mask_volatile_columns`] is needed for the one
+/// row inserted without an explicit `createdAt`.
+fn mask_l0_default_created_at(value: &JsValue) -> JsValue {
+    let Some(JsValue::Object(l0)) = value.get("l0") else {
+        return value.clone();
+    };
+    let mut l0 = l0.clone();
+    let keys = l0
+        .entries()
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    for key in keys {
+        let replacement = match l0.get_key(&key) {
+            Some(JsValue::Array(items)) => JsValue::Array(
+                items
+                    .iter()
+                    .map(|record| {
+                        let mut object = record.as_object().expect("l0 record").clone();
+                        let is_defaulted = object
+                            .get("l0IndexId")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|id| id.equals_str("l0-defaults"));
+                        if is_defaulted {
+                            object.insert("createdAt".into(), JsValue::from(""));
+                        }
+                        JsValue::Object(object)
+                    })
+                    .collect(),
+            ),
+            _ => continue,
+        };
+        l0.insert(key, replacement);
+    }
+    let mut root = value.as_object().expect("observation object").clone();
+    root.insert("l0".into(), JsValue::Object(l0));
+    JsValue::Object(root)
+}
+
 // -- observation mirrored from observe.mts --------------------------------
 
 fn settings_json(settings: &IndexingSettings) -> JsValue {
@@ -417,6 +457,247 @@ fn first_id(records: &[JsValue], key: &str) -> Option<String> {
         .and_then(|record| record.get(key))
         .and_then(JsValue::as_string)
         .map(|id| id.to_utf8().expect("fixture trace ids are UTF-8"))
+}
+
+fn l0_json(record: &L0SessionRecord) -> JsValue {
+    object(vec![
+        ("l0IndexId", JsValue::from(record.l0_index_id.as_str())),
+        ("sessionKey", JsValue::from(record.session_key.as_str())),
+        ("timestamp", JsValue::from(record.timestamp.as_str())),
+        ("messages", record.messages.clone()),
+        ("source", JsValue::from(record.source.as_str())),
+        ("indexed", JsValue::Bool(record.indexed)),
+        ("createdAt", JsValue::from(record.created_at.as_str())),
+    ])
+}
+
+fn l0_list(records: Vec<L0SessionRecord>) -> JsValue {
+    JsValue::Array(records.iter().map(l0_json).collect())
+}
+
+fn l0_optional(record: Option<L0SessionRecord>) -> JsValue {
+    record.as_ref().map(l0_json).unwrap_or(JsValue::Null)
+}
+
+fn id_strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+/// Mirror of `observeL0` in `tests/fixtures/edgeclaw-storage/observe.mts`.
+fn observe_l0(storage: &EdgeClawStorage) -> JsValue {
+    object(vec![
+        (
+            "unindexedS1",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("s1")
+                    .expect("unindexed s1"),
+            ),
+        ),
+        (
+            "unindexedS2",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("s2")
+                    .expect("unindexed s2"),
+            ),
+        ),
+        (
+            "unindexedSTie",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("s-tie")
+                    .expect("unindexed s-tie"),
+            ),
+        ),
+        (
+            "unindexedSRaw",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("s-raw")
+                    .expect("unindexed s-raw"),
+            ),
+        ),
+        (
+            "unindexedSIdx",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("s-idx")
+                    .expect("unindexed s-idx"),
+            ),
+        ),
+        (
+            "unindexedMissing",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("missing")
+                    .expect("unindexed missing"),
+            ),
+        ),
+        (
+            "unindexedNulKey",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("a\0b")
+                    .expect("unindexed nul key"),
+            ),
+        ),
+        (
+            "unindexedTruncatedKey",
+            l0_list(
+                storage
+                    .list_unindexed_l0_by_session("a")
+                    .expect("unindexed truncated key"),
+            ),
+        ),
+        (
+            "latestS2BeforeFirst",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s2",
+                        "2026-10-20T09:55:00.000Z",
+                        "2026-10-20T09:54:00.000Z",
+                    )
+                    .expect("latest s2 first"),
+            ),
+        ),
+        (
+            "latestS2AtSecond",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s2",
+                        "2026-10-20T10:05:00.000Z",
+                        "2026-10-20T10:04:00.000Z",
+                    )
+                    .expect("latest s2 second"),
+            ),
+        ),
+        (
+            "latestExactKey",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s-idx",
+                        "2026-10-20T15:00:00.000Z",
+                        "2026-10-20T14:59:00.000Z",
+                    )
+                    .expect("latest exact key"),
+            ),
+        ),
+        (
+            "latestSTieMid",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s-tie",
+                        "2026-10-20T13:00:00.000Z",
+                        "2026-10-20T13:00:00.500Z",
+                    )
+                    .expect("latest tie mid"),
+            ),
+        ),
+        (
+            "latestSTieHigh",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s-tie",
+                        "2026-10-20T13:00:00.000Z",
+                        "2026-10-20T13:00:01.000Z",
+                    )
+                    .expect("latest tie high"),
+            ),
+        ),
+        (
+            "latestSTieAfterAll",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "s-tie",
+                        "2026-10-20T13:00:01.000Z",
+                        "2099-01-01T00:00:00.000Z",
+                    )
+                    .expect("latest tie after all"),
+            ),
+        ),
+        (
+            "latestMissing",
+            l0_optional(
+                storage
+                    .get_latest_l0_before(
+                        "missing",
+                        "2026-10-20T13:00:00.000Z",
+                        "2026-10-20T13:00:00.000Z",
+                    )
+                    .expect("latest missing"),
+            ),
+        ),
+        (
+            "byIds",
+            l0_list(
+                storage
+                    .get_l0_by_ids(&id_strings(&[
+                        "l0-a",
+                        "l0-a",
+                        " ",
+                        "l0-missing",
+                        "l0-tie-2",
+                    ]))
+                    .expect("by ids"),
+            ),
+        ),
+        (
+            "byIdsEmpty",
+            l0_list(storage.get_l0_by_ids(&[]).expect("by ids empty")),
+        ),
+        (
+            "byIdsBlank",
+            l0_list(
+                storage
+                    .get_l0_by_ids(&id_strings(&["", " "]))
+                    .expect("by ids blank"),
+            ),
+        ),
+        (
+            "byIdsNulKey",
+            l0_list(
+                storage
+                    .get_l0_by_ids(&id_strings(&["l0-nul-key"]))
+                    .expect("by ids nul key"),
+            ),
+        ),
+        (
+            "recent0",
+            l0_list(storage.list_recent_l0(0, 0).expect("recent0")),
+        ),
+        (
+            "recentNeg",
+            l0_list(storage.list_recent_l0(-5, -1).expect("recent negative")),
+        ),
+        (
+            "recent2",
+            l0_list(storage.list_recent_l0(2, 0).expect("recent2")),
+        ),
+        (
+            "recentOffset1",
+            l0_list(storage.list_recent_l0(3, 1).expect("recent offset")),
+        ),
+        (
+            "recentOffsetPastEnd",
+            l0_list(
+                storage
+                    .list_recent_l0(5, 1000)
+                    .expect("recent offset past end"),
+            ),
+        ),
+        (
+            "recentAll",
+            l0_list(storage.list_recent_l0(1000, 0).expect("recent all")),
+        ),
+        ("all", l0_list(storage.list_all_l0().expect("list all l0"))),
+    ])
 }
 
 fn observe(storage: &EdgeClawStorage) -> JsValue {
@@ -674,6 +955,7 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
         ("caseTraces", case_traces),
         ("indexTraces", index_traces),
         ("dreamTraces", dream_traces),
+        ("l0", observe_l0(storage)),
     ])
 }
 
@@ -718,6 +1000,35 @@ fn apply_operations(storage: &EdgeClawStorage, operations: &JsValue) {
                     })
                     .expect("insert l0 session");
             }
+            "markL0Indexed" => {
+                let ids: Vec<String> = as_array(field(operation, "ids"))
+                    .iter()
+                    .map(as_text)
+                    .collect();
+                storage.mark_l0_indexed(&ids).expect("mark l0 indexed");
+            }
+            "rawL0Insert" => {
+                let record = field(operation, "record");
+                let connection = Connection::open(storage.path()).expect("open raw l0 connection");
+                connection
+                    .execute(
+                        "INSERT INTO l0_sessions
+                           (l0_index_id, session_key, timestamp, messages_json, source, indexed, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        params![
+                            as_text(field(record, "l0IndexId")),
+                            as_text(field(record, "sessionKey")),
+                            as_text(field(record, "timestamp")),
+                            as_text(field(record, "messagesJson")),
+                            as_text(field(record, "source")),
+                            field(record, "indexed")
+                                .as_number()
+                                .expect("raw indexed is a number") as i64,
+                            as_text(field(record, "createdAt")),
+                        ],
+                    )
+                    .expect("insert raw l0 row");
+            }
             "saveCaseTrace" => {
                 let limit = operation.get("limit").map(as_usize).unwrap_or(30);
                 storage
@@ -758,6 +1069,61 @@ fn apply_operations(storage: &EdgeClawStorage, operations: &JsValue) {
             }
             other => panic!("unknown operation {other}"),
         }
+    }
+}
+
+// -- repair replay ---------------------------------------------------------
+
+fn repair_result_json(result: RepairMemoryResult) -> JsValue {
+    object(vec![
+        ("inspected", number(result.inspected as i64)),
+        ("updated", number(result.updated as i64)),
+        ("removed", number(result.removed as i64)),
+        ("rebuilt", JsValue::Bool(result.rebuilt)),
+    ])
+}
+
+/// Mirror of `repairTransform` in `generate.mts`; the returned objects keep
+/// the normalized message key order so the written JSON text matches TS.
+fn repair_messages(step: &JsValue, record: &L0SessionRecord) -> Vec<JsValue> {
+    let JsValue::Array(messages) = &record.messages else {
+        panic!("repair input messages are an array");
+    };
+    match as_text(field(step, "kind")).as_str() {
+        "identity" => messages.clone(),
+        "filterContent" => {
+            let needle = as_text(field(step, "content"));
+            messages
+                .iter()
+                .filter(|message| {
+                    !matches!(
+                        message.get("content").and_then(JsValue::as_string),
+                        Some(content) if content.equals_str(&needle)
+                    )
+                })
+                .cloned()
+                .collect()
+        }
+        "rewriteContent" => {
+            let from = as_text(field(step, "from"));
+            let to = as_text(field(step, "to"));
+            messages
+                .iter()
+                .map(|message| {
+                    let matched = matches!(
+                        message.get("content").and_then(JsValue::as_string),
+                        Some(content) if content.equals_str(&from)
+                    );
+                    if !matched {
+                        return message.clone();
+                    }
+                    let mut object = message.as_object().expect("message is an object").clone();
+                    object.insert("content".into(), JsValue::from(to.as_str()));
+                    JsValue::Object(object)
+                })
+                .collect()
+        }
+        other => panic!("unknown repair transform {other}"),
     }
 }
 
@@ -898,14 +1264,14 @@ fn rust_writes_and_reads_the_portable_script() {
     let storage = EdgeClawStorage::open(&path).expect("create Rust database");
     apply_operations(&storage, field(rust_writes, "operations"));
     assert_json_eq(
-        &observe(&storage),
-        field(rust_writes, "observations"),
+        &mask_l0_default_created_at(&observe(&storage)),
+        &mask_l0_default_created_at(field(rust_writes, "observations")),
         "TS observations of the portable operation script",
     );
     apply_operations(&storage, field(rust_writes, "limitOperations"));
     assert_json_eq(
-        &observe(&storage),
-        field(rust_writes, "limitedObservations"),
+        &mask_l0_default_created_at(&observe(&storage)),
+        &mask_l0_default_created_at(field(rust_writes, "limitedObservations")),
         "save-side limit truncation",
     );
     drop(storage);
@@ -1431,8 +1797,8 @@ fn real_ts_reads_the_rust_written_database() {
     let verified = parse_json(&fs::read_to_string(&output).expect("read verify.json"))
         .expect("verify.json parses");
     assert_json_eq(
-        field(&verified, "observations"),
-        field(rust_writes, "limitedObservations"),
+        &mask_l0_default_created_at(field(&verified, "observations")),
+        &mask_l0_default_created_at(field(rust_writes, "limitedObservations")),
         "real TS observations of the Rust-written database",
     );
     assert_json_eq(
@@ -1450,4 +1816,196 @@ fn real_ts_reads_the_rust_written_database() {
         &mask_volatile_columns(field(rust_writes, "rows")),
         "real TS reads the Rust-written row text",
     );
+}
+
+/// A6.6-pr10d repair: start from the real TS pre-repair database (base64),
+/// read it before any transform, then run the same three-step transform script
+/// and compare both the `RepairMemoryResult` counters and the full observation
+/// surface after every step. The row dump is compared byte for byte, so the
+/// rewritten `messages_json`, the `indexed = 0` reset and the deletions must
+/// all match the baseline.
+#[test]
+fn rust_repairs_l0_like_ts() {
+    let oracle = baseline::oracle(ORACLE);
+    let repair = field(&oracle, "repair");
+    let directory = TempDir::new("repair");
+    let path = write_encoded_db(
+        &directory,
+        "repair.db",
+        &as_text(field(repair, "beforeBase64")),
+    );
+
+    let storage = EdgeClawStorage::open(&path).expect("open TS pre-repair database");
+    assert_json_eq(
+        &observe(&storage),
+        field(repair, "before"),
+        "observations before the first repair step",
+    );
+    {
+        let connection = Connection::open(&path).expect("open for pre-repair dump");
+        assert_json_eq(
+            &dump_rows(&connection),
+            field(repair, "beforeRows"),
+            "rows before the first repair step",
+        );
+    }
+
+    for (index, entry) in as_array(field(repair, "afterSteps")).iter().enumerate() {
+        let step = field(entry, "step");
+        let result = storage
+            .repair_l0_sessions(|record| repair_messages(step, record))
+            .unwrap_or_else(|error| panic!("repair step {index} failed: {error}"));
+        assert_json_eq(
+            &repair_result_json(result),
+            field(entry, "result"),
+            &format!("repair result after step {index}"),
+        );
+        assert_json_eq(
+            &observe(&storage),
+            field(entry, "observations"),
+            &format!("observations after repair step {index}"),
+        );
+    }
+    drop(storage);
+
+    let connection = Connection::open(&path).expect("open for dump");
+    assert_json_eq(
+        &dump_rows(&connection),
+        field(repair, "rows"),
+        "rows after all repair steps",
+    );
+    assert_json_eq(
+        &dump_schema(&connection),
+        field(repair, "schema"),
+        "sqlite_master after repair",
+    );
+    assert_json_eq(
+        &dump_columns(&connection),
+        field(repair, "columns"),
+        "table_info after repair",
+    );
+}
+
+/// The repair callback runs outside the connection lock, so it may read the
+/// same storage. Holding the mutex across the callback would deadlock here.
+#[test]
+fn repair_callback_can_read_the_same_storage() {
+    let directory = TempDir::new("repair-reentrant");
+    let path = directory.path().join("repair.db");
+    let storage = EdgeClawStorage::open(&path).expect("create database");
+    storage
+        .insert_l0_session(&L0SessionRecord {
+            l0_index_id: "r".into(),
+            session_key: "s".into(),
+            timestamp: "2026-10-20T00:00:00.000Z".into(),
+            messages: parse_json(r#"[{"role":"user","content":"keep"}]"#).unwrap(),
+            source: "openclaw".into(),
+            indexed: false,
+            created_at: "2026-10-20T00:00:00.000Z".into(),
+        })
+        .expect("insert l0 row");
+
+    let result = storage
+        .repair_l0_sessions(|_| {
+            let rows = storage.list_all_l0().expect("reentrant read");
+            assert_eq!(rows.len(), 1);
+            match &rows[0].messages {
+                JsValue::Array(messages) => messages.clone(),
+                other => panic!("normalized messages are an array, got {other:?}"),
+            }
+        })
+        .expect("repair with a reentrant callback");
+    assert_eq!(result.inspected, 1);
+    assert_eq!(result.updated, 0);
+    assert_eq!(result.removed, 0);
+    assert!(!result.rebuilt);
+}
+
+/// Rust -> TS for the repair corpus: a real baseline process reads the
+/// Rust-written pre-repair database, then again after the Rust repair steps.
+/// Needs the checkout and its `node_modules`, so it is ignored by default.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn real_ts_reads_the_rust_repaired_database() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE");
+    let oracle = baseline::oracle(ORACLE);
+    let repair = field(&oracle, "repair");
+    let directory = TempDir::new("repair-to-ts");
+    let path = directory.path().join("rust-repair.db");
+    let verify =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/edgeclaw-storage/verify.mts");
+    let loader = Path::new(&baseline).join("node_modules/tsx/dist/loader.mjs");
+    let run_verify = |output: &Path| -> JsValue {
+        let status = Command::new("node")
+            .arg("--import")
+            .arg(&loader)
+            .arg(&verify)
+            .arg(&path)
+            .arg(output)
+            .env("PDRS_BASELINE", &baseline)
+            .status()
+            .expect("run node verifier");
+        assert!(status.success(), "verify.mts failed with {status}");
+        parse_json(&fs::read_to_string(output).expect("read verify.json"))
+            .expect("verify.json parses")
+    };
+
+    let storage = EdgeClawStorage::open(&path).expect("create Rust database");
+    apply_operations(&storage, field(repair, "operations"));
+    drop(storage);
+
+    let before = run_verify(&directory.path().join("verify-before.json"));
+    assert_json_eq(
+        field(&before, "observations"),
+        field(repair, "before"),
+        "real TS observations of the pre-repair Rust database",
+    );
+    assert_json_eq(
+        field(&before, "rows"),
+        field(repair, "beforeRows"),
+        "real TS sees the pre-repair Rust rows",
+    );
+
+    let storage = EdgeClawStorage::open(&path).expect("reopen Rust database");
+    for entry in as_array(field(repair, "afterSteps")) {
+        let step = field(entry, "step");
+        storage
+            .repair_l0_sessions(|record| repair_messages(step, record))
+            .expect("repair l0 sessions");
+    }
+    drop(storage);
+
+    let after = run_verify(&directory.path().join("verify-after.json"));
+    let last = as_array(field(repair, "afterSteps"))
+        .last()
+        .expect("repair steps exist");
+    assert_json_eq(
+        field(&after, "observations"),
+        field(last, "observations"),
+        "real TS observations after the Rust repair steps",
+    );
+    assert_json_eq(
+        field(&after, "rows"),
+        field(repair, "rows"),
+        "real TS sees the repaired Rust rows",
+    );
+    assert_json_eq(
+        field(&after, "schema"),
+        field(repair, "schema"),
+        "real TS sees the repaired Rust schema",
+    );
+    assert_json_eq(
+        field(&after, "columns"),
+        field(repair, "columns"),
+        "real TS sees the repaired Rust table_info",
+    );
+}
+
+/// The committed oracle must stay reproducible from the real baseline. This
+/// runs `generate.mts` once into a scratch directory and compares bytes; the
+/// A6.6-pr10d run also verified two independent generations were identical.
+#[test]
+#[ignore = "requires PDRS_BASELINE; regenerates the fixture into a temp dir"]
+fn fixture_regenerates_identically_from_the_baseline() {
+    baseline::regenerates_identically("edgeclaw-storage");
 }
