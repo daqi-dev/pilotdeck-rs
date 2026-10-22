@@ -77,16 +77,38 @@ pub fn load_plugin_commands(
     plugin_name: &str,
     base: &Path,
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
-    // Explicit DFS keeps the TS traversal order without growing the call stack.
-    let mut pending = markdown_entries(base);
+    // Keep only the current DFS ancestry, so acyclic aliases still load in
+    // their original positions. A global visited set would drop valid aliases.
+    let mut ancestors = std::collections::HashSet::new();
+    if let Ok(canonical) = base.canonicalize() {
+        ancestors.insert(canonical);
+    }
+    let mut pending: Vec<_> = markdown_entries(base)
+        .into_iter()
+        .map(|p| (p, false))
+        .collect();
     pending.reverse();
     let mut output = Vec::new();
-    while let Some(path) = pending.pop() {
+    while let Some((path, leaving)) = pending.pop() {
+        if leaving {
+            ancestors.remove(&path);
+            continue;
+        }
         let Ok(metadata) = std::fs::metadata(&path) else {
             continue;
         };
         if metadata.is_dir() {
-            let mut entries = markdown_entries(&path);
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+            if !ancestors.insert(canonical.clone()) {
+                continue;
+            }
+            pending.push((canonical, true));
+            let mut entries: Vec<_> = markdown_entries(&path)
+                .into_iter()
+                .map(|p| (p, false))
+                .collect();
             entries.reverse();
             pending.extend(entries);
         } else if path

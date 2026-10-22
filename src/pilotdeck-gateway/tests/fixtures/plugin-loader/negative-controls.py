@@ -64,12 +64,35 @@ CASES += [
      'if let Ok(command) = load_markdown(&path, get_plugin_command_name(plugin_name, &path, base)) { output.push(command); }',
      'plugin_loader_hooks_paths'),
 ]
+PLUGINS = 'src/pilotdeck-gateway/src/runtime/plugins.rs'
+CONTRIBUTIONS = 'src/pilotdeck-gateway/src/runtime/plugins/contributions.rs'
+# lib: / regressions: / runtime: select a real test target without weakening
+# the existing assertion-failure-only kill criterion.
+CASES += [
+    ('publication-state', PLUGINS, '        self.assert_active("replace")?;', '        // negative control: permit publication', 'lib:registry_rejects_publication_while_draining'),
+    ('shutdown-before-refresh', PLUGINS, '                st.disposal_requested = true;', '                st.disposal_requested = true;\n                st.registry.state = RegistryState::Draining;', 'lib:dispose_waits_for_refresh_publication_then_drains_its_generation'),
+    ('retired-cleanup', PLUGINS, '.retain(|p| !Arc::ptr_eq(p, &plugin));', '.retain(|_| true);', 'lib:retired_plugin_disposes_once_across_refresh_and_shutdown'),
+    ('shared-disposal', PLUGINS, '            if let Some(rx) = registry.pending_disposals.get(&key) {\n                return rx.clone();\n            }', '            // negative control: start another disposal', 'lib:retired_disposal_is_shared_with_shutdown_and_all_lease_flavors'),
+    ('release-error', PLUGINS, '    PluginRuntimeError::aggregate("Failed to dispose released plugins.", errors)', '    let _ = errors; Ok(())', 'lib:retired_disposal_is_shared_with_shutdown_and_all_lease_flavors'),
+    ('lease-release-error', CONTRIBUTIONS, '        let result = release_lease_plugins(&plugins, &state, &waiters).await;', '        let _ = release_lease_plugins(&plugins, &state, &waiters).await; let result = Ok(());', 'lib:retired_disposal_is_shared_with_shutdown_and_all_lease_flavors'),
+    ('skill-insertion-order', CONTRIBUTIONS, 'selected.into_iter().map(|(c, _)| c).collect()', 'selected.into_iter().rev().map(|(c, _)| c).collect()', 'lib:skill_contributions_keep_ts_map_order'),
+    ('skill-equal-priority', CONTRIBUTIONS, 'priority >= selected[index].1', 'priority > selected[index].1', 'lib:skill_contributions_keep_ts_map_order'),
+    ('markdown-cycle', MARKDOWN, 'if !ancestors.insert(canonical.clone()) {', 'if !ancestors.insert(canonical.clone()) && false {', 'regressions:plugin_markdown_cycle_is_bounded'),
+    ('markdown-alias', MARKDOWN, 'ancestors.remove(&path);', 'let _ = &path;', 'regressions:plugin_markdown_acyclic_aliases_are_preserved'),
+    ('utf16-byte-slice', CONTRIBUTIONS,
+     '    let mut units = trimmed[..trimmed.len().min(MAX_LEN)].to_vec();',
+     '    let decoded = String::from_utf16_lossy(trimmed); let cut = if decoded.len() > MAX_LEN { &decoded[..MAX_LEN] } else { &decoded }; let mut units: Vec<u16> = cut.encode_utf16().collect();',
+     'regressions:plugin_mcp_utf16_oracle'),
+    ('utf16-lossy-surrogate', CONTRIBUTIONS, 'let mut trimmed = value.units();', 'let decoded = JsString::from(String::from_utf16_lossy(value.units())); let mut trimmed = decoded.units();', 'regressions:plugin_mcp_utf16_oracle'),
+    ('utf16-trim', CONTRIBUTIONS, 'char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)', 'char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)', 'regressions:plugin_mcp_utf16_oracle'),
+    ('runtime-replay-generation', PLUGINS, 'self.generation += 1;', 'self.generation += 2;', 'runtime:runtime_empty_directories'),
+]
 selected = set(sys.argv[2:])
 if selected:
     assert selected <= {c[0] for c in CASES}, selected
     CASES = [c for c in CASES if c[0] in selected]
 originals = {p:(ROOT/p).read_bytes() for p in {c[1] for c in CASES}}
-assert all(originals[p].decode().count(old) == 1 for _,p,old,_,_ in CASES), 'mutation anchor must be unique'
+assert all(originals[p].decode().count(old) == 1 and old != new for _,p,old,new,_ in CASES), 'mutation anchor must be unique'
 env = dict(os.environ)
 # The generator's guard was already run twice; replay metadata validation stays
 # enabled, but avoid 650 baseline git subprocesses after every recompilation.
@@ -83,7 +106,16 @@ try:
         (OUTPUT/(name+'.slots.log')).write_text(gate.stdout + gate.stderr)
         path.write_text(originals[relative].decode().replace(old,new))
         try:
-            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','plugin_loader',test,'--','--exact'],cwd=ROOT,env=env,timeout=180)
+            if ':' in test:
+                target, test_name = test.split(':', 1)
+                if target == 'lib':
+                    target_args = ['--lib']
+                    test_name = 'runtime::plugins::tests::' + test_name
+                else:
+                    target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
+            else:
+                target_args, test_name = ['--test','plugin_loader'], test
+            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact'],cwd=ROOT,env=env,timeout=180)
             (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
             output = (OUTPUT/(name+'.log')).read_text()
             killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output

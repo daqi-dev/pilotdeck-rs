@@ -11,6 +11,25 @@ fn lifecycle_oracle() -> serde_json::Value {
         .clone()
 }
 
+fn runtime_error_oracle(id: &str) -> serde_json::Value {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/plugin-runtime/oracle.json"
+    ))
+    .unwrap();
+    fixture["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id)
+        .unwrap()["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|r| r.get("error"))
+        .unwrap()
+        .clone()
+}
+
 #[test]
 fn registry_duplicate_key_keeps_first_position_and_last_value() {
     // PluginRegistry.ts:73-76,92-93: Map.set replaces a value in place.
@@ -99,7 +118,10 @@ async fn retired_plugin_disposes_once_across_refresh_and_shutdown() {
         .replace_all(vec![plugin])
         .unwrap();
     runtime.refresh().await.unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        lifecycle_oracle()["sequentialCalls"].as_u64().unwrap() as usize
+    );
     assert!(
         runtime
             .state
@@ -112,7 +134,7 @@ async fn retired_plugin_disposes_once_across_refresh_and_shutdown() {
     runtime.dispose().await.unwrap();
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        1,
+        lifecycle_oracle()["sequentialCalls"].as_u64().unwrap() as usize,
         "shutdown must not redispose retired instances"
     );
 }
@@ -190,6 +212,10 @@ async fn retired_disposal_is_shared_with_shutdown_and_all_lease_flavors() {
                     (lease.release().await, lease.release().await)
                 }
             };
+            assert_eq!(
+                repeated.as_ref().unwrap_err().message,
+                lifecycle_oracle()["repeatReleaseError"].as_str().unwrap()
+            );
             assert_eq!(first, repeated, "repeated release must share the result");
             first
         });
@@ -201,7 +227,10 @@ async fn retired_disposal_is_shared_with_shutdown_and_all_lease_flavors() {
             !shutdown.is_finished(),
             "shutdown must share the pending disposal"
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            lifecycle_oracle()["sharedCalls"].as_u64().unwrap() as usize
+        );
         finish.notify_one();
         let error = tokio::time::timeout(std::time::Duration::from_secs(5), release)
             .await
@@ -217,15 +246,27 @@ async fn retired_disposal_is_shared_with_shutdown_and_all_lease_flavors() {
             shutdown_error.message,
             lifecycle_oracle()["shutdownError"].as_str().unwrap()
         );
-        assert_eq!(shutdown_error.causes.len(), 2);
+        assert_eq!(
+            shutdown_error.causes.len(),
+            runtime_error_oracle("dispose-single-error")["errors"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
         assert!(
             shutdown_error
                 .causes
                 .iter()
                 .all(|e| e.message == "dispose failed")
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(runtime.snapshot().await.is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            lifecycle_oracle()["sharedCalls"].as_u64().unwrap() as usize
+        );
+        assert_eq!(
+            runtime.snapshot().await.len(),
+            lifecycle_oracle()["finalCount"].as_u64().unwrap() as usize
+        );
     }
 }
 
@@ -250,13 +291,11 @@ async fn dispose_waits_for_refresh_publication_then_drains_its_generation() {
         runtime.lifecycle_state().await.as_str(),
         lifecycle_oracle()["stateWhileRefresh"].as_str().unwrap()
     );
-    assert!(
-        runtime
-            .refresh()
-            .await
-            .unwrap_err()
-            .message
-            .contains("draining")
+    assert_eq!(
+        runtime.refresh().await.unwrap_err().message,
+        runtime_error_oracle("dispose-waits-for-pending-refresh")["message"]
+            .as_str()
+            .unwrap()
     );
     let calls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&calls);
@@ -291,14 +330,20 @@ async fn dispose_waits_for_refresh_publication_then_drains_its_generation() {
         .unwrap()
         .unwrap();
     second_shutdown.await.unwrap().unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(runtime.snapshot().await.is_empty());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        lifecycle_oracle()["newCalls"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        runtime.snapshot().await.len(),
+        lifecycle_oracle()["finalCount"].as_u64().unwrap() as usize
+    );
     assert_eq!(runtime.lifecycle_state().await, RegistryState::Disposed);
     let mut st = runtime.state.lock().await;
     let generation = st.registry.generation;
     assert_eq!(
         st.registry.replace_all(Vec::new()).err().unwrap().message,
-        "Cannot replace plugins; plugin registry is disposed."
+        lifecycle_oracle()["publicationError"].as_str().unwrap()
     );
     assert_eq!(st.registry.generation, generation);
 }
@@ -312,4 +357,63 @@ fn registry_rejects_publication_while_draining() {
         "Cannot replace plugins; plugin registry is draining."
     );
     assert_eq!(registry.generation, 0);
+}
+
+#[tokio::test]
+async fn skill_contributions_keep_ts_map_order() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/plugin-loader/regressions.json"
+    ))
+    .unwrap();
+    let fixture = &fixture["skills"];
+    let runtime = empty_runtime();
+    let plugins = fixture["specs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|spec| {
+            let mut plugin = disposable("same", Box::new(|| Box::pin(async { Ok(()) })));
+            let p = Arc::get_mut(&mut plugin).unwrap();
+            p.source = match spec["source"].as_str().unwrap() {
+                "global" => PluginSource::Global,
+                "builtin" => PluginSource::Builtin,
+                "project" => PluginSource::Project,
+                _ => unreachable!(),
+            };
+            p.skills = spec["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| loader::LoadedPluginCommand {
+                    name: v[0].as_str().unwrap().into(),
+                    path: format!("/skills/{}/SKILL.md", v[0].as_str().unwrap()).into(),
+                    content: v[1].as_str().unwrap().into(),
+                    frontmatter: HashMap::from([("description".into(), v[1].clone())]),
+                    is_skill: true,
+                })
+                .collect();
+            plugin
+        })
+        .collect();
+    runtime
+        .state
+        .lock()
+        .await
+        .registry
+        .replace_all(plugins)
+        .unwrap();
+    let encode = |skills: &[PluginSkillContribution]| {
+        serde_json::Value::Array(skills.iter().map(|s| serde_json::json!({"name":s.name,"description":s.description,"content":s.content,"namespace":s.namespace})).collect())
+    };
+    assert_eq!(encode(&runtime.all_skills().await), fixture["result"]);
+    let mut session = runtime
+        .acquire_session_contributions(Vec::new())
+        .await
+        .unwrap();
+    let mut legacy = runtime.acquire_contribution_snapshot().await.unwrap();
+    assert_eq!(encode(&session.contributions.skills), fixture["result"]);
+    assert_eq!(encode(&legacy.contributions.skills), fixture["result"]);
+    session.release().await.unwrap();
+    legacy.release().await.unwrap();
+    runtime.dispose().await.unwrap();
 }
