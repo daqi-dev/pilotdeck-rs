@@ -1,0 +1,5145 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37",
+    "src/gateway/client/GatewayTurnReplayStore.ts": "ff3f8206be88afac0336f0aede66c084ce40eef5ea6318d1e751c3902bc135ce",
+    "src/gateway/client/GatewayTurnEventCoordinator.ts": "48c8b51b02003f47b2eb682dc9d058be79cb5304937dc915135354bf500bee1e",
+    "src/gateway/client/GatewayAgentEventProjector.ts": "8236f898bec8b263827b8c66f27ac190cdd497baa0ac27723637e34847832225",
+    "src/gateway/util/AsyncQueue.ts": "7c13151c23b0114e04cfefe590456e99b64a097226a96dee6226fe24afe309c8",
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "src/gateway/protocol/version.ts": "6255b72c723454eda9ce6c7e83d5006f0ff5351ae6365a38b97ed54ef1fe8b2f"
+  },
+  "cases": [
+    {
+      "name": "ordered-durable-terminal-after-session-end",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "model_event",
+            "event": {
+              "type": "text_delta",
+              "text": "hi"
+            },
+            "sequence": 72
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "emit",
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "moduleSeq": 99
+          }
+        },
+        {
+          "op": "release",
+          "index": 1
+        },
+        {
+          "op": "release",
+          "index": 0
+        },
+        {
+          "op": "release",
+          "index": 2
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "release",
+          "index": 3
+        },
+        {
+          "op": "emit",
+          "event": {
+            "type": "late"
+          }
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 2,
+            "revision": 3
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 3,
+            "revision": 4
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 3,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 3,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 3,
+            "revision": 4
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 3,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 3,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 4,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 3,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 4,
+            "revision": 5,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 3,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 4,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 3,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 4,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 3,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "moduleSeq": 99,
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 4,
+            "revision": 5,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 3,
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              }
+            },
+            {
+              "seq": 4,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "moduleSeq": 99,
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "append-failure-then-success-single-unknown",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "model_event",
+            "event": {
+              "type": "text_delta",
+              "text": "hi"
+            },
+            "sequence": 72
+          }
+        },
+        {
+          "op": "release",
+          "index": 0,
+          "fail": true
+        },
+        {
+          "op": "release",
+          "index": 1
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "release",
+          "index": 2,
+          "fail": true
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 1,
+            "revision": 2
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 1,
+            "revision": 2
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "running",
+            "lastSeq": 1,
+            "revision": 2
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "running",
+            "lastSeq": 1,
+            "revision": 2
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "real-storage-persist-failure",
+      "setup": {
+        "storageFailure": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "release",
+          "index": 0,
+          "fail": true
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "release",
+          "index": 1
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "accept-storage-failure-result-unknown",
+      "setup": {
+        "acceptStorageFailure": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "injected storage failure",
+                "recoverable": false,
+                "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "injected storage failure",
+                "recoverable": false,
+                "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "injected storage failure",
+              "recoverable": false,
+              "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "all-appends-fail-only-one-unknown",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "model_event",
+            "event": {
+              "type": "text_delta",
+              "text": "hi"
+            },
+            "sequence": 72
+          }
+        },
+        {
+          "op": "release",
+          "index": 0,
+          "fail": true
+        },
+        {
+          "op": "release",
+          "index": 1,
+          "fail": true
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "release",
+          "index": 2,
+          "fail": true
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 2,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "close-waits-for-pending-append",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "observe"
+        },
+        {
+          "op": "release",
+          "index": 0
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "code": "result_unknown",
+                "message": "Gateway stream ended without a terminal result.",
+                "recoverable": true
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "running",
+            "lastSeq": 1,
+            "revision": 2
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "late-event-while-terminal-append-pending",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "emit",
+          "event": {
+            "type": "agent_status",
+            "event": "late"
+          }
+        },
+        {
+          "op": "release",
+          "index": 0
+        },
+        {
+          "op": "release",
+          "index": 1
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "completed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "agent_status",
+                "event": "late",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-terminal-is-registry-failure-not-second-success",
+      "setup": {},
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "release",
+          "index": 0
+        },
+        {
+          "op": "release",
+          "index": 1
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": false,
+          "record": {
+            "state": "completed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the run result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            },
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the run result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "index": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "without-registry",
+      "setup": {
+        "noRegistry": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "input_accepted",
+            "sessionId": "s",
+            "turnId": "r",
+            "input": {
+              "type": "text",
+              "text": "hello"
+            },
+            "sequence": 71
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "model_event",
+            "event": {
+              "type": "text_delta",
+              "text": "hi"
+            },
+            "sequence": 72
+          }
+        },
+        {
+          "op": "agent",
+          "event": {
+            "type": "turn_completed",
+            "result": {
+              "type": "success",
+              "stopReason": "completed",
+              "usage": {}
+            },
+            "sequence": 73
+          }
+        },
+        {
+          "op": "end"
+        },
+        {
+          "op": "emit",
+          "event": {
+            "type": "late"
+          }
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [],
+          "durable": [],
+          "ended": false,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            }
+          ],
+          "calls": [],
+          "durable": [],
+          "ended": false,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [],
+          "durable": [],
+          "ended": false,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            }
+          ],
+          "calls": [],
+          "durable": [],
+          "ended": false,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            ]
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 3,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [],
+          "durable": [],
+          "ended": true,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 3,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hi",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "calls": [],
+          "durable": [],
+          "ended": true,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r",
+            "events": [
+              {
+                "type": "input_accepted",
+                "runId": "r"
+              },
+              {
+                "type": "assistant_text_delta",
+                "text": "hi",
+                "runId": "r"
+              },
+              {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            ],
+            "terminal": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-replays-durable-events",
+      "setup": {
+        "seed": [
+          {
+            "type": "agent_status",
+            "runId": "r",
+            "event": "seed"
+          },
+          {
+            "type": "turn_completed",
+            "runId": "r",
+            "usage": {},
+            "finishReason": "completed"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "op": "observe"
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "seed"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": false,
+              "event": {
+                "type": "turn_completed",
+                "runId": "r",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 2,
+              "final": true,
+              "event": {
+                "type": "turn_completed",
+                "runId": "r",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "seed"
+            },
+            {
+              "type": "turn_completed",
+              "runId": "r",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "events"
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": {
+            "state": "completed",
+            "lastSeq": 2,
+            "revision": 3,
+            "result": {
+              "type": "turn_completed",
+              "runId": "r",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "agent_status",
+                "runId": "r",
+                "event": "seed"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "type": "turn_completed",
+                "runId": "r",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "conflict-does-not-start-pump",
+      "setup": {
+        "seed": [],
+        "conflict": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "conflict",
+                "message": "Run r already exists with different request material.",
+                "recoverable": true
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "conflict",
+                "message": "Run r already exists with different request material.",
+                "recoverable": true
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "conflict",
+              "message": "Run r already exists with different request material.",
+              "recoverable": true
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "accept-failure-result-unknown",
+      "setup": {
+        "acceptFailure": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "injected accept failure",
+                "recoverable": false,
+                "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "injected accept failure",
+                "recoverable": false,
+                "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "injected accept failure",
+              "recoverable": false,
+              "userHint": "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": null,
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "preflight-registry-failure",
+      "setup": {
+        "preflight": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "release",
+          "index": 0,
+          "fail": true
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the preflight result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "result_unknown",
+                "message": "Gateway could not durably persist the preflight result.",
+                "recoverable": false,
+                "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "result_unknown",
+              "message": "Gateway could not durably persist the preflight result.",
+              "recoverable": false,
+              "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "durable": [],
+          "ended": true,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "preflight-durable-before-visible",
+      "setup": {
+        "preflight": true
+      },
+      "steps": [
+        {
+          "op": "observe"
+        },
+        {
+          "op": "release",
+          "index": 0
+        }
+      ],
+      "results": [
+        {
+          "wsFrames": [],
+          "visible": [],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "durable": [],
+          "ended": false,
+          "record": {
+            "state": "accepted",
+            "lastSeq": 0,
+            "revision": 1
+          },
+          "registryEvents": [],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        },
+        {
+          "wsFrames": [
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 0,
+              "final": false,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            },
+            {
+              "type": "event",
+              "id": "request-9",
+              "seq": 1,
+              "final": true,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "replace_turn_pending",
+              "message": "This session is waiting for its edited replacement turn to be accepted.",
+              "recoverable": true,
+              "userHint": "Wait for the edited message transaction to finish, then try again."
+            }
+          ],
+          "calls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "index": 0,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "durable": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "replace_turn_pending",
+              "message": "This session is waiting for its edited replacement turn to be accepted.",
+              "recoverable": true,
+              "userHint": "Wait for the edited message transaction to finish, then try again."
+            }
+          ],
+          "ended": true,
+          "record": {
+            "state": "failed",
+            "lastSeq": 1,
+            "revision": 2,
+            "result": {
+              "type": "error",
+              "runId": "r",
+              "code": "replace_turn_pending",
+              "message": "This session is waiting for its edited replacement turn to be accepted.",
+              "recoverable": true,
+              "userHint": "Wait for the edited message transaction to finish, then try again."
+            }
+          },
+          "registryEvents": [
+            {
+              "seq": 1,
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "replay": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      ]
+    }
+  ]
+}

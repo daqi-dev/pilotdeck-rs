@@ -93,3 +93,11 @@ mod transcript_adapter_tests;
 
 mod task_budget;
 pub use task_budget::{TaskBudgetError, TaskBudgetScope, TaskBudgetState, TaskBudgetStore};
+
+// Fault injection shared by publication tests; production storage stays unchanged.
+#[cfg(test)]
+pub(crate) fn fail_next_registry_persist(registry: &FileRunRegistry) {
+    registry
+        .fail_persist
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+}
