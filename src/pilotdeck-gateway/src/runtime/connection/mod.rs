@@ -8,7 +8,6 @@ use context::{SessionKey, State, js_value, truthy};
 use pilotdeck_protocol::{
     GATEWAY_PROTOCOL_VERSION, JsObject, JsString, JsValue, parse_json, stringify_json,
 };
-use serde_json::Value;
 use std::{
     future::Future,
     pin::Pin,
@@ -56,10 +55,14 @@ pub trait ConnectionGateway: Send + Sync {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>>;
     fn request(&self, method: JsString, params: JsValue)
     -> Call<'_, Result<JsValue, RequestError>>;
+    /// Provider events cross this boundary as JsValue: the frame's `event`
+    /// property must keep TS insertion order, which serde_json::Value (BTreeMap)
+    /// cannot. Adapters whose provider still yields Value convert once at that
+    /// provider boundary, before calling `emit`.
     fn submit<'a>(
         &'a self,
         params: JsValue,
-        emit: &'a (dyn Fn(Value) + Send + Sync),
+        emit: &'a (dyn Fn(JsValue) + Send + Sync),
     ) -> Call<'a, Result<(), RequestError>>;
     fn disconnect(
         &self,
@@ -330,15 +333,17 @@ impl GatewayConnection {
         cleanup: Option<SubmitCleanup<'_>>,
     ) -> Result<(), RequestError> {
         let stream = Mutex::new((0u64, None, None));
-        let emit = |event: Value| {
+        let emit = |event: JsValue| {
             let mut stream = stream.lock().unwrap();
-            if event["type"] == "turn_completed" {
+            let kind = event.get("type").and_then(JsValue::as_string);
+            if kind.is_some_and(|kind| kind.equals_str("turn_completed")) {
                 stream.1 = Some(event.clone());
             }
-            if event["type"] == "error" {
+            if kind.is_some_and(|kind| kind.equals_str("error")) {
                 stream.2 = Some(event.clone());
             }
-            if event["type"] == "permission_request" && input.get("sessionKey").is_some_and(truthy)
+            if kind.is_some_and(|kind| kind.equals_str("permission_request"))
+                && input.get("sessionKey").is_some_and(truthy)
             {
                 let mut payload = JsObject::new();
                 payload.insert("type".into(), JsValue::from("requested"));
@@ -350,7 +355,7 @@ impl GatewayConnection {
                     payload.insert("projectKey".into(), value.clone());
                 }
                 if let Some(value) = event.get("requestId") {
-                    payload.insert("requestId".into(), js_value(value));
+                    payload.insert("requestId".into(), value.clone());
                 }
                 self.notify("permission_changed", Some(JsValue::Object(payload)));
             }
@@ -359,7 +364,7 @@ impl GatewayConnection {
             out.insert("id".into(), id.clone());
             out.insert("seq".into(), JsValue::Number(stream.0 as f64));
             out.insert("final".into(), JsValue::Bool(false));
-            out.insert("event".into(), js_value(&event));
+            out.insert("event".into(), event);
             self.send(JsValue::Object(out));
             stream.0 += 1;
         };
@@ -370,7 +375,7 @@ impl GatewayConnection {
         let (seq, completed, error) = stream.into_inner().unwrap();
         // Build the fallback in TS property order rather than serde's sort.
         let terminal = match error.or(completed) {
-            Some(event) => js_value(&event),
+            Some(event) => event,
             None => {
                 let mut fallback = JsObject::new();
                 fallback.insert("type".into(), JsValue::from("error"));

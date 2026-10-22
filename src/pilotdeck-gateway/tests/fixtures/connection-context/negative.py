@@ -29,6 +29,10 @@ mutants = [
     ("remove-sdk-control-special-case", "context.rs", 'if !sdk_control {', 'if true || !sdk_control {', 1),
     ("swap-validation-order", "mod.rs", checks, auth + protocol, 1),
     ("wrong-close-code", "mod.rs", 'self.text.close(4003, "auth_failed");', 'self.text.close(4001, "auth_failed");', 1),
+    # New #474-follow-up scenario coverage: the old serde path rejects the
+    # lone-surrogate id frame and closes 4002 instead of answering.
+    ("serde-json-inbound", "mod.rs", 'let Ok(frame) = parse_json(message) else {',
+     'let Ok(frame) = serde_json::from_str::<serde_json::Value>(message).map(|frame| js_value(&frame)) else {', 1),
     ("numeric-generation-to-string", "binding.rs", '"generation": self.generation', '"generation": self.generation.to_string()', 1),
     ("accept-string-generation", "binding.rs", '.as_f64()', '.as_f64().or_else(|| value["generation"].as_str().and_then(|s| s.parse::<f64>().ok()))', 1),
     ("ignore-preserve-turn", "mod.rs", 'if in_flight && !preserve_turn {', 'if in_flight && (true || !preserve_turn) {', 1),
@@ -85,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
     (scratch / "src/runtime/connection").mkdir(parents=True)
     (scratch / "tests/fixtures/connection-context").mkdir(parents=True)
     base_lib = '#[path="runtime/connection/mod.rs"] pub mod connection;\n' + f'#[cfg(test)] #[path={json.dumps(str(rust / "pilotdeck-gateway/tests/common/baseline.rs"))}] mod test_baseline;\n'
-    manifest = '[package]\nname="pdrs-pr3-negative"\nversion="0.0.0"\nedition="2024"\n[dependencies]\n' + f'pilotdeck-protocol={{path={json.dumps(str(rust / "pilotdeck-protocol"))}}}\n' + 'serde_json={version="=1.0.151",features=["float_roundtrip"]}\nsha2="=0.10.9"\nuuid={version="=1.27.0",features=["v4"]}\ntokio={version="=1.48.0",features=["macros","rt-multi-thread","sync"]}\n'
+    manifest = '[package]\nname="pdrs-pr3-negative"\nversion="0.0.0"\nedition="2024"\n[dependencies]\n' + f'pilotdeck-protocol={{path={json.dumps(str(rust / "pilotdeck-protocol"))}}}\n' + 'serde_json={version="=1.0.151",features=["float_roundtrip"]}\nsha2="=0.10.9"\nuuid={version="=1.27.0",features=["v4"]}\ntokio={version="=1.48.0",features=["macros","rt-multi-thread","sync","time"]}\n'
     (scratch / "Cargo.toml").write_text(manifest)
     for name, filename, before, after, count in [("baseline", None, None, None, 0)] + mutants:
         for file, content in originals.items():
@@ -117,6 +121,8 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
                 f"connection::tests::{case}" in raw.split("failures:")[-1]
                 for case in ("non_object_string_params_match_ts", "non_object_array_params_match_ts"))
             passed = passed and all(f'"submit-turn-ui-{kind}-params" step 1' in raw for kind in ("string", "array"))
+        if name == "serde-json-inbound":
+            passed = passed and '"lone-surrogate-id" step 1' in raw
         if name == "tampered-source-hash":
             passed = passed and "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match" in raw
         (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "CARGO_TARGET_DIR=" + env["CARGO_TARGET_DIR"] + "\nCOMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")

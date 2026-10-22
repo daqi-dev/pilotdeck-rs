@@ -4417,7 +4417,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-14\",\"generation\":14}}"
+          ]
         },
         {
           "frames": [
@@ -4460,6 +4463,9 @@
           ],
           "interactions": [
             "old-socket"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-14\",\"generation\":14}}"
           ]
         },
         {
@@ -4515,7 +4521,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-14\",\"generation\":14}}"
+          ]
         },
         {
           "frames": [
@@ -4592,7 +4601,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-14\",\"generation\":14}}",
+            "{\"type\":\"event\",\"id\":\"running\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"running\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -4654,7 +4668,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-15\",\"generation\":15}}"
+          ]
         },
         {
           "frames": [
@@ -4697,6 +4714,9 @@
           ],
           "interactions": [
             "old-socket"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-15\",\"generation\":15}}"
           ]
         },
         {
@@ -4746,7 +4766,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-15\",\"generation\":15}}"
+          ]
         },
         {
           "frames": [
@@ -4817,7 +4840,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-15\",\"generation\":15}}",
+            "{\"type\":\"event\",\"id\":\"running\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"running\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -9094,7 +9122,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-25\",\"generation\":25}}"
+          ]
         },
         {
           "frames": [
@@ -9144,6 +9175,10 @@
           "inFlight": [],
           "interactions": [
             "s"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-25\",\"generation\":25}}",
+            "{\"type\":\"response\",\"id\":\"submit_turn\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"fixture submit failed\"}}"
           ]
         }
       ]
@@ -9188,7 +9223,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-26\",\"generation\":26}}"
+          ]
         },
         {
           "frames": [
@@ -9248,6 +9286,11 @@
           "inFlight": [],
           "interactions": [
             "s"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-26\",\"generation\":26}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"response\",\"id\":\"submit_turn\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"fixture submit failed\"}}"
           ]
         }
       ]
@@ -9292,7 +9335,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-27\",\"generation\":27}}"
+          ]
         },
         {
           "frames": [
@@ -9347,6 +9393,10 @@
           "inFlight": [],
           "interactions": [
             "s"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-27\",\"generation\":27}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":true,\"event\":{\"type\":\"error\",\"code\":\"result_unknown\",\"message\":\"Gateway stream ended without a terminal result.\",\"recoverable\":true}}"
           ]
         }
       ]
@@ -9391,7 +9441,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-28\",\"generation\":28}}"
+          ]
         },
         {
           "frames": [
@@ -9474,6 +9527,13 @@
           "inFlight": [],
           "interactions": [
             "s"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-28\",\"generation\":28}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"requested\",\"sessionKey\":\"s\",\"projectKey\":\"p\",\"requestId\":\"fixture-permission\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"permission_request\",\"requestId\":\"fixture-permission\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":2,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
           ]
         }
       ]
@@ -9992,7 +10052,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-30\",\"generation\":30}}"
+          ]
         },
         {
           "frames": [
@@ -10020,7 +10083,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-30\",\"generation\":30}}"
+          ]
         },
         {
           "frames": [
@@ -10076,7 +10142,12 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-30\",\"generation\":30}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"resolved\",\"sessionKey\":\"s\",\"requestId\":\"after-close\"}}",
+            "{\"type\":\"response\",\"id\":\"permission_decide\",\"ok\":true,\"result\":{\"accepted\":true}}"
+          ]
         },
         {
           "frames": [
@@ -10166,6 +10237,13 @@
           "inFlight": [],
           "interactions": [
             "new-after-close"
+          ],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-30\",\"generation\":30}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"resolved\",\"sessionKey\":\"s\",\"requestId\":\"after-close\"}}",
+            "{\"type\":\"response\",\"id\":\"permission_decide\",\"ok\":true,\"result\":{\"accepted\":true}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
           ]
         },
         {
@@ -10264,7 +10342,14 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-30\",\"generation\":30}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"resolved\",\"sessionKey\":\"s\",\"requestId\":\"after-close\"}}",
+            "{\"type\":\"response\",\"id\":\"permission_decide\",\"ok\":true,\"result\":{\"accepted\":true}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -10690,7 +10775,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-32\",\"generation\":32}}"
+          ]
         },
         {
           "frames": [
@@ -10749,7 +10837,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-32\",\"generation\":32}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -10838,7 +10931,14 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-32\",\"generation\":32}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"missing-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"missing-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -10957,7 +11057,16 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-32\",\"generation\":32}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"null-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"missing-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"missing-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"object-params\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"object-params\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -11926,7 +12035,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-36\",\"generation\":36}}"
+          ]
         },
         {
           "frames": [
@@ -11988,7 +12100,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-36\",\"generation\":36}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12050,7 +12167,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-36\",\"generation\":36}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12096,7 +12218,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-37\",\"generation\":37}}"
+          ]
         },
         {
           "frames": [
@@ -12157,7 +12282,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-37\",\"generation\":37}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12218,7 +12348,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-37\",\"generation\":37}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12264,7 +12399,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-38\",\"generation\":38}}"
+          ]
         },
         {
           "frames": [
@@ -12323,7 +12461,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-38\",\"generation\":38}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12382,7 +12525,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-38\",\"generation\":38}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12428,7 +12576,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-39\",\"generation\":39}}"
+          ]
         },
         {
           "frames": [
@@ -12487,7 +12638,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-39\",\"generation\":39}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12546,7 +12702,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-39\",\"generation\":39}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12592,7 +12753,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-40\",\"generation\":40}}"
+          ]
         },
         {
           "frames": [
@@ -12655,7 +12819,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-40\",\"generation\":40}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12718,7 +12887,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-40\",\"generation\":40}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12764,7 +12938,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-41\",\"generation\":41}}"
+          ]
         },
         {
           "frames": [
@@ -12826,7 +13003,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-41\",\"generation\":41}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -12888,7 +13070,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-41\",\"generation\":41}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -12934,7 +13121,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-42\",\"generation\":42}}"
+          ]
         },
         {
           "frames": [
@@ -12995,7 +13185,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-42\",\"generation\":42}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -13056,7 +13251,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-42\",\"generation\":42}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -13102,7 +13302,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-43\",\"generation\":43}}"
+          ]
         },
         {
           "frames": [
@@ -13161,7 +13364,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-43\",\"generation\":43}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -13220,7 +13428,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-43\",\"generation\":43}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -13266,7 +13479,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-44\",\"generation\":44}}"
+          ]
         },
         {
           "frames": [
@@ -13325,7 +13541,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-44\",\"generation\":44}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -13384,7 +13605,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-44\",\"generation\":44}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -13430,7 +13656,10 @@
           ],
           "finalInFlight": [],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-45\",\"generation\":45}}"
+          ]
         },
         {
           "frames": [
@@ -13493,7 +13722,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-45\",\"generation\":45}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         },
         {
           "frames": [
@@ -13556,7 +13790,12 @@
             []
           ],
           "inFlight": [],
-          "interactions": []
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-45\",\"generation\":45}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}",
+            "{\"type\":\"event\",\"id\":\"submit_turn\",\"seq\":1,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"runId\":\"fixture-run\"}}"
+          ]
         }
       ]
     },
@@ -17785,6 +18024,590 @@
           "finalInFlight": [],
           "inFlight": [],
           "interactions": []
+        }
+      ]
+    },
+    {
+      "name": "lone-surrogate-id",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"\\ud800\",\"method\":\"describe_server\",\"params\":{}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-76",
+                "generation": 76
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-76\",\"generation\":76}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-76",
+                "generation": 76
+              }
+            },
+            {
+              "type": "response",
+              "id": "\ud800",
+              "ok": true,
+              "result": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-76\",\"generation\":76}}",
+            "{\"type\":\"response\",\"id\":\"\\ud800\",\"ok\":true,\"result\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]}}"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lone-surrogate-method",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"1\",\"method\":\"\\ud800\",\"params\":{}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-77",
+                "generation": 77
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-77\",\"generation\":77}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-77",
+                "generation": 77
+              }
+            },
+            {
+              "type": "response",
+              "id": "1",
+              "ok": false,
+              "error": {
+                "code": "gateway_request_failed",
+                "message": "Unknown gateway method \ud800."
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-77\",\"generation\":77}}",
+            "{\"type\":\"response\",\"id\":\"1\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Unknown gateway method \\ud800.\"}}"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lone-surrogate-client-name",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"\\ud800\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"1\",\"method\":\"describe_server\",\"params\":{}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-78",
+                "generation": 78
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-78\",\"generation\":78}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-78",
+                "generation": 78
+              }
+            },
+            {
+              "type": "response",
+              "id": "1",
+              "ok": true,
+              "result": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-78\",\"generation\":78}}",
+            "{\"type\":\"response\",\"id\":\"1\",\"ok\":true,\"result\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]}}"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lone-surrogate-session-key",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"1\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":\"\\ud800\",\"requestId\":\"r\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-79",
+                "generation": 79
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-79\",\"generation\":79}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-79",
+                "generation": 79
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "\ud800",
+                "requestId": "r"
+              }
+            },
+            {
+              "type": "response",
+              "id": "1",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "\ud800",
+                "requestId": "r",
+                "interactionBinding": {
+                  "connectionId": "@connection-79",
+                  "generation": 79
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-79\",\"generation\":79}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"resolved\",\"sessionKey\":\"\\ud800\",\"requestId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"1\",\"ok\":true,\"result\":{\"accepted\":true}}"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lone-surrogate-params",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"1\",\"method\":\"permission_decide\",\"params\":{\"sessionKey\":\"s\",\"requestId\":\"r\",\"payload\":\"\\ud800\"}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-80",
+                "generation": 80
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-80\",\"generation\":80}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-80",
+                "generation": 80
+              }
+            },
+            {
+              "type": "notification",
+              "name": "permission_changed",
+              "payload": {
+                "type": "resolved",
+                "sessionKey": "s",
+                "requestId": "r"
+              }
+            },
+            {
+              "type": "response",
+              "id": "1",
+              "ok": true,
+              "result": {
+                "accepted": true
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "permission_decide",
+              "params": {
+                "sessionKey": "s",
+                "requestId": "r",
+                "payload": "\ud800",
+                "interactionBinding": {
+                  "connectionId": "@connection-80",
+                  "generation": 80
+                }
+              }
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-80\",\"generation\":80}}",
+            "{\"type\":\"notification\",\"name\":\"permission_changed\",\"payload\":{\"type\":\"resolved\",\"sessionKey\":\"s\",\"requestId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"1\",\"ok\":true,\"result\":{\"accepted\":true}}"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ascii-describe-pins-top-level-order",
+      "rawText": true,
+      "steps": [
+        {
+          "op": "message",
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"ui\",\"clientVersion\":\"test\",\"token\":\"fixture-token\"}"
+        },
+        {
+          "op": "message",
+          "raw": "{\"type\":\"request\",\"id\":\"1\",\"method\":\"describe_server\",\"params\":{}}"
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-81",
+                "generation": 81
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-81\",\"generation\":81}}"
+          ]
+        },
+        {
+          "frames": [
+            {
+              "type": "hello_ok",
+              "protocolVersion": "1.2",
+              "serverVersion": "test",
+              "serverInfo": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              },
+              "interactionBinding": {
+                "connectionId": "@connection-81",
+                "generation": 81
+              }
+            },
+            {
+              "type": "response",
+              "id": "1",
+              "ok": true,
+              "result": {
+                "name": "fixture-server",
+                "capabilities": [
+                  "fixture"
+                ]
+              }
+            }
+          ],
+          "closes": [],
+          "calls": [
+            {
+              "method": "describe_server"
+            },
+            {
+              "method": "describe_server"
+            }
+          ],
+          "finalInFlight": [],
+          "inFlight": [],
+          "interactions": [],
+          "framesText": [
+            "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"test\",\"serverInfo\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]},\"interactionBinding\":{\"connectionId\":\"@connection-81\",\"generation\":81}}",
+            "{\"type\":\"response\",\"id\":\"1\",\"ok\":true,\"result\":{\"name\":\"fixture-server\",\"capabilities\":[\"fixture\"]}}"
+          ]
         }
       ]
     }

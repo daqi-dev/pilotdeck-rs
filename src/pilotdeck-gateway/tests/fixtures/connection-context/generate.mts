@@ -125,9 +125,30 @@ for (const method of ['submit_turn', 'elicitation_respond', 'permission_decide',
       steps:[message(hello(client)), request(method, params), {op:'close'}]});
   }
 }
+// #474 follow-up: lone-surrogate identifiers and the ASCII top-level order are
+// recorded as complete outbound text, not only as re-parsed objects.
+scenarios.push(
+  {name:'lone-surrogate-id',rawText:true,steps:[message(hello()),
+    request('describe_server',{},'\ud800')]},
+  {name:'lone-surrogate-method',rawText:true,steps:[message(hello()),
+    request('\ud800',{},'1')]},
+  {name:'lone-surrogate-client-name',rawText:true,steps:[message(hello('\ud800')),
+    request('describe_server',{},'1')]},
+  {name:'lone-surrogate-session-key',rawText:true,steps:[message(hello()),
+    request('permission_decide',{sessionKey:'\ud800',requestId:'r'},'1')]},
+  {name:'lone-surrogate-params',rawText:true,steps:[message(hello()),
+    request('permission_decide',{sessionKey:'s',requestId:'r',payload:'\ud800'},'1')]},
+  {name:'ascii-describe-pins-top-level-order',rawText:true,steps:[message(hello('ui')),
+    request('describe_server',{},'1')]},
+);
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
+// Byte-level frames keep every escaped surrogate and every insertion-ordered
+// key; only the real crypto.randomUUID values already recorded above are masked.
+const maskText = (text: string) => {for (const [id, marker] of uuids) text = text.split(id).join(marker); return text;};
 for (const scenario of scenarios) {
-  const frames: any[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];
+  const captureRaw = scenario.rawText === true || scenario.name.startsWith('submit-')
+    || scenario.name.startsWith('close-preserve-') || scenario.name === 'request-after-close';
+  const frames: any[] = [], rawFrames: string[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];
   const port = createNativeInteractionReconnectPort();
   const coordinator = new GatewayInteractionCoordinator({reconnectPort:port});
   const registrations: any[] = [];
@@ -136,7 +157,7 @@ for (const scenario of scenarios) {
   let startingSlot: string | undefined;
   let held: Promise<any> | undefined;
   const text = {onMessage(h: any) {messageHandler=h;},onClose(h: any) {closeHandler=h;},
-    sendText(s: string) {const frame=JSON.parse(s);frames.push(frame);if(frame.final===true)finalInFlight.push([...connection.inFlightSessions]);}, close(code: number, reason: string) {closes.push({code,reason});}};
+    sendText(s: string) {const frame=JSON.parse(s);frames.push(frame);rawFrames.push(s);if(frame.final===true)finalInFlight.push([...connection.inFlightSessions]);}, close(code: number, reason: string) {closes.push({code,reason});}};
   const gateway = {
     async describeServer() {calls.push({method:'describe_server'});if (scenario.holdDescribe) {startedDescribe();await new Promise<void>(r=>{releaseDescribe=r;});}return {name:'fixture-server',capabilities:['fixture']};},
     skillValidate: async () => {throw new skills.SkillValidationError({valid:false,issues:[{code:'fixture',message:'fixture validation'}]});},
@@ -197,7 +218,8 @@ for (const scenario of scenarios) {
     }
     else throw new Error(step.op);
     scenario.results.push(snapshot({frames,closes,calls,finalInFlight,
-      inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions],...(scenario.failDisconnect ? {closeErrors} : {})}));
+      inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions],...(scenario.failDisconnect ? {closeErrors} : {}),
+      ...(captureRaw ? {framesText:rawFrames.map(maskText)} : {})}));
   }
   assert.equal(submits.size,0);
   for (const registration of registrations) registration.dispose();
