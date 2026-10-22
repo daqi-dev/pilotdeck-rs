@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #510，边界登记）**：accepted-diffs.md 末尾追加 A7.3-INTERACTION-BOUNDARY-001（pending 输入类型域与线程映射），类别为边界登记、非豁免，不新增已接受差异、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+
 > **2026-10-22 人批重登记（PR #476）**：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 两条接受为已知差异（用户本人在协调者会话批准），并要求 Rust 补实现（见 accepted-diffs.md 该节末尾的跟进 issue）；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-22 修复轮 3 重登记（PR #476，透明披露补齐）**：按本单 gate3 sibling P1 的要求（`_tmp/20261022-a64-pr9b-gate3/sibling.md`，工作指令「gate3 的 P0/P1 一并修」），在 accepted-diffs.md 末尾新增「已知未对齐（未接受，待人批）· A6.4 stats」一节：A6.4-STATS-RETENTION-001（retention 只解析 `toISOString` 规范形，真实 TS 删除 8 类非规范行而 Rust 保留）与 A6.4-STATS-BASELINEMODEL-001（未知 `stats.baselineModel` ref 的 fatal 诊断未实现）。两条状态均为「未批准，非已接受差异」，不新增豁免、不改判分语义、不改门禁；真实 TS 探针（固定时钟与 retention）与 Rust 侧机器判据见该节。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。两家评审见 PR（gate4）；人批另行。
@@ -25,7 +27,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-c20aa58f4a1af81b84bde3f3d7293c363ec497aff79a43cbe3d08ec9711624e8  accepted-diffs.md
+1ec1ccc1e49a53cf3b98ea5c48b0c7e7a79a068dce0ed2a3339d2d60ef30e409  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

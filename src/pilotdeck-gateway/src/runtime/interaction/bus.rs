@@ -37,9 +37,15 @@ impl Registration {
             .iter_mut()
             .find(|b| b.bus == self.bus && b.owner == self.owner)
         {
-            bucket.entries.retain(|e| e.token != self.token);
+            bucket
+                .entries
+                .lock()
+                .unwrap()
+                .retain(|e| e.token != self.token);
         }
-        state.buckets.retain(|b| !b.entries.is_empty());
+        state
+            .buckets
+            .retain(|b| !b.entries.lock().unwrap().is_empty());
     }
 }
 
@@ -84,17 +90,17 @@ impl<const P: bool> PendingBus<P> {
         {
             index
         } else {
-            let id = state.serial();
             state.buckets.push(Bucket {
-                id,
                 bus: self.id,
                 owner: owner.clone(),
-                entries: vec![],
+                entries: Arc::default(),
             });
             state.buckets.len() - 1
         };
         if state.buckets[bucket]
             .entries
+            .lock()
+            .unwrap()
             .iter()
             .any(|e| e.entry.request_id == entry.request_id)
         {
@@ -132,10 +138,11 @@ impl<const P: bool> PendingBus<P> {
             payload: reconnect::replay_payload(payload),
             binding,
         });
-        state.buckets[bucket].entries.push(Stored {
+        state.buckets[bucket].entries.lock().unwrap().push(Stored {
             token,
             entry,
             active: active.clone(),
+            settled_by: None,
         });
         Ok(Registration {
             state: self.port.state.clone(),
@@ -161,22 +168,31 @@ impl<const P: bool> PendingBus<P> {
             .buckets
             .iter()
             .position(|b| b.bus == self.id && &b.owner == owner)?;
-        let bucket = &mut state.buckets[index];
-        let index = bucket
-            .entries
-            .iter()
-            .position(|e| &e.entry.request_id == request)?;
-        let stored = bucket.entries.remove(index);
+        let stored = {
+            let mut entries = state.buckets[index].entries.lock().unwrap();
+            let index = entries.iter().position(|e| {
+                &e.entry.request_id == request
+                    && (e.active.load(Ordering::SeqCst)
+                        || e.settled_by == Some(std::thread::current().id()))
+            })?;
+            entries.remove(index)
+        };
         stored.active.store(false, Ordering::SeqCst);
         reconnect::remove(&mut state, stored.token, owner);
-        state.buckets.retain(|b| !b.entries.is_empty());
+        state
+            .buckets
+            .retain(|b| !b.entries.lock().unwrap().is_empty());
         Some(stored.entry)
     }
     pub fn has_pending(&self, owner: &JsString, request: &JsString) -> bool {
         self.port.state.lock().unwrap().buckets.iter().any(|b| {
             b.bus == self.id
                 && &b.owner == owner
-                && b.entries.iter().any(|e| &e.entry.request_id == request)
+                && b.entries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|e| &e.entry.request_id == request)
         })
     }
     pub fn pending_count(&self, owner: &JsString) -> usize {
@@ -187,7 +203,7 @@ impl<const P: bool> PendingBus<P> {
             .buckets
             .iter()
             .find(|b| b.bus == self.id && &b.owner == owner)
-            .map_or(0, |b| b.entries.len())
+            .map_or(0, |b| b.entries.lock().unwrap().len())
     }
     pub fn has_pending_session(&self, owner: &JsString) -> bool {
         self.pending_count(owner) > 0
@@ -214,7 +230,7 @@ impl<const P: bool> PendingBus<P> {
         self.port.current_binding(owner)
     }
     pub fn reject_session(&self, owner: &JsString, reason: &JsString) {
-        let bucket_id = self
+        let entries = self
             .port
             .state
             .lock()
@@ -222,24 +238,24 @@ impl<const P: bool> PendingBus<P> {
             .buckets
             .iter()
             .find(|b| b.bus == self.id && &b.owner == owner)
-            .map(|b| b.id);
-        let Some(bucket_id) = bucket_id else {
+            .map(|b| b.entries.clone());
+        let Some(entries) = entries else {
             return;
         };
         let mut cursor = 0;
         loop {
-            // TS iterates a live Map: callbacks can remove later entries or
-            // append new ones. Keep the original bucket identity and cursor.
+            // TS holds the original live Map through nested reject/deny calls,
+            // including after bySession deletes it. Revisit settled entries only
+            // for synchronous callback reentry, never from another thread.
             let entry = {
                 let mut state = self.port.state.lock().unwrap();
-                let stored = state
-                    .buckets
-                    .iter()
-                    .find(|b| b.id == bucket_id)
-                    .and_then(|b| b.entries.iter().find(|e| e.token > cursor));
-                stored
+                let mut entries = entries.lock().unwrap();
+                entries
+                    .iter_mut()
+                    .find(|e| e.token > cursor && bulk_available(e))
                     .map(|stored| {
                         cursor = stored.token;
+                        stored.settled_by = Some(std::thread::current().id());
                         stored.active.store(false, Ordering::SeqCst);
                         stored.entry.clone()
                     })
@@ -279,7 +295,8 @@ impl<const P: bool> PendingBus<P> {
     }
     fn deny(&self, owner: &JsString, reason: &JsString) {
         // TS removes the permission bucket before callbacks (rejectSession
-        // instead removes it after callbacks). Reentrant registration survives.
+        // instead removes it after callbacks). Reentrant registration survives this
+        // deny, unless an enclosing reject later deletes the owner as in TS.
         let entries = {
             let mut state = self.port.state.lock().unwrap();
             let Some(index) = state
@@ -291,14 +308,27 @@ impl<const P: bool> PendingBus<P> {
             };
             state.buckets.remove(index).entries
         };
-        for stored in entries {
-            {
+        let mut cursor = 0;
+        loop {
+            let entry = {
                 let mut state = self.port.state.lock().unwrap();
-                stored.active.store(false, Ordering::SeqCst);
-                reconnect::remove(&mut state, stored.token, owner);
-            }
-            (stored.entry.resolve)(object([
-                ("requestId", JsValue::String(stored.entry.request_id)),
+                let mut entries = entries.lock().unwrap();
+                entries
+                    .iter_mut()
+                    .find(|e| e.token > cursor && bulk_available(e))
+                    .map(|stored| {
+                        cursor = stored.token;
+                        stored.settled_by = Some(std::thread::current().id());
+                        stored.active.store(false, Ordering::SeqCst);
+                        stored.entry.clone()
+                    })
+                    .inspect(|_| reconnect::remove(&mut state, cursor, owner))
+            };
+            let Some(entry) = entry else {
+                break;
+            };
+            (entry.resolve)(object([
+                ("requestId", JsValue::String(entry.request_id)),
                 ("decision", "deny".into()),
                 ("reason", JsValue::String(reason.clone())),
             ]));
@@ -317,4 +347,13 @@ fn message(parts: &[JsString]) -> JsString {
             .flat_map(|s| s.units().iter().copied())
             .collect(),
     )
+}
+
+// An inactive entry may still belong to the original TS Map during synchronous
+// reentry (or dispose on a detached deny Map). Cross-thread bulk calls must not
+// settle an entry already claimed by another bulk operation.
+fn bulk_available(stored: &Stored) -> bool {
+    stored
+        .settled_by
+        .is_none_or(|thread| thread == std::thread::current().id())
 }

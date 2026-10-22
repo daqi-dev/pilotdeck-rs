@@ -8162,6 +8162,2530 @@
       ]
     },
     {
+      "name": "permission-dispose-preserves-other-pending",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "first",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "registration_dispose",
+          "tag": "first"
+        },
+        {
+          "op": "decide",
+          "id": "last",
+          "session": "s",
+          "decision": "allow"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 2,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": {
+                "requestId": "last",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "permission-shared-port-duplicate",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "r",
+          "session": "s",
+          "peer": true
+        },
+        {
+          "op": "decide",
+          "id": "r",
+          "session": "s",
+          "decision": "allow"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "error": "Interaction request r is already pending for s."
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "permission",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "requestId": "r",
+                "decision": "allow"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "permission-nested-reject-original-map",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "reject",
+              "kind": "permission",
+              "reason": "inner"
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "reject",
+          "kind": "permission",
+          "session": "s",
+          "reason": "outer"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 2,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 2,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": "inner",
+              "p": 2,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": "inner",
+              "p": 2,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "reentry",
+              "result": null
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "permission-reject-consume-self",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "decide",
+              "id": "first",
+              "session": "s",
+              "decision": "allow"
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "reject",
+          "kind": "permission",
+          "session": "s",
+          "reason": "outer"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 2,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 2,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": {
+                "requestId": "first",
+                "decision": "allow"
+              },
+              "p": 1,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "reentry",
+              "result": {
+                "delivered": true
+              }
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 1,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "question-dispose-preserves-other-pending",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "first",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "registration_dispose",
+          "tag": "first"
+        },
+        {
+          "op": "answer",
+          "id": "last",
+          "session": "s",
+          "answer": {
+            "behavior": "answered",
+            "value": {
+              "text": "yes"
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 2,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "last",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "last"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "question-shared-port-duplicate",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "r",
+          "session": "s",
+          "peer": true
+        },
+        {
+          "op": "answer",
+          "id": "r",
+          "session": "s",
+          "answer": {
+            "behavior": "answered",
+            "value": {
+              "text": "yes"
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "error": "Interaction request r is already pending for s."
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": true
+          },
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "r"
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "question-nested-reject-original-map",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "reject",
+              "kind": "question",
+              "reason": "inner"
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "reject",
+          "kind": "question",
+          "session": "s",
+          "reason": "outer"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 2,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 0,
+              "q": 2,
+              "replay": 1
+            },
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "first",
+              "value": "inner",
+              "p": 0,
+              "q": 2,
+              "replay": 1
+            },
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "last",
+              "value": "inner",
+              "p": 0,
+              "q": 2,
+              "replay": 0
+            },
+            {
+              "event": "reentry",
+              "result": null
+            },
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "question-reject-consume-self",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "answer",
+              "id": "first",
+              "session": "s",
+              "answer": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "reject",
+          "kind": "question",
+          "session": "s",
+          "reason": "outer"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 2,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "question",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "question",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 0,
+              "q": 2,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "question",
+              "session": "s",
+              "id": "first",
+              "value": {
+                "behavior": "answered",
+                "value": {
+                  "text": "yes"
+                }
+              },
+              "p": 0,
+              "q": 1,
+              "replay": 1
+            },
+            {
+              "event": "delivered",
+              "session": "s",
+              "id": "first"
+            },
+            {
+              "event": "reentry",
+              "result": {
+                "delivered": true
+              }
+            },
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 0,
+              "q": 1,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "close-clears-last-before-new-pending",
+      "steps": [
+        {
+          "op": "reconnect",
+          "session": "s",
+          "next": {
+            "connectionId": "a",
+            "generation": 1
+          }
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "r",
+          "session": "s"
+        },
+        {
+          "op": "close",
+          "session": "s",
+          "reason": "closed"
+        },
+        {
+          "op": "register",
+          "kind": "question",
+          "id": "new",
+          "session": "s"
+        },
+        {
+          "op": "reconnect",
+          "session": "s",
+          "next": {
+            "connectionId": "fresh",
+            "generation": 0
+          }
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "outcome": "no_pending",
+            "binding": {
+              "connectionId": "a",
+              "generation": 1
+            },
+            "requests": []
+          },
+          "events": [],
+          "registrations": [],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": {
+                "connectionId": "a",
+                "generation": 1
+              },
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "r",
+                  "kind": "question",
+                  "toolCallId": "tc-r",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "a",
+                    "generation": 1
+                  }
+                }
+              ],
+              "binding": {
+                "connectionId": "a",
+                "generation": 1
+              },
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": "closed",
+              "p": 0,
+              "q": 1,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": "closed",
+              "p": 0,
+              "q": 1,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            },
+            {
+              "tag": "new",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": true,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "question",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "question",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "outcome": "initial",
+            "binding": {
+              "connectionId": "fresh",
+              "generation": 0
+            },
+            "requests": [
+              {
+                "ownerId": "s",
+                "requestId": "new",
+                "kind": "question",
+                "toolCallId": "tc-new",
+                "toolName": "fixture",
+                "binding": {
+                  "connectionId": "fresh",
+                  "generation": 0
+                }
+              }
+            ]
+          },
+          "events": [
+            {
+              "event": "reject",
+              "kind": "question",
+              "session": "s",
+              "id": "r",
+              "value": "closed",
+              "p": 0,
+              "q": 1,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "r",
+              "active": false
+            },
+            {
+              "tag": "new",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 1,
+              "hasP": false,
+              "hasQ": true,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "question",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "fresh",
+                    "generation": 0
+                  }
+                }
+              ],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "question",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture",
+                  "binding": {
+                    "connectionId": "fresh",
+                    "generation": 0
+                  }
+                }
+              ],
+              "binding": {
+                "connectionId": "fresh",
+                "generation": 0
+              },
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "deny-dispose-detached-entry-still-settles",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "registration_dispose",
+              "tag": "last"
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "deny",
+          "session": "s",
+          "reason": "denied"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 2,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": {
+                "requestId": "first",
+                "decision": "deny",
+                "reason": "denied"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "reentry",
+              "result": null
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": {
+                "requestId": "last",
+                "decision": "deny",
+                "reason": "denied"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reject-deny-register-original-map",
+      "steps": [
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "first",
+          "session": "s",
+          "reenterSteps": [
+            {
+              "op": "deny",
+              "session": "s",
+              "reason": "inner"
+            },
+            {
+              "op": "register",
+              "kind": "permission",
+              "id": "new",
+              "session": "s"
+            }
+          ]
+        },
+        {
+          "op": "register",
+          "kind": "permission",
+          "id": "last",
+          "session": "s"
+        },
+        {
+          "op": "reject",
+          "kind": "permission",
+          "session": "s",
+          "reason": "outer"
+        },
+        {
+          "op": "decide",
+          "id": "new",
+          "session": "s",
+          "decision": "allow"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 1,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "registered": true
+          },
+          "events": [],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": true
+            },
+            {
+              "tag": "last",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 2,
+              "q": 0,
+              "hasP": true,
+              "hasQ": false,
+              "pendingP": true,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "first",
+                  "kind": "permission",
+                  "toolCallId": "tc-first",
+                  "toolName": "fixture"
+                },
+                {
+                  "ownerId": "s",
+                  "requestId": "last",
+                  "kind": "permission",
+                  "toolCallId": "tc-last",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": null,
+          "events": [
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 2,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": {
+                "requestId": "first",
+                "decision": "deny",
+                "reason": "inner"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": {
+                "requestId": "last",
+                "decision": "deny",
+                "reason": "inner"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "reentry",
+              "result": null
+            },
+            {
+              "event": "reentry",
+              "result": {
+                "registered": true
+              }
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 1,
+              "q": 0,
+              "replay": 1
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            },
+            {
+              "tag": "new",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "permission",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "permission",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        },
+        {
+          "result": {
+            "delivered": false
+          },
+          "events": [
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": "outer",
+              "p": 2,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "first",
+              "value": {
+                "requestId": "first",
+                "decision": "deny",
+                "reason": "inner"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 1
+            },
+            {
+              "event": "resolve",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": {
+                "requestId": "last",
+                "decision": "deny",
+                "reason": "inner"
+              },
+              "p": 0,
+              "q": 0,
+              "replay": 0
+            },
+            {
+              "event": "reentry",
+              "result": null
+            },
+            {
+              "event": "reentry",
+              "result": {
+                "registered": true
+              }
+            },
+            {
+              "event": "reject",
+              "kind": "permission",
+              "session": "s",
+              "id": "last",
+              "value": "outer",
+              "p": 1,
+              "q": 0,
+              "replay": 1
+            }
+          ],
+          "registrations": [
+            {
+              "tag": "first",
+              "active": false
+            },
+            {
+              "tag": "last",
+              "active": false
+            },
+            {
+              "tag": "new",
+              "active": true
+            }
+          ],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "permission",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "qSnapshot": [],
+              "snapshot": [
+                {
+                  "ownerId": "s",
+                  "requestId": "new",
+                  "kind": "permission",
+                  "toolCallId": "tc-new",
+                  "toolName": "fixture"
+                }
+              ],
+              "binding": null,
+              "rules": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "permission-deny-session",
       "steps": [
         {
@@ -12834,6 +15358,21 @@
         {
           "op": "grant",
           "session": "s",
+          "entry": "Bash(x\ry)"
+        },
+        {
+          "op": "grant",
+          "session": "s",
+          "entry": "Bash(x y)"
+        },
+        {
+          "op": "grant",
+          "session": "s",
+          "entry": "Bash(x y)"
+        },
+        {
+          "op": "grant",
+          "session": "s",
           "entry": "Read:*.rs"
         },
         {
@@ -13181,6 +15720,174 @@
         {
           "result": {
             "granted": true,
+            "entry": "Bash(x\ry)"
+          },
+          "events": [],
+          "registrations": [],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash",
+                  "pattern": "git:*"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "result": {
+            "granted": true,
+            "entry": "Bash(x y)"
+          },
+          "events": [],
+          "registrations": [],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash",
+                  "pattern": "git:*"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "result": {
+            "granted": true,
+            "entry": "Bash(x y)"
+          },
+          "events": [],
+          "registrations": [],
+          "owners": [
+            {
+              "session": "s",
+              "p": 0,
+              "q": 0,
+              "hasP": false,
+              "hasQ": false,
+              "pendingP": false,
+              "pendingQ": false,
+              "pSnapshot": [],
+              "qSnapshot": [],
+              "snapshot": [],
+              "binding": null,
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash",
+                  "pattern": "git:*"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "bash"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "result": {
+            "granted": true,
             "entry": "Read:*.rs"
           },
           "events": [],
@@ -13219,6 +15926,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13271,6 +15993,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13329,6 +16066,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13393,6 +16145,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13462,6 +16229,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13537,6 +16319,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13617,6 +16414,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13706,6 +16518,21 @@
                 {
                   "source": "session",
                   "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
                   "toolName": "Read",
                   "pattern": "*.rs"
                 },
@@ -13787,6 +16614,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13877,6 +16719,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -13976,6 +16833,21 @@
                 {
                   "source": "session",
                   "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
                   "toolName": "Read",
                   "pattern": "*.rs"
                 },
@@ -14067,6 +16939,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -14167,6 +17054,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -14272,6 +17174,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",
@@ -14382,6 +17299,21 @@
                   "source": "session",
                   "behavior": "allow",
                   "toolName": "Bash(x\ny)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x\ry)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
+                },
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "Bash(x y)"
                 },
                 {
                   "source": "session",

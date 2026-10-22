@@ -5,6 +5,9 @@
 //! mutex. Only the winning consume returns the callback. Registrations require
 //! explicit disposal (dropping a handle, like dropping a JS reference, does not
 //! cancel). Callbacks run outside the mutex and may reenter the services.
+//! Synchronous bulk callback reentry can revisit a rejected entry, as in TS;
+//! another thread cannot claim that already settled entry. Pending/replay
+//! ownership belongs here; connection::BindingOwners is a connection-only subset.
 mod bus;
 mod coordinator;
 mod reconnect;
@@ -62,12 +65,15 @@ struct Stored {
     token: u64,
     entry: PendingEntry,
     active: Arc<AtomicBool>,
+    // Bulk settlement can revisit entries only on its synchronous callback thread.
+    settled_by: Option<std::thread::ThreadId>,
 }
 struct Bucket {
-    id: u64,
     bus: u64,
     owner: JsString,
-    entries: Vec<Stored>,
+    // Lock State before entries; release both before invoking any callback.
+    // An iterator retains the original TS Map even after bySession deletes it.
+    entries: Arc<Mutex<Vec<Stored>>>,
 }
 type Shared = Arc<Mutex<State>>;
 
