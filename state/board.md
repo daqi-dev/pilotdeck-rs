@@ -1,13 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A7.1-pr3 | gate | blocked | PR #421 @0a75d155：孤立代理 P1 连续 3 轮（gate5/6/7 boundary），挂起；需人实测 `{"type":"request","id":"\ud800","method":"describe_server"}` TS 行为；决策卡 state/decisions-20261022.md:#421-surrogate-p1
-- #434 | gate | ready | PR #434 token_accounting；gate PASS（旧 head），pr-gate CI FAILURE（head 不符，需重跑 run-review-roles.py）
-- #455 | gate | ready | PR #455 P2-跟进第5批；无结果块，需首次跑 run-review-roles.py
-- #390 | impl | ready | codex/issue-390 已推 origin（含 boundary P2 金样）；需开 PR 再走评审
+updated: 2026-10-22 11:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #460 | coord | doing | PR #460 board 更新（chore/waiver），入合并队列等合入
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
+- #458 | impl | blocked | 入站孤立代理（#421 拆出），前置于 A7.2
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
@@ -16,6 +14,13 @@ updated: 2026-10-22 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 11:40 · /loop 协调轮
+> **合并**：#421（A7.1-pr3 连接 context/auth/binding）合入 main（25abd804），邮箱核验 noreply ✅。#459（#390 LazyLock+openai url）合入 main（2026-10-22T03:22:11Z）。#434（#410 token_accounting）、#455（P2-跟进第5批）此前已合入。
+> **关单**：#386（子进程 SIGINT 重置，PR #407 已合入）关闭。#443（output_schema 量词，PR #441 已合入）关闭。
+> **#421 脱困**：修复轮 7（入站改 parse_json）回滚，保留修复轮 6（params JsValue 展开）。gate8 P0=0 P1=0，合入。入站孤立代理拆出为 #458，前置于 A7.2。
+> **清理**：wt-a63-pr1、wt-a68-pr1、wt-a64-pr7 全部回收归档。worktree 1/12，磁盘 44.7 GiB。
+> **下一步**：① 等 #460（board chore）合入；② #458 待排期；③ READY 无 ready 项，等下一产品单。
 
 > ## 2026-10-22 10:30 · /loop 协调轮（新会话接续）
 > **清理**：8 棵已合入 worktree 全部归档 `_tmp/archive/worktrees-20261022/`（4880 文件，rsync -aH --sparse），git worktree remove 删除；磁盘 96.6→60.8 GiB，worktree 12→4/12。
