@@ -1,10 +1,18 @@
 ---
 name: model-runners
-description: 本机已核验的 OpenCode 与 DeepSeek 通道（2026-10-17 起 DeepSeek 首选直连 API 脚本，dsh 仅兜底）；适用于接续评审，不是永久工具选型。
+description: 模型通道正本——2026-10-22 起优先 glm-5.3-mb 与 deepseek-v4.1-flash-mb（llm-center），含各入口、已知坑与误报判别；旧段按日期递减，已被新段覆盖。
 type: feedback
 ---
 
 # 本机评审入口：2026-10-15 经验
+
+**2026-10-22 核验（人定：优先 `glm-5.3-mb` 与 `deepseek-v4.1-flash-mb`；本段优先于下文）**
+- **分工**：实现默认 DeepSeek（dsh + `scripts/dsh-headless-llm-center.patch.yml`，`model: deepseek-v4.1-flash-mb`）。评审默认两家：GLM（`scripts/run-review-roles.py` 默认 `--runner zai`，模型 `glm-5.3-mb`）+ DeepSeek（`scripts/review-deepseek.py` 默认 `deepseek-v4.1-flash-mb`，或 dsh read-only）。作者是 GLM 或 DeepSeek 时，第二家评审才用 codex（`gpt-6.1-sol`，走 OpenAI 自家后端，不经 llm-center）。Claude 只做难单。
+- **模型名必须带 `-mb`**。不带 `-mb` 的 `glm-5.3` 网关也会应答，但不是指定通道，出错时不容易察觉。10-22 查出 `_tmp/20261018-a6-split/glm_review.py` 写死了 `--model glm-5.3`，已改成 `glm-5.3-mb`。派单前先 `grep -n -- '--model\|model:'` 看一眼启动脚本或 patch。
+- **不是失败的输出**：`claude -p` 跑 GLM 时，stderr 会打 `Claude Code doesn't recognize the model "glm-5.3-mb"…` 和 `[claude-code:unrecognized_model]`，意思只是按 200k 估上下文窗口。判成败只看三样：exit 码、jsonl 里有没有 `"type":"result"` 行、`.md` 末尾有没有 `VERDICT:` 行。网关回显的展示名 `GLM-5.3` 已由 `RESP_MODEL_ALIAS` 放行。
+- **中断不是失败**：jsonl 停在 `thinking_tokens`、没有 result 行，说明进程被打断了（比如上一会话退出连带杀掉）。作废重跑，不计入「同一失败 3 次」。
+- **`--runner anthropic` 现在跑不了**：它只认 `.env.local` 里的 `ANTHROPIC_API_KEY`，现在没有这把钥，会报「anthropic 通道缺 ANTHROPIC_API_KEY」后退出，不产 summary.md。外层包装脚本的 `exit=$?` 可能被后续命令吃掉而显示 0，要以 summary.md 是否生成为准。需要 Claude 评审时用 `_tmp/20261018-a6-split/review.sh … claude`（走本会话的 llm-center 环境；10-22 未实测）。
+- **下文过时项**：10-17 段的 `--model glm-5.3`、`api.z.ai`、`ANTHROPIC_AUTH_TOKEN`，以及「怎么用」里的 `zai-coding-plan/glm-5.3`、`deepseek-flash`、`deepseek-official`，都不要再用。OpenCode 手工评审改用 `opencode run -m llmcenter/glm-5.3-mb`。
 
 **2026-10-20 两家都改走 llm-center（用户指定，优先于下文所有旧 URL/模型名）**：网关 `https://llm-center.modelbest.co`，Anthropic Messages 协议（`POST /v1/messages`，头 `x-api-key` + `anthropic-version: 2023-06-01`），密钥仍是 `.env.local` 的 `ZAI_API_KEY` / `DEEPSEEK_API_KEY`。GLM 模型 `glm-5.3-mb`：`run-review-roles.py` 把 `ANTHROPIC_BASE_URL` 设为**主机根**（Claude Code 自己拼 `/v1/messages`，带 `/v1/messages` 会拼成双路径 404）；网关在响应体里回显展示名 `GLM-5.3`、`modelUsage` 却是请求名，守卫用 `RESP_MODEL_ALIAS` 只放行这一对。DeepSeek 模型 `deepseek-v4.1-flash-mb`：`review-deepseek.py` 已从 OpenAI chat 改成 Messages（`max_tokens` 必填，默认 16384；`--thinking enabled` 发 `budget_tokens`）。实测原件 `_tmp/20261020-llm-center-smoke/`。另：旧文写的 `ANTHROPIC_AUTH_TOKEN` 不准，代码实际设的是 `ANTHROPIC_API_KEY`。
 
