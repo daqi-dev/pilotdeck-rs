@@ -12,6 +12,7 @@
 
 use crate::{
     metadata::js_trim,
+    project_files::{has_unpaired_surrogate, node_collator, node_locale},
     runtime::memory::{js_is_space_unit, js_trim_units},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -20,8 +21,8 @@ use std::{
     collections::HashSet,
     fmt, fs,
     path::{Path, PathBuf},
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Mutex, OnceLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const INDEXING_SETTINGS_STATE_KEY: &str = "indexingSettings";
@@ -78,6 +79,15 @@ pub enum StorageError {
     /// `JSON.stringify(undefined)` has no text; TS hands `undefined` to
     /// `node:sqlite`, which raises a binding `TypeError`.
     Unstringifiable(&'static str),
+    /// A stored pipeline value the TS `save*Trace` methods spread directly
+    /// (`[record, ...readPipelineState(key, [])]`). Spreading `null`, an
+    /// object, a number or a boolean is a JS `TypeError`; a string is
+    /// iterable and its characters are dropped by the sanitizer.
+    NotIterable(String),
+    /// The comparison cannot be reproduced without the Node host: ICU4X
+    /// folds unpaired surrogates to U+FFFD while Node's collation keeps them
+    /// distinct. Mirrors the existing `workspace_snapshot` boundary.
+    HostRequired(String),
 }
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -87,6 +97,10 @@ impl fmt::Display for StorageError {
             Self::Json(error) => write!(f, "json: {error}"),
             Self::InvalidTrace(error) => write!(f, "invalid trace record: {error}"),
             Self::Unstringifiable(what) => write!(f, "{what} cannot be represented as JSON text"),
+            Self::NotIterable(key) => {
+                write!(f, "pipeline state {key} is not iterable (TypeError)")
+            }
+            Self::HostRequired(error) => write!(f, "requires the Node host: {error}"),
         }
     }
 }
@@ -158,6 +172,11 @@ impl EdgeClawStorage {
             fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(&path)?;
+        // `node:sqlite`'s `DatabaseSync` leaves `PRAGMA busy_timeout` at 0
+        // (measured on Node 22.22.0: a second writer fails immediately with
+        // `ERR_SQLITE_ERROR` / "database is locked"). rusqlite's `open` sets
+        // `sqlite3_busy_timeout(db, 5000)` instead, so overwrite it explicitly.
+        conn.busy_timeout(Duration::ZERO)?;
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(INIT_SQL)?;
         let storage = Self {
@@ -225,7 +244,7 @@ impl EdgeClawStorage {
             )
             .optional()?;
         match raw {
-            Some(SqlValue::Text(raw)) => Ok(parse_json(&raw).ok()),
+            Some(SqlValue::Text(raw)) => Ok(parse_json(&node_text(raw)).ok()),
             _ => Ok(None),
         }
     }
@@ -327,7 +346,8 @@ impl EdgeClawStorage {
                  ORDER BY first_timestamp ASC
                  LIMIT ?1",
             )?;
-            let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+            let rows = statement
+                .query_map([limit as i64], |row| row.get::<_, String>(0).map(node_text))?;
             return Ok(rows.collect::<Result<Vec<_>, _>>()?);
         }
         let placeholders = placeholders(preferred.len());
@@ -341,7 +361,7 @@ impl EdgeClawStorage {
         let conn = self.conn();
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(preferred.iter()), |row| {
-            row.get::<_, String>(0)
+            row.get::<_, String>(0).map(node_text)
         })?;
         let mut keys = rows.collect::<Result<Vec<_>, _>>()?;
         keys.truncate(limit);
@@ -395,6 +415,7 @@ impl EdgeClawStorage {
             );
             conn.query_row(&sql, params_from_iter(preferred.iter()), |row| row.get(0))?
         };
+        let timestamp = timestamp.map(node_text);
         Ok(timestamp.filter(|value| !js_trim(value).is_empty()))
     }
 
@@ -506,14 +527,18 @@ impl EdgeClawStorage {
         kind: TraceKind,
     ) -> Result<(), StorageError> {
         let conn = self.conn();
-        let existing = Self::read_pipeline_state(&conn, state_key)?
-            .unwrap_or_else(|| JsValue::Array(Vec::new()));
+        // `[record, ...readPipelineState(key, [])]`: a missing row or bad JSON
+        // falls back to `[]`; a string is iterable (its characters are dropped
+        // by the sanitizer); anything else throws a JS `TypeError` before the
+        // write, leaving the stored value untouched.
+        let existing = Self::read_pipeline_state(&conn, state_key)?;
         let mut items = match &existing {
-            JsValue::Array(items) => items.clone(),
-            _ => Vec::new(),
+            None | Some(JsValue::String(_)) => Vec::new(),
+            Some(JsValue::Array(items)) => items.clone(),
+            Some(_) => return Err(StorageError::NotIterable(state_key.to_owned())),
         };
         items.insert(0, record.clone());
-        let sanitized = sanitize_trace_array(&JsValue::Array(items), id_key, "startedAt");
+        let sanitized = sanitize_trace_array(&JsValue::Array(items), id_key, "startedAt")?;
         let normalized = normalize_traces(sanitized, kind)?;
         let capped = normalized.into_iter().take(limit.max(1)).collect();
         Self::write_pipeline_state(&conn, state_key, &JsValue::Array(capped))
@@ -529,7 +554,7 @@ impl EdgeClawStorage {
         let value = self
             .get_pipeline_state(state_key)?
             .unwrap_or_else(|| JsValue::Array(Vec::new()));
-        let sanitized = sanitize_trace_array(&value, id_key, "startedAt");
+        let sanitized = sanitize_trace_array(&value, id_key, "startedAt")?;
         let normalized = normalize_traces(sanitized, kind)?;
         Ok(normalized.into_iter().take(limit.max(1)).collect())
     }
@@ -593,14 +618,41 @@ fn placeholders(count: usize) -> String {
         .join(", ")
 }
 
+/// `node:sqlite` returns TEXT values with `sqlite3_column_text`, which stops at
+/// the first NUL even though the column keeps the full bytes (`hex()` proves
+/// it). Node 22.22.0 measured: `'a\0b'` reads back as `'a'`. Mirror that at
+/// every TEXT read boundary in this module.
+fn node_text(value: String) -> String {
+    match value.find('\0') {
+        Some(index) => value[..index].to_owned(),
+        None => value,
+    }
+}
+
+/// `Array#sort` on trace records uses `String#localeCompare` (default locale,
+/// sort usage, variant strength), not UTF-16 code-unit order. Reuse the
+/// gateway's pinned Node/ICU collator (`project_files::node_collator`), which
+/// every other locale-dependent sort in this crate already uses.
+fn trace_collator() -> Result<&'static icu_collator::CollatorBorrowed<'static>, StorageError> {
+    static COLLATOR: OnceLock<Option<icu_collator::CollatorBorrowed<'static>>> = OnceLock::new();
+    COLLATOR
+        .get_or_init(|| {
+            let locale = node_locale(|key| std::env::var(key).ok());
+            node_collator(&locale).ok()
+        })
+        .as_ref()
+        .ok_or_else(|| StorageError::HostRequired("Collation data unavailable.".into()))
+}
+
 /// `sanitizeTraceArray`: keep object records with string key + sort key, sort
 /// by `startedAt` descending (JS stable sort), drop empty ids and duplicates.
-/// `localeCompare` is approximated by UTF-16 code-unit order; the generator
-/// asserts equality for every fixture pair, and non-ASCII collation is a
-/// documented divergence outside this corpus.
-fn sanitize_trace_array(value: &JsValue, id_key: &str, sort_key: &str) -> Vec<JsValue> {
+fn sanitize_trace_array(
+    value: &JsValue,
+    id_key: &str,
+    sort_key: &str,
+) -> Result<Vec<JsValue>, StorageError> {
     let JsValue::Array(items) = value else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut filtered: Vec<&JsValue> = items
         .iter()
@@ -609,16 +661,31 @@ fn sanitize_trace_array(value: &JsValue, id_key: &str, sort_key: &str) -> Vec<Js
                 && item.get(sort_key).and_then(JsValue::as_string).is_some()
         })
         .collect();
+    // ICU4X folds unpaired surrogates to U+FFFD while V8's collation keeps
+    // distinct weights. Only refuse when such a key actually takes part in a
+    // comparison; a single distinct key never calls the comparator.
+    let has_distinct_keys = filtered.first().is_some_and(|first| {
+        let first = trace_sort_key(first, sort_key);
+        filtered
+            .iter()
+            .skip(1)
+            .any(|item| trace_sort_key(item, sort_key).units() != first.units())
+    });
+    if has_distinct_keys
+        && filtered
+            .iter()
+            .any(|item| has_unpaired_surrogate(trace_sort_key(item, sort_key)))
+    {
+        return Err(StorageError::HostRequired(
+            "trace startedAt collation requires the Node host for unpaired surrogates.".into(),
+        ));
+    }
+    let collator = trace_collator()?;
     filtered.sort_by(|left, right| {
-        let left = left
-            .get(sort_key)
-            .and_then(JsValue::as_string)
-            .expect("filtered trace has a sort key");
-        let right = right
-            .get(sort_key)
-            .and_then(JsValue::as_string)
-            .expect("filtered trace has a sort key");
-        right.units().cmp(left.units())
+        collator.compare_utf16(
+            trace_sort_key(right, sort_key).units(),
+            trace_sort_key(left, sort_key).units(),
+        )
     });
     let mut seen = HashSet::new();
     let mut records = Vec::new();
@@ -632,7 +699,13 @@ fn sanitize_trace_array(value: &JsValue, id_key: &str, sort_key: &str) -> Vec<Js
         }
         records.push(item.clone());
     }
-    records
+    Ok(records)
+}
+
+fn trace_sort_key<'a>(item: &'a JsValue, sort_key: &str) -> &'a JsString {
+    item.get(sort_key)
+        .and_then(JsValue::as_string)
+        .expect("filtered trace has a sort key")
 }
 
 fn normalize_traces(records: Vec<JsValue>, kind: TraceKind) -> Result<Vec<JsValue>, StorageError> {
@@ -651,7 +724,9 @@ fn normalize_traces(records: Vec<JsValue>, kind: TraceKind) -> Result<Vec<JsValu
 
 /// `normalizeIndexTraceRecord` / `normalizeDreamTraceRecord`
 /// (`sqlite.ts:196-241`): fill `isNoOp` and `displayStatus`, keeping every
-/// other field and its insertion position.
+/// other field and its insertion position. The `&&` chains short-circuit
+/// exactly like JS: `storedResults` is only read when `status === "completed"`
+/// and `outcome` only when `status !== "error"`.
 fn normalize_trace(record: JsValue, kind: TraceKind) -> Result<JsValue, StorageError> {
     let object = record
         .as_object()
@@ -661,32 +736,8 @@ fn normalize_trace(record: JsValue, kind: TraceKind) -> Result<JsValue, StorageE
     let is_no_op = match object.get("isNoOp") {
         Some(JsValue::Bool(value)) => *value,
         _ => match kind {
-            TraceKind::Index => {
-                let stored = match object.get("storedResults") {
-                    Some(JsValue::Array(items)) => items.is_empty(),
-                    Some(_) | None => {
-                        return Err(StorageError::InvalidTrace(
-                            "storedResults is not an array".into(),
-                        ));
-                    }
-                };
-                status.is_some_and(|status| status.equals_str("completed")) && stored
-            }
-            TraceKind::Dream => {
-                let outcome = object
-                    .get("outcome")
-                    .and_then(JsValue::as_object)
-                    .ok_or_else(|| StorageError::InvalidTrace("outcome is not an object".into()))?;
-                let deleted_files = outcome.get("deletedFiles").and_then(JsValue::as_number);
-                let rewritten_projects = outcome
-                    .get("rewrittenProjects")
-                    .and_then(JsValue::as_number);
-                let profile_updated = outcome.get("profileUpdated").is_some_and(js_truthy);
-                !status.is_some_and(|status| status.equals_str("error"))
-                    && deleted_files == Some(0.0)
-                    && rewritten_projects == Some(0.0)
-                    && !profile_updated
-            }
+            TraceKind::Index => index_is_no_op(object, status)?,
+            TraceKind::Dream => dream_is_no_op(object, status)?,
             TraceKind::Case => false,
         },
     };
@@ -708,6 +759,65 @@ fn normalize_trace(record: JsValue, kind: TraceKind) -> Result<JsValue, StorageE
     normalized.insert("isNoOp".into(), JsValue::Bool(is_no_op));
     normalized.insert("displayStatus".into(), JsValue::String(display_status));
     Ok(JsValue::Object(normalized))
+}
+
+/// `record.status === "completed" && record.storedResults.length === 0`.
+fn index_is_no_op(object: &JsObject, status: Option<&JsString>) -> Result<bool, StorageError> {
+    if !status.is_some_and(|status| status.equals_str("completed")) {
+        return Ok(false);
+    }
+    match object.get("storedResults") {
+        Some(JsValue::Undefined) | Some(JsValue::Null) | None => Err(StorageError::InvalidTrace(
+            "Cannot read properties of undefined (reading 'length')".into(),
+        )),
+        Some(value) => Ok(js_length_is_zero(value)),
+    }
+}
+
+/// `record.status !== "error" && record.outcome.deletedFiles === 0 && ...`.
+fn dream_is_no_op(object: &JsObject, status: Option<&JsString>) -> Result<bool, StorageError> {
+    if status.is_some_and(|status| status.equals_str("error")) {
+        return Ok(false);
+    }
+    let outcome = match object.get("outcome") {
+        Some(JsValue::Undefined) | Some(JsValue::Null) | None => {
+            return Err(StorageError::InvalidTrace(
+                "Cannot read properties of undefined (reading 'deletedFiles')".into(),
+            ));
+        }
+        Some(outcome) => outcome,
+    };
+    // Property access on a number/string/boolean/array yields `undefined`
+    // (no throw); only `null`/`undefined` throw, handled above.
+    let (deleted_files, rewritten_projects, profile_updated) = match outcome {
+        JsValue::Object(outcome) => (
+            outcome.get("deletedFiles"),
+            outcome.get("rewrittenProjects"),
+            outcome.get("profileUpdated"),
+        ),
+        _ => (None, None, None),
+    };
+    Ok(deleted_files.is_some_and(is_js_zero)
+        && rewritten_projects.is_some_and(is_js_zero)
+        && !profile_updated.is_some_and(js_truthy))
+}
+
+/// JS `value.length === 0` for the shapes `storedResults` can hold: arrays,
+/// strings (UTF-16 units) and arbitrary objects with a numeric `length`.
+/// Numbers and booleans have no `length` and compare false.
+fn js_length_is_zero(value: &JsValue) -> bool {
+    match value {
+        JsValue::Array(items) => items.is_empty(),
+        JsValue::String(value) => value.units().is_empty(),
+        JsValue::Object(object) => {
+            matches!(object.get("length"), Some(JsValue::Number(length)) if *length == 0.0)
+        }
+        _ => false,
+    }
+}
+
+fn is_js_zero(value: &JsValue) -> bool {
+    matches!(value, JsValue::Number(number) if *number == 0.0)
 }
 
 fn trace_id_is(record: &JsValue, id_key: &str, expected: &str) -> bool {
@@ -802,49 +912,16 @@ fn js_truthy(value: &JsValue) -> bool {
     }
 }
 
+/// `new Date().toISOString()` via the crate's existing `Date#toISOString`
+/// port. `pilotdeck_transport::system_clock` is already the gateway's single
+/// implementation (used by config/store, tools, user_dialog, file_history), so
+/// this module does not carry a fourth copy of the civil-calendar algorithm.
 fn now_iso() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0);
-    iso_from_epoch_millis(millis)
-}
-
-/// `new Date(millis).toISOString()` for a non-negative epoch value.
-fn iso_from_epoch_millis(epoch_millis: i64) -> String {
-    let days = epoch_millis.div_euclid(86_400_000);
-    let millis_of_day = epoch_millis.rem_euclid(86_400_000);
-    let (year, month, day) = civil_from_days(days);
-    let seconds = millis_of_day / 1_000;
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        seconds / 3_600,
-        (seconds / 60) % 60,
-        seconds % 60,
-        millis_of_day % 1_000
-    )
-}
-
-/// Howard Hinnant's civil-from-days algorithm (proleptic Gregorian).
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
+    let millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis().min(i64::MAX as u128) as i64,
+        Err(error) => -(error.duration().as_millis().min(i64::MAX as u128) as i64),
     };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month, day)
+    pilotdeck_transport::system_clock::format_epoch_iso(millis)
 }
 
 #[cfg(test)]
@@ -860,16 +937,14 @@ mod tests {
     }
 
     #[test]
-    fn iso_matches_js_date_to_iso_string() {
-        assert_eq!(iso_from_epoch_millis(0), "1970-01-01T00:00:00.000Z");
-        assert_eq!(
-            iso_from_epoch_millis(1_700_000_000_123),
-            "2023-11-14T22:13:20.123Z"
-        );
-        assert_eq!(
-            iso_from_epoch_millis(951_782_400_000),
-            "2000-02-29T00:00:00.000Z"
-        );
+    fn now_iso_matches_js_date_to_iso_string() {
+        // `format_epoch_iso` is the shared `Date#toISOString` port; assert the
+        // timestamp `now_iso` produces still has the JS shape.
+        let value = now_iso();
+        assert_eq!(value.len(), 24, "{value}");
+        assert!(value.ends_with('Z'), "{value}");
+        assert_eq!(&value[4..5], "-");
+        assert_eq!(&value[10..11], "T");
     }
 
     #[test]
@@ -925,7 +1000,8 @@ mod tests {
             ]),
             "caseId",
             "startedAt",
-        );
+        )
+        .unwrap();
         let ids: Vec<JsString> = sanitized
             .iter()
             .map(|record| {
@@ -938,5 +1014,117 @@ mod tests {
             .collect();
         // "a" keeps its newest record; the blank id is dropped.
         assert_eq!(ids, [JsString::from("a"), JsString::from("b"),]);
+    }
+
+    #[test]
+    fn trace_sanitizer_uses_locale_compare_not_code_units() {
+        // Node 22.22.0 en-US measured: "Z".localeCompare("a") === 1 while the
+        // UTF-16 unit order is "Z" < "a". Descending locale order therefore
+        // keeps "Z" first and, for a duplicate id, keeps the "Z" record.
+        let record = |id: &str, started: &str| {
+            parse_json(&format!(r#"{{"caseId":"{id}","startedAt":"{started}"}}"#)).unwrap()
+        };
+        let sorted = sanitize_trace_array(
+            &JsValue::Array(vec![record("z", "Z"), record("a", "a")]),
+            "caseId",
+            "startedAt",
+        )
+        .unwrap();
+        assert_eq!(
+            sorted[0].get("caseId").and_then(JsValue::as_string),
+            Some(&JsString::from("z"))
+        );
+        let deduped = sanitize_trace_array(
+            &JsValue::Array(vec![record("same", "Z"), record("same", "a")]),
+            "caseId",
+            "startedAt",
+        )
+        .unwrap();
+        assert_eq!(
+            deduped[0].get("startedAt").and_then(JsValue::as_string),
+            Some(&JsString::from("Z"))
+        );
+    }
+
+    #[test]
+    fn trace_collation_stops_at_unpaired_surrogates_that_must_be_compared() {
+        // ICU4X folds unpaired surrogates to U+FFFD while V8 keeps distinct
+        // weights; the module refuses only when such a key takes part in a
+        // comparison (mirrors the `workspace_snapshot` boundary).
+        let record = |id: &str, started: &str| {
+            parse_json(&format!(r#"{{"caseId":"{id}","startedAt":"{started}"}}"#)).unwrap()
+        };
+        let lone = sanitize_trace_array(
+            &JsValue::Array(vec![record("a", r"\ud800a"), record("b", r"\ud800b")]),
+            "caseId",
+            "startedAt",
+        );
+        assert!(matches!(lone, Err(StorageError::HostRequired(_))));
+        // A single record never runs the comparator, so it still stores.
+        let single = sanitize_trace_array(
+            &JsValue::Array(vec![record("a", r"\ud800a")]),
+            "caseId",
+            "startedAt",
+        )
+        .unwrap();
+        assert_eq!(single.len(), 1);
+    }
+
+    #[test]
+    fn trace_normalization_short_circuits_like_js() {
+        let normalized =
+            |record: &str, kind| normalize_trace(parse_json(record).unwrap(), kind).unwrap();
+        // status !== "completed" never reads storedResults.
+        let running = normalized(
+            r#"{"indexTraceId":"x","startedAt":"t","status":"running"}"#,
+            TraceKind::Index,
+        );
+        assert_eq!(running.get("isNoOp"), Some(&JsValue::Bool(false)));
+        // String/object lengths and non-array shapes are computed with JS
+        // semantics; only null/undefined would throw.
+        for (stored, no_op) in [
+            ("\"\"", true),
+            ("{\"length\":0}", true),
+            ("5", false),
+            ("\"x\"", false),
+            ("{}", false),
+        ] {
+            let record = format!(
+                r#"{{"indexTraceId":"x","startedAt":"t","status":"completed","storedResults":{stored}}}"#
+            );
+            assert_eq!(
+                normalized(&record, TraceKind::Index).get("isNoOp"),
+                Some(&JsValue::Bool(no_op)),
+                "storedResults={stored}"
+            );
+        }
+        // status === "error" never reads outcome.
+        let error = normalized(
+            r#"{"dreamTraceId":"d","startedAt":"t","status":"error"}"#,
+            TraceKind::Dream,
+        );
+        assert_eq!(error.get("isNoOp"), Some(&JsValue::Bool(false)));
+        // Primitive outcome: property access yields undefined, no throw.
+        let primitive = normalized(
+            r#"{"dreamTraceId":"d","startedAt":"t","status":"completed","outcome":5}"#,
+            TraceKind::Dream,
+        );
+        assert_eq!(primitive.get("isNoOp"), Some(&JsValue::Bool(false)));
+    }
+
+    #[test]
+    fn completed_index_trace_without_stored_results_is_a_type_error() {
+        let record =
+            parse_json(r#"{"indexTraceId":"x","startedAt":"t","status":"completed"}"#).unwrap();
+        assert!(matches!(
+            normalize_trace(record, TraceKind::Index),
+            Err(StorageError::InvalidTrace(_))
+        ));
+        let record =
+            parse_json(r#"{"dreamTraceId":"d","startedAt":"t","status":"completed"}"#).unwrap();
+        assert!(matches!(
+            normalize_trace(record, TraceKind::Dream),
+            Err(StorageError::InvalidTrace(_))
+        ));
     }
 }

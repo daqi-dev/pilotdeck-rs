@@ -24,9 +24,9 @@ export function observe(repo: any): any {
   const caseRecent = repo.listRecentCaseTraces(30);
   const indexRecent = repo.listRecentIndexTraces(30);
   const dreamRecent = repo.listRecentDreamTraces(30);
-  assertLocaleOrder(caseRecent.map((record: any) => record.startedAt));
-  assertLocaleOrder(indexRecent.map((record: any) => record.startedAt));
-  assertLocaleOrder(dreamRecent.map((record: any) => record.startedAt));
+  assertDescendingLocale(caseRecent.map((record: any) => record.startedAt));
+  assertDescendingLocale(indexRecent.map((record: any) => record.startedAt));
+  assertDescendingLocale(dreamRecent.map((record: any) => record.startedAt));
   const firstCase = caseRecent[0]?.caseId;
   const firstIndex = indexRecent[0]?.indexTraceId;
   const firstDream = dreamRecent[0]?.dreamTraceId;
@@ -42,6 +42,7 @@ export function observe(repo: any): any {
       loneSurrogate: repo.getPipelineState('loneSurrogate') ?? null,
       objectState: repo.getPipelineState('objectState') ?? null,
       arrayState: repo.getPipelineState('arrayState') ?? null,
+      nulSuffix: repo.getPipelineState('nulSuffix') ?? null,
     },
     sessions: {
       pendingAll: repo.listPendingSessionKeys(),
@@ -57,6 +58,8 @@ export function observe(repo: any): any {
       earliestAll: repo.getEarliestPendingTimestamp() ?? null,
       earliestPreferred: repo.getEarliestPendingTimestamp(['s2']) ?? null,
       earliestNone: repo.getEarliestPendingTimestamp(['none']) ?? null,
+      earliestBlank: repo.getEarliestPendingTimestamp(['s-blank']) ?? null,
+      earliestNul: repo.getEarliestPendingTimestamp(['s-nul']) ?? null,
     },
     settings: {
       defaults: repo.getIndexingSettings(DEFAULTS),
@@ -87,17 +90,19 @@ export function observe(repo: any): any {
 }
 
 /**
- * The Rust sanitizer orders by UTF-16 code units. Assert every fixture pair
- * has the same order under Node's localeCompare so the approximation is exact
- * for this corpus rather than merely assumed.
+ * The Rust sanitizer sorts with the same pinned Node/ICU collator, so every
+ * adjacent pair must be non-ascending under `localeCompare`. The corpus check
+ * in `generate.mts` additionally asserts that locale and code-unit order
+ * actually disagree for at least one planned key ("Z" vs "a").
  */
-function assertLocaleOrder(values: string[]) {
+function assertDescendingLocale(values: string[]) {
   for (let index = 1; index < values.length; index += 1) {
     const left = values[index - 1];
     const right = values[index];
-    const locale = Math.sign(left.localeCompare(right));
-    const units = left === right ? 0 : left < right ? -1 : 1;
-    assert.equal(locale, units, `localeCompare disagrees with code units: ${left} / ${right}`);
+    assert.ok(
+      left.localeCompare(right) >= 0,
+      `localeCompare order is not descending: ${JSON.stringify(left)} / ${JSON.stringify(right)}`,
+    );
   }
 }
 

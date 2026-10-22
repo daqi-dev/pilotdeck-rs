@@ -13,7 +13,7 @@ RESULT「依赖与 SQLite 版本」）。
   另含 `sqlite_master`、`PRAGMA table_info`、原始行文本的导出。
 - `verify.mts`：反向验证器。Rust 写入的 `.db` 交给真实 TS `MemoryRepository`
   重新打开，输出同形状观察面，供 Rust→TS 对拍。
-- `oracle.json`：唯一入库的金样。含四个场景的观察值、schema、行文本和
+- `oracle.json`：唯一入库的金样。含五个场景的观察值、schema、行文本和
   `.db` 的 base64。`.db` 文件本身不在此目录、不入库。
 
 ## 场景
@@ -24,9 +24,21 @@ RESULT「依赖与 SQLite 版本」）。
 | `empty` | TS 新库 schema；Rust 新建库的 `sqlite_master.sql` 与 `table_info` 必须逐字一致 |
 | `migration` | TS 旧 schema（`state_value` 列）库；Rust 打开后迁移结果与 TS 的 schema/行一致（含 `COALESCE`） |
 | `rustWrites` | 同一操作脚本由 Rust 重放；两份快照分别覆盖操作后与 save 侧 `limit` 截断后 |
+| `errors` | TS 会抛 `TypeError` 的 trace 写入；记录真实错误文本、抛错后的 pipeline 状态，Rust 必须同样失败且不写库（字符串状态可迭代，仍成功） |
+
+脚本还固定了这些边界：
+
+- `localeCompare` 与 UTF-16 码元序不同的记录（`0Z` / `0a`），含重复 id 的去重赢家。
+- TEXT 中的 NUL：`session_key`、`timestamp`、`source`、`created_at` 与
+  `pipeline_state.state_json`。node:sqlite 读出到首个 NUL 为止（列内字节完整）。
+- `insertL0Session` 的空 `source`（→ `"openclaw"`）与空 `createdAt`（→ `nowIso()`）；
+  后者在 Rust 重放时按约定 mask `created_at`，由单测单独校验写侧默认值。
+- 空白 `MIN(timestamp)` 经 `.trim()` 后返回 `undefined`。
+- `normalizeIndexTraceRecord` / `normalizeDreamTraceRecord` 的短路与非数组
+  `storedResults` / 原始类型 `outcome` 形状。
 
 `tsRead` / `migration` 的 `.db` 由 `oracle.json` 的 base64 还原到临时目录；
-`empty` / `rustWrites` 由 Rust 现场建库。`rustWrites.operations` 与
+`empty` / `rustWrites` / `errors` 由 Rust 现场建库。`rustWrites.operations` 与
 `limitOperations` 是同一份 JSON 脚本，TS 与 Rust 各自执行。
 
 ## 再生
@@ -40,8 +52,8 @@ PDRS_BASELINE=/abs/PilotDeck \
 ```
 
 生成器冻结 `Date`（2026-10-21T00:00:00.000Z），两次独立运行必须逐字节一致；
-A6.6-pr10a 记录为
-`sha256 311547d39174af400485deff5e6c98db36f333ce683e609005cdd22faa46ad9e`。
+A6.6-pr10a 修复轮 1 记录为
+`sha256 0274519e489a5611a50162be77b5faf1670e1400d7db897e7b0c093d1990e202`。
 
 ## 回放
 
