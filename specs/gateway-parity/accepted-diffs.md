@@ -99,3 +99,5 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅 `router.stats.baselineModel` 指向未配置 provider/model 时——TS 以 fatal 诊断丢弃该字段，Rust 接受并可能算出不同的 `baselineCost` / `totalSavedCost`。已配置 ref 的正常路径两侧一致（`token_stats` 的 `configCases` 钉住）。
 - **机器判据**：`runtime::model::router::tests::unknown_baseline_model_is_accepted_like_the_recorded_gap`（钉住现状，实现 fatal 诊断后会转红，提醒同步更新本条）。
 - **批准记录**：无。`未批准，非已接受差异`；前置于 stats 配置接入 `modelConfig` 的后续单，届时补真实 TS 金样与 fatal 路径回放。
+
+人批（2026-10-22，用户本人在协调者会话）：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 两条**接受为已知差异**，但要求 Rust 补实现：BASELINEMODEL 见 https://github.com/daqi-dev/pilotdeck-rs/issues/493，RETENTION（按 V8 dateparser 逐格式移植并用 TS 金样对拍）见 https://github.com/daqi-dev/pilotdeck-rs/issues/494。补齐后在本节追加「已实现，差异消除」。
