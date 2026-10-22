@@ -1,7 +1,7 @@
 use super::binding::BindingOwners;
 use super::*;
 use pilotdeck_protocol::{JsObject, parse_json, stringify_json};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use tokio::sync::Semaphore;
 
@@ -44,11 +44,10 @@ fn session_values(sessions: &[SessionKey]) -> Vec<Value> {
         .map(|key| serde_json::from_str(&stringify_json(key.value()).unwrap().unwrap()).unwrap())
         .collect()
 }
-fn frame_values(frames: &[String]) -> Vec<Value> {
-    frames
-        .iter()
-        .map(|raw| serde_json::from_str(raw).unwrap())
-        .collect()
+/// Outbound frames may carry lone surrogates; serde_json rejects those, so the
+/// semantic replay parses with the same JS-semantics codec as production.
+fn frame_values(frames: &[String]) -> Vec<JsValue> {
+    frames.iter().map(|raw| parse_json(raw).unwrap()).collect()
 }
 struct Gateway {
     calls: Mutex<Vec<JsValue>>,
@@ -186,7 +185,7 @@ impl ConnectionGateway for Gateway {
     fn submit<'a>(
         &'a self,
         params: JsValue,
-        emit: &'a (dyn Fn(Value) + Send + Sync),
+        emit: &'a (dyn Fn(JsValue) + Send + Sync),
     ) -> Call<'a, Result<(), RequestError>> {
         Box::pin(async move {
             self.record("submit_turn", params.clone());
@@ -199,8 +198,14 @@ impl ConnectionGateway for Gateway {
                     None,
                 );
             }
+            // The provider-side events of A7.2 are still serde Value; this
+            // fixture crosses that boundary through ordered JSON text, because
+            // serde Value (BTreeMap) cannot carry TS insertion order.
             if self.permission_event || self.submit_mode == "permission" {
-                emit(json!({"type":"permission_request","requestId":"fixture-permission"}));
+                emit(
+                    parse_json(r#"{"type":"permission_request","requestId":"fixture-permission"}"#)
+                        .unwrap(),
+                );
             }
             if self.submit_mode == "throw" {
                 return Err(RequestError::new("fixture submit failed"));
@@ -214,7 +219,7 @@ impl ConnectionGateway for Gateway {
                 self.started.add_permits(1);
                 release.acquire().await.unwrap().forget();
             }
-            emit(json!({"type":"turn_completed","runId":"fixture-run"}));
+            emit(parse_json(r#"{"type":"turn_completed","runId":"fixture-run"}"#).unwrap());
             if self.submit_mode == "completed-then-throw" {
                 return Err(RequestError::new("fixture submit failed"));
             }
@@ -318,7 +323,7 @@ async fn replay(only: Option<&str>) {
             .len(),
         10
     );
-    assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 75);
+    assert_eq!(array(oracle.get("scenarios").unwrap()).len(), 81);
     let mut ids = BTreeMap::new();
     let sequence = std::sync::atomic::AtomicU64::new(0);
     let mut replayed = 0;
@@ -424,31 +429,63 @@ async fn replay(only: Option<&str>) {
                     session_values(&state.interactions),
                 )
             };
-            let frames = frame_values(&text.frames.lock().unwrap());
-            let mut actual = json!({"frames":frames, "closes":*text.closes.lock().unwrap(),
+            let raw_frames = text.frames.lock().unwrap().clone();
+            let mut actual = json!({"closes":*text.closes.lock().unwrap(),
                 "finalInFlight":*text.final_in_flight.lock().unwrap(),
                 "inFlight":in_flight,"interactions":interactions});
             if gateway.fail_disconnect {
                 actual["closeErrors"] = json!(close_errors);
             }
             let mut actual = js(&actual).as_object().unwrap().clone();
+            actual.insert("frames".into(), JsValue::Array(frame_values(&raw_frames)));
             actual.insert(
                 "calls".into(),
                 JsValue::Array(gateway.calls.lock().unwrap().clone()),
             );
             let actual = normalized(&JsValue::Object(actual), &ids);
-            let expected = normalized(
-                &array(recorded.get("results").unwrap())[step_index],
-                &BTreeMap::new(),
-            );
+            // framesText is asserted separately as raw text; keep it out of the
+            // semantic (key-order-insensitive) comparison.
+            let expected_source = array(recorded.get("results").unwrap())[step_index]
+                .as_object()
+                .unwrap();
+            let frames_text = expected_source.get("framesText").cloned();
+            let mut expected_object = JsObject::new();
+            for (key, value) in expected_source.entries() {
+                if !key.equals_str("framesText") {
+                    expected_object.insert(key.clone(), value.clone());
+                }
+            }
+            let expected = normalized(&JsValue::Object(expected_object), &BTreeMap::new());
             assert_eq!(actual, expected, "{} step {}", scenario["name"], step_index);
+            // Byte-level comparison for the scenarios that record the exact
+            // outbound text: insertion order, surrogate escaping and number
+            // formatting all have to match TS JSON.stringify byte for byte.
+            if let Some(expected_text) = frames_text {
+                let expected_text = array(&expected_text)
+                    .iter()
+                    .map(|item| item.as_string().unwrap().to_utf8().unwrap())
+                    .collect::<Vec<_>>();
+                let actual_text = raw_frames
+                    .iter()
+                    .map(|raw| {
+                        ids.iter().fold(raw.clone(), |text, (id, marker)| {
+                            text.replace(id.as_str(), marker)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    actual_text, expected_text,
+                    "{} step {} raw frames",
+                    scenario["name"], step_index
+                );
+            }
         }
         assert!(submissions.is_empty());
     }
     assert_eq!(
         replayed,
         match only {
-            None => 75,
+            None => 81,
             Some("-string-params") => 16,
             Some("-array-params") => 8,
             _ => panic!("unknown replay subset"),
@@ -879,7 +916,13 @@ async fn lone_surrogate_submit_session_is_tracked_and_forwarded_on_close() {
         .await
         .unwrap()
     });
-    gateway.started.acquire().await.unwrap().forget();
+    // Bound the wait: a regression that rejects the frame must fail this test
+    // instead of leaving it parked forever on a gate the submit never reaches.
+    tokio::time::timeout(std::time::Duration::from_secs(5), gateway.started.acquire())
+        .await
+        .expect("submit did not start")
+        .unwrap()
+        .forget();
     {
         let state = connection.state.lock().unwrap();
         assert_eq!(session_units(&state.in_flight), vec![vec![0xD83D]]);
@@ -936,4 +979,74 @@ async fn lone_surrogate_client_name_is_accepted_in_hello() {
     }
     assert_sent(&text, &connection, &[TS_HELLO_OK]);
     assert!(text.closes.lock().unwrap().is_empty());
+}
+
+const TS_DEEP_RESPONSE: &str = r#"{"type":"response","id":"deep-{depth}","ok":true,"result":{"name":"fixture-server","capabilities":["fixture"]}}"#;
+
+/// Node 22 `JSON.parse` is iterative: depth 128 is not a boundary. The real TS
+/// connection dispatches 200/1_000/30_000-deep params normally (see
+/// `ts-depth-probe.json`); `parse_json` takes the same iterative path.
+#[tokio::test]
+async fn deeply_nested_valid_frames_are_dispatched_like_node_json_parse() {
+    let text = Arc::new(MemoryText::default());
+    let gateway = Arc::new(Gateway::new(false));
+    let connection =
+        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
+    connection
+        .receive(
+            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
+        )
+        .await
+        .unwrap();
+    let depths = [200usize, 1_000, 30_000];
+    for depth in depths {
+        let raw = [
+            "{\"type\":\"request\",\"id\":\"deep-",
+            &depth.to_string(),
+            "\",\"method\":\"describe_server\",\"params\":{\"value\":",
+            &"[".repeat(depth),
+            "0",
+            &"]".repeat(depth),
+            "}}",
+        ]
+        .concat();
+        connection.receive(&raw).await.unwrap();
+    }
+    let frames = text.frames.lock().unwrap().clone();
+    assert_eq!(frames.len(), depths.len() + 1);
+    for (index, depth) in depths.into_iter().enumerate() {
+        let expected = TS_DEEP_RESPONSE.replace("{depth}", &depth.to_string());
+        assert_eq!(frames[index + 1], expected, "depth {depth}");
+    }
+    assert!(text.closes.lock().unwrap().is_empty());
+}
+
+/// A malformed frame deeper than serde's typed recursion limit still closes
+/// 4002 invalid_json, exactly like the TS catch around `JSON.parse`.
+#[tokio::test]
+async fn deeply_nested_malformed_frame_closes_invalid_json_like_ts() {
+    let text = Arc::new(MemoryText::default());
+    let gateway = Arc::new(Gateway::new(false));
+    let connection =
+        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
+    connection
+        .receive(
+            r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"fixture-token"}"#,
+        )
+        .await
+        .unwrap();
+    let raw = [
+        "{\"type\":\"request\",\"id\":\"bad\",\"method\":\"describe_server\",\"params\":{\"value\":",
+        &"[".repeat(1_000),
+        "0",
+        &"]".repeat(999),
+        "}}",
+    ]
+    .concat();
+    connection.receive(&raw).await.unwrap();
+    assert_eq!(
+        *text.closes.lock().unwrap(),
+        vec![json!({"code":4002,"reason":"invalid_json"})]
+    );
+    assert_eq!(text.frames.lock().unwrap().len(), 1);
 }
