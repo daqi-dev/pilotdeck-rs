@@ -17,7 +17,7 @@
 //! file to `verify.mts`, which reopens it through the real `MemoryRepository`.
 
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
-    EdgeClawStorage, IndexingSettings, L0SessionRecord,
+    EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError,
 };
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use rusqlite::{Connection, params};
@@ -26,7 +26,11 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
+
+#[path = "common/baseline.rs"]
+mod baseline;
 
 const ORACLE: &str = include_str!("fixtures/edgeclaw-storage/oracle.json");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -290,6 +294,15 @@ fn dump_columns(conn: &Connection) -> JsValue {
     ])
 }
 
+/// `node:sqlite` reads TEXT up to the first NUL (`sqlite3_column_text`), so
+/// the TS dump/observation surface never sees the suffix. Mirror it here.
+fn node_text(value: String) -> String {
+    match value.find('\0') {
+        Some(index) => value[..index].to_owned(),
+        None => value,
+    }
+}
+
 fn dump_rows(conn: &Connection) -> JsValue {
     let mut l0_statement = conn
         .prepare(
@@ -299,29 +312,15 @@ fn dump_rows(conn: &Connection) -> JsValue {
         .expect("prepare l0 dump");
     let l0_rows = l0_statement
         .query_map([], |row| {
+            let text = |index: usize| row.get::<_, String>(index).map(node_text);
             Ok(object(vec![
-                (
-                    "l0_index_id",
-                    JsValue::from(row.get::<_, String>(0)?.as_str()),
-                ),
-                (
-                    "session_key",
-                    JsValue::from(row.get::<_, String>(1)?.as_str()),
-                ),
-                (
-                    "timestamp",
-                    JsValue::from(row.get::<_, String>(2)?.as_str()),
-                ),
-                (
-                    "messages_json",
-                    JsValue::from(row.get::<_, String>(3)?.as_str()),
-                ),
-                ("source", JsValue::from(row.get::<_, String>(4)?.as_str())),
+                ("l0_index_id", JsValue::from(text(0)?.as_str())),
+                ("session_key", JsValue::from(text(1)?.as_str())),
+                ("timestamp", JsValue::from(text(2)?.as_str())),
+                ("messages_json", JsValue::from(text(3)?.as_str())),
+                ("source", JsValue::from(text(4)?.as_str())),
                 ("indexed", number(row.get::<_, i64>(5)?)),
-                (
-                    "created_at",
-                    JsValue::from(row.get::<_, String>(6)?.as_str()),
-                ),
+                ("created_at", JsValue::from(text(6)?.as_str())),
             ]))
         })
         .expect("query l0 dump");
@@ -334,19 +333,11 @@ fn dump_rows(conn: &Connection) -> JsValue {
         .expect("prepare pipeline dump");
     let pipeline_rows = pipeline_statement
         .query_map([], |row| {
+            let text = |index: usize| row.get::<_, String>(index).map(node_text);
             Ok(object(vec![
-                (
-                    "state_key",
-                    JsValue::from(row.get::<_, String>(0)?.as_str()),
-                ),
-                (
-                    "state_json",
-                    JsValue::from(row.get::<_, String>(1)?.as_str()),
-                ),
-                (
-                    "updated_at",
-                    JsValue::from(row.get::<_, String>(2)?.as_str()),
-                ),
+                ("state_key", JsValue::from(text(0)?.as_str())),
+                ("state_json", JsValue::from(text(1)?.as_str())),
+                ("updated_at", JsValue::from(text(2)?.as_str())),
             ]))
         })
         .expect("query pipeline dump");
@@ -362,9 +353,24 @@ fn dump_rows(conn: &Connection) -> JsValue {
 
 /// `updated_at` is `nowIso()`; Rust writes real wall-clock time while the TS
 /// oracle froze the clock, so the two sides can only be compared with that
-/// column masked.
-fn mask_updated_at(rows: &JsValue) -> JsValue {
-    let masked = as_array(field(rows, "pipeline_state"))
+/// column masked. The same holds for `l0_sessions.created_at` on the one row
+/// whose `createdAt` is empty (`insertL0Session` then calls `nowIso()`).
+fn mask_volatile_columns(rows: &JsValue) -> JsValue {
+    let sessions = as_array(field(rows, "l0_sessions"))
+        .iter()
+        .map(|row| {
+            let mut object = row.as_object().expect("row is an object").clone();
+            let is_defaulted = object
+                .get("l0_index_id")
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| id.equals_str("l0-defaults"));
+            if is_defaulted {
+                object.insert("created_at".into(), JsValue::from(""));
+            }
+            JsValue::Object(object)
+        })
+        .collect::<Vec<_>>();
+    let pipeline = as_array(field(rows, "pipeline_state"))
         .iter()
         .map(|row| {
             let mut object = row.as_object().expect("row is an object").clone();
@@ -373,8 +379,8 @@ fn mask_updated_at(rows: &JsValue) -> JsValue {
         })
         .collect::<Vec<_>>();
     object(vec![
-        ("l0_sessions", field(rows, "l0_sessions").clone()),
-        ("pipeline_state", JsValue::Array(masked)),
+        ("l0_sessions", JsValue::Array(sessions)),
+        ("pipeline_state", JsValue::Array(pipeline)),
     ])
 }
 
@@ -452,6 +458,10 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
             "arrayState",
             optional(storage.get_pipeline_state("arrayState").unwrap()),
         ),
+        (
+            "nulSuffix",
+            optional(storage.get_pipeline_state("nulSuffix").unwrap()),
+        ),
     ]);
 
     let preferred = vec!["s2".to_owned(), "s4".to_owned(), " ".to_owned()];
@@ -460,6 +470,8 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
     let blank = vec![" ".to_owned()];
     let s1 = vec!["s1".to_owned()];
     let s2 = vec!["s2".to_owned()];
+    let s_blank = vec!["s-blank".to_owned()];
+    let s_nul = vec!["s-nul".to_owned()];
 
     let sessions = object(vec![
         (
@@ -533,6 +545,24 @@ fn observe(storage: &EdgeClawStorage) -> JsValue {
             optional(
                 storage
                     .get_earliest_pending_timestamp(Some(&none))
+                    .unwrap()
+                    .map(|value| JsValue::from(value.as_str())),
+            ),
+        ),
+        (
+            "earliestBlank",
+            optional(
+                storage
+                    .get_earliest_pending_timestamp(Some(&s_blank))
+                    .unwrap()
+                    .map(|value| JsValue::from(value.as_str())),
+            ),
+        ),
+        (
+            "earliestNul",
+            optional(
+                storage
+                    .get_earliest_pending_timestamp(Some(&s_nul))
                     .unwrap()
                     .map(|value| JsValue::from(value.as_str())),
             ),
@@ -741,7 +771,7 @@ fn bundled_sqlite_is_the_node_series() {
 
 #[test]
 fn rust_reads_the_ts_written_database() {
-    let oracle = parse_json(ORACLE).expect("oracle.json parses");
+    let oracle = baseline::oracle(ORACLE);
     let ts_read = field(&oracle, "tsRead");
     let directory = TempDir::new("ts-read");
     let path = write_encoded_db(
@@ -781,7 +811,7 @@ fn rust_reads_the_ts_written_database() {
 
 #[test]
 fn rust_creates_the_same_empty_schema_as_ts() {
-    let oracle = parse_json(ORACLE).expect("oracle.json parses");
+    let oracle = baseline::oracle(ORACLE);
     let empty = field(&oracle, "empty");
     let directory = TempDir::new("empty");
     let path = directory.path().join("empty.db");
@@ -817,7 +847,7 @@ fn rust_creates_the_same_empty_schema_as_ts() {
 
 #[test]
 fn rust_migrates_the_legacy_schema_like_ts() {
-    let oracle = parse_json(ORACLE).expect("oracle.json parses");
+    let oracle = baseline::oracle(ORACLE);
     let migration = field(&oracle, "migration");
     let directory = TempDir::new("migration");
     let path = write_encoded_db(
@@ -857,7 +887,7 @@ fn rust_migrates_the_legacy_schema_like_ts() {
 
 #[test]
 fn rust_writes_and_reads_the_portable_script() {
-    let oracle = parse_json(ORACLE).expect("oracle.json parses");
+    let oracle = baseline::oracle(ORACLE);
     let rust_writes = field(&oracle, "rustWrites");
     let directory = TempDir::new("rust-writes");
     let path = directory.path().join("rust.db");
@@ -890,10 +920,180 @@ fn rust_writes_and_reads_the_portable_script() {
         "Rust-created table_info must match TS",
     );
     assert_json_eq(
-        &mask_updated_at(&dump_rows(&connection)),
-        &mask_updated_at(field(rust_writes, "rows")),
+        &mask_volatile_columns(&dump_rows(&connection)),
+        &mask_volatile_columns(field(rust_writes, "rows")),
         "Rust-written row text (JSON column text included) must match TS",
     );
+}
+
+/// Every replay goes through `common/baseline.rs::oracle`, which pins the
+/// commit and source hashes. Prove the guard actually rejects drift instead of
+/// trusting that the fixture happens to be correct today.
+#[test]
+fn provenance_guard_rejects_a_drifted_oracle() {
+    let drifted = ORACLE.replace(
+        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+        "0000000000000000000000000000000000000000",
+    );
+    assert_ne!(drifted, ORACLE, "fixture must record the baseline commit");
+    // The pre-fix wiring (`parse_json(ORACLE)`) accepted this text happily;
+    // keep that as the in-test negative control so the guard cannot regress
+    // into a no-op.
+    assert!(
+        parse_json(&drifted).is_ok(),
+        "the unguarded parser must accept the drift for this control to mean anything"
+    );
+    let drifted: &str = &drifted;
+    let result = std::panic::catch_unwind(|| baseline::oracle(drifted));
+    assert!(
+        result.is_err(),
+        "provenance guard accepted an oracle with a drifted sourceCommit"
+    );
+}
+
+/// Real TS `save*Trace` calls that throw (recorded in `errors.attempts`) must
+/// fail in Rust too and must not overwrite the stored pipeline value. The
+/// string-state case is iterable in JS and therefore succeeds.
+#[test]
+fn trace_writes_that_throw_in_ts_fail_without_writing() {
+    let oracle = baseline::oracle(ORACLE);
+    let errors = field(&oracle, "errors");
+    let directory = TempDir::new("errors");
+    let path = directory.path().join("errors.db");
+    let storage = EdgeClawStorage::open(&path).expect("create Rust database");
+    for attempt in as_array(field(errors, "attempts")) {
+        let label = as_text(field(attempt, "label"));
+        let record = field(attempt, "record");
+        let result = match label.as_str() {
+            "index-completed-missing-storedResults" => storage.save_index_trace(record, 30),
+            "dream-completed-missing-outcome" => storage.save_dream_trace(record, 30),
+            "case-state-object" => {
+                storage
+                    .set_pipeline_state("recentCaseTraces", &object(vec![("a", number(1))]))
+                    .unwrap();
+                storage.save_case_trace(record, 30)
+            }
+            "index-state-null" => {
+                storage
+                    .set_pipeline_state("recentIndexTraces", &JsValue::Null)
+                    .unwrap();
+                storage.save_index_trace(record, 30)
+            }
+            "case-state-string" => {
+                storage
+                    .set_pipeline_state("recentCaseTraces", &JsValue::from("abc"))
+                    .unwrap();
+                storage.save_case_trace(record, 30)
+            }
+            other => panic!("unknown error scenario {other}"),
+        };
+        let threw = field(attempt, "threw")
+            .as_bool()
+            .expect("threw is a boolean");
+        assert_eq!(result.is_err(), threw, "outcome for {label}: {result:?}");
+        let state_key = as_text(field(attempt, "stateKey"));
+        let state = optional(storage.get_pipeline_state(&state_key).unwrap());
+        assert_json_eq(
+            &state,
+            field(attempt, "state"),
+            &format!("state after {label}"),
+        );
+    }
+}
+
+/// Node 22.22.0 `DatabaseSync` leaves `PRAGMA busy_timeout` at 0: a second
+/// writer fails immediately with `ERR_SQLITE_ERROR` / "database is locked".
+/// rusqlite would otherwise wait its default 5 s, so assert the elapsed time
+/// as well as the error, not just that a write eventually fails.
+#[test]
+fn write_lock_contention_fails_immediately_like_node() {
+    let directory = TempDir::new("busy");
+    let path = directory.path().join("busy.db");
+    let storage = EdgeClawStorage::open(&path).expect("create Rust database");
+    let blocker = Connection::open(storage.path()).expect("open blocking connection");
+    blocker
+        .busy_timeout(Duration::ZERO)
+        .expect("disable blocker timeout");
+    blocker
+        .execute_batch("BEGIN IMMEDIATE;")
+        .expect("take the write lock");
+    blocker
+        .execute(
+            "INSERT INTO pipeline_state (state_key, state_json, updated_at)
+             VALUES (?1, ?2, ?3)",
+            params!["blocker", "{}", "2026-10-20T00:00:00.000Z"],
+        )
+        .expect("hold a write");
+
+    let defaults = IndexingSettings {
+        reasoning_mode: "answer_first".into(),
+        auto_index_interval_minutes: 5,
+        auto_dream_interval_minutes: 10,
+    };
+    let started = Instant::now();
+    let error = storage
+        .save_indexing_settings(&object(vec![]), &defaults)
+        .expect_err("the write lock must reject the second writer");
+    let elapsed = started.elapsed();
+    blocker
+        .execute_batch("ROLLBACK;")
+        .expect("release the write lock");
+
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "busy timeout waited {elapsed:?}; Node fails immediately (timeout 0)"
+    );
+    match &error {
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(inner, _)) => {
+            assert_eq!(
+                inner.code,
+                rusqlite::ErrorCode::DatabaseBusy,
+                "unexpected sqlite error: {error}"
+            );
+        }
+        other => panic!("expected a SQLITE_BUSY error, got {other:?}"),
+    }
+    assert!(
+        error.to_string().contains("database is locked"),
+        "Node's message is \"database is locked\", got {error}"
+    );
+}
+
+/// `insertL0Session` defaults (`sqlite.ts:929,952`): empty `source` becomes
+/// `"openclaw"`, empty `createdAt` becomes `nowIso()`. The TS side is frozen in
+/// the oracle, so the portable replay masks this row's `created_at`; this test
+/// pins the Rust write-side defaults themselves.
+#[test]
+fn empty_source_and_created_at_use_the_ts_defaults() {
+    let directory = TempDir::new("defaults");
+    let path = directory.path().join("defaults.db");
+    let storage = EdgeClawStorage::open(&path).expect("create Rust database");
+    storage
+        .insert_l0_session(&L0SessionRecord {
+            l0_index_id: "l0-defaults".into(),
+            session_key: "s-defaults".into(),
+            timestamp: "2026-10-20T04:00:00.000Z".into(),
+            messages: JsValue::Array(vec![]),
+            source: String::new(),
+            indexed: false,
+            created_at: String::new(),
+        })
+        .expect("insert with empty defaults");
+
+    let connection = Connection::open(storage.path()).expect("open for dump");
+    let (source, created_at): (String, String) = connection
+        .query_row(
+            "SELECT source, created_at FROM l0_sessions WHERE l0_index_id = ?1",
+            ["l0-defaults"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read defaults");
+    assert_eq!(source, "openclaw");
+    assert_eq!(created_at.len(), 24, "{created_at}");
+    assert_eq!(&created_at[4..5], "-");
+    assert_eq!(&created_at[10..11], "T");
+    assert_eq!(&created_at[19..20], ".");
+    assert!(created_at.ends_with('Z'), "{created_at}");
 }
 
 /// Rust -> TS: a real baseline process reopens the Rust-written database. This
@@ -902,7 +1102,7 @@ fn rust_writes_and_reads_the_portable_script() {
 #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
 fn real_ts_reads_the_rust_written_database() {
     let baseline = std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE");
-    let oracle = parse_json(ORACLE).expect("oracle.json parses");
+    let oracle = baseline::oracle(ORACLE);
     let rust_writes = field(&oracle, "rustWrites");
     let directory = TempDir::new("rust-to-ts");
     let path = directory.path().join("rust.db");
@@ -945,8 +1145,8 @@ fn real_ts_reads_the_rust_written_database() {
         "real TS sees the Rust-created table_info",
     );
     assert_json_eq(
-        &mask_updated_at(field(&verified, "rows")),
-        &mask_updated_at(field(rust_writes, "rows")),
+        &mask_volatile_columns(field(&verified, "rows")),
+        &mask_volatile_columns(field(rust_writes, "rows")),
         "real TS reads the Rust-written row text",
     );
 }

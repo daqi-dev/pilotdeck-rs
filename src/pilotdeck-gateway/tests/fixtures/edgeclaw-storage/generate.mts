@@ -207,6 +207,17 @@ function session(
   };
 }
 
+function without(record: Record<string, unknown>, key: string) {
+  const copy = { ...record };
+  delete copy[key];
+  return copy;
+}
+
+// The corpus must actually distinguish `localeCompare` from UTF-16 code-unit
+// order, otherwise a code-unit approximation would pass the oracle.
+assert.equal(Math.sign('Z'.localeCompare('a')), 1);
+assert.equal('Z' < 'a', true);
+
 // -- the portable operation script ----------------------------------------
 //
 // The same list is replayed by the Rust suite through `EdgeClawStorage`.
@@ -276,6 +287,36 @@ const OPERATIONS: any[] = [
       source: 'cli',
     }),
   },
+  // Default branches: empty `source` -> "openclaw", empty `createdAt` ->
+  // nowIso() (frozen above). The Rust replay masks only this row's
+  // `created_at` because it cannot inject the frozen clock.
+  {
+    kind: 'insertL0Session',
+    record: session('l0-defaults', 's-defaults', T('04:00'), '', { source: '' }),
+  },
+  // NUL bytes: node:sqlite binds the full bytes (`hex()` proves it) but TEXT
+  // reads stop at the first NUL. These rows lock that read behavior for
+  // session_key, timestamp and created_at/source.
+  {
+    kind: 'insertL0Session',
+    record: session('l0-nul-key', 'a\0b', T('06:30'), '2026-10-20T06:29:00.000Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-nul-ts', 's-nul', '2025\0suffix', '2026-10-20T05:00:00.000Z'),
+  },
+  {
+    kind: 'insertL0Session',
+    record: session('l0-nul-meta', 's-meta', T('05:30'), '2026\0tail', {
+      source: 'oc\0x',
+    }),
+  },
+  // A blank MIN(timestamp) is a valid string but `getEarliestPendingTimestamp`
+  // returns undefined after `.trim()`.
+  {
+    kind: 'insertL0Session',
+    record: session('l0-blank-ts', 's-blank', ' ', '2026-10-20T04:30:00.000Z'),
+  },
 
   // Cases: stable descending sort, duplicate id keeps the newest, entries that
   // are not objects / lack a string id or startedAt / have an empty id are
@@ -298,6 +339,14 @@ const OPERATIONS: any[] = [
   { kind: 'saveCaseTrace', record: caseTrace('', T('15:00')) },
   { kind: 'saveCaseTrace', record: caseTrace(' ', T('16:00')) },
   { kind: 'saveCaseTrace', record: caseTrace('case-g', T('12:00')) },
+  // `localeCompare` vs UTF-16 code-unit order: en-US sorts "0a" before "0Z"
+  // even though '0Z' < '0a' by code unit. The "0" prefix keeps these below
+  // every ISO timestamp used above. For the duplicate id the locale sort
+  // keeps the "0Z" record; the code-unit approximation kept "0a".
+  { kind: 'saveCaseTrace', record: caseTrace('case-collate-z', '0Z') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-collate-a', '0a') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-collate-dup', '0Z') },
+  { kind: 'saveCaseTrace', record: caseTrace('case-collate-dup', '0a') },
 
   // Index traces: `isNoOp` and `displayStatus` normalization.
   {
@@ -342,6 +391,37 @@ const OPERATIONS: any[] = [
       displayStatus: '',
     }),
   },
+  // Short-circuit and JS property/length semantics. These shapes are accepted
+  // by `normalizeIndexTraceRecord`; only a missing/null `storedResults` on a
+  // completed record throws (covered by the errors scenario).
+  {
+    kind: 'saveIndexTrace',
+    record: without(indexTrace('idx-g', T('17:00'), { status: 'running' }), 'storedResults'),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-h', T('18:00'), { storedResults: '' }),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-i', T('19:00'), { storedResults: { length: 0 } }),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-j', T('20:00'), { storedResults: 5 }),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-k', T('21:00'), { storedResults: 'x' }),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-l', T('22:00'), { isNoOp: 'true', storedResults: [] }),
+  },
+  {
+    kind: 'saveIndexTrace',
+    record: indexTrace('idx-m', T('23:00'), { status: 5, storedResults: [] }),
+  },
 
   // Dream traces: the same normalization over `outcome`, plus truthiness of
   // `profileUpdated`.
@@ -382,6 +462,41 @@ const OPERATIONS: any[] = [
       dreamOutcome({ profileUpdated: true }),
     ),
   },
+  // Dream short-circuit and primitive `outcome` shapes: `status === "error"`
+  // never reads outcome, and property access on a number/string/array yields
+  // undefined (no throw).
+  {
+    kind: 'saveDreamTrace',
+    record: dreamTrace('dr-g', T('15:00'), 'completed', 5 as any),
+  },
+  {
+    kind: 'saveDreamTrace',
+    record: without(dreamTrace('dr-h', T('16:00'), 'error', {}), 'outcome'),
+  },
+  {
+    kind: 'saveDreamTrace',
+    record: dreamTrace('dr-i', T('17:00'), 'completed', {
+      deletedFiles: '0',
+      rewrittenProjects: 0,
+      profileUpdated: false,
+    }),
+  },
+  {
+    kind: 'saveDreamTrace',
+    record: dreamTrace('dr-j', T('18:00'), 'completed', {
+      deletedFiles: 0,
+      rewrittenProjects: 0,
+      profileUpdated: 0,
+    }),
+  },
+  {
+    kind: 'saveDreamTrace',
+    record: dreamTrace('dr-k', T('19:00'), 'success', {
+      deletedFiles: -0,
+      rewrittenProjects: 0,
+      profileUpdated: false,
+    }),
+  },
 
   // Indexing settings: floor, clamp, parseInt strings, and the only accepted
   // reasoning mode. The second save merges over the first.
@@ -409,6 +524,14 @@ const OPERATIONS: any[] = [
     kind: 'rawPipelineInsert',
     key: 'brokenJson',
     json: '{not json',
+    updatedAt: T('00:00'),
+  },
+  // Raw NUL in TEXT: the stored bytes keep the suffix, but node:sqlite reads
+  // the value as the valid JSON prefix (the suffix is never parsed).
+  {
+    kind: 'rawPipelineInsert',
+    key: 'nulSuffix',
+    json: '{"a":1}\0garbage',
     updatedAt: T('00:00'),
   },
 ];
@@ -573,6 +696,71 @@ const rustWrites = {
   ...readArtifacts(rustWritesPath),
 };
 
+// -- scenario: calls the baseline rejects -----------------------------------
+//
+// A `TypeError` from normalization or from spreading a non-iterable stored
+// state must surface as an error in Rust too, and must not write a value that
+// TS would have left untouched. `name`/`message` are the real Node texts.
+const errorAttempts: any[] = [];
+const errorsPath = join(scenarioDir('errors'), 'memory.db');
+withRepo(errorsPath, (repo) => {
+  const attempt = (label: string, stateKey: string, record: any, run: () => void) => {
+    let threw = false;
+    let name: string | null = null;
+    let message: string | null = null;
+    try {
+      run();
+    } catch (error: any) {
+      threw = true;
+      name = error?.name ?? null;
+      message = error?.message ?? null;
+    }
+    errorAttempts.push({
+      label,
+      record,
+      threw,
+      name,
+      message,
+      stateKey,
+      state: repo.getPipelineState(stateKey) ?? null,
+    });
+  };
+  const missingStored = {
+    indexTraceId: 'idx-throw',
+    startedAt: T('01:00'),
+    status: 'completed',
+  };
+  attempt('index-completed-missing-storedResults', 'recentIndexTraces', missingStored, () =>
+    repo.saveIndexTrace(missingStored),
+  );
+  const missingOutcome = {
+    dreamTraceId: 'dr-throw',
+    startedAt: T('02:00'),
+    status: 'completed',
+  };
+  attempt('dream-completed-missing-outcome', 'recentDreamTraces', missingOutcome, () =>
+    repo.saveDreamTrace(missingOutcome),
+  );
+  repo.setPipelineState('recentCaseTraces', { a: 1 });
+  const objectStateRecord = caseTrace('case-throw', T('03:00'));
+  attempt('case-state-object', 'recentCaseTraces', objectStateRecord, () =>
+    repo.saveCaseTrace(objectStateRecord),
+  );
+  repo.setPipelineState('recentIndexTraces', null);
+  const nullStateRecord = indexTrace('idx-throw-null', T('04:00'));
+  attempt('index-state-null', 'recentIndexTraces', nullStateRecord, () =>
+    repo.saveIndexTrace(nullStateRecord),
+  );
+  // A string is iterable; the spread produces characters that the sanitizer
+  // drops, so the save succeeds with just the new record.
+  repo.setPipelineState('recentCaseTraces', 'abc');
+  const stringStateRecord = caseTrace('case-string', T('05:00'));
+  attempt('case-state-string', 'recentCaseTraces', stringStateRecord, () =>
+    repo.saveCaseTrace(stringStateRecord),
+  );
+});
+const errors = { attempts: errorAttempts };
+
 // The save-side truncation must have actually truncated, otherwise the fixture
 // would pass even if `limit` were ignored.
 assert.equal(rustWritesLimitedObservations.caseTraces.recent30.length, 2);
@@ -589,6 +777,7 @@ const oracle = {
   empty,
   migration,
   rustWrites,
+  errors,
 };
 
 mkdirSync(output, { recursive: true });
@@ -598,7 +787,7 @@ writeFileSync(oraclePath, text);
 const sha256 = createHash('sha256').update(text).digest('hex');
 console.log(`wrote ${oraclePath}`);
 console.log(`oracle sha256 ${sha256}`);
-console.log('scenarios: tsRead, empty, migration, rustWrites');
+console.log('scenarios: tsRead, empty, migration, rustWrites, errors');
 // Only cleaned up after every assertion passed; a failure keeps the temp
 // databases around for inspection.
 rmSync(root, { recursive: true, force: true });
