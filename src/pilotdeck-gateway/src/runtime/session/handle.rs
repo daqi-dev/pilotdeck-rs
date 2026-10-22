@@ -105,15 +105,24 @@ impl LiveSessionHandle {
     }
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
+        let call_session_abort;
         {
             let mut progress = self.0.progress.lock().unwrap();
             if progress.state == HandleState::Disposed {
                 return Ok(());
             }
+            // In Draining the drain task owns the session teardown; a concurrent
+            // abort must not race the watcher loop or the lease release.  Record
+            // the cancellation reason but skip the session.abort() call.
+            call_session_abort = progress.state == HandleState::Active;
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
         self.0.changed.send_modify(|version| *version += 1);
-        self.0.session.abort(reason)
+        if call_session_abort {
+            self.0.session.abort(reason)
+        } else {
+            Ok(())
+        }
     }
 
     /// Cross the cutoff synchronously; the spawned drain survives cancellation
@@ -134,6 +143,24 @@ impl LiveSessionHandle {
         let abort_error = active.then(|| self.abort(&reason).err()).flatten();
         let handle = self.clone();
         tokio::spawn(async move {
+            // Use a guard to guarantee result.send_replace is called even if
+            // session.dispose() panics, preventing wait_result from hanging
+            // forever and ensuring the lease is always released.
+            struct DisposeGuard<'a> {
+                result: &'a watch::Sender<Option<RuntimeResult>>,
+                lease: Option<RuntimeLease>,
+                handle_progress: &'a Mutex<Progress>,
+                outcome: Option<RuntimeResult>,
+            }
+            impl Drop for DisposeGuard<'_> {
+                fn drop(&mut self) {
+                    self.handle_progress.lock().unwrap().state = HandleState::Disposed;
+                    let outcome = self.outcome.take().unwrap_or_else(|| {
+                        Err(RuntimeError::new("Agent session dispose task panicked."))
+                    });
+                    self.result.send_replace(Some(outcome));
+                }
+            }
             let mut failures: Vec<_> = abort_error.into_iter().collect();
             let mut changed = handle.0.changed.subscribe();
             loop {
@@ -142,12 +169,18 @@ impl LiveSessionHandle {
                 }
                 let _ = changed.changed().await;
             }
+            let lease = handle.0.lease.lock().unwrap().take();
+            let mut guard = DisposeGuard {
+                result: &result,
+                lease,
+                handle_progress: &handle.0.progress,
+                outcome: None,
+            };
             let mut disposal_failures = Vec::new();
             if let Err(error) = handle.0.session.dispose().await {
                 disposal_failures.push(error);
             }
-            let lease = handle.0.lease.lock().unwrap().take();
-            if let Some(mut lease) = lease
+            if let Some(mut lease) = guard.lease.take()
                 && let Err(error) = lease.release().await
             {
                 disposal_failures.push(error);
@@ -155,8 +188,7 @@ impl LiveSessionHandle {
             if let Err(error) = aggregate("Failed to dispose agent session.", disposal_failures) {
                 failures.push(error);
             }
-            handle.0.progress.lock().unwrap().state = HandleState::Disposed;
-            result.send_replace(Some(aggregate("Failed to dispose agent handle.", failures)));
+            guard.outcome = Some(aggregate("Failed to dispose agent handle.", failures));
         });
         Box::pin(wait_result(completion))
     }
@@ -197,5 +229,155 @@ pub(super) async fn wait_result<T: Clone>(mut receiver: watch::Receiver<Option<T
             .changed()
             .await
             .expect("session lifecycle executor stopped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::project::{DisposeFuture, RuntimeError, RuntimeResult};
+    use pilotdeck_protocol::{JsValue, parse_json};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct MemSession {
+        aborted: Mutex<Vec<String>>,
+        disposed: AtomicBool,
+        dispose_gate: tokio::sync::watch::Sender<bool>,
+    }
+    impl MemSession {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                aborted: Mutex::new(vec![]),
+                disposed: AtomicBool::new(false),
+                dispose_gate: tokio::sync::watch::channel(true).0,
+            })
+        }
+        fn with_gate(gate: tokio::sync::watch::Sender<bool>) -> Arc<Self> {
+            Arc::new(Self {
+                aborted: Mutex::new(vec![]),
+                disposed: AtomicBool::new(false),
+                dispose_gate: gate,
+            })
+        }
+    }
+    impl LiveSession for MemSession {
+        fn snapshot(&self) -> JsValue {
+            parse_json("{}").unwrap()
+        }
+        fn abort(&self, reason: &JsString) -> RuntimeResult {
+            self.aborted.lock().unwrap().push(reason.to_utf8().unwrap());
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async {
+                let _ = self.dispose_gate.subscribe().wait_for(|open| *open).await;
+                self.disposed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
+    /// abort() during Draining must set cancellation_reason without calling
+    /// session.abort() again (concurrent drain owns the session teardown).
+    #[tokio::test]
+    async fn abort_during_draining_sets_reason_without_session_abort() {
+        let session = MemSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        // Start a turn so dispose() path marks activity=true
+        let _activity = handle.begin_activity().unwrap();
+        // dispose() sets state=Draining; because active=true it calls abort()
+        // internally, but our new guard prevents session.abort() since
+        // state is already Draining when abort() is reached.
+        let dispose_fut = handle.dispose("dispose-reason".into());
+        assert_eq!(handle.state(), HandleState::Draining);
+        // A concurrent external abort while draining — must NOT call session.abort()
+        handle.abort(&"concurrent-abort".into()).unwrap();
+        // release drain by dropping activity
+        drop(_activity);
+        dispose_fut.await.unwrap();
+        assert_eq!(handle.state(), HandleState::Disposed);
+        // session.abort() must never be called because state was Draining for
+        // both the dispose-internal call and the external concurrent call
+        let aborts = session.aborted.lock().unwrap().clone();
+        assert!(
+            aborts.is_empty(),
+            "session.abort() must not be called while in Draining state: {aborts:?}"
+        );
+    }
+
+    /// Calling abort() after Disposed is a no-op with no session call.
+    #[tokio::test]
+    async fn abort_after_disposed_is_noop() {
+        let session = MemSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        handle.dispose("done".into()).await.unwrap();
+        assert_eq!(handle.state(), HandleState::Disposed);
+        handle.abort(&"late".into()).unwrap();
+        assert!(session.aborted.lock().unwrap().is_empty());
+    }
+
+    /// DisposeGuard must send a result even when session.dispose() is still
+    /// running; await completes only after dispose finishes.
+    #[tokio::test]
+    async fn dispose_guard_sends_result_on_completion() {
+        let (gate_tx, _gate_rx) = tokio::sync::watch::channel(false);
+        let session = MemSession::with_gate(gate_tx.clone());
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let dispose_fut = handle.dispose("finish".into());
+        // Open gate so dispose() returns
+        gate_tx.send_replace(true);
+        dispose_fut.await.unwrap();
+        assert!(session.disposed.load(Ordering::SeqCst));
+        assert_eq!(handle.state(), HandleState::Disposed);
+    }
+
+    /// Repeated dispose() calls must share the same result channel.
+    #[tokio::test]
+    async fn dispose_repeated_shares_result() {
+        let session = MemSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let f1 = handle.dispose("first".into());
+        let f2 = handle.dispose("second".into());
+        f1.await.unwrap();
+        f2.await.unwrap();
+        assert_eq!(handle.state(), HandleState::Disposed);
+    }
+
+    /// Negative control: a panic inside the drain task still delivers a
+    /// result via DisposeGuard, so wait_result never hangs.
+    #[tokio::test]
+    async fn dispose_guard_sends_result_on_panic() {
+        struct PanicSession;
+        impl LiveSession for PanicSession {
+            fn snapshot(&self) -> JsValue {
+                parse_json("{}").unwrap()
+            }
+            fn abort(&self, _reason: &JsString) -> RuntimeResult {
+                Ok(())
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                Box::pin(async {
+                    panic!("simulated session.dispose() panic");
+                })
+            }
+        }
+        let handle = LiveSessionHandle::new(Arc::new(PanicSession), None);
+        // If DisposeGuard fails to send, this await hangs forever.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            handle.dispose("boom".into()),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "dispose did not complete within 3s — DisposeGuard failed to deliver result on panic"
+        );
+        assert!(
+            result.unwrap().is_err(),
+            "expected error from panicked dispose"
+        );
     }
 }
