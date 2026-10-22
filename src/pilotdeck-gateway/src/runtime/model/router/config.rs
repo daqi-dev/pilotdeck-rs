@@ -354,8 +354,8 @@ fn parse_token_saver(value: &JsValue) -> Option<TokenSaverConfig> {
     let judge_timeout_ms = object
         .get("judgeTimeoutMs")
         .and_then(JsValue::as_number)
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(5_000.0);
+        .filter(|value| value.is_finite() && value.fract() == 0.0 && *value > 0.0)
+        .unwrap_or(15_000.0);
     let cache_aware = object
         .get("cacheAwareSwitching")
         .and_then(JsValue::as_object)

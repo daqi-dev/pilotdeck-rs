@@ -1579,17 +1579,34 @@ mod tests {
         rustix::process::Pid::from_raw(raw).expect("valid pid")
     }
 
-    /// Poll under the caller's runtime so a deferred background cleanup task
-    /// can run; a blocking sleep would starve the current-thread runtime.
-    async fn wait_process_gone(pid: rustix::process::Pid, limit: Duration) -> bool {
-        let deadline = Instant::now() + limit;
-        while Instant::now() < deadline {
-            if rustix::process::test_kill_process(pid).is_err() {
-                return true;
+    /// Short successful subprocesses must not spend their tool timeout on OS
+    /// scheduling under load. Keep virtual time frozen while draining/reaping;
+    /// drive_test_run supplies the wall-clock deadlock watchdog.
+    fn process_block<F: std::future::Future>(future: F, leader_file: &Path) -> F::Output {
+        frozen_time_block(async {
+            let mut run = std::pin::pin!(future);
+            let early = drive_test_run(
+                run.as_mut(),
+                || {
+                    pid_file_ready(leader_file)
+                        && matches!(
+                            crate::process_group::leader_exited_unreaped(read_pid(leader_file)),
+                            Ok(true)
+                        )
+                },
+                Duration::ZERO,
+            )
+            .await;
+            if let Some(output) = early {
+                return output;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        false
+            // The real leader has exited. Wake the product's 5ms WNOWAIT
+            // observer only now, so startup cannot consume the tool deadline.
+            tokio::time::advance(Duration::from_millis(10)).await;
+            drive_test_run(run.as_mut(), || false, Duration::ZERO)
+                .await
+                .expect("subprocess completed")
+        })
     }
 
     fn kill_descendant_if_alive(pid: rustix::process::Pid) {
@@ -1716,7 +1733,15 @@ mod tests {
         std::fs::create_dir_all(&package_dir).expect("wrapper package");
         std::fs::write(package_dir.join("package.json"), "{}").expect("wrapper manifest");
         let bundled = bin.join("rg");
-        std::fs::write(&bundled, "#!/bin/sh\nprintf 'x.txt:1:hit\\n'\n").expect("write bundled");
+        let leader_file = scratch.root.join("leader.pid");
+        std::fs::write(
+            &bundled,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nprintf 'x.txt:1:hit\\n'\n",
+                leader_file.display()
+            ),
+        )
+        .expect("write bundled");
         std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755))
             .expect("chmod bundled");
 
@@ -1735,12 +1760,15 @@ mod tests {
             None,
             &scratch.root,
         );
-        let output = futures_block(run_ripgrep_with_timeout(
-            &[],
-            &cwd_string(&scratch.root),
-            &context,
-            StdDuration::from_secs(5),
-        ))
+        let output = process_block(
+            run_ripgrep_with_timeout(
+                &[],
+                &cwd_string(&scratch.root),
+                &context,
+                StdDuration::from_secs(5),
+            ),
+            &leader_file,
+        )
         .expect("bundled engine runs");
         assert_eq!(output, "x.txt:1:hit\n");
     }
@@ -1882,7 +1910,7 @@ mod tests {
             "member",
             "#!/bin/sh\ntrap '' TERM\nprintf ready\nexec /bin/sleep 30\n",
         );
-        futures_block(async {
+        frozen_time_block(async {
             // No process_group(0): this child is a member, not a group leader.
             let mut child = Command::new(script)
                 .stdout(Stdio::piped())
@@ -1899,13 +1927,15 @@ mod tests {
                 .await
                 .expect("ready");
             kill_descendant_if_alive(pid);
-            let exited = timeout(Duration::from_secs(2), child.wait()).await;
-            if exited.is_err() {
-                let _ = child.kill().await;
-            }
-            assert!(
-                exited.is_ok(),
-                "failure cleanup did not kill the member PID"
+            let mut wait = std::pin::pin!(child.wait());
+            let status = drive_test_run(wait.as_mut(), || false, Duration::ZERO)
+                .await
+                .expect("member reaped")
+                .expect("wait member");
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                status.signal(),
+                Some(rustix::process::Signal::KILL.as_raw())
             );
         });
     }
@@ -2100,62 +2130,97 @@ mod tests {
     fn cancellation_during_drain_after_leader_exit_aborts_the_run() {
         let scratch = Scratch::new("cancel");
         let pid_file = scratch.root.join("descendant.pid");
+        let leader_file = scratch.root.join("leader.pid");
+        let ready = scratch.root.join("ready");
+        let term = scratch.root.join("term");
+        let probe = scratch.root.join("probe");
+        let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-hold",
             &format!(
-                "#!/bin/sh\n( /bin/sleep 30 ) &\necho $! > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                pid_file.display()
+                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
+                term.display(), probe.display(), ack.display(), ready.display(), pid_file.display(), leader_file.display()
             ),
         );
         let signal = Cancellation::new();
         let context = context(
             &[
-                (
-                    "PILOTDECK_RIPGREP_PATH",
-                    script.to_str().expect("utf8 script"),
-                ),
+                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
                 ("PATH", "/usr/bin:/bin"),
             ],
             Some(signal.clone()),
             &scratch.root,
         );
         let cwd = cwd_string(&scratch.root);
-        let pid_file_for_trigger = pid_file.clone();
-        let (error, elapsed) = futures_block(async move {
-            let started = std::time::Instant::now();
-            let trigger = tokio::spawn(async move {
-                // Cancel only after the shell has started and recorded the
-                // descendant; a fixed delay raced with process startup (>200 ms
-                // in this sandbox) and sometimes cancelled before the fork.
-                let deadline = Instant::now() + StdDuration::from_secs(8);
-                while !pid_file_for_trigger.exists() && Instant::now() < deadline {
-                    tokio::time::sleep(StdDuration::from_millis(10)).await;
-                }
-                tokio::time::sleep(StdDuration::from_millis(100)).await;
-                signal.cancel();
-            });
-            let result =
-                run_ripgrep_with_timeout(&[], &cwd, &context, StdDuration::from_secs(10)).await;
-            let _ = trigger.await;
-            let elapsed = started.elapsed();
+        frozen_time_block(async {
+            let mut run = Box::pin(run_ripgrep_with_timeout(
+                &[],
+                &cwd,
+                &context,
+                Duration::from_secs(10),
+            ));
+            // Observe both an installed descendant trap and an exited leader;
+            // neither a fixed sleep nor a merely-created PID file proves this.
+            let early = drive_test_run(
+                run.as_mut(),
+                || {
+                    ready.exists()
+                        && pid_file_ready(&leader_file)
+                        && pid_file_ready(&pid_file)
+                        && matches!(
+                            crate::process_group::leader_exited_unreaped(read_pid(&leader_file)),
+                            Ok(true)
+                        )
+                },
+                Duration::ZERO,
+            )
+            .await;
+            assert!(early.is_none(), "run ended before cancellation: {early:?}");
+            let group = read_pid(&leader_file);
             let pid = read_pid(&pid_file);
-            if !wait_process_gone(pid, StdDuration::from_secs(3)).await {
-                kill_descendant_if_alive(pid);
-                panic!("descendant {pid:?} survived cancellation");
-            }
-            (result.expect_err("aborted"), elapsed)
+            let mut cleanup = crate::process_group::GroupGuard(Some(group));
+            signal.cancel();
+            let early = drive_test_run(run.as_mut(), || term.exists(), Duration::ZERO).await;
+            assert!(
+                early.is_none(),
+                "pipe holder returned before KILL: {early:?}"
+            );
+            let term_at = Instant::now();
+            tokio::time::advance(TS_KILL_GRACE - Duration::from_millis(1)).await;
+            std::fs::write(&probe, "probe").expect("probe during grace");
+            let early = drive_test_run(run.as_mut(), || ack.exists(), Duration::ZERO).await;
+            assert!(
+                early.is_none(),
+                "pipe holder returned inside grace: {early:?}"
+            );
+            assert!(rustix::process::test_kill_process(pid).is_ok());
+            tokio::time::advance(Duration::from_millis(1)).await;
+            let error = drive_test_run(run.as_mut(), || false, Duration::from_millis(10))
+                .await
+                .expect("completed")
+                .expect_err("aborted");
+            assert_eq!(error.code, "tool_aborted");
+            assert!(Instant::now() - term_at >= TS_KILL_GRACE);
+            wait_test_event(
+                || !crate::process_group::group_exists(group),
+                Duration::from_millis(10),
+            )
+            .await;
+            cleanup.disarm();
         });
-        assert_eq!(error.code, "tool_aborted");
-        assert!(
-            elapsed < StdDuration::from_secs(5),
-            "cancellation must bound pipe draining: {elapsed:?}"
-        );
     }
 
     #[test]
     fn signal_exit_uses_the_node_signal_name() {
         let scratch = Scratch::new("signal");
-        let script = scratch.script("rg-term", "#!/bin/sh\nkill -TERM $$\n");
+        let leader_file = scratch.root.join("leader.pid");
+        let script = scratch.script(
+            "rg-term",
+            &format!(
+                "#!/bin/sh\necho $$ > '{}'\nkill -TERM $$\n",
+                leader_file.display()
+            ),
+        );
         let context = context(
             &[
                 (
@@ -2167,12 +2232,15 @@ mod tests {
             None,
             &scratch.root,
         );
-        let error = futures_block(run_ripgrep_with_timeout(
-            &[],
-            &cwd_string(&scratch.root),
-            &context,
-            StdDuration::from_secs(5),
-        ))
+        let error = process_block(
+            run_ripgrep_with_timeout(
+                &[],
+                &cwd_string(&scratch.root),
+                &context,
+                StdDuration::from_secs(5),
+            ),
+            &leader_file,
+        )
         .expect_err("signalled");
         assert_eq!(
             error.message.to_utf8().unwrap(),
@@ -2183,7 +2251,14 @@ mod tests {
     #[test]
     fn nonzero_exit_carries_exit_code_and_stderr_details() {
         let scratch = Scratch::new("nonzero");
-        let script = scratch.script("rg-fail", "#!/bin/sh\nprintf 'boom' >&2\nexit 2\n");
+        let leader_file = scratch.root.join("leader.pid");
+        let script = scratch.script(
+            "rg-fail",
+            &format!(
+                "#!/bin/sh\necho $$ > '{}'\nprintf 'boom' >&2\nexit 2\n",
+                leader_file.display()
+            ),
+        );
         let context = context(
             &[
                 (
@@ -2195,12 +2270,15 @@ mod tests {
             None,
             &scratch.root,
         );
-        let error = futures_block(run_ripgrep_with_timeout(
-            &[],
-            &cwd_string(&scratch.root),
-            &context,
-            StdDuration::from_secs(5),
-        ))
+        let error = process_block(
+            run_ripgrep_with_timeout(
+                &[],
+                &cwd_string(&scratch.root),
+                &context,
+                StdDuration::from_secs(5),
+            ),
+            &leader_file,
+        )
         .expect_err("failed");
         assert_eq!(error.code, "tool_execution_failed");
         assert_eq!(
