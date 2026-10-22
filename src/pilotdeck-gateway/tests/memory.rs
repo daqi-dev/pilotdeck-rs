@@ -6,10 +6,11 @@ mod baseline;
 use pilotdeck_gateway::runtime::{
     memory::{
         MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryFuture, MemoryListInput,
-        MemoryMaintenanceService, MemoryManagementService, MemoryProjection, MemoryProviderError,
-        MemoryResolver, MemoryWipeInput, NativeMemoryProviderOptions, NativeMemoryService,
-        NativeProjectMemoryProvider, ProjectMemoryBundle, ProjectMemoryBundleOptions,
-        ProjectMemoryProvider, ProjectMemoryRegistry, ProjectMemoryResources,
+        MemoryMaintenanceService, MemoryManagementService, MemoryProjection, MemoryProjectionError,
+        MemoryProviderError, MemoryResolver, MemoryWipeInput, NativeMemoryProviderOptions,
+        NativeMemoryService, NativeProjectMemoryProvider, ProjectMemoryBundle,
+        ProjectMemoryBundleOptions, ProjectMemoryProvider, ProjectMemoryRegistry,
+        ProjectMemoryResources,
     },
     project::{ProjectRuntimeRegistry, ResourceBundle, RuntimeError, RuntimeResult},
 };
@@ -55,7 +56,7 @@ impl MemoryManagementService for FakeManagement {
     fn clear(&self, _: &str) -> Result<(), MemoryProviderError> {
         Ok(())
     }
-    fn clear_session(&self, _: &str) -> Result<(), MemoryProviderError> {
+    fn clear_session(&self, _: &JsString) -> Result<(), MemoryProviderError> {
         Ok(())
     }
 }
@@ -73,7 +74,7 @@ impl NativeMemoryService for FakeNativeService {
     fn clear(&self, _: &str) -> Result<(), MemoryProviderError> {
         Ok(())
     }
-    fn clear_session(&self, _: &str) -> Result<(), MemoryProviderError> {
+    fn clear_session(&self, _: &JsString) -> Result<(), MemoryProviderError> {
         Ok(())
     }
     fn close(&self) {
@@ -186,7 +187,9 @@ fn bundle_from_fixture(
             options.provider_factory = Some(Arc::new(move |_: ProjectMemoryBundleOptions| {
                 factory_calls.fetch_add(1, Ordering::SeqCst);
                 factory_events.push("factory");
-                Err(MemoryBundleError::Factory("factory boom".into()))
+                Err(MemoryBundleError::Factory(MemoryProviderError::new(
+                    "factory boom",
+                )))
             }));
         }
         "undefined" => {
@@ -444,12 +447,6 @@ async fn real_ts_memory_bundle_oracle() {
     assert_eq!(replayed, 10);
 }
 
-fn optional_string(input: &JsValue, key: &str) -> Option<String> {
-    input
-        .get(key)
-        .and_then(JsValue::as_string)
-        .and_then(|value| value.to_utf8().ok())
-}
 fn optional_js_string(input: &JsValue, key: &str) -> Option<JsString> {
     input.get(key).and_then(JsValue::as_string).cloned()
 }
@@ -546,9 +543,9 @@ impl MemoryManagementService for ProjectionManagement {
         self.calls.lock().unwrap().push(JsValue::Object(call));
         self.maybe_fail("clear")
     }
-    fn clear_session(&self, session_key: &str) -> Result<(), MemoryProviderError> {
+    fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError> {
         let mut call = call_object("clearSession");
-        call.insert("sessionKey".into(), JsValue::from(session_key));
+        call.insert("sessionKey".into(), JsValue::String(session_key.clone()));
         self.calls.lock().unwrap().push(JsValue::Object(call));
         self.maybe_fail("clearSession")
     }
@@ -601,15 +598,15 @@ fn real_ts_memory_projection_oracle() {
                 Some("list") => projection
                     .list(&MemoryListInput {
                         project_key: optional_js_string(input, "projectKey"),
-                        session_key: optional_string(input, "sessionKey"),
+                        session_key: optional_js_string(input, "sessionKey"),
                     })
                     .map(|result| result.to_js())
                     .map_err(|error| error.to_js()),
                 Some("wipe") => projection
                     .wipe(&MemoryWipeInput {
                         project_key: optional_js_string(input, "projectKey"),
-                        session_key: optional_string(input, "sessionKey"),
-                        scope: optional_string(input, "scope"),
+                        session_key: optional_js_string(input, "sessionKey"),
+                        scope: optional_js_string(input, "scope"),
                     })
                     .map(|result| result.to_js())
                     .map_err(|error| error.to_js()),
@@ -801,4 +798,223 @@ async fn concurrent_dispose_waiters_observe_one_completion() {
         "the disposer must run exactly once"
     );
     assert_eq!(events.snapshot(), ["dispose"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dispose_during_factory_schedules_the_published_disposer() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let entered_signal = Arc::clone(&entered);
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    // `Receiver` is `Send` but not `Sync`; the factory must be `Fn + Sync`, so
+    // the receiver is captured behind a mutex (used exactly once).
+    let release_rx = Mutex::new(release_rx);
+    let disposer_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&disposer_calls);
+    let mut options = ProjectMemoryBundleOptions::new("/pdrs-fixture/stage-race");
+    options.provider_factory = Some(Arc::new(move |_| {
+        entered_signal.notify_one();
+        release_rx
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("test must release the factory");
+        // Clone before building the inner `Fn` disposer: the factory closure
+        // itself may not move its captures out.
+        let calls = Arc::clone(&calls);
+        Ok(Some(ProjectMemoryProvider {
+            memory: Arc::new(FakeResolver),
+            maintenance: None,
+            management: None,
+            dispose: Some(Arc::new(move || {
+                let calls = Arc::clone(&calls);
+                Box::pin(async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            })),
+        }))
+    }));
+    let bundle = Arc::new(ProjectMemoryBundle::new(options));
+    let staged = {
+        let bundle = Arc::clone(&bundle);
+        tokio::task::spawn_blocking(move || bundle.stage())
+    };
+    entered.notified().await;
+    let dispose = bundle.dispose();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(
+        disposer_calls.load(Ordering::SeqCst),
+        0,
+        "dispose must wait for the in-flight stage"
+    );
+    release_tx.send(()).unwrap();
+    let resources = staged.await.unwrap().unwrap();
+    assert_eq!(
+        resources.js_keys(),
+        ["memory", "memoryManagement", "memoryService"]
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), dispose)
+        .await
+        .expect("the published disposer must run")
+        .unwrap();
+    assert_eq!(disposer_calls.load(Ordering::SeqCst), 1);
+    bundle.dispose().await.unwrap();
+    assert_eq!(
+        disposer_calls.load(Ordering::SeqCst),
+        1,
+        "the disposer must run exactly once"
+    );
+}
+
+/// A Rust panic is not a TS throw, but it must not wedge a concurrent
+/// `dispose()`: the publication guard has to be alive while the factory runs.
+#[test]
+fn panicking_factory_still_releases_a_waiting_dispose() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let entered_signal = Arc::clone(&entered);
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let mut options = ProjectMemoryBundleOptions::new("/pdrs-fixture/stage-panic");
+        options.provider_factory = Some(Arc::new(move |_| {
+            entered_signal.notify_one();
+            release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("test must release the factory");
+            panic!("factory boom");
+        }));
+        let bundle = Arc::new(ProjectMemoryBundle::new(options));
+        let staged = {
+            let bundle = Arc::clone(&bundle);
+            tokio::task::spawn_blocking(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| bundle.stage()))
+            })
+        };
+        entered.notified().await;
+        let dispose = bundle.dispose();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        release_tx.send(()).unwrap();
+        let staged = staged.await.unwrap();
+        assert!(staged.is_err(), "the factory panic must propagate");
+        tokio::time::timeout(std::time::Duration::from_secs(10), dispose)
+            .await
+            .expect("dispose must not wait forever for a panicked stage")
+            .unwrap();
+    });
+}
+
+#[test]
+fn factory_error_projects_name_code_and_raw_utf16_units() {
+    let message = JsString::from_utf16(
+        "factory boom "
+            .encode_utf16()
+            .chain([0xD800])
+            .collect::<Vec<_>>(),
+    );
+    let mut options = ProjectMemoryBundleOptions::new("/pdrs-fixture/factory-error");
+    let thrown = message.clone();
+    options.provider_factory = Some(Arc::new(move |_| {
+        Err(MemoryBundleError::Factory(MemoryProviderError {
+            name: "DialogGatewayError".into(),
+            code: Some("FACTORY_FAILED".into()),
+            message: thrown.clone(),
+            requires_host: false,
+        }))
+    }));
+    let bundle = ProjectMemoryBundle::new(options);
+    let error = bundle.stage().unwrap_err();
+    assert_eq!(
+        error
+            .factory_error()
+            .expect("factory error retains its JS shape")
+            .message
+            .units(),
+        message.units()
+    );
+    let projected = MemoryProjectionError::from(error);
+    assert_eq!(projected.name(), "DialogGatewayError");
+    assert_eq!(projected.code(), Some("FACTORY_FAILED"));
+    assert_eq!(projected.message().units(), message.units());
+    assert!(!projected.message().units().contains(&0xFFFD));
+    assert!(!projected.requires_host());
+}
+
+/// #318 item 3: `sessionKey` is a JS-owned wire string. A lone surrogate must
+/// filter and reach `clearSession` as the same UTF-16 units, never aliasing the
+/// literal U+FFFD string.
+#[test]
+fn session_key_identity_is_utf16_exact() {
+    let lone = JsString::from_utf16(
+        "a".encode_utf16()
+            .chain([0xD800])
+            .chain("b".encode_utf16())
+            .collect::<Vec<_>>(),
+    );
+    let items = vec![
+        parse_json(r#"{"id":"surrogate","sourceSessionKey":"a\ud800b"}"#).unwrap(),
+        parse_json(r#"{"id":"replacement","sourceSessionKey":"a\ufffdb"}"#).unwrap(),
+    ];
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let management = Arc::new(ProjectionManagement {
+        calls: Arc::clone(&calls),
+        items,
+        fail: None,
+    });
+    let registry = Arc::new(ProjectionRegistry {
+        calls: Arc::clone(&calls),
+        management: Some(management),
+        resolve_key_fail: None,
+        resolve_fail: None,
+        known_projects: None,
+    });
+    let projection = MemoryProjection::new(registry, "/pdrs-fixture/fallback");
+
+    let listed = projection
+        .list(&MemoryListInput {
+            project_key: Some(JsString::from("/pdrs-fixture/project")),
+            session_key: Some(lone.clone()),
+        })
+        .expect("list with a lone surrogate");
+    assert_eq!(listed.items.len(), 1, "must not alias the U+FFFD item");
+    assert_eq!(
+        listed.items[0]
+            .get("id")
+            .and_then(JsValue::as_string)
+            .and_then(|id| id.to_utf8().ok())
+            .as_deref(),
+        Some("surrogate")
+    );
+
+    projection
+        .wipe(&MemoryWipeInput {
+            project_key: Some(JsString::from("/pdrs-fixture/project")),
+            session_key: Some(lone.clone()),
+            scope: Some(JsString::from("session")),
+        })
+        .expect("a lone surrogate is not JS whitespace");
+    let calls = calls.lock().unwrap();
+    let clear_session = calls
+        .iter()
+        .rev()
+        .find(|call| {
+            call.get("op")
+                .and_then(JsValue::as_string)
+                .is_some_and(|op| op.equals_str("clearSession"))
+        })
+        .expect("clearSession was called");
+    assert_eq!(
+        clear_session
+            .get("sessionKey")
+            .and_then(JsValue::as_string)
+            .expect("sessionKey recorded")
+            .units(),
+        lone.units()
+    );
 }

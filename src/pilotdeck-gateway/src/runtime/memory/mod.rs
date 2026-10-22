@@ -2,14 +2,11 @@
 //!
 //! Ports `ProjectMemoryBundle.ts:41-86` (stage/dispose and injected provider
 //! ownership) and `createLocalGateway.ts:1238-1259` (`memory_list` /
-//! `memory_wipe`). The native EdgeClaw service is intentionally not ported:
-//! it needs SQLite, which is a separate decision (A6.6-pr10+). Callers inject
-//! a provider factory; the factory returns `None` for the disabled or
-//! unsupported configuration that the native factory used to report.
-use crate::{
-    metadata::js_trim,
-    runtime::project::{DisposeFuture, RuntimeError, RuntimeResources},
-};
+//! `memory_wipe`). The EdgeClaw sqlite store is introduced by A6.6-pr10a in
+//! [`edgeclaw`]; provider composition itself still takes an injected factory.
+use crate::runtime::project::{DisposeFuture, RuntimeError, RuntimeResources};
+
+pub mod edgeclaw;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
@@ -35,7 +32,9 @@ pub trait MemoryMaintenanceService: Send + Sync {
 pub trait MemoryManagementService: Send + Sync {
     fn list(&self, limit: usize) -> Result<Vec<JsValue>, MemoryProviderError>;
     fn clear(&self, scope: &str) -> Result<(), MemoryProviderError>;
-    fn clear_session(&self, session_key: &str) -> Result<(), MemoryProviderError>;
+    /// JS string identity: the raw UTF-16 units, not a lossy `String`, so a
+    /// lone surrogate reaches the provider as `"\ud800"` rather than U+FFFD.
+    fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError>;
 }
 
 /// The native EdgeClaw service shape, used only by the deprecated
@@ -44,7 +43,9 @@ pub trait NativeMemoryService: Send + Sync {
     fn run_due_scheduled_maintenance(&self, reason: &str) -> MemoryFuture<'_, ()>;
     fn list(&self, limit: usize) -> Result<Vec<JsValue>, MemoryProviderError>;
     fn clear(&self, scope: &str) -> Result<(), MemoryProviderError>;
-    fn clear_session(&self, session_key: &str) -> Result<(), MemoryProviderError>;
+    /// JS string identity: the raw UTF-16 units, not a lossy `String`, so a
+    /// lone surrogate reaches the provider as `"\ud800"` rather than U+FFFD.
+    fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError>;
     fn close(&self);
 }
 
@@ -203,8 +204,21 @@ impl fmt::Debug for ProjectMemoryResources {
 pub enum MemoryBundleError {
     StageCalledMoreThanOnce,
     AlreadyDisposing,
-    Factory(String),
+    /// A throwing `providerFactory` / `createProvider` propagates the exact JS
+    /// error (`ProjectMemoryBundle.ts:57-73`): `name`, `code`, and UTF-16
+    /// `message` survive instead of collapsing into a plain `String`.
+    Factory(MemoryProviderError),
     NativeProviderNotPorted,
+}
+impl MemoryBundleError {
+    /// The original JS error for [`Self::Factory`], for callers that project
+    /// the same `{name, code, message}` shape as provider management errors.
+    pub fn factory_error(&self) -> Option<&MemoryProviderError> {
+        match self {
+            Self::Factory(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 impl fmt::Display for MemoryBundleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -213,7 +227,9 @@ impl fmt::Display for MemoryBundleError {
                 f.write_str("ProjectMemoryBundle.stage called more than once.")
             }
             Self::AlreadyDisposing => f.write_str("ProjectMemoryBundle is already disposing."),
-            Self::Factory(message) => f.write_str(message),
+            Self::Factory(error) => {
+                f.write_str(&String::from_utf16_lossy(error.message.units()))
+            }
             Self::NativeProviderNotPorted => f.write_str(
                 "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
             ),
@@ -229,6 +245,11 @@ impl From<MemoryBundleError> for RuntimeError {
 
 struct BundleState {
     staged: bool,
+    /// Set once `stage()` has finished (success, factory error, or panic) and
+    /// the disposer slot holds its final value. `dispose()` waits for this
+    /// while a stage is in flight, so a disposer published after the dispose
+    /// call is still the one scheduled.
+    published: bool,
     dispose_started: bool,
     disposed: bool,
     disposer: Option<MemoryDisposeFn>,
@@ -237,6 +258,36 @@ struct BundleState {
 struct BundleShared {
     state: Mutex<BundleState>,
     notify: Notify,
+}
+
+/// Publishes the stage outcome even when the factory panics, so a concurrent
+/// `dispose()` cannot wait forever on a stage that will never finish.
+struct StagePublish<'a> {
+    shared: &'a BundleShared,
+    published: bool,
+}
+impl StagePublish<'_> {
+    fn publish(mut self, disposer: Option<MemoryDisposeFn>) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.disposer = disposer;
+            state.published = true;
+        }
+        self.published = true;
+        self.shared.notify.notify_waiters();
+    }
+}
+impl Drop for StagePublish<'_> {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.published = true;
+        }
+        self.shared.notify.notify_waiters();
+    }
 }
 
 /// One project generation's memory provider ownership.
@@ -256,6 +307,7 @@ impl ProjectMemoryBundle {
             shared: Arc::new(BundleShared {
                 state: Mutex::new(BundleState {
                     staged: false,
+                    published: false,
                     dispose_started: false,
                     disposed: false,
                     disposer: None,
@@ -268,6 +320,12 @@ impl ProjectMemoryBundle {
 
     /// `ProjectMemoryBundle.ts:49-80`. `staged` is set before the factory runs,
     /// so a throwing factory still consumes the one allowed stage attempt.
+    ///
+    /// The factory may block; a concurrent `dispose()` must not observe a
+    /// taken-but-unset disposer slot. It waits for [`BundleState::published`]
+    /// instead, which makes the two calls linearizable: either dispose wins
+    /// (and the later stage reports `AlreadyDisposing`), or stage wins and its
+    /// exact disposer is scheduled.
     pub fn stage(&self) -> Result<ProjectMemoryResources, MemoryBundleError> {
         {
             let mut state = self.shared.state.lock().unwrap();
@@ -280,41 +338,53 @@ impl ProjectMemoryBundle {
             state.staged = true;
         }
 
+        // The guard must exist before the factory runs: a panic unwinds past
+        // the call, and `Drop` publishes the empty slot so a concurrent
+        // `dispose()` cannot wait forever.
+        let publish = StagePublish {
+            shared: &self.shared,
+            published: false,
+        };
         let created = if let Some(factory) = &self.options.provider_factory {
-            factory(self.options.clone())?
+            factory(self.options.clone())
         } else if let Some(factory) = &self.options.create_provider {
             let input = NativeMemoryProviderOptions {
                 project_root: self.options.project_root.clone(),
                 config: self.options.config.clone(),
                 agent_model: self.options.agent_model.clone(),
             };
-            factory(&input)?.map(wrap_native)
+            factory(&input).map(|created| created.map(wrap_native))
         } else if self
             .options
             .config
             .as_ref()
             .is_some_and(|config| config.enabled && config.provider == "edgeclaw")
         {
-            return Err(MemoryBundleError::NativeProviderNotPorted);
+            Err(MemoryBundleError::NativeProviderNotPorted)
         } else {
             // The native factory returns undefined for missing/disabled
             // configurations; the injected factory covers those states here.
-            None
+            Ok(None)
         };
-
-        let (resources, disposer) = match created {
-            Some(provider) => (
-                ProjectMemoryResources {
+        match created {
+            Ok(Some(provider)) => {
+                let resources = ProjectMemoryResources {
                     memory: Some(provider.memory),
                     maintenance: provider.maintenance,
                     management: provider.management,
-                },
-                provider.dispose,
-            ),
-            None => (ProjectMemoryResources::default(), None),
-        };
-        self.shared.state.lock().unwrap().disposer = disposer;
-        Ok(resources)
+                };
+                publish.publish(provider.dispose);
+                Ok(resources)
+            }
+            Ok(None) => {
+                publish.publish(None);
+                Ok(ProjectMemoryResources::default())
+            }
+            Err(error) => {
+                publish.publish(None);
+                Err(error)
+            }
+        }
     }
 
     /// `ProjectMemoryBundle.ts:82-85`. The first call schedules the exact
@@ -333,14 +403,32 @@ impl ProjectMemoryBundle {
             }
         };
         if first {
-            let disposer = self.shared.state.lock().unwrap().disposer.take();
-            let shared = Arc::clone(&self.shared);
+            let wait_shared = Arc::clone(&self.shared);
             let task = executor.spawn(async move {
+                let disposer = loop {
+                    // Register before the publication check; `enable()` makes
+                    // this waiter visible to `notify_waiters()` immediately.
+                    let notified = wait_shared.notify.notified();
+                    tokio::pin!(notified);
+                    notified.as_mut().enable();
+                    {
+                        let mut state = wait_shared.state.lock().unwrap();
+                        // Dispose before stage: `staged` is still false, so TS
+                        // resolves immediately and a later stage sees
+                        // `AlreadyDisposing`. During a stage the exact
+                        // disposer is not known yet, so wait for publication.
+                        if !state.staged || state.published {
+                            break state.disposer.take();
+                        }
+                    }
+                    notified.await;
+                };
                 match disposer {
                     Some(disposer) => disposer().await,
                     None => Ok(()),
                 }
             });
+            let shared = Arc::clone(&self.shared);
             executor.spawn(async move {
                 let result = match task.await {
                     Ok(result) => result,
@@ -424,7 +512,7 @@ impl MemoryManagementService for NativeManagement {
     fn clear(&self, scope: &str) -> Result<(), MemoryProviderError> {
         self.0.clear(scope)
     }
-    fn clear_session(&self, session_key: &str) -> Result<(), MemoryProviderError> {
+    fn clear_session(&self, session_key: &JsString) -> Result<(), MemoryProviderError> {
         self.0.clear_session(session_key)
     }
 }
@@ -455,15 +543,18 @@ pub trait ProjectMemoryRegistry: Send + Sync {
 pub struct MemoryListInput {
     /// Raw wire `projectKey`; absent or null uses the fallback project root.
     pub project_key: Option<JsString>,
-    pub session_key: Option<String>,
+    /// Raw wire `sessionKey`, compared with JS truthiness (`===` filtering).
+    pub session_key: Option<JsString>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct MemoryWipeInput {
     /// Raw wire `projectKey`; absent or null uses the fallback project root.
     pub project_key: Option<JsString>,
-    pub session_key: Option<String>,
+    /// Raw wire `sessionKey`; forwarded to `clearSession` without lossy
+    /// replacement-decoding.
+    pub session_key: Option<JsString>,
     /// Compared with `=== "session"`; anything else takes the project branch.
-    pub scope: Option<String>,
+    pub scope: Option<JsString>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -547,6 +638,24 @@ impl From<MemoryProviderError> for MemoryProjectionError {
         }
     }
 }
+impl From<MemoryBundleError> for MemoryProjectionError {
+    /// A throwing provider factory propagates the original JS error
+    /// (`ProjectMemoryBundle.ts:57-73`), so it projects through the same
+    /// `{name, code, message}` shape as a provider management failure instead
+    /// of a fixed `"Error"` with the code dropped.
+    fn from(error: MemoryBundleError) -> Self {
+        match error {
+            MemoryBundleError::Factory(error) => error.into(),
+            other => MemoryProviderError {
+                name: "Error".into(),
+                code: None,
+                message: JsString::from(other.to_string()),
+                requires_host: false,
+            }
+            .into(),
+        }
+    }
+}
 
 /// The two management methods from `createLocalGateway.ts:1238-1259`.
 pub struct MemoryProjection {
@@ -601,13 +710,13 @@ impl MemoryProjection {
                 )
             })?;
         let items = management.list(100).map_err(MemoryProjectionError::from)?;
-        let items = match input.session_key.as_deref() {
+        let items = match input.session_key.as_ref() {
             // TS truthiness: an empty string lists everything, a whitespace
-            // string filters (and never matches the untrimmed comparison).
+            // string filters (and never matches the untrimmed identity).
             Some(session_key) if !session_key.is_empty() => items
                 .into_iter()
                 .filter(|item| match item.get("sourceSessionKey") {
-                    Some(JsValue::String(value)) => value.equals_str(session_key),
+                    Some(JsValue::String(value)) => value.units() == session_key.units(),
                     _ => false,
                 })
                 .collect(),
@@ -628,11 +737,15 @@ impl MemoryProjection {
                     "Gateway memory provider is unavailable.",
                 )
             })?;
-        if input.scope.as_deref() == Some("session") {
+        if input
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope.equals_str("session"))
+        {
             let session_key = input
                 .session_key
-                .as_deref()
-                .filter(|session_key| !js_trim(session_key).is_empty())
+                .as_ref()
+                .filter(|session_key| !js_trim_units(session_key.units()).is_empty())
                 .ok_or_else(|| {
                     MemoryProjectionError::gateway(
                         "INVALID_MEMORY_SCOPE",
@@ -655,6 +768,38 @@ impl MemoryProjection {
             scope: "project",
         })
     }
+}
+
+/// ECMAScript WhiteSpace + LineTerminator as UTF-16 code units.
+pub(crate) fn js_is_space_unit(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x0009..=0x000D
+            | 0x0020
+            | 0x00A0
+            | 0x1680
+            | 0x2000..=0x200A
+            | 0x2028
+            | 0x2029
+            | 0x202F
+            | 0x205F
+            | 0x3000
+            | 0xFEFF
+    )
+}
+
+/// ECMAScript `String.prototype.trim` over raw UTF-16 units, without decoding
+/// (a lone surrogate is not whitespace and must keep its identity).
+pub(crate) fn js_trim_units(units: &[u16]) -> &[u16] {
+    let start = units.iter().position(|&unit| !js_is_space_unit(unit));
+    let Some(start) = start else {
+        return &[];
+    };
+    let end = units
+        .iter()
+        .rposition(|&unit| !js_is_space_unit(unit))
+        .unwrap();
+    &units[start..=end]
 }
 
 #[cfg(test)]
