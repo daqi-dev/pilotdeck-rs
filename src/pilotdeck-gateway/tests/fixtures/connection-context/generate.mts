@@ -92,7 +92,8 @@ for (const sessionKey of [5, true, 0, false, null, '']) scenarios.push({
     request('reconnect_interaction',{sessionKey}),
     request('permission_decide',{sessionKey,requestId:'control'}),
     {op:'close'}, {op:'finish'}]});
-for (const submitMode of ['throw', 'completed-then-throw', 'empty', 'permission']) scenarios.push({
+for (const submitMode of ['throw', 'completed-then-throw', 'empty', 'permission',
+  'error', 'error-then-completed', 'completed-then-error']) scenarios.push({
   name:`submit-${submitMode}`, submitMode, steps:[message(hello()), request('submit_turn',{sessionKey:'s',projectKey:'p'})]});
 scenarios.push({name:'disconnect-failure-stops-close',failDisconnect:true,steps:[message(hello()),
   request('reconnect_interaction',{sessionKey:'s1'}),
@@ -128,26 +129,31 @@ for (const method of ['submit_turn', 'elicitation_respond', 'permission_decide',
 // #474 follow-up: lone-surrogate identifiers and the ASCII top-level order are
 // recorded as complete outbound text, not only as re-parsed objects.
 scenarios.push(
-  {name:'lone-surrogate-id',rawText:true,steps:[message(hello()),
+  {name:'lone-surrogate-id',steps:[message(hello()),
     request('describe_server',{},'\ud800')]},
-  {name:'lone-surrogate-method',rawText:true,steps:[message(hello()),
+  {name:'lone-surrogate-method',steps:[message(hello()),
     request('\ud800',{},'1')]},
-  {name:'lone-surrogate-client-name',rawText:true,steps:[message(hello('\ud800')),
+  {name:'lone-surrogate-client-name',steps:[message(hello('\ud800')),
     request('describe_server',{},'1')]},
-  {name:'lone-surrogate-session-key',rawText:true,steps:[message(hello()),
+  {name:'lone-surrogate-session-key',steps:[message(hello()),
     request('permission_decide',{sessionKey:'\ud800',requestId:'r'},'1')]},
-  {name:'lone-surrogate-params',rawText:true,steps:[message(hello()),
+  {name:'lone-surrogate-params',steps:[message(hello()),
     request('permission_decide',{sessionKey:'s',requestId:'r',payload:'\ud800'},'1')]},
-  {name:'ascii-describe-pins-top-level-order',rawText:true,steps:[message(hello('ui')),
+  {name:'ascii-describe-pins-top-level-order',steps:[message(hello('ui')),
     request('describe_server',{},'1')]},
+  // #474 originals: abort_turn forwards the lone surrogate without tracking a
+  // session; submit_turn tracks it and close forwards disconnect then abort.
+  {name:'lone-surrogate-abort-session-key',steps:[message(hello()),
+    request('abort_turn',{sessionKey:'\ud83d'},'1')]},
+  {name:'lone-surrogate-submit-session',steps:[message(hello()),
+    {op:'start',frame:{type:'request',id:'s1',method:'submit_turn',params:{sessionKey:'\ud83d'}}},
+    {op:'close'}, {op:'finish'}]},
 );
 const snapshot = (value: any): any => JSON.parse(JSON.stringify(value, (_k,v) => typeof v === 'string' && uuids.has(v) ? uuids.get(v) : v));
 // Byte-level frames keep every escaped surrogate and every insertion-ordered
 // key; only the real crypto.randomUUID values already recorded above are masked.
-const maskText = (text: string) => {for (const [id, marker] of uuids) text = text.split(id).join(marker); return text;};
+const maskText = (text: string) => {for (const [id, marker] of uuids) text = text.replaceAll(id, marker); return text;};
 for (const scenario of scenarios) {
-  const captureRaw = scenario.rawText === true || scenario.name.startsWith('submit-')
-    || scenario.name.startsWith('close-preserve-') || scenario.name === 'request-after-close';
   const frames: any[] = [], rawFrames: string[] = [], closes: any[] = [], calls: any[] = [], finalInFlight: any[] = [], closeErrors: any[] = [];
   const port = createNativeInteractionReconnectPort();
   const coordinator = new GatewayInteractionCoordinator({reconnectPort:port});
@@ -177,6 +183,11 @@ for (const scenario of scenarios) {
       if (scenario.permissionEvent || scenario.submitMode === 'permission') yield {type:'permission_request',requestId:'fixture-permission'};
       if (scenario.submitMode === 'throw') throw new Error('fixture submit failed');
       if (scenario.submitMode === 'empty') return;
+      // Real provider error events exercise lastError/lastCompleted priority.
+      const errorEvent = {type:'error',code:'fixture_error',message:'fixture stream failed',recoverable:true};
+      if (scenario.submitMode === 'error') {yield errorEvent; return;}
+      if (scenario.submitMode === 'error-then-completed') {yield errorEvent; yield {type:'turn_completed',runId:'fixture-run'}; return;}
+      if (scenario.submitMode === 'completed-then-error') {yield {type:'turn_completed',runId:'fixture-run'}; yield errorEvent; return;}
       if (startingSlot !== undefined) {
         const gate = submits.get(startingSlot)!;
         gate.ready(); await gate.wait;
@@ -219,7 +230,7 @@ for (const scenario of scenarios) {
     else throw new Error(step.op);
     scenario.results.push(snapshot({frames,closes,calls,finalInFlight,
       inFlight:[...connection.inFlightSessions],interactions:[...connection.interactionSessions],...(scenario.failDisconnect ? {closeErrors} : {}),
-      ...(captureRaw ? {framesText:rawFrames.map(maskText)} : {})}));
+      framesText:rawFrames.map(maskText)}));
   }
   assert.equal(submits.size,0);
   for (const registration of registrations) registration.dispose();
