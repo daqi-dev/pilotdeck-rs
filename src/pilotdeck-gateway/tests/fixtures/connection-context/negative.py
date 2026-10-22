@@ -14,7 +14,7 @@ rust = fixture.parents[3]
 source = rust / "pilotdeck-gateway/src/runtime/connection"
 originals = {p.name: p.read_text() for p in source.glob("*.rs")}
 originals["oracle.json"] = (fixture / "oracle.json").read_text()
-env = dict(os.environ, CARGO_NET_OFFLINE="true", CARGO_TARGET_DIR=str(rust / "target"))
+env = dict(os.environ, CARGO_NET_OFFLINE="true")
 assert env.get("CARGO_HOME") and env.get("PDRS_BASELINE")
 # Capture exact formatted blocks so the validation order mutation moves whole checks.
 module = originals["mod.rs"]
@@ -25,7 +25,7 @@ protocol, auth = checks.split('            if frame["token"] != self.token {', 1
 auth = '            if frame["token"] != self.token {' + auth
 mutants = [
     ("cleanup-after-final-frame", "mod.rs", "        drop(cleanup);", "        let _late_cleanup = cleanup;", 1),
-    ("remove-server-override", "context.rs", 'params["interactionBinding"] = binding.to_json();', 'params["interactionBinding"] = params.get("interactionBinding").cloned().unwrap_or(Value::Null);', 2),
+    ("remove-server-override", "context.rs", 'fields.insert("interactionBinding".into(), js_value(&binding.to_json()));', 'fields.insert("interactionBinding".into(), js_value(params.get("interactionBinding").unwrap_or(&Value::Null)));', 2),
     ("remove-sdk-control-special-case", "context.rs", 'if !sdk_control {', 'if true || !sdk_control {', 1),
     ("swap-validation-order", "mod.rs", checks, auth + protocol, 1),
     ("wrong-close-code", "mod.rs", 'self.text.close(4003, "auth_failed");', 'self.text.close(4001, "auth_failed");', 1),
@@ -37,11 +37,21 @@ mutants = [
     ("ticket-scoped-in-flight", None, None, None, 0),
     ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(Value::Null)',
      'frame.get("params").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!({}))', 1),
-    ("non-string-session-as-empty", "mod.rs", 'truthy(&input["sessionKey"])',
-     'input["sessionKey"].as_str().is_some_and(|session| !session.is_empty())', 1),
+    ("non-string-session-as-empty", "mod.rs", 'truthy(&input["sessionKey"]).then(|| SessionKey::new(input["sessionKey"].clone()))',
+     'input["sessionKey"].as_str().is_some_and(|session| !session.is_empty()).then(|| SessionKey::new(input["sessionKey"].clone()))', 1),
     ("tampered-source-hash", "oracle.json",
      json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/server/GatewayWsConnection.ts"], "0" * 64, 1),
 ]
+# Restore the pre-fix spread behavior while keeping the new lossless port.
+context = originals["context.rs"]
+spread_start = context.index("        let mut fields = match &params {")
+spread_end = context.index("        match method {", spread_start)
+mutants.append(("non-object-params-as-empty", "context.rs", context[spread_start:spread_end],
+                '        let mut fields = if params.is_object() { js_value(&params).as_object().unwrap().clone() } else { JsObject::new() };\n', 1))
+selected = set(sys.argv[2:])
+assert selected <= {name for name, *_ in mutants}, selected
+if selected:
+    mutants = [mutant for mutant in mutants if mutant[0] in selected]
 # Restore ticket retention without changing the observed session-set shape.
 # Each submit gets its own ticket; cleanup leaves the session present while a
 # second ticket exists. This is the old behavior the TS close trace must reject.
@@ -70,6 +80,8 @@ ticket_patches = {
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
+    # No shared positive build artifacts: compile and test every mutant here.
+    env["CARGO_TARGET_DIR"] = str(scratch / "target")
     (scratch / "src/runtime/connection").mkdir(parents=True)
     (scratch / "tests/fixtures/connection-context").mkdir(parents=True)
     base_lib = '#[path="runtime/connection/mod.rs"] pub mod connection;\n' + f'#[cfg(test)] #[path={json.dumps(str(rust / "pilotdeck-gateway/tests/common/baseline.rs"))}] mod test_baseline;\n'
@@ -100,14 +112,22 @@ with tempfile.TemporaryDirectory(prefix="pdrs-pr3-negative-", dir="/tmp") as tem
             passed = passed and '"permission-decide-null-and-missing-params" step 1' in raw
         if name == "non-string-session-as-empty":
             passed = passed and '\"session-key-5\" step 1' in raw
+        if name == "non-object-params-as-empty":
+            passed = passed and all(
+                f"connection::tests::{case}" in raw.split("failures:")[-1]
+                for case in ("non_object_string_params_match_ts", "non_object_array_params_match_ts"))
+            passed = passed and all(f'"submit-turn-ui-{kind}-params" step 1' in raw for kind in ("string", "array"))
         if name == "tampered-source-hash":
             passed = passed and "oracle hash for src/gateway/server/GatewayWsConnection.ts does not match" in raw
-        (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "COMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")
+        (output / f"negative-{name}.log").write_text(gate.stdout + gate.stderr + "CARGO_TARGET_DIR=" + env["CARGO_TARGET_DIR"] + "\nCOMMAND " + " ".join(command) + "\n" + raw + f"\nexit={result.returncode}\n")
         summary.append({"name":name,"file":filename,"before":before,"after":after,"exit":result.returncode,"passed":passed,
                         "patches":ticket_patches if name == "ticket-scoped-in-flight" else None})
         (output / "negative-summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2)+"\n")
         print(name, "PASS" if passed else "INVALID", flush=True)
         if not passed: raise SystemExit(1)
+    if selected:
+        print("all selected controls rejected; temporary sources removed on exit")
+        raise SystemExit(0)
     # Compiler-level identity controls use the real project runtime type, not a
     # lookalike. These are explicitly type rejection, not oracle behavior catches.
     for file, content in originals.items():
