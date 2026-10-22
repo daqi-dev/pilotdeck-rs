@@ -1,10 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 14:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #422 | impl | doing | PR #467；修复轮 9 结构性 exactly-once 派 codex（wt-a71-pr2-p2，_tmp/20261022-issue-422/fix9.md）
+updated: 2026-10-22 14:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
-- #458 | impl | blocked | 入站孤立代理（#421 拆出），前置于 A7.2
+- #458 | impl | doing | 入站帧孤立代理与 TS 对齐（A7.2 前置）；wt-a71-pr2-p2；DeepSeek；_tmp/20261022-issue-458/impl.md
+- #414 | impl | doing | PR #471 mark_session_dirty（A7.2 前置）；gate1 0/0；评审 GLM + codex
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
 - D4 | impl | blocked | 已人批(10-15 D4→B);待A5.4定标时排期
@@ -13,6 +13,14 @@ updated: 2026-10-22 14:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 14:55 · /loop 协调轮
+> **#467（#422）合入**（aa63aed6，邮箱 noreply）。gate9 四角色（glm-5.3-mb）P0/P1=0；GLM r9 0/0。DeepSeek r9 报 P1：dispose 返回后、lease.release 期间仍可 abort。协调者读了 TS：`AgentHandle.ts:282-286` 在 await onDispose 之后、finally 里才置 disposed，期间同样可以 abort，和 Rust 的 lease 窗口结构相同，所以降为 P2c 开 #470（前置于 #422 关单，#422 保持 open）。全量 817/0；config_store 报 SIGKILL，按 memory「macos-exec-sigkill」换新 inode 重签后 1/0。
+> **#414 → PR #471**（DeepSeek 实现，98af4f70）：RefreshRouter 增加 mark_session_dirty，3 个测试替身补齐，负控已转红；沙箱外 runtime::session 37/0，clippy、fmt 通过；--serial gate1 P0/P1=0 已贴正文，pr-gate PASS。评审：GLM（-mb）+ codex（作者是 DeepSeek，第二家由 codex 补位）。
+> **#458 派 DeepSeek**：复用已合入的 wt-a71-pr2-p2，新分支 deepseek/issue-458。任务书要求先用 Node 实测 TS 对孤立代理帧的处理；协议字段只走 JsValue 一条路，避免 #421 修复轮 7 的双轨问题。
+> **模型（人提醒）**：优先 glm-5.3-mb、deepseek-v4.1-flash-mb。核出 `_tmp/20261018-a6-split/glm_review.py` 写死了 `glm-5.3`（少 `-mb`），已改；run-review-roles 默认值本来就是 -mb，dsh patch 是 deepseek-v4.1-flash-mb。`--runner anthropic` 缺 .env.local 密钥，跑不起来。
+> **采纳的提速建议**：先清完 A7.2 前置（#422 已合入，#414、#458 在做），再做完整的 submit 轮次；A6 尾包（stats/usage、插件 loader、grep、memory attachment、EdgeClaw、A6.9）下轮盘点后进 READY。
+> **#468** 仍待人定（real.md 两份冲突）。worktree 4/12。
 
 > ## 2026-10-22 14:00 · /loop 协调轮
 > **#467（#422）脱困**：修复轮 2/4/6/7 一直在调 `session.abort()` 在锁内还是锁外：放锁内，panic 会毒化 progress mutex；放锁外，abort 和 dispose 之间又有 TOCTOU。gate7 boundary 的 P1-2（并发 abort+dispose 两次派发）在修复轮 8 之后还在。同一处已修 3 次以上，不再挪位置，改用结构性修法：progress 加 abort 派发标志，锁内 check-and-set、锁外调用。先查 TS 基线，再补多线程并发测试和负控。实现方换成 codex（修复轮 9，`_tmp/20261022-issue-422/fix9.md`），看板 redispatch+1。gate8 是上一会话退出时连带中断的（jsonl 停在 thinking，没有 result），不算失败，作废；新 head 出来后用 --serial 重跑。
