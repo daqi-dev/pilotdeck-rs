@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-23 02:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-23 05:00 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -13,19 +13,38 @@ updated: 2026-10-23 02:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #454 | coord | human | web_fetch 宽页节点内存：候选差异 A6.5-WEBFETCH-NODES-001（向严），待人定
 - #508 | coord | human | MCP 工具结果自动读图可越出 cwd、无上限（TS 相同），建议 A 向安全偏离；卡 _tmp/20261023-loop/card-mcp-image-read.md
 - accepted-diffs-502 | coord | human | #505 合入的 32 条「已知未对齐（未批准）」待人逐条批
-- A7.2-pr1 | impl | doing | PR #487 压成单提交并 rebase 到 main，沙箱外 lib 940/0，merge-when-green 等 CI
-- A7.3-pr1 | impl | doing | PR #510 修复轮 1（34d132d3），r2 GLM+Grok、gate2 在跑
-- A6.6-pr10c | impl | doing | PR #512 EdgeClaw close/accessors，r1 GLM+Grok、gate1 在跑
-- D2-pr2 | impl | doing | PR #513 chat search，r1 GLM+Grok、gate1 在跑
-- A7.5-pr1 | impl | doing | PR #514 替换协调器 + #416，r1 GLM+Grok、gate1 排队
-- A7.4-pr1 | impl | doing | user_dialog Journal + Channel；wt-a74-pr1-dialog-channel；DeepSeek
-- p2-sweep-11 | impl | doing | #389 #308 #271 #235 #453 测试假红与负控进程组；wt-p2-sweep-11；codex
-- #485 | impl | doing | abort 契约夹具 P2 三件；wt-p2-485-abort-contract；GLM
-- A6.6-pr10e | impl | blocked | 等 #512（pr10c）合入
-- A7.2-pr3 | impl | blocked | 等 #487（pr1）合入
+- accepted-diffs-1023 | coord | human | 新登记未批准两条：D2-CHATSEARCH-REGEX-BACKTRACK-001（#513）、A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001（#524）
+- D2-pr2 | impl | doing | PR #513 chat search 修复轮 4，r3 GLM+Grok、gate3
+- #485 | impl | doing | PR #521 修复轮 2，r3 Grok+codex、gate3
+- A6.6-pr10e | impl | doing | PR #523 修复轮 1（rmSync 语义），r2 GLM+Grok、gate2
+- #518 | impl | doing | PR #524 账本冲突 rebase 后 gate3，收尾链自动入队
+- #517 | impl | doing | PR #525 修复轮 1（kinds 非数组 TypeError）；DeepSeek
+- A6.6-pr10f | impl | doing | PR #531 export/import，r1 Grok+codex、gate1
+- p2-sweep-12 | impl | doing | #528；wt-p2-sweep-12；DeepSeek
+- A7.4-pr2 | impl | doing | user_dialog HTTP store；wt-a74-pr2-http-store；DeepSeek
+- A7.2-pr4 | impl | doing | submit 编排；wt-a72-pr4-submit；codex
+- A7.2-pr7 | impl | doing | 读面；wt-a72-pr7-read；GLM
+- A6.6-pr10g | impl | blocked | 等 #523（pr10e，clear* 依赖 stage 语义）合入
+- A7.2-pr5 | impl | blocked | 等 A7.2-pr4 合入（含 A7.2-REPLAY-RETENTION-TIMER-001 对齐）
+- #530 | impl | ready | #519 同类：生成器收尾 dispose 无时限、bash-tool / mcp-client 生成器失败路径遗留进程
 - #495 | impl | ready | memory 附件 / prompt cache 评审遗留 P2（前置 A6.9）
 - #484 | impl | ready | 插件 loader 评审遗留 P2（前置 A6.9）
 <!-- READY:END -->
+
+> ## 2026-10-23 02:40 → 05:00 · /loop 协调轮与两小时交接
+> **02:55**：#510（A7.3-pr1）、#512（EdgeClaw pr10c）合入，邮箱 noreply，两棵树回收；剩余 P2 按 c 类开 #516（前置 A7.3 接线）、#517（前置 EdgeClaw 接线，含 includeExternal 真值等与 TS 不一致项）。#487 gate10 通过后入队，但排在前面的 #510 也改了账本，合入后 #487 再次冲突被踢出 → 二次 rebase（账本/FROZEN 同法合并，src 补丁逐行一致），gate11 与核验在跑。#513 Grok r1 P0（`İ` 小写后变长，snippet 切片 panic，已复现）+ gate boundary P1 + 负控全 NOT_APPLICABLE 仍报 PASS（P2b 按 P1）→ 等 GLM r1 后派 codex 修复轮 3。#515（board）补 waiver 后入队。新派：A6.6-pr10e 快照/换根（codex）、pr10f export/import（GLM）、#517（DeepSeek）。worktree 11/12，磁盘 77.7 GiB。
+> **03:00**：#514（A7.5-pr1）两家 r1 均 0/0、gate1 P0/P1=0，已入队；剩余 P2 开 #518（端口 panic 后预约永久卡住，三家独立撞上，按真问题优先修，#514 合入后派单）。#513 修复轮 3（codex）已在跑。#487 gate11 与核验在跑；#515 在队列。
+> **03:20**：#514（A7.5-pr1）、#515（board）合入，邮箱 noreply，两棵树回收；#487 rebase 后 gate11 通过，在合并队列第 1 位。交付三单开 PR：#520 A7.4-pr1（DeepSeek，lib 879/0、user_dialog 含 ignored 16/0）、#521 #485（GLM，lib 878/0）、#522 p2-sweep-11（codex，Closes #389 #308 #271 #235 #453，压测 50/50、48/48；#453 自测沙箱外 5/5 且 ps 无残留），各派非作者两家评审与 gate1。**现场核对抓到 6 个空转孤儿**（`until [ -f go ]`，已跑 2 天多），来自 background-tasks 夹具生成器失败路径：finally 先删临时目录、不停任务 → 按 pid 结束，开 #519 派 DeepSeek。另有 pid 10202 属 `~/ws/PilotDeck-rust-program-20261009`，红线不碰。新派 #518（A7.5 panic 后预约卡住，codex）、#516（A7.3 interaction P2，GLM）。#513 修复轮 3 交付（P0 已修、Number 分隔符 P1 被 node 实测驳回），沙箱外复验在跑。worktree 12/12，磁盘 76.9 GiB。
+> **03:30**：#487（A7.2-pr1）合入（fa9c8a36，noreply），树回收；A7.2-pr3 发布管线派 codex（wt-a72-pr3-publish）。#513 修复轮 3 沙箱外复验：CLI 57/0、D0 chat-search 全 PASS（不适用项为空）、宿主负控 PASS（首次复验我把输出目录写成主仓绝对路径，装置按规则 BLOCKED，改相对路径重跑）。Number 数字分隔符 P1 经 node 实测驳回；回溯上限登记 D2-CHATSEARCH-REGEX-BACKTRACK-001（未批准，待人批），FROZEN 重登记；r2 GLM+Grok、gate2 在跑。#520 #521 #522 r1 与 gate1 在跑。worktree 12/12。
+> **03:45**：#522（p2-sweep-11）两家 r1 0/0、gate1 通过，结果块已贴，等 CI 入队。#520 A7.4-pr1：Grok r1 P1（abort 落在注册窗口时整套资源泄漏，有探针复现）+ gate P1×3（共享 AbortSignal 被整体清空、journal 读改写无锁、README 声称的目录场景不在金样）→ 修复轮 1 派回 DeepSeek。#521：gate boundary P1（cases 空数组零比较即绿，假 PASS）→ 修复轮 1 派回 GLM。交付并开 PR：#523 EdgeClaw pr10e（codex，snapshots 6/0 等五套含 ignored 全过、lib 881/0）、#524 #518（codex，lib 944/0、replacement 含守卫 62/0；另登记 A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001 未批准），各派 GLM+Grok 与 gate1。
+> **03:50**：#517（DeepSeek，edgeclaw 三套含 ignored 35/0；TS 实测推翻一条评审推断：`HOME=` 时 os.homedir() 返回空串、不回落 passwd；node:sqlite DatabaseSync 默认 timeout 0）与 #519（DeepSeek，生成器失败路径先 dispose + 进程组 SIGKILL 再删目录；修复前 3 组存活，修复后全无）交付，证据已拉回，沙箱外核验排队等 cargo 名额（4/4）。#519 范围外记录：本机 `rewind` 测试二进制 exec 即 SIGKILL（memory「macos-exec-sigkill」同类），$TMPDIR 有 3 个 10-20 的旧 scratch 目录。#517 与 #523 都改了 storage/accessors.rs，后合入的需 rebase。#513 r2 Grok 0/0，等 GLM 与 gate2。
+> **04:00**：#517 → PR #525（DeepSeek；沙箱外 accessors 8/0、storage 18/0、file_memory 9/0、memory 10/0、lib 881/0），GLM+Grok r1 与 gate1。#513 gate2 boundary P1（标题快路径非法 JSON 转义：TS 整条命令 exit 1，Rust 吞错走慢路径；GLM r1 曾提、修复轮 3 列为范围外）→ 修复轮 4 派 codex。#524 gate1 P1（负控缺 PDRS_BASELINE 时把无关失败记成检出）→ 等 Grok r1 后派 codex 修复轮 1。#523 gate1 P0/P1=0，等两家 r1。#522 等 CI。#519 核验排队。
+> **04:10**：#522（p2-sweep-11）03:45 入队。#519 → PR #526（DeepSeek；background_tasks 含真实 TS 重生成 9/0，跑后无孤儿），GLM+Grok r1 与 gate1。**verify.sh 第二处修正**：上轮加的 `--include-ignored` 会把只能由父测试注入信号后调用的两条 `*_worker` 探针也直接跑起来，必然失败（child_signals.rs:101）→ 改为精确 `--skip` 这两条（不能用 `--skip _worker`，子串会误跳 `bridge_fifo_read_does_not_block_async_worker` 等正常用例）。A7.2-pr3（codex，14 场景、19 负控）、#520 修复轮 1（DeepSeek，lib 918/0）、#521 修复轮 1（GLM）交付，沙箱外核验排队（新脚本 `_tmp/20261023-loop/verify-q.sh`，等名额后跑 verify 并补跑 ignored 模块）。
+> **04:25**：#522（p2-sweep-11）合入（a894d31b，noreply），树回收；剩余 P2 开 #528，派 DeepSeek 做 p2-sweep-12（新树 wt-p2-sweep-12）。核验全绿后推进：#520 修复轮 1（lib 918/0、user_dialog 含 ignored 20/0）、#521 修复轮 1（lib 913/0、session 含 ignored 57/0）各派 r2 增量评审与 gate2；A7.2-pr3 → PR #527（codex；lib 991/0、runtime::turn 含 ignored 94/0），GLM+Grok r1 与 gate1。#523 Grok r1 P1（目录只能部分删除时 remove_dir_all 与 Node rmSync 遍历与遇错语义不同，残留文件树不一致）→ 修复轮 1 派 codex。#525 GLM r1 把结论写成「裁决：P0=0…」，收尾脚本不认 → 按原文机械转写一行标准 VERDICT 并重启收尾链；finalize-reviewed 改为也接受「裁决：」（四个数字仍须齐全）。#516、#518 修复轮 1、#513 修复轮 4 交付，核验与 D0 排队。
+> **04:45**：#526（#519）合入（a58b8d80，noreply），树回收；剩余 P2 开 #530（生成器收尾 dispose 无时限，Grok 已实测 60 s 不退出且孤儿残留；bash-tool / mcp-client 同构生成器失败路径遗留进程），待 p2-sweep-12 交付后派。新派 A7.4-pr2 HTTP store（DeepSeek）。#513 修复轮 4 沙箱外复验 CLI 57/0、D0 全 PASS、宿主负控 PASS（首跑因 pull-evidence 已把树内证据目录移走、脚本没 mkdir 而失败，补建后重跑），r3 GLM+Grok 与 gate3。#516 → PR #529（GLM；runtime::interaction 含 ignored 6/0；lib 1 条失败为 #528 登记的 disposer_timeout 负载假红，单独 3/3 过），Grok+codex r1 与 gate1。#524 修复轮 1 推送，r2 与 gate2。#525 gate1 P1（project entries 的 kinds 为数字/布尔/对象时 TS 抛 TypeError、Rust 返回 []）→ DeepSeek 修复轮 1；#521 gate2 P1（守卫只断言非空，截成 1 条仍绿）→ GLM 修复轮 2。**事故**：#516 rebase 冲突时，命令用 `| grep CONFLICT;` 吞了退出码，后续 add/commit 把带冲突标记的账本与 GLM 全部改动提交成了协调者提交；推送因非快进失败未上远端，`rebase --abort` 恢复后逐块合并重做。规则记入 auto-memory「rebase-in-script-stop」：rebase 必须 if 判退出码、冲突即停。
+> **04:55**：#527（A7.2-pr3）两家 r1 与 gate1 收敛，04:18 入队。#523 修复轮 1（codex）交付：删除逻辑按 Node 22 rmSync 语义重写（新 node_fs.rs），金样 +9 场景（原 34 场景期望未改），9 条负控，核验排队。#520 GLM r2 0/0、gate2 完成，等 Grok r2。
+> **05:05**：#527（A7.2-pr3）合入（95ff24c4，noreply），树回收 → A7.2-pr4 submit 编排派 codex（wt-a72-pr4-submit）。#520 04:27 入队；#529 结果块已贴。#523 修复轮 1 核验通过（edgeclaw 五套含 ignored 全过，lib 唯一失败为 #528 登记的负载假红、单独 3/3 过），提交并派 r2 与 gate2。pr10f（GLM）与 #521 修复轮 2 交付，核验排队。pr10f 另报 `rewind` 测试二进制被外部 SIGKILL、用 /usr/bin/time 包装后 4/4 过（与 #519 所见同一现象）。
+> **05:00 交接（持有人：协调者本会话）**：本段合入 #510 #511 #512 #514 #515 #522 #526 #527 #520 #529（另 #487 早前），在审 #513 #521 #523 #524 #525 #531，在做见 READY。#524 因 #529 先合入账本冲突，已 rebase、src 补丁逐行一致、gate3 后自动入队；账本冲突在本段已出现 4 次（#487×2、#516、#524），凡改 accepted-diffs 的 PR 排队时都要预期一次 rebase。worktree 12/12（开 board 树时一度到 13，立即删除，等合入腾出名额再开）；磁盘约 77 GiB / 160；闸门与 cargo 名额排队正常。下一个交接点约 07:00。
 
 > ## 2026-10-23 00:25 → 02:40 · /loop 协调轮与两小时交接（00:05 交接后的记录原在 _tmp，本段补进库）
 > **00:25**：#503（交接）在合并队列。#488 修复轮 5（9e42dd1b，GLM，lib 868/0），r6 codex+Grok 与 gate6 在跑。A6.6-pr10d → PR #504（DeepSeek，edgeclaw_storage 15/0、lib 857/0），GLM+Grok r1 与 gate1 在跑。
