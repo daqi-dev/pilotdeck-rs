@@ -1,9 +1,9 @@
 //! `prepareForModel` mainline: message projection, prompt-time state, prompt
 //! assembly and instruction layering.
 //!
-//! Ported from `context/DefaultContextRuntime.ts:167-426` without the memory
-//! attachment block (A6.6-pr5b) and without prompt-cache generation (cache
-//! owner). Prompt contributions are session-owned and injected as a registry.
+//! Ported from `context/DefaultContextRuntime.ts:167-426`, including the memory
+//! attachment builder and session prompt-cache plans. Memory retrieval and
+//! prompt contributions are injected independently of concrete providers.
 use super::{
     compaction::{
         is_direct_tool_result, is_media_reference_with_id, is_real_user_request_message,
@@ -67,6 +67,10 @@ pub struct Options {
     /// `DefaultContextRuntimeOptions.toolResultBudget`; `None` keeps the
     /// pass-through `applyToolResults` behavior.
     pub tool_result_budget: Option<Arc<super::tool_budget::ToolResultBudget>>,
+    pub memory_resolver: Option<Arc<dyn super::memory::MemoryResolver>>,
+    pub project_root: Option<String>,
+    pub memory_retrieval_timeout_ms: f64,
+    pub prompt_cache_coordinator: Option<Arc<super::cache::PromptCacheCoordinator>>,
     pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     /// Host identity rendered in the user-context block. TS reads
     /// `process.platform` / `process.version`; the Rust host has no Node, so
@@ -87,6 +91,10 @@ impl Default for Options {
             instruction_discovery: None,
             prompt_contributions: None,
             tool_result_budget: None,
+            memory_resolver: None,
+            project_root: None,
+            memory_retrieval_timeout_ms: 30_000.0,
+            prompt_cache_coordinator: None,
             now: None,
             platform: None,
             node_version: None,
@@ -105,8 +113,25 @@ struct Inner {
     instruction_discovery: Option<InstructionDiscovery>,
     prompt_contributions: Option<PromptContributionRegistry>,
     tool_result_budget: Option<Arc<super::tool_budget::ToolResultBudget>>,
+    memory_resolver: Option<Arc<dyn super::memory::MemoryResolver>>,
+    project_root: Option<String>,
+    memory_retrieval_timeout_ms: f64,
+    prompt_cache_coordinator: Arc<super::cache::PromptCacheCoordinator>,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
     state: Mutex<HashMap<Option<JsString>, TimeState>>,
+    cache_sessions: Mutex<HashSet<JsString>>,
+}
+impl Inner {
+    fn release_caches(&self) {
+        for session_id in self.cache_sessions.lock().unwrap().drain() {
+            self.prompt_cache_coordinator.release(&session_id);
+        }
+    }
+}
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.release_caches();
+    }
 }
 #[derive(Clone)]
 pub struct DefaultContextRuntime {
@@ -123,7 +148,7 @@ impl DefaultContextRuntime {
             .unwrap_or_else(|| crate::project_files::node_locale(|key| std::env::var(key).ok()));
         let assembler = PromptAssembler::with_environment(
             extension,
-            locale,
+            locale.clone(),
             options.platform.unwrap_or_else(|| {
                 match std::env::consts::OS {
                     "macos" => "darwin",
@@ -147,18 +172,32 @@ impl DefaultContextRuntime {
                 instruction_discovery: options.instruction_discovery,
                 prompt_contributions: options.prompt_contributions,
                 tool_result_budget: options.tool_result_budget,
+                memory_resolver: options.memory_resolver,
+                project_root: options.project_root,
+                memory_retrieval_timeout_ms: options.memory_retrieval_timeout_ms,
+                prompt_cache_coordinator: options
+                    .prompt_cache_coordinator
+                    .unwrap_or_else(|| Arc::new(super::cache::PromptCacheCoordinator::new(locale))),
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
                 state: Mutex::new(HashMap::new()),
+                cache_sessions: Mutex::new(HashSet::new()),
             }),
         }
     }
     /// Prompt-time state is session scoped; release it when a session ends.
     pub fn release_session(&self, session_id: &JsString) {
+        self.inner.cache_sessions.lock().unwrap().remove(session_id);
+        self.inner.prompt_cache_coordinator.release(session_id);
         self.inner
             .state
             .lock()
             .unwrap()
             .remove(&Some(session_id.clone()));
+    }
+
+    /// Release cache generations owned by this runtime (TS `dispose`).
+    pub fn dispose(&self) {
+        self.inner.release_caches();
     }
 
     async fn prepare(
@@ -176,7 +215,7 @@ impl DefaultContextRuntime {
             .into_iter()
             .map(|warning| Diagnostic {
                 code: warning.code.into(),
-                severity: "warning",
+                severity: "warning".into(),
                 message: warning.message,
             })
             .collect();
@@ -191,7 +230,7 @@ impl DefaultContextRuntime {
                 permission_mode: input.permission_mode.clone(),
                 run_mode: input.run_mode.clone(),
                 additional_working_directories: input.additional_working_directories.clone(),
-                abort,
+                abort: abort.clone(),
             };
             let variables = vec![
                 ("cwd".to_owned(), contribution_value(fields.get("cwd"))),
@@ -332,8 +371,57 @@ impl DefaultContextRuntime {
                 parts.push(context.text.clone());
             }
         }
+        let mut runtime_contexts = vec![(
+            "pilotdeck:user-context:0".to_owned(),
+            prompt
+                .sections
+                .user_context
+                .first()
+                .cloned()
+                .unwrap_or_default(),
+        )];
+        runtime_contexts.extend(
+            registered_runtime_contexts
+                .iter()
+                .map(|context| (context.name.clone(), context.text.clone())),
+        );
+        if let Some(resolver) = &self.inner.memory_resolver {
+            let (attachment, memory_diagnostics) = super::memory::build(
+                resolver.as_ref(),
+                super::memory::MemoryRetrieveInput {
+                    query: super::memory::recent_user_text(&messages),
+                    session_id: input.session_id_text.clone(),
+                    project_root: self
+                        .inner
+                        .project_root
+                        .as_ref()
+                        .unwrap_or(&input.cwd)
+                        .clone(),
+                    recent_messages: messages.clone(),
+                    signal: Cancellation::default(),
+                },
+                abort.as_ref(),
+                self.inner.memory_retrieval_timeout_ms,
+            )
+            .await;
+            if let Some(text) = attachment {
+                if input.surface == RuntimeContextSurface::SystemPrompt {
+                    parts.push(text.clone());
+                }
+                runtime_contexts.push(("pilotdeck:memory:0:0".into(), text));
+            }
+            diagnostics.extend(memory_diagnostics.into_iter().map(|d| Diagnostic {
+                code: d.code,
+                severity: d.severity,
+                message: d.message,
+            }));
+        }
+        // TS returns the partial context after an aborted memory retrieval,
+        // before instruction discovery, cache planning or prompt-time commit.
+        let memory_aborted = self.inner.memory_resolver.is_some()
+            && abort.as_ref().is_some_and(Cancellation::is_cancelled);
         let mut instruction_layers: Option<Vec<Layer>> = None;
-        if let Some(discovery) = self.inner.instruction_discovery.clone() {
+        if !memory_aborted && let Some(discovery) = self.inner.instruction_discovery.clone() {
             let result = tokio::task::spawn_blocking(move || discovery.discover())
                 .await
                 .unwrap_or_else(|error| Err(error.to_string()));
@@ -360,32 +448,48 @@ impl DefaultContextRuntime {
                 }
                 Err(_) => diagnostics.push(Diagnostic {
                     code: "instruction_discovery_failed".into(),
-                    severity: "warning",
+                    severity: "warning".into(),
                     message: "Failed to discover PILOTDECK.md instruction files.".into(),
                 }),
             }
         }
         let joined = parts.join("\n\n");
-        let mut runtime_contexts = vec![(
-            "pilotdeck:user-context:0".to_owned(),
-            prompt
-                .sections
-                .user_context
-                .first()
-                .cloned()
-                .unwrap_or_default(),
-        )];
-        runtime_contexts.extend(
-            registered_runtime_contexts
-                .iter()
-                .map(|context| (context.name.clone(), context.text.clone())),
-        );
         let runtime_context_messages =
             build_runtime_context_messages(&runtime_contexts, input.surface);
         let projected_messages =
             insert_before_latest_user_request(request_messages, &runtime_context_messages);
 
-        if !input.preview_only {
+        let cache_plan = if memory_aborted {
+            None
+        } else {
+            if let Some(session_id) = &input.session_id
+                && !session_id.is_empty()
+            {
+                self.inner
+                    .cache_sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session_id.clone());
+            }
+            self.inner.prompt_cache_coordinator.create_plan(
+                input.session_id.clone(),
+                super::cache::CachePlanInput {
+                    provider: fields.get("provider").unwrap_or(&UNDEFINED),
+                    model: fields.get("model").unwrap_or(&UNDEFINED),
+                    system_prompt: &joined,
+                    tools: &effective_tools,
+                    messages: &projected_messages,
+                    enabled: fields
+                        .get("protocol")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|s| s.equals_str("anthropic"))
+                        && fields.get("supportsPromptCache").and_then(JsValue::as_bool)
+                            == Some(true),
+                },
+                !input.preview_only,
+            )?
+        };
+        if !memory_aborted && !input.preview_only {
             self.inner.state.lock().unwrap().insert(
                 input.session_id,
                 TimeState {
@@ -444,7 +548,7 @@ impl DefaultContextRuntime {
             );
         }
         let tool_count = effective_tools.len();
-        Ok(object(vec![
+        let mut result = object(vec![
             ("messages", JsValue::Array(projected_messages)),
             ("systemPrompt", JsValue::String(joined.into())),
             (
@@ -481,7 +585,17 @@ impl DefaultContextRuntime {
                 ]),
             ),
             ("materialization", JsValue::Object(materialization)),
-        ]))
+        ]);
+        if let Some(plan) = cache_plan
+            && let JsValue::Object(result) = &mut result
+        {
+            result.insert(
+                "cacheBreakpoints".into(),
+                plan.get("messages").unwrap().clone(),
+            );
+            result.insert("cachePlan".into(), plan);
+        }
+        Ok(result)
     }
 
     /// `DefaultContextRuntime.applyToolResults` (TS:427-473): rewrite the new
@@ -573,7 +687,35 @@ impl ContextRuntime for DefaultContextRuntime {
     }
     fn try_auto_compact(&self, input: ContextInput) -> HostFuture<JsValue> {
         match &self.inner.compaction {
-            Some(port) => port.try_auto_compact(input, self.inner.max_context_tokens),
+            Some(port) => {
+                let session_id = input
+                    .fields
+                    .get("sessionId")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_else(|| "".into());
+                let future = port.try_auto_compact(input, self.inner.max_context_tokens);
+                let runtime = self.clone();
+                Box::pin(async move {
+                    let result = future.await?;
+                    if result
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|s| s.equals_str("compacted"))
+                    {
+                        if !session_id.is_empty() {
+                            runtime
+                                .inner
+                                .cache_sessions
+                                .lock()
+                                .unwrap()
+                                .insert(session_id.clone());
+                        }
+                        runtime.inner.prompt_cache_coordinator.reset(&session_id);
+                    }
+                    Ok(result)
+                })
+            }
             None => {
                 let context = input
                     .fields
@@ -752,7 +894,7 @@ struct MaxMessages {
 
 struct Diagnostic {
     code: String,
-    severity: &'static str,
+    severity: String,
     message: String,
 }
 struct Warning {
@@ -1195,7 +1337,7 @@ enum StableFrame<'a> {
 /// on this path (measured 2026-10-19, Node v22.22.0: first RangeError at 2540
 /// nested arrays, 2500 repeated successes), so the bound stays inside the
 /// deterministic-success region.
-fn stable_serialize(value: &JsValue) -> Result<String, StackOverflow> {
+pub(super) fn stable_serialize(value: &JsValue) -> Result<String, StackOverflow> {
     let mut out = String::new();
     let mut frames: Vec<StableFrame<'_>> = Vec::new();
     let mut next = Some(value);
@@ -1298,7 +1440,7 @@ fn persistence_diagnostic(message: String) -> JsValue {
     ])
 }
 
-fn object(fields: Vec<(&str, JsValue)>) -> JsValue {
+pub(super) fn object(fields: Vec<(&str, JsValue)>) -> JsValue {
     let mut object = JsObject::new();
     for (key, value) in fields {
         object.insert(key.into(), value);

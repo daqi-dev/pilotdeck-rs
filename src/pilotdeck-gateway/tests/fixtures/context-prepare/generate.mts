@@ -121,6 +121,7 @@ const { registerExtensionPromptContributions } = await import(
     join(baseline, 'src/context/prompt/registerExtensionPromptContributions.ts'),
   ).href
 );
+const { PromptCacheCoordinator } = await import(pathToFileURL(join(baseline, 'src/context/cache/PromptCacheCoordinator.ts')).href);
 const { InstructionDiscovery } = await import(
   pathToFileURL(join(baseline, 'src/context/instructions/InstructionDiscovery.ts')).href
 );
@@ -223,7 +224,7 @@ type Extension = {
   mcp?: any[];
   promptContributions?: { name: string; content: string }[];
 };
-type AbortMode = 'section' | 'variable';
+type AbortMode = 'section' | 'variable' | 'memory' | 'memory-pending';
 type DynamicText =
   | { kind: 'string'; value: string }
   /** Runtime non-string despite the TS `string` type; `resolveText` rejects it. */
@@ -258,6 +259,8 @@ type Step = {
   input: any;
   /** Use the previous step's prepared messages as this step's input. */
   messagesFromPrevious?: boolean;
+  cacheAction?: 'reset' | 'release' | 'dispose';
+  compact?: 'compacted' | 'skipped';
   /**
    * `before`: abort before `prepareForModel`; `section`/`variable`: abort from
    * inside that provider, after it has been called.
@@ -272,6 +275,9 @@ type Case = {
     extension?: Extension;
     discovery?: Discovery;
     contributions?: Contributions;
+    projectRoot?: string;
+    memoryTimeoutMs?: number;
+    memory?: { context?: string; error?: string; pending?: boolean; diagnostics?: any[]; abort?: boolean; expectQuery?: string; expectRecentCount?: number; expectProjectRoot?: string };
   };
   steps: Step[];
 };
@@ -493,6 +499,7 @@ const cases: Case[] = [
           messages: sevenProjectionMessages(),
         }),
       },
+      { clockMs: baseClock, input: baseInput({ maxMessages: { $number: '-Infinity' }, messages: sevenProjectionMessages() }) },
       {
         clockMs: baseClock,
         input: baseInput({ maxMessages: 2.5, messages: sevenProjectionMessages() }),
@@ -1006,7 +1013,62 @@ const cases: Case[] = [
     ],
   },
 ];
-assert.equal(cases.length, 41, 'case count');
+// Attachments: real builder, injected retrieval contract (no EdgeClaw dependency).
+const memoryInput = (extra: any = {}) => baseInput({ ...extra });
+for (const [name, memory, extra] of [
+  ['text', { context: '\uFEFF  remembered\n detail \uFEFF', expectQuery: ' newest ', expectRecentCount: 3, expectProjectRoot: '<fixture>/memory-root' }, {}],
+  ['empty', { context: ' \n\t\uFEFF', diagnostics: [{ code: 'memory_context_empty', severity: 'info', message: 'empty provider context' }] }, {}],
+  ['absent', { diagnostics: [{ code: 'memory_disabled', severity: 'warning', message: 'disabled' }] }, {}],
+  ['error', { error: 'provider boom' }, {}],
+  ['provider-truncated', { context: 'provider prefix…', diagnostics: [{ code: 'memory_context_empty', severity: 'warning', message: 'provider truncated result' }] }, {}],
+  ['projected', { context: 'after projection', expectQuery: ' newest ', expectRecentCount: 1 }, { maxMessages: 1 }],
+  ['no-user', { context: 'still retrieve', expectQuery: '', expectRecentCount: 0 }, { messages: [] }],
+] as const) {
+  cases.push({ name: `memory-${name}`, setup: { memory, ...(name === 'text' ? { projectRoot: '<fixture>/memory-root' } : {}) }, steps: [{ clockMs: baseClock, input: memoryInput({ messages: [user(text('old')), assistant(text('reply')), user(text('  '), text(' newest '), text('ignored'))], ...extra }) }] });
+}
+cases.push({ name: 'memory-user-surface', setup: { surface: 'user_message', memory: { context: 'durable memory' }, discovery: { projectRoot: '<fixture>/project', cwd: '<fixture>/project', pilotHome: '<fixture>/emptyhome' } }, steps: [{ clockMs: baseClock, input: memoryInput() }, { clockMs: baseClock, messagesFromPrevious: true, input: memoryInput() }] });
+cases.push({ name: 'memory-timeout', setup: { memory: { pending: true }, memoryTimeoutMs: 2 }, steps: [{ clockMs: baseClock, input: memoryInput() }] });
+for (const mode of ['before', 'memory', 'memory-pending'] as const) {
+  cases.push({ name: `memory-abort-${mode}`, setup: { memory: { abort: true, context: 'returned while aborting' }, discovery: { projectRoot: '<fixture>/project', cwd: '<fixture>/project', pilotHome: '<fixture>/emptyhome' } }, steps: [{ clockMs: baseClock, abort: mode, input: memoryInput({ protocol: 'anthropic', supportsPromptCache: true }) }, { clockMs: baseClock + 86400000, input: memoryInput() }] });
+}
+// Stable cwd is intentional: a temp path inside the SHA-256 input cannot be
+// normalized after hashing. These cases perform no instruction filesystem IO.
+const cacheInput = (extra: any = {}) => baseInput({ cwd: '/pdrs-cache-fixture', customSystemPrompt: 'cache system', protocol: 'anthropic', supportsPromptCache: true, ...extra });
+cases.push({ name: 'cache-gating', steps: [
+  { clockMs: baseClock, input: cacheInput() },
+  { clockMs: baseClock, input: cacheInput({ protocol: 'openai' }) },
+  { clockMs: baseClock, input: cacheInput({ supportsPromptCache: false }) },
+  { clockMs: baseClock, input: cacheInput({ supportsPromptCache: 'true' }) },
+  { clockMs: baseClock, input: cacheInput({ protocol: 'Anthropic' }) },
+] });
+cases.push({ name: 'cache-generations', steps: [
+  { clockMs: baseClock, input: cacheInput() },
+  { clockMs: baseClock, input: cacheInput() },
+  { clockMs: baseClock, input: cacheInput({ previewOnly: true, messages: [user(text('preview'))] }) },
+  { clockMs: baseClock, input: cacheInput() },
+  { clockMs: baseClock, input: cacheInput({ messages: [user(text('committed'))] }) },
+  { clockMs: baseClock, input: cacheInput({ sessionId: 'other' }) },
+  { clockMs: baseClock, cacheAction: 'reset', input: cacheInput({ previewOnly: true, messages: [user(text('committed'))] }) },
+  { clockMs: baseClock, input: cacheInput({ messages: [user(text('committed'))] }) },
+  { clockMs: baseClock, cacheAction: 'reset', input: cacheInput({ supportsPromptCache: false }) },
+  { clockMs: baseClock, input: cacheInput({ messages: [user(text('committed'))] }) },
+  { clockMs: baseClock, cacheAction: 'release', input: cacheInput() },
+  { clockMs: baseClock, input: cacheInput({ messages: [user(text('different'))] }) },
+  { clockMs: baseClock, cacheAction: 'dispose', input: cacheInput({ messages: [user(text('different'))] }) },
+  { clockMs: baseClock, compact: 'skipped', input: cacheInput({ messages: [user(text('different'))] }) },
+  { clockMs: baseClock, compact: 'compacted', input: cacheInput({ messages: [user(text('different'))] }) },
+] });
+const sys = (s: string) => ({ role: 'system', content: [text(s)] });
+cases.push({ name: 'cache-breakpoint-edges', steps: [
+  [], [sys('only')], [user(text('1'))], [user(text('1')), sys('middle'), assistant(text('2')), user(text('3'))],
+  [user(text('old')), sys('middle'), user(text('1')), assistant(text('2')), user(text('3')), sys('tail')],
+].map(messages => ({ clockMs: baseClock, input: cacheInput({ messages, customSystemPrompt: '', runtimeContextSurface: 'other' }) })) });
+cases.push({ name: 'cache-tool-order', steps: [
+  [{ name: 'z', inputSchema: { b: 2, a: 1 } }, { name: 'a', inputSchema: {} }, { name: 'a', inputSchema: { z: 1 } }, { name: 'Ä', inputSchema: {} }, { name: 'A', inputSchema: {} }],
+  [{ name: 'A', inputSchema: {} }, { name: 'Ä', inputSchema: {} }, { name: 'a', inputSchema: { z: 1 } }, { name: 'a', inputSchema: {} }, { name: 'z', inputSchema: { a: 1, b: 2 } }],
+].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
+cases.push({ name: 'cache-memory-user-surface', setup: { surface: 'user_message', memory: { context: 'cache memory' } }, steps: [{ clockMs: baseClock, input: cacheInput({ messages: [user(text('old')), assistant(text('reply')), user(text('new'))] }) }] });
+assert.equal(cases.length, 58, 'case count');
 
 // ---------------------------------------------------------------- execute
 // JSON cannot carry NaN/Infinity/-0. Inputs use {$number: "..."} markers and
@@ -1138,7 +1200,30 @@ for (const spec of cases) {
       });
     }
   }
+  const coordinator = new PromptCacheCoordinator();
+  const memoryContractErrors: unknown[] = [];
+  const memoryResolver = setup.memory ? {
+    async retrieve(input: any) {
+      try {
+      assert.equal(input.projectRoot, setup.memory.expectProjectRoot ?? setup.projectRoot ?? (spec.name.startsWith('cache-') ? '/pdrs-cache-fixture' : join(output, 'project')));
+      assert.equal(input.sessionId, 'session');
+      if (setup.memory.expectQuery !== undefined) assert.equal(input.query, setup.memory.expectQuery);
+      if (setup.memory.expectRecentCount !== undefined) assert.equal(input.recentMessages.length, setup.memory.expectRecentCount);
+      assert.ok(input.signal instanceof AbortSignal);
+      } catch (error) { memoryContractErrors.push(error); throw error; }
+      if (setup.memory.abort && (abortState.mode === 'memory' || abortState.mode === 'memory-pending')) abortState.controller!.abort();
+      if (abortState.mode === 'memory-pending') return await new Promise(() => {});
+      if (setup.memory.pending) return await new Promise(() => {});
+      if (setup.memory.error) throw new Error(setup.memory.error);
+      return { systemContext: setup.memory.context, diagnostics: setup.memory.diagnostics ?? [] };
+    },
+    async captureTurn() {},
+  } : undefined;
+  let compactResult = 'skipped';
   const runtime = new DefaultContextRuntime({
+    memoryResolver,
+    projectRoot: setup.projectRoot,
+    memoryRetrievalTimeoutMs: setup.memoryTimeoutMs,
     extension: resolver(setup.extension),
     promptContributions,
     includeExtensionsWithCustomSystemPrompt: setup.includeExtensions ?? false,
@@ -1151,12 +1236,8 @@ for (const spec of cases) {
         )
       : undefined,
     now: () => new Date(clockMs),
-    promptCacheCoordinator: {
-      createPlan: () => undefined,
-      reset() {},
-      release() {},
-    },
-    compaction: {},
+    promptCacheCoordinator: coordinator,
+    compaction: { async autoCompact() { return { type: compactResult }; } } as any,
   });
   const recordedSteps: any[] = [];
   let previousOutput: any;
@@ -1176,6 +1257,9 @@ for (const spec of cases) {
       ),
     );
     const normalizedInput = normalize(encodeNumbers(input), output);
+    if (step.compact) { compactResult = step.compact; await runtime.tryAutoCompact({ sessionId: input.sessionId } as any); }
+    if (step.cacheAction === 'dispose') runtime.dispose();
+    else if (step.cacheAction) coordinator[step.cacheAction](input.sessionId);
     const controller = new AbortController();
     abortState.controller = step.abort ? controller : undefined;
     abortState.mode = step.abort;
@@ -1186,12 +1270,14 @@ for (const spec of cases) {
       recordedSteps.push({
         clockMs,
         ...(step.abort ? { abort: step.abort } : {}),
+        ...(step.cacheAction ? { cacheAction: step.cacheAction } : {}),
+        ...(step.compact ? { compact: step.compact } : {}),
         input: normalizedInput,
         output: JSON.stringify(normalize(result, output)),
       });
       previousOutput = result;
     } catch (error) {
-      if (step.abort) {
+      if (step.abort && step.abort !== 'memory' && step.abort !== 'memory-pending') {
         // Pin the real shape, not only the message: the default reason is a
         // DOMException with name=AbortError and legacy code=20.
         assert.ok(error instanceof Error);
@@ -1202,11 +1288,14 @@ for (const spec of cases) {
       recordedSteps.push({
         clockMs,
         ...(step.abort ? { abort: step.abort } : {}),
+        ...(step.cacheAction ? { cacheAction: step.cacheAction } : {}),
+        ...(step.compact ? { compact: step.compact } : {}),
         input: normalizedInput,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
+  assert.deepEqual(memoryContractErrors, [], `memory contract ${spec.name}`);
   recordedCases.push({
     name: spec.name,
     setup: normalize(setup, output),

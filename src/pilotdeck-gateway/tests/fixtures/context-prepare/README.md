@@ -12,11 +12,11 @@ locale。
 真实运行时注入：
 
 - `now: () => new Date(clockMs)` — 每步时钟由用例给定；
-- `promptCacheCoordinator` — 返回 `undefined` 的空实现，隔离缓存代次（本 PR 不含
-  cache plan）；
+- `promptCacheCoordinator` — 真实 `PromptCacheCoordinator`，包含 generation、preview、reset、release 与 dispose；
+- `memoryResolver` — 注入可控 provider，真实 `MemoryAttachmentBuilder` 执行包装、JS trim、诊断、超时与中止；
 - `promptContributions` — 用例可构造真实 `PromptContributionRegistry`，并调用真实
   `registerExtensionPromptContributions`；无 contributions 的用例保持 `undefined`；
-- `compaction: {}` — 只避免构造 native compaction provider，`prepareForModel` 不读；
+- `compaction.autoCompact` — 注入 compacted/skipped 结果，验证真实 runtime 的 cache reset 接线；
 - 扩展 resolver — 由用例的 commands/skills/mcp 数组驱动；
 - `InstructionDiscovery` — 真实 Node 文件系统 + 真实层级发现；
 - `abortSignal` — 带 `abort` 的步骤构造真实 `AbortController`：`before` 在调用前
@@ -40,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 41 个用例 / 63 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 58 个用例 / 108 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -83,7 +83,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   7 条并告警 `Truncated 8 message(s) to respect maxMessages=-1.`（`droppedCount`
   可以大于消息数）；`-0` 等价于 0；`2.5` 在 `messages[4.5]` 读到 undefined，整体
   抛 `TypeError: Cannot read properties of undefined (reading 'content')`；
-  `NaN` / `Infinity` 不截断。JSON 不能表示这些数，生成器在 oracle 输入里用
+  `NaN` / `Infinity` 不截断；`-Infinity` 丢弃全部消息，warning 含 Infinity，`droppedCount` 在 JSON 输出为 null。JSON 不能表示这些数，生成器在 oracle 输入里用
   `{"$number": "NaN" | "Infinity" | "-Infinity" | "-0"}` 标记，Rust 回放重建。
   消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：超过 2000 层容器
   按 V8 同文 `RangeError: Maximum call stack size exceeded` 拒绝（同一卡片的
@@ -99,9 +99,19 @@ tool schema；`contributions-abort-during-provider` 若缺 `resolveText` provide
 检查，会返回 `LEAK` 而不是中止；`contributions-abort-during-variable` 若缺变量
 provider 后的检查，会返回 `LATE` 而不是中止。
 
-切分点：内存附件（`MemoryAttachmentBuilder` / `MemoryResolver`，含
-`memory_provider_error` 诊断与 abort 早退）留 **A6.6-pr5b**；prompt contributions
-的 abort 检查已在本夹具覆盖。prompt cache plan（`cachePlan` / `cacheBreakpoints`）
-不在本夹具范围，由缓存 owner 接入。运行时上下文只从 user-context、prompt
-contributions 与 instructions 生成，`applyToolResults` 等 operation 仍走 A6.6-pr1
-的默认 unsupported。
+本轮新增：
+
+- memory 有内容、空白/缺省、provider 报错、provider 已截断文本与透传诊断；
+  builder 不承担 provider 的检索/截断策略。注入参数核对 query（最新 user 的首个非空 text，保留原空白）、
+  sessionId、projectRoot 覆盖/回退、投影后的 recentMessages。system/user surface、重复准备时去掉旧 runtime context；
+- memory 2ms 超时、预先中止、provider 内中止并 resolve、provider 内中止并保持 pending。
+  中止返回部分 context，跳过 instructions/cache/time-state commit；Rust 同时验证 child signal 被中止；
+- cache 协议/布尔能力开关、空/全 system/1/3/超过 3 条消息断点、system 排除、user surface 插入后的索引；
+  相同指纹复用 generation、消息变化增加、session 隔离、preview 不提交、不消费 reset、
+  disabled commit 消费 reset、release/dispose 清代次、仅 compacted 触发 reset；
+- cache 工具按 ICU 名称与 stableSerialize 二级排序（重复名、大小写、变音字符，逆序输入同指纹）；
+  整个 cachePlan（包括 SHA-256）逐字节比对。cache 场景使用固定 `/pdrs-cache-fixture` cwd：
+  临时目录进入哈希后无法再做路径规范化，这些场景不启用 instruction 文件 IO。
+
+已有 41 个 case 保留真实 TS 输出；本次更换真实 coordinator 后，其旧输入没有启用 cache，旧输出不变。
+新增/扩展行为的临时实现变异、原始失败日志与恢复后的回放记录见交付 `_tmp/20261022-a66-pr5b/RESULT.md`。
