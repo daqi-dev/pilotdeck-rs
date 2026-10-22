@@ -1592,6 +1592,400 @@
           }
         }
       ]
+    },
+    {
+      "name": "run-events-non-numeric-last-seq",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": [
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e1"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e2"
+              },
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e3"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": "5"
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": null
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": true
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": [
+                2
+              ]
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 6
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": "10"
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 2
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": "3"
+            }
+          }
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 0
+          },
+          "recordPatch": {
+            "record": 0,
+            "set": {
+              "lastSeq": null
+            }
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "keys": [
+            "events",
+            "nextSeq",
+            "gap"
+          ],
+          "result": {
+            "events": [],
+            "nextSeq": "5",
+            "gap": true
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq",
+            "gap"
+          ],
+          "result": {
+            "events": [],
+            "nextSeq": null,
+            "gap": true
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq",
+            "gap"
+          ],
+          "result": {
+            "events": [],
+            "nextSeq": true,
+            "gap": true
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq",
+            "gap"
+          ],
+          "result": {
+            "events": [],
+            "nextSeq": [
+              2
+            ],
+            "gap": true
+          }
+        },
+        {
+          "keys": [
+            "events"
+          ],
+          "result": {
+            "events": []
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 3,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e3"
+                }
+              }
+            ],
+            "nextSeq": 3
+          }
+        },
+        {
+          "keys": [
+            "events",
+            "nextSeq"
+          ],
+          "result": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e1"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e2"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "agent_status",
+                  "runId": "r1",
+                  "event": "e3"
+                }
+              }
+            ],
+            "nextSeq": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-corrupt-snapshot-errors",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": [
+              {
+                "type": "agent_status",
+                "runId": "r1",
+                "event": "e1"
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          },
+          "snapshot": "{"
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          },
+          "snapshot": "null"
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1"
+          },
+          "snapshot": "{\"schemaVersion\":2,\"records\":[],\"events\":{}}"
+        },
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "afterSeq": 0
+          },
+          "snapshot": "{\"schemaVersion\":1,\"records\":[null],\"events\":{}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "error": {
+            "name": "SyntaxError",
+            "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+          }
+        },
+        {
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot read properties of null (reading 'schemaVersion')"
+          }
+        },
+        {
+          "error": {
+            "name": "Error",
+            "message": "invalid run registry snapshot"
+          }
+        },
+        {
+          "error": {
+            "name": "TypeError",
+            "message": "Cannot read properties of null (reading 'projectKey')"
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-not-found-lone-surrogate-runid",
+      "setup": {
+        "seed": [
+          {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "r1",
+            "material": "m",
+            "events": []
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "runEvents",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "x\ud800y",
+            "afterSeq": 2
+          }
+        },
+        {
+          "method": "runGet",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "x\ud800y"
+          }
+        },
+        {
+          "method": "runReattach",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "p",
+            "runId": "x\ud800y"
+          }
+        }
+      ],
+      "outcomes": [
+        {
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "RUN_NOT_FOUND",
+            "message": "Run x\ud800y is not registered."
+          }
+        },
+        {
+          "keys": null
+        },
+        {
+          "keys": null
+        }
+      ]
     }
   ]
 }

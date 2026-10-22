@@ -248,11 +248,18 @@ fn assert_error(
             );
             assert_eq!(portable(&error.to_string()), message, "{context}");
         }
-        // SyntaxError/TypeError: same layer; V8 wording is not claimed.
-        _ => assert!(
-            matches!(error, RunRegistryError::Invalid(_)),
-            "{context}: {name} {message} vs {error:?}"
-        ),
+        // SyntaxError/TypeError: a corrupt snapshot carries the TS builtin
+        // name (message included); the mutate-path strict errors keep the
+        // plain Invalid shape, where V8 wording is not claimed.
+        "SyntaxError" | "TypeError" => match error {
+            RunRegistryError::Named(actual, text) => {
+                assert_eq!(*actual, name, "{context}");
+                assert_eq!(portable(text), message, "{context}");
+            }
+            RunRegistryError::Invalid(_) => {}
+            other => panic!("{context}: {name} {message} vs {other:?}"),
+        },
+        _ => panic!("{context}: unexpected error name {name}: {error:?}"),
     }
 }
 

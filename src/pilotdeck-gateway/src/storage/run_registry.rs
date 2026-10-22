@@ -32,9 +32,13 @@ pub enum RunRegistryError {
     Conflict(String),
     NotFound(String),
     Terminal(String),
-    /// TS plain `Error`/`SyntaxError`/`TypeError`: snapshot syntax or shape.
-    /// JSON syntax wording follows the pinned V8 formatter; shape messages match TS.
+    /// TS plain `Error`: snapshot shape. Messages match TS.
     Invalid(String),
+    /// TS builtin JS errors that cross with their real `name` (RunRegistry.ts:
+    /// 95-96,101): the `SyntaxError` from `JSON.parse` of a corrupt
+    /// snapshot and the `TypeError` from property reads on a `null` snapshot.
+    /// JSON syntax wording follows the pinned V8 formatter.
+    Named(&'static str, String),
     /// RunRegistry.ts:142.
     LockTimeout(String),
     Io(io::Error),
@@ -48,6 +52,17 @@ impl RunRegistryError {
             _ => None,
         }
     }
+    /// The JS error name that crosses the gateway read face unchanged
+    /// (InProcessGateway.ts:2525-2528,2551-2552 propagate the thrown object):
+    /// `RunRegistryError` for business codes, the builtin name for
+    /// `SyntaxError`/`TypeError`, plain `Error` otherwise.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Conflict(_) | Self::NotFound(_) | Self::Terminal(_) => "RunRegistryError",
+            Self::Named(name, _) => name,
+            _ => "Error",
+        }
+    }
 }
 impl fmt::Display for RunRegistryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,6 +71,7 @@ impl fmt::Display for RunRegistryError {
             | Self::NotFound(m)
             | Self::Terminal(m)
             | Self::Invalid(m)
+            | Self::Named(_, m)
             | Self::LockTimeout(m) => f.write_str(m),
             Self::Io(e) => e.fmt(f),
         }
@@ -571,13 +587,15 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
     // Node readFile(path, "utf8") replaces invalid bytes.
     let source = String::from_utf8_lossy(&bytes);
     let value = parse_json(&source).map_err(|error| {
-        invalid(
+        named(
+            "SyntaxError",
             pilotdeck_protocol::json_syntax::parse_error(&source)
                 .unwrap_or_else(|| error.to_string()),
         )
     })?;
     if matches!(value, JsValue::Null) {
-        return Err(invalid(
+        return Err(named(
+            "TypeError",
             "Cannot read properties of null (reading 'schemaVersion')",
         ));
     }
@@ -590,7 +608,8 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
     let mut snapshot = Snapshot::default();
     for record in records {
         if matches!(record, JsValue::Null) {
-            return Err(invalid(
+            return Err(named(
+                "TypeError",
                 "Cannot read properties of null (reading 'projectKey')",
             ));
         }
@@ -735,4 +754,7 @@ fn now() -> Result<JsValue> {
 }
 fn invalid(message: impl Into<String>) -> RunRegistryError {
     RunRegistryError::Invalid(message.into())
+}
+fn named(name: &'static str, message: impl Into<String>) -> RunRegistryError {
+    RunRegistryError::Named(name, message.into())
 }
