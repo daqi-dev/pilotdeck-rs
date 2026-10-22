@@ -53628,7 +53628,7 @@
         "retentionMs": 60000
       },
       "initial": {
-        "stats.jsonl": "{\"sessionId\":\"expired\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2000-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"rfc-gmt\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"Mon, 01 Jan 2001 00:00:00 GMT\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-no-colon\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-01-01T00:00:00+0800\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-01-01T24:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"lowercase-tz\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-01-01t00:00:00.000z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"feb-30-rollover\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-02-30T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"zone-less\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-01-01T00:00:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"single-digit-date\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-1-1\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-15\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2001-01-01T00:00:00+15:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+        "stats.jsonl": "{\"sessionId\":\"expired\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2000-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"non-ascii-offset\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+汉a\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"fraction-without-seconds\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"hour-24-with-sub-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T24:00:00.0001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"six-digit-unsigned-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"002000-01-01T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"leap-day-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2024-02-29T12:34:56.789Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"canonical-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-02T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
       },
       "steps": [
         {
@@ -53636,7 +53636,7 @@
           "expected": {
             "result": null,
             "files": {
-              "stats.jsonl": "{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+              "stats.jsonl": "{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"non-ascii-offset\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+汉a\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"fraction-without-seconds\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"hour-24-with-sub-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T24:00:00.0001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"six-digit-unsigned-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"002000-01-01T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"canonical-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-02T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
             }
           }
         },
@@ -53644,39 +53644,39 @@
           "op": "snapshot",
           "expected": {
             "result": {
-              "totalRequests": 7,
-              "totalInputTokens": 49,
-              "totalOutputTokens": 21,
-              "totalCost": 0.000511,
-              "totalBaselineCost": 0.000511,
+              "totalRequests": 12,
+              "totalInputTokens": 84,
+              "totalOutputTokens": 36,
+              "totalCost": 0.0008760000000000002,
+              "totalBaselineCost": 0.0008760000000000002,
               "totalSavedCost": 0,
               "perScenario": {
-                "default": 7
+                "default": 12
               },
               "perModel": {
-                "anthropic/claude-sonnet-4-5-20250929": 7
+                "anthropic/claude-sonnet-4-5-20250929": 12
               },
               "perProvider": {
-                "anthropic": 7
+                "anthropic": 12
               },
               "perTier": {},
               "perRole": {},
               "costSources": {
-                "built_in_estimate": 7
+                "built_in_estimate": 12
               },
               "perModelUsage": {
                 "anthropic/claude-sonnet-4-5-20250929": {
                   "provider": "anthropic",
                   "model": "claude-sonnet-4-5-20250929",
-                  "totalRequests": 7,
-                  "inputTokens": 49,
-                  "outputTokens": 21,
+                  "totalRequests": 12,
+                  "inputTokens": 84,
+                  "outputTokens": 36,
                   "cacheReadTokens": 0,
                   "cacheWriteTokens": 0,
-                  "totalTokens": 70,
-                  "totalCost": 0.000511,
+                  "totalTokens": 120,
+                  "totalCost": 0.0008760000000000002,
                   "costSources": {
-                    "built_in_estimate": 7
+                    "built_in_estimate": 12
                   },
                   "roles": {}
                 }
@@ -53689,39 +53689,39 @@
           "expected": {
             "result": [
               {
-                "totalRequests": 5,
-                "totalInputTokens": 35,
-                "totalOutputTokens": 15,
-                "totalCost": 0.000365,
-                "totalBaselineCost": 0.000365,
+                "totalRequests": 10,
+                "totalInputTokens": 70,
+                "totalOutputTokens": 30,
+                "totalCost": 0.0007300000000000001,
+                "totalBaselineCost": 0.0007300000000000001,
                 "totalSavedCost": 0,
                 "perScenario": {
-                  "default": 5
+                  "default": 10
                 },
                 "perModel": {
-                  "anthropic/claude-sonnet-4-5-20250929": 5
+                  "anthropic/claude-sonnet-4-5-20250929": 10
                 },
                 "perProvider": {
-                  "anthropic": 5
+                  "anthropic": 10
                 },
                 "perTier": {},
                 "perRole": {},
                 "costSources": {
-                  "built_in_estimate": 5
+                  "built_in_estimate": 10
                 },
                 "perModelUsage": {
                   "anthropic/claude-sonnet-4-5-20250929": {
                     "provider": "anthropic",
                     "model": "claude-sonnet-4-5-20250929",
-                    "totalRequests": 5,
-                    "inputTokens": 35,
-                    "outputTokens": 15,
+                    "totalRequests": 10,
+                    "inputTokens": 70,
+                    "outputTokens": 30,
                     "cacheReadTokens": 0,
                     "cacheWriteTokens": 0,
-                    "totalTokens": 50,
-                    "totalCost": 0.000365,
+                    "totalTokens": 100,
+                    "totalCost": 0.0007300000000000001,
                     "costSources": {
-                      "built_in_estimate": 5
+                      "built_in_estimate": 10
                     },
                     "roles": {}
                   }
@@ -53778,15 +53778,15 @@
               {
                 "provider": "anthropic",
                 "model": "claude-sonnet-4-5-20250929",
-                "totalRequests": 7,
-                "inputTokens": 49,
-                "outputTokens": 21,
+                "totalRequests": 12,
+                "inputTokens": 84,
+                "outputTokens": 36,
                 "cacheReadTokens": 0,
                 "cacheWriteTokens": 0,
-                "totalTokens": 70,
-                "totalCost": 0.000511,
+                "totalTokens": 120,
+                "totalCost": 0.0008760000000000002,
                 "costSources": {
-                  "built_in_estimate": 7
+                  "built_in_estimate": 12
                 },
                 "roles": {}
               }
@@ -53803,39 +53803,39 @@
           "op": "snapshot",
           "expected": {
             "result": {
-              "totalRequests": 7,
-              "totalInputTokens": 49,
-              "totalOutputTokens": 21,
-              "totalCost": 0.000511,
-              "totalBaselineCost": 0.000511,
+              "totalRequests": 12,
+              "totalInputTokens": 84,
+              "totalOutputTokens": 36,
+              "totalCost": 0.0008760000000000002,
+              "totalBaselineCost": 0.0008760000000000002,
               "totalSavedCost": 0,
               "perScenario": {
-                "default": 7
+                "default": 12
               },
               "perModel": {
-                "anthropic/claude-sonnet-4-5-20250929": 7
+                "anthropic/claude-sonnet-4-5-20250929": 12
               },
               "perProvider": {
-                "anthropic": 7
+                "anthropic": 12
               },
               "perTier": {},
               "perRole": {},
               "costSources": {
-                "built_in_estimate": 7
+                "built_in_estimate": 12
               },
               "perModelUsage": {
                 "anthropic/claude-sonnet-4-5-20250929": {
                   "provider": "anthropic",
                   "model": "claude-sonnet-4-5-20250929",
-                  "totalRequests": 7,
-                  "inputTokens": 49,
-                  "outputTokens": 21,
+                  "totalRequests": 12,
+                  "inputTokens": 84,
+                  "outputTokens": 36,
                   "cacheReadTokens": 0,
                   "cacheWriteTokens": 0,
-                  "totalTokens": 70,
-                  "totalCost": 0.000511,
+                  "totalTokens": 120,
+                  "totalCost": 0.0008760000000000002,
                   "costSources": {
-                    "built_in_estimate": 7
+                    "built_in_estimate": 12
                   },
                   "roles": {}
                 }
@@ -53888,41 +53888,41 @@
           "op": "snapshot",
           "expected": {
             "result": {
-              "totalRequests": 8,
-              "totalInputTokens": 50,
-              "totalOutputTokens": 22,
-              "totalCost": 0.0005235,
-              "totalBaselineCost": 0.0005235,
+              "totalRequests": 13,
+              "totalInputTokens": 85,
+              "totalOutputTokens": 37,
+              "totalCost": 0.0008885000000000002,
+              "totalBaselineCost": 0.0008885000000000002,
               "totalSavedCost": 0,
               "perScenario": {
-                "default": 8
+                "default": 13
               },
               "perModel": {
-                "anthropic/claude-sonnet-4-5-20250929": 7,
+                "anthropic/claude-sonnet-4-5-20250929": 12,
                 "openai/gpt-4o": 1
               },
               "perProvider": {
-                "anthropic": 7,
+                "anthropic": 12,
                 "openai": 1
               },
               "perTier": {},
               "perRole": {},
               "costSources": {
-                "built_in_estimate": 8
+                "built_in_estimate": 13
               },
               "perModelUsage": {
                 "anthropic/claude-sonnet-4-5-20250929": {
                   "provider": "anthropic",
                   "model": "claude-sonnet-4-5-20250929",
-                  "totalRequests": 7,
-                  "inputTokens": 49,
-                  "outputTokens": 21,
+                  "totalRequests": 12,
+                  "inputTokens": 84,
+                  "outputTokens": 36,
                   "cacheReadTokens": 0,
                   "cacheWriteTokens": 0,
-                  "totalTokens": 70,
-                  "totalCost": 0.000511,
+                  "totalTokens": 120,
+                  "totalCost": 0.0008760000000000002,
                   "costSources": {
-                    "built_in_estimate": 7
+                    "built_in_estimate": 12
                   },
                   "roles": {}
                 },
@@ -53950,7 +53950,88 @@
           "expected": {
             "result": null,
             "files": {
-              "stats.jsonl": "{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"fresh\",\"turnId\":\"t1\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"startedAt\":\"2999-01-02T00:00:00.000Z\",\"endedAt\":\"2999-01-02T00:00:01.000Z\",\"cost\":{\"input\":0.0000024999999999999998,\"output\":0.000009999999999999999,\"cacheRead\":0,\"total\":0.000012499999999999999},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000012499999999999999}\n"
+              "stats.jsonl": "{\"sessionId\":\"keep\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T00:00:01.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"malformed\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2999-01-01T00:00:00.000Z\",\"endedAt\":\"not-a-date\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-hour\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+99:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-offset-minute\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+01:99\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"offset-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+24:00\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"bad-day-32\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-32T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"non-ascii-offset\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00:00+汉a\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"fraction-without-seconds\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T00:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"hour-24-with-sub-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2000-01-01T24:00:00.0001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"six-digit-unsigned-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"002000-01-01T00:00:00Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"canonical-ms\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-02T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"future-hour-24\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2001-01-01T00:00:00.000Z\",\"endedAt\":\"2999-01-01T24:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"fresh\",\"turnId\":\"t1\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"openai\",\"model\":\"gpt-4o\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"startedAt\":\"2999-01-02T00:00:00.000Z\",\"endedAt\":\"2999-01-02T00:00:01.000Z\",\"cost\":{\"input\":0.0000024999999999999998,\"output\":0.000009999999999999999,\"cacheRead\":0,\"total\":0.000012499999999999999},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000012499999999999999}\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "retention-boundary",
+      "now": 1772366400500,
+      "config": {
+        "enabled": true,
+        "retentionMs": 60000
+      },
+      "initial": {
+        "stats.jsonl": "{\"sessionId\":\"boundary-equal\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.500Z\",\"endedAt\":\"2026-03-01T11:59:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"boundary-inside\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.501Z\",\"endedAt\":\"2026-03-01T11:59:00.501Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"boundary-outside\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.499Z\",\"endedAt\":\"2026-03-01T11:59:00.499Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"leap-day-old\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2024-02-29T12:34:56.789Z\",\"endedAt\":\"2024-02-29T12:34:56.789Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+      },
+      "steps": [
+        {
+          "op": "files",
+          "expected": {
+            "result": null,
+            "files": {
+              "stats.jsonl": "{\"sessionId\":\"boundary-equal\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.500Z\",\"endedAt\":\"2026-03-01T11:59:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"boundary-inside\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.501Z\",\"endedAt\":\"2026-03-01T11:59:00.501Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+            }
+          }
+        },
+        {
+          "op": "snapshot",
+          "expected": {
+            "result": {
+              "totalRequests": 2,
+              "totalInputTokens": 14,
+              "totalOutputTokens": 6,
+              "totalCost": 0.000146,
+              "totalBaselineCost": 0.000146,
+              "totalSavedCost": 0,
+              "perScenario": {
+                "default": 2
+              },
+              "perModel": {
+                "anthropic/claude-sonnet-4-5-20250929": 2
+              },
+              "perProvider": {
+                "anthropic": 2
+              },
+              "perTier": {},
+              "perRole": {},
+              "costSources": {
+                "built_in_estimate": 2
+              },
+              "perModelUsage": {
+                "anthropic/claude-sonnet-4-5-20250929": {
+                  "provider": "anthropic",
+                  "model": "claude-sonnet-4-5-20250929",
+                  "totalRequests": 2,
+                  "inputTokens": 14,
+                  "outputTokens": 6,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": 0,
+                  "totalTokens": 20,
+                  "totalCost": 0.000146,
+                  "costSources": {
+                    "built_in_estimate": 2
+                  },
+                  "roles": {}
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "reopen",
+          "expected": {
+            "result": null
+          }
+        },
+        {
+          "op": "files",
+          "expected": {
+            "result": null,
+            "files": {
+              "stats.jsonl": "{\"sessionId\":\"boundary-equal\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.500Z\",\"endedAt\":\"2026-03-01T11:59:00.500Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"boundary-inside\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"2026-03-01T11:59:00.501Z\",\"endedAt\":\"2026-03-01T11:59:00.501Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
             }
           }
         }

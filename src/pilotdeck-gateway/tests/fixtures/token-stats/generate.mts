@@ -66,6 +66,8 @@ function modelUsageProjection(stats: any, input: any) {
 type Scenario = {
   name: string;
   config: any;
+  /** Fixed `Date.now()` for boundary scenarios; omitted means the real clock. */
+  now?: number;
   initial?: Record<string, string>;
   ops: Array<{ op: string; [key: string]: any }>;
 };
@@ -238,9 +240,12 @@ const MALFORMED_ROW = {
   sessionId: 'malformed',
   endedAt: 'not-a-date',
 };
-// Every row below exercises one `Date.parse` branch the retention decision can
-// reach. Old rows must be dropped (TS parsed them); malformed rows must be kept
-// (`!Number.isFinite`).
+// Rows the retention decision can reach. V8 parses a wide legacy grammar; the
+// Rust port deliberately interprets only the canonical `toISOString()` shape
+// and keeps everything else (see RESULT.md「修复轮 2」). Rows whose V8 parse is a
+// finite *past* instant are therefore absent here: TS deletes them, Rust keeps
+// them, and that divergence is pinned by Rust unit tests instead. Rows below
+// are either canonical or NaN in V8, so both implementations agree.
 const OLD = (sessionId: string, endedAt: string) => ({
   ...RETAINED_ROW,
   sessionId,
@@ -255,14 +260,16 @@ const RETENTION_ROWS = [
   OLD('bad-offset-minute', '2000-01-01T00:00:00+01:99'),
   OLD('offset-24', '2000-01-01T00:00:00+24:00'),
   OLD('bad-day-32', '2000-01-32T00:00:00Z'),
-  OLD('rfc-gmt', 'Mon, 01 Jan 2001 00:00:00 GMT'),
-  OLD('offset-no-colon', '2001-01-01T00:00:00+0800'),
-  OLD('hour-24', '2001-01-01T24:00:00Z'),
-  OLD('lowercase-tz', '2001-01-01t00:00:00.000z'),
-  OLD('feb-30-rollover', '2001-02-30T00:00:00Z'),
-  OLD('zone-less', '2001-01-01T00:00:00'),
-  OLD('single-digit-date', '2001-1-1'),
-  OLD('offset-15', '2001-01-01T00:00:00+15:00'),
+  // codex r2 inputs: all NaN in V8, so both sides keep them. `+汉a` used to
+  // panic the old hand-written offset parser; the rest slipped through its
+  // grammar and were deleted as old rows.
+  OLD('non-ascii-offset', '2000-01-01T00:00:00+汉a'),
+  OLD('fraction-without-seconds', '2000-01-01T00:00.500Z'),
+  OLD('hour-24-with-sub-ms', '2000-01-01T24:00:00.0001Z'),
+  OLD('six-digit-unsigned-year', '002000-01-01T00:00:00Z'),
+  // Canonical timestamps: millisecond precision and a real leap day.
+  OLD('leap-day-ms', '2024-02-29T12:34:56.789Z'),
+  OLD('canonical-ms', '2999-01-02T00:00:00.001Z'),
   OLD('future-hour-24', '2999-01-01T24:00:00.000Z'),
 ];
 {
@@ -286,6 +293,33 @@ const RETENTION_ROWS = [
       { op: 'snapshot' },
       { op: 'files' },
     ],
+  });
+}
+
+// ── C2. retention boundary: fixed clock, exact `now - retentionMs` ──────────
+// `isRetained` compares `endedAt >= now - retentionMs`; a row exactly on the
+// boundary must survive. `Date.now` is pinned so the generator records the
+// canonical millisecond timestamps around it.
+{
+  const now = Date.UTC(2026, 2, 1, 12, 0, 0, 500);
+  const boundary = (sessionId: string, endedAt: string) => ({
+    ...RETAINED_ROW,
+    sessionId,
+    startedAt: endedAt,
+    endedAt,
+  });
+  const rows = [
+    boundary('boundary-equal', new Date(now - 60_000).toISOString()),
+    boundary('boundary-inside', new Date(now - 59_999).toISOString()),
+    boundary('boundary-outside', new Date(now - 60_001).toISOString()),
+    boundary('leap-day-old', '2024-02-29T12:34:56.789Z'),
+  ];
+  scenarios.push({
+    name: 'retention-boundary',
+    now,
+    config: { enabled: true, retentionMs: 60_000 },
+    initial: { 'stats.jsonl': rows.map(json).join('\n') + '\n' },
+    ops: [{ op: 'files' }, { op: 'snapshot' }, { op: 'reopen' }, { op: 'files' }],
   });
 }
 
@@ -430,60 +464,76 @@ for (const scenario of scenarios) {
     ...scenario.config,
     ...(scenario.config.enabled ? { filePath: join(home, 'stats.jsonl') } : {}),
   };
-  let stats = new TokenStatsCollector(config);
-  const steps: any[] = [];
-  for (const step of scenario.ops) {
-    let result: any = null;
-    switch (step.op) {
-      case 'observe': {
-        const observed = clone(step.record);
-        stats.observe(observed);
-        result = clone(observed);
-        break;
-      }
-      case 'snapshot':
-        result = clone(stats.snapshot());
-        break;
-      case 'hourly':
-        result = clone(stats.hourlySnapshots());
-        break;
-      case 'session':
-        result = clone(stats.sessionSnapshot?.(step.sessionId) ?? null);
-        break;
-      case 'modelUsage':
-        result = clone(stats.modelUsageSnapshot?.(step.sessionId));
-        break;
-      case 'recent':
-        result = clone(stats.recent(step.limit));
-        break;
-      case 'estimateCost':
-        result = stats.estimateCost(step.usage, step.provider, step.model);
-        break;
-      case 'usageProjection':
-        result = clone(usageProjection(stats, step.sessionKey ? { sessionKey: step.sessionKey } : {}));
-        break;
-      case 'modelUsageProjection':
-        result = clone(modelUsageProjection(stats, step.sessionKey ? { sessionKey: step.sessionKey } : {}));
-        break;
-      case 'reopen':
-        stats.dispose();
-        stats = new TokenStatsCollector(config);
-        break;
-      case 'clear':
-        stats.clear();
-        break;
-      case 'files':
-        break;
-      default:
-        throw new Error(`unknown op ${step.op}`);
-    }
-    steps.push({
-      ...step,
-      expected: { result, ...(step.op === 'files' ? { files: listing(home) } : {}) },
-    });
+  // `TokenStatsCollector` reads `Date.now()` in `isRetained`; pin it for the
+  // boundary scenario so the exact `now - retentionMs` row stays reproducible.
+  const realNow = Date.now;
+  if (typeof scenario.now === 'number') {
+    Date.now = () => scenario.now as number;
   }
-  stats.dispose();
-  recorded.push({ name: scenario.name, config: scenario.config, initial: scenario.initial ?? {}, steps });
+  try {
+    let stats = new TokenStatsCollector(config);
+    const steps: any[] = [];
+    for (const step of scenario.ops) {
+      let result: any = null;
+      switch (step.op) {
+        case 'observe': {
+          const observed = clone(step.record);
+          stats.observe(observed);
+          result = clone(observed);
+          break;
+        }
+        case 'snapshot':
+          result = clone(stats.snapshot());
+          break;
+        case 'hourly':
+          result = clone(stats.hourlySnapshots());
+          break;
+        case 'session':
+          result = clone(stats.sessionSnapshot?.(step.sessionId) ?? null);
+          break;
+        case 'modelUsage':
+          result = clone(stats.modelUsageSnapshot?.(step.sessionId));
+          break;
+        case 'recent':
+          result = clone(stats.recent(step.limit));
+          break;
+        case 'estimateCost':
+          result = stats.estimateCost(step.usage, step.provider, step.model);
+          break;
+        case 'usageProjection':
+          result = clone(usageProjection(stats, step.sessionKey ? { sessionKey: step.sessionKey } : {}));
+          break;
+        case 'modelUsageProjection':
+          result = clone(modelUsageProjection(stats, step.sessionKey ? { sessionKey: step.sessionKey } : {}));
+          break;
+        case 'reopen':
+          stats.dispose();
+          stats = new TokenStatsCollector(config);
+          break;
+        case 'clear':
+          stats.clear();
+          break;
+        case 'files':
+          break;
+        default:
+          throw new Error(`unknown op ${step.op}`);
+      }
+      steps.push({
+        ...step,
+        expected: { result, ...(step.op === 'files' ? { files: listing(home) } : {}) },
+      });
+    }
+    stats.dispose();
+    recorded.push({
+      name: scenario.name,
+      ...(typeof scenario.now === 'number' ? { now: scenario.now } : {}),
+      config: scenario.config,
+      initial: scenario.initial ?? {},
+      steps,
+    });
+  } finally {
+    Date.now = realNow;
+  }
 }
 
 writeFileSync(

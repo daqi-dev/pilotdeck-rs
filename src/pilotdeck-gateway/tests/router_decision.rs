@@ -8,6 +8,7 @@ use pilotdeck_gateway::runtime::model::router::{
     RouterDecisionInput, RouterDeps, RouterFuture, RouterInvokeError, RouterModelInvocation,
     RouterModelRef, RouterRuntime, RouterRuntimeError,
 };
+use pilotdeck_gateway::runtime::model::stats::TokenStatsCollector;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
@@ -344,7 +345,11 @@ fn build_runtime(
             custom_routers,
             events: Arc::new(move |event: JsValue| events_sink.lock().expect("events").push(event)),
             clock,
-            stats: None,
+            // Hermetic: the oracle snapshots enable `stats`; the default
+            // collector would create/read `$PILOT_HOME/router/stats.jsonl` (and
+            // migrate a real legacy stats.json). Decision replay never observes
+            // usage, so inject a disabled collector instead.
+            stats: Some(Arc::new(Mutex::new(TokenStatsCollector::new(None, None)))),
             is_model_allowed: Arc::new(move |model: &RouterModelRef| {
                 let key = format!(
                     "{}/{}",
