@@ -11,7 +11,10 @@
 //! and renamed into place; manifests are `JSON.stringify(value, null, 2)`
 //! with no trailing newline.
 //!
-//! Known divergences (otherwise the ports are byte-identical):
+//! Known divergences and storage-contract notes (ledger entries are unapproved):
+//! specs/gateway-parity/accepted-diffs.md A6.6-SNAPSHOT-IO-001 and
+//! A6.6-SNAPSHOT-COLLATION-001. Synchronous execution and UTF-16 preservation
+//! below describe the contract, not independently measured output differences.
 //! - IO error text inside `_FAILED.json` uses the Node libuv wording from the
 //!   measured table (`node_io`); errnos outside it fall back to the Rust
 //!   `io::Error` Display. Manifest JSON syntax errors use the V8 messages
@@ -1032,6 +1035,7 @@ fn store_file(source: &Path, snapshot_root: &Path) -> std::result::Result<Stored
 /// workspaceSnapshot.ts:240-252 key order; undefined failure fields drop out
 /// of the JSON text, matching `JSON.stringify`. The timestamp never fails in
 /// TS (`new Date()`), so its Rust-only failure is the marker message.
+/// Ledger: specs/gateway-parity/accepted-diffs.md A6.6-SNAPSHOT-CLOCK-001 (unapproved).
 fn manifest_json(
     input: &WorkspaceSnapshotInput,
     phase: SnapshotPhase,

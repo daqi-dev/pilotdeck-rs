@@ -11,8 +11,10 @@
 //! Server-Sent Events are parsed as `eventsource-parser@3.0.8` does. Only
 //! `http:` URLs are served: TLS needs a dependency this crate does not have
 //! yet, so `https:` is refused up front with `mcp_unsupported_transport`.
+//! Ledger: gateway accepted-diffs A6.5-MCP-HTTPS-001 (unapproved).
 //!
-//! Deliberate differences (no observable protocol effect): a closed
+//! Deliberate lifecycle differences (unapproved; network side effects remain):
+//! gateway accepted-diffs A6.5-MCP-HTTP-LIFETIME-001. A closed
 //! transport also drops its open event streams (undici keeps a body open
 //! after `networkFetch` detached the abort signal); a legacy `EventSource`
 //! whose first connection fails stops instead of retrying every 3 s in the

@@ -591,7 +591,8 @@ fn unmeasured_errnos_require_the_host() {
     );
 }
 
-/// The depth itself is a known divergence (js_value module docs). Here only
+/// The depth itself is a known divergence (A6-JSVALUE-DEPTH-001 in
+/// specs/gateway-parity/accepted-diffs.md, unapproved). Here only
 /// the shape is pinned: no Rust stack overflow, and the error lands where V8's
 /// RangeError would (caught inside decodeListCursor, uncaught elsewhere).
 #[test]

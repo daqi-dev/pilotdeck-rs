@@ -479,6 +479,7 @@ impl ProjectRuntimeRegistry {
     /// Close admission immediately on first poll, then drain *all* generations,
     /// including ones removed by invalidate/reload. Unlike TS's leased-runtime
     /// skip, the task's explicit shutdown contract requires awaiting leases.
+    /// Ledger: specs/gateway-parity/accepted-diffs.md A7-PROJECT-DISPOSE-001 (unapproved).
     /// Repeated/concurrent calls observe one result; cancellation is harmless.
     pub async fn dispose(&self) -> RuntimeResult {
         let completion = {

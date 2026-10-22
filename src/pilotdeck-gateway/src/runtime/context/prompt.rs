@@ -425,31 +425,17 @@ pub(crate) fn iso_timestamp_now() -> String {
     iso_timestamp(ms)
 }
 
-/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`, matching `new Date(ms).toISOString()` for
-/// the supported domain: finite `ms` inside the JS Date range `|ms| <= 8.64e15`
-/// whose year is 0000-9999. Callers: `iso_timestamp_now` (current wall clock,
-/// always inside the domain) and the router's `startedAt` / `endedAt`, which
-/// stamp `RouterDeps.clock()` — a seam that tests can pin to any value.
+/// UTC ISO text, including signed six-digit extended years, matching
+/// `new Date(ms).toISOString()` for finite `|ms| <= 8.64e15`.
+/// Callers: `iso_timestamp_now` and router `startedAt` / `endedAt`.
 ///
 /// Outside the domain this diverges from TS, which throws
 /// `RangeError: Invalid time value` from `toISOString()` (NaN included) and so
-/// writes no record: NaN casts to 0 here (writing `1970-01-01T00:00:00.000Z`),
-/// and an out-of-range or extended-year instant formats with an over-wide
-/// unsigned year, which is not canonical and is therefore never parsed again by
-/// stats retention. Only an injected clock can reach those values, so callers
-/// injecting a clock must keep it finite and inside the range.
+/// writes no record: Rust's float-to-integer cast saturates (NaN becomes 0),
+/// then formats the resulting integer. See gateway accepted-diffs.md
+/// A6.4-CLOCK-TIMECLIP-001. Only injected clocks can reach those values.
 pub(crate) fn iso_timestamp(timestamp_ms: f64) -> String {
-    let ms = timestamp_ms as i64;
-    let days = ms.div_euclid(86_400_000);
-    let day_ms = ms.rem_euclid(86_400_000);
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        day_ms / 3_600_000,
-        day_ms / 60_000 % 60,
-        day_ms / 1_000 % 60,
-        day_ms % 1_000
-    )
+    pilotdeck_transport::system_clock::format_epoch_iso(timestamp_ms as i64)
 }
 
 /// Howard Hinnant's civil-from-days, with day 0 = 1970-01-01.
@@ -1211,6 +1197,35 @@ mod tests {
             iso_timestamp(1_749_484_800_000.0),
             "2025-06-09T16:00:00.000Z"
         );
+    }
+
+    #[test]
+    fn extended_year_timestamps_match_real_ts() {
+        let oracle = crate::test_baseline::oracle(include_str!(
+            "../../../tests/fixtures/diff-backfill/oracle.json"
+        ));
+        let JsValue::Array(cases) = oracle.get("dates").unwrap() else {
+            panic!("dates")
+        };
+        let mut checked = 0;
+        for case in cases {
+            if let Some(expected) = case.get("iso").and_then(JsValue::as_string) {
+                let input = case
+                    .get("input")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
+                assert_eq!(
+                    iso_timestamp(input.parse().unwrap()),
+                    expected.to_utf8().unwrap(),
+                    "{input}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 5);
     }
     #[test]
     fn default_platform_uses_node_names() {

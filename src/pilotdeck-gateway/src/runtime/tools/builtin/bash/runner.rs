@@ -8,7 +8,9 @@
 //! cannot be reused under us. A [`GroupGuard`] SIGKILLs the group if the run
 //! future is dropped mid-flight; the child itself has `kill_on_drop`.
 //!
-//! Known, documented differences from Node:
+//! Known, documented differences from Node (unapproved):
+//! specs/gateway-parity/accepted-diffs.md A6.5-BASH-OS-001 and
+//! A6.5-BASH-WNOWAIT-001 (only the fallback/early-shutdown paths differ).
 //! - `detached` calls `setsid()`; here the child gets a new process group via
 //!   `process_group(0)` but stays in the parent's session. The sole approved
 //!   `pre_exec` hook only resets child signals.
@@ -82,6 +84,7 @@ pub struct CommandOptions {
 /// uncaught exception in the data listener; the TS server shuts the whole
 /// gateway down on it (`cli/pilotdeck.ts:267`). Here only the overflowing
 /// chunk is dropped, which also bounds the memory a command can pin.
+/// Ledger: specs/gateway-parity/accepted-diffs.md A6.5-BASH-OUTPUT-001 (unapproved).
 struct StreamText {
     text: String,
     units: usize,

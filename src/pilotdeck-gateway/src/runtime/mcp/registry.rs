@@ -1014,6 +1014,7 @@ impl ProjectMcpRuntimeProvider {
 
     /// `dispose()`: reject new leases, drain existing leases, then stop every
     /// generation; memoized. Unlike the TS baseline, disposal respects leases.
+    /// Ledger: specs/gateway-parity/accepted-diffs.md A6.5-MCP-DISPOSE-001 (unapproved).
     pub async fn dispose(&self) -> Result<(), RuntimeError> {
         let receiver = {
             let mut state = lock(&self.state);

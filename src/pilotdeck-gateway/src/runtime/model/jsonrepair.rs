@@ -7,7 +7,8 @@
 //! [`MAX_DEPTH`]: deeper input fails (as an over-deep input makes the JS
 //! version throw `RangeError`). Known divergence: V8's limit depends on the
 //! stack and is larger, so inputs nested between the two limits repair in TS
-//! but fail here.
+//! but fail here. Ledger: specs/gateway-parity/accepted-diffs.md
+//! A6.4-JSONREPAIR-DEPTH-001 (unapproved).
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 
 /// Nesting levels accepted before giving up (keeps the Rust stack bounded

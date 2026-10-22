@@ -50,9 +50,12 @@ pub struct InstructionDiscovery {
     project_root: PathBuf,
     cwd: PathBuf,
     pilot_home: PathBuf,
-    /// `PILOTDECK_MANAGED_CONFIG`; resolved once per runtime, unlike TS's
-    /// per-discovery env read. Host env does not change during a process.
-    managed_dir: Option<PathBuf>,
+    managed_dir: ManagedDirectory,
+}
+#[derive(Clone, Debug)]
+enum ManagedDirectory {
+    Fixed(Option<PathBuf>),
+    Environment,
 }
 impl InstructionDiscovery {
     pub fn new(
@@ -65,7 +68,7 @@ impl InstructionDiscovery {
             project_root: project_root.into(),
             cwd: cwd.into(),
             pilot_home: pilot_home.into(),
-            managed_dir,
+            managed_dir: ManagedDirectory::Fixed(managed_dir),
         }
     }
     /// Default managed directory from the host environment.
@@ -74,17 +77,34 @@ impl InstructionDiscovery {
         cwd: impl Into<PathBuf>,
         pilot_home: impl Into<PathBuf>,
     ) -> Self {
-        let managed_dir = std::env::var_os("PILOTDECK_MANAGED_CONFIG")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
-        Self::new(project_root, cwd, pilot_home, managed_dir)
+        Self {
+            project_root: project_root.into(),
+            cwd: cwd.into(),
+            pilot_home: pilot_home.into(),
+            managed_dir: ManagedDirectory::Environment,
+        }
     }
 
     /// Synchronous storage pass; call from `spawn_blocking` in async callers.
     pub fn discover(&self) -> Result<Vec<Layer>, String> {
+        self.discover_with_environment(|| {
+            std::env::var_os("PILOTDECK_MANAGED_CONFIG")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+    }
+
+    fn discover_with_environment(
+        &self,
+        managed_environment: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<Vec<Layer>, String> {
         let mut layers = Vec::new();
         let mut seen = HashSet::new();
-        if let Some(dir) = &self.managed_dir {
+        let managed_dir = match &self.managed_dir {
+            ManagedDirectory::Fixed(dir) => dir.clone(),
+            ManagedDirectory::Environment => managed_environment(),
+        };
+        if let Some(dir) = &managed_dir {
             self.try_add(
                 &mut layers,
                 &mut seen,
@@ -216,4 +236,69 @@ fn absolute(path: &Path) -> Result<PathBuf, String> {
     }
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     Ok(resolve(&cwd, &path.to_string_lossy()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn managed_environment_is_read_on_each_discovery_like_real_ts() {
+        let raw = include_str!("../../../tests/fixtures/diff-backfill/oracle.json");
+        crate::test_baseline::oracle(raw);
+        let oracle: Value = serde_json::from_str(raw).unwrap();
+        let root = std::env::temp_dir().join(format!("pdrs-502-{}", uuid::Uuid::new_v4()));
+        for name in ["project", "home", "a", "b"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        for name in ["a", "b"] {
+            std::fs::write(
+                root.join(name).join("PILOTDECK.md"),
+                format!("  managed {name}\n"),
+            )
+            .unwrap();
+        }
+        let discovery = InstructionDiscovery::from_environment(
+            root.join("project"),
+            root.join("project"),
+            root.join("home"),
+        );
+        let fixed = InstructionDiscovery::new(
+            root.join("project"),
+            root.join("project"),
+            root.join("home"),
+            Some(root.join("a")),
+        );
+        let cases = oracle["managed"].as_array().unwrap();
+        assert_eq!(cases.len(), 5);
+        for case in cases {
+            let value = case["value"].as_str().filter(|value| !value.is_empty());
+            // Inject the per-call environment read instead of mutating process
+            // env (unsafe with parallel Rust tests). TS changes its real env.
+            let layers = discovery
+                .discover_with_environment(|| value.map(|value| root.join(value)))
+                .unwrap();
+            let actual: Vec<_> = layers
+                .iter()
+                .map(|layer| {
+                    json!({
+                        "scope": layer.scope.as_str(), "content": layer.content,
+                        "path": layer.path.replace(root.to_str().unwrap(), "<tree>"),
+                    })
+                })
+                .collect();
+            assert_eq!(json!(actual), case["layers"], "{case}");
+            let fixed_layers = fixed
+                .discover_with_environment(|| {
+                    panic!("explicit directory must not read environment")
+                })
+                .unwrap();
+            assert_eq!(
+                fixed_layers[0].content,
+                cases[0]["layers"][0]["content"].as_str().unwrap()
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

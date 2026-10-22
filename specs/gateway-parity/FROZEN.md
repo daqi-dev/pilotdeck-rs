@@ -25,7 +25,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-256d3a5f03ebe9de463febcad2ad8d31da8927e7c6e921866823d891d6d22e42  accepted-diffs.md
+c20aa58f4a1af81b84bde3f3d7293c363ec497aff79a43cbe3d08ec9711624e8  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
@@ -51,3 +51,5 @@ e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/
 > **2026-10-22 人批重登记（issue #496）**：按用户本人选 B 的明确授权，accepted-diffs.md 只追加 A6.4-STATS-SIDECAR-001（降级追加写旁路文件，向安全偏离 TS），修复 retention 锁超时追加与压缩 rename 交错丢账；保留判断、账目行格式与聚合输出不变。真实 TS 两次生成逐字节一致、原版丢账实测及各类变异负控见 `_tmp/20261022-issue-496/RESULT.md`；仅重登记 accepted-diffs.md 哈希，其余哈希与判分语义不变，独立评审由协调者续办。
 
 > **2026-10-22 issue #494 补实现重登记**：按本单用户明确授权，只在 A6.4-STATS-RETENTION-001 末尾追加 V8 共享解析器接入、三个时区真实 TS 回放依据与仍保留的未验证本地 TZif 子集；未宣称全量消除，PR 号待协调者创建后补记。仅重登记 accepted-diffs.md 哈希，不改阈值、装置与判分语义。金样两次一致、变异负控及测试证据见工作区 `_tmp/20261022-issue-494/RESULT.md`，独立评审由协调者续办。
+
+> **2026-10-23 issue #502 只追加补登重登记**：按本单用户明确授权，全仓自述差异审计后，accepted-diffs.md 追加 32 条「已知未对齐（未批准）」六字段记录。既有账本原文逐字节保留，AI 决策不冒充人批，既有人批条目只在代码加编号引用；不新增豁免、不改阈值或判分语义。五处低成本对齐（count URL、managed env、合法扩展年份、transcript/run registry JSON 语法文案）的真实 TS 金样两次一致及独立变异负控见 `_tmp/20261022-issue-502-diff-backfill/RESULT.md`。仅重登记 accepted-diffs.md 哈希；未改在途 turn/edgeclaw 文件。独立评审由协调者续办，本记录不声称已完成双评审。

@@ -636,6 +636,7 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
         };
         if name.starts_with("node-only-") {
             // Declared gap: the first divergence must be an explicit refusal.
+            // Ledger: gateway accepted-diffs A6.2-TRANSCRIPT-DOMAIN-001 (unapproved).
             let mut refused = false;
             for step in steps {
                 let outcome = run_step(&mut ctx, step);

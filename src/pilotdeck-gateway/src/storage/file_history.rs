@@ -845,6 +845,7 @@ fn node_fs_error(error: io::Error, syscall: &str, path: &Path) -> FileHistoryErr
     match crate::node_io::diagnostic(&error, syscall, Some(&path.to_string_lossy())) {
         Some((_, message)) => FileHistoryError::Fs(message),
         // Unmeasured errno: keep a reason but drop the Rust-specific suffix.
+        // Ledger: gateway accepted-diffs A6.6-FILEHISTORY-IO-001 (unapproved).
         None => FileHistoryError::Fs(without_os_error(&error)),
     }
 }

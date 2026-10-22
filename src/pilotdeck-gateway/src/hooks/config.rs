@@ -261,7 +261,8 @@ pub struct HookConditionInput<'a> {
 
 // Node 22.22.0: real HookRuntime.run, with 0/32 extra synchronous frames,
 // serializes 6500 nested arrays/objects but throws at 7000. Stay at 4000.
-// [上界, V8 实际阈值) 这段属于已接受的不可判定带；见夹具 README。
+// Fixed-budget gap, not human-approved: specs/gateway-parity/accepted-diffs.md
+// A6.7-HOOK-RESOURCE-001; see the fixture README for measurements.
 const MAX_STRINGIFY_DEPTH: usize = 4000;
 
 /// Unlike matcher regex errors, TS does not catch condition serialization errors.

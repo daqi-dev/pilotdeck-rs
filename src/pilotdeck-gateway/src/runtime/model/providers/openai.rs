@@ -81,7 +81,9 @@ fn google_openai_compatible(provider: &JsValue) -> bool {
     // catalog default). Rust's `text` is `String(url)` coercion, not an
     // empty-string fallback. Node probe (2026-10-22): url 123/{}/null ->
     // "https://api.openai.com/v1"; a custom provider without a default ->
-    // `invalid_config_value` "requires a url". Direct builder calls bypassing
+    // `invalid_config_value` "requires a url". Ledger:
+    // specs/gateway-parity/accepted-diffs.md A6.4-OPENAI-URL-001 (unapproved).
+    // Direct builder calls bypassing
     // config do throw `TypeError: provider.url.trim is not a function`.
     let raw = text(field(provider, "url"));
     let lowered = raw.to_lowercase();

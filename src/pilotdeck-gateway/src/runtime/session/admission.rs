@@ -52,6 +52,7 @@ impl SessionAdmission {
     /// A nonempty ID also requires the identity returned by `begin_turn`:
     /// unlike TS's string-only cleanup, a stale consumer cannot clear a later
     /// reservation that reused its runId after close. None/empty stay unfenced.
+    /// Ledger: specs/gateway-parity/accepted-diffs.md A7-ADMISSION-FENCE-001 (unapproved).
     pub fn end_turn(
         &self,
         session_key: &JsString,

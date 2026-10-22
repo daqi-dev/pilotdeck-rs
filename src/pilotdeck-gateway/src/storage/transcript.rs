@@ -26,7 +26,7 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub severity: &'static str,
     pub line: Option<usize>,
-    /// JSON parser wording is Rust-specific; code/severity/line match TS.
+    /// JSON syntax text follows the pinned V8 formatter, like TS JSON.parse.
     pub message: String,
 }
 #[derive(Debug)]
@@ -122,7 +122,8 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
                 code: "transcript_line_invalid",
                 severity: "error",
                 line: Some(index + 1),
-                message: error.to_string(),
+                message: pilotdeck_protocol::json_syntax::parse_error(line)
+                    .unwrap_or_else(|| error.to_string()),
             }),
         }
     }
@@ -144,6 +145,7 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
             if ties.contains(&if n == 0.0 { 0 } else { n.to_bits() })
                 && has_unpaired_surrogate(field(entry, "createdAt").as_string().unwrap())
             {
+                // Ledger: gateway accepted-diffs A6.2-TRANSCRIPT-COLLATION-001 (unapproved).
                 return Err(invalid(
                     "Transcript timestamp collation requires the Node host for unpaired surrogates.",
                 ));
@@ -173,6 +175,7 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
 /// The lock file is kept so contenders always lock the same inode; Drop releases
 /// the OS lock, including after crashes. TS does not honor this Rust lock:
 /// TS/Rust cutover must stop the previous writer before opening this store.
+/// Ledger: specs/gateway-parity/accepted-diffs.md A6.2-TRANSCRIPT-LOCK-001 (unapproved).
 /// Hard-link aliases are unsupported: each name has its own lock, and replacing
 /// one name forks its history away from the other names of the original inode.
 /// Appends preserve original bytes and atomically replace through a sibling file.

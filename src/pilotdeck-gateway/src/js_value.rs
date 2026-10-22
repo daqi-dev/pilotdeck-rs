@@ -12,6 +12,7 @@
 //! fixed constant, while V8's shrinks as the caller's stack grows, so the
 //! constant sits below the measured value and depths between it and V8's
 //! real limit throw here but convert in TS.
+//! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsValue, stringify_json};
 

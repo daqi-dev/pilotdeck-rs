@@ -33,7 +33,7 @@ pub enum RunRegistryError {
     NotFound(String),
     Terminal(String),
     /// TS plain `Error`/`SyntaxError`/`TypeError`: snapshot syntax or shape.
-    /// JSON parser wording is Rust-specific; shape messages match TS.
+    /// JSON syntax wording follows the pinned V8 formatter; shape messages match TS.
     Invalid(String),
     /// RunRegistry.ts:142.
     LockTimeout(String),
@@ -569,7 +569,13 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
         Err(e) => return Err(e.into()),
     };
     // Node readFile(path, "utf8") replaces invalid bytes.
-    let value = parse_json(&String::from_utf8_lossy(&bytes))?;
+    let source = String::from_utf8_lossy(&bytes);
+    let value = parse_json(&source).map_err(|error| {
+        invalid(
+            pilotdeck_protocol::json_syntax::parse_error(&source)
+                .unwrap_or_else(|| error.to_string()),
+        )
+    })?;
     if matches!(value, JsValue::Null) {
         return Err(invalid(
             "Cannot read properties of null (reading 'schemaVersion')",

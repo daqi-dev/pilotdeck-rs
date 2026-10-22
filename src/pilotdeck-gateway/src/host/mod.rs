@@ -17,7 +17,8 @@
 //!
 //! Resource policy (#191): pipe input uses bounded-channel backpressure; the
 //! event application queue fails closed with `Limit` when full so a stalled
-//! consumer cannot indefinitely hide cancellation or input errors. TS's async
+//! consumer cannot indefinitely hide cancellation or input errors. Ledger:
+//! specs/gateway-parity/accepted-diffs.md A7-HOST-RESOURCE-001 (unapproved). TS's async
 //! generator instead pulls events serially (client:659-684). No event is dropped.
 //! `max_buffered_bytes` counts retained NDJSON bytes, including partial input,
 //! queued/in-flight event copies, callback requests, completed responses/cache

@@ -524,6 +524,7 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
     assert_eq!(scenarios.len(), 78);
+    // Ledger: gateway accepted-diffs A6.5-TOOLS-SCHEDULE-001 (unapproved).
     // Scenarios flagged rustSerializesNonReadOnly pin a deliberate deviation
     // and are asserted explicitly in non_readonly_safe_tools_run_sequentially.
     for (spec, signal) in scenarios
@@ -567,6 +568,7 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
         }
         let mut expected = array(field(spec, "events")).to_vec();
         if field(spec, "drain") == &JsValue::Bool(true) {
+            // Ledger: gateway accepted-diffs A6.5-TOOLS-CANCEL-001 (unapproved).
             // Deliberate deviation (fixtures/tool-runtime/README.md): the
             // rejection time is TS's exactly, but the started siblings that
             // TS lets finish detached after it are dropped by the batch.
@@ -608,6 +610,7 @@ fn strip_times(results: &JsValue) -> JsValue {
 fn events(json: &str) -> JsValue {
     parse_json(json).unwrap()
 }
+/// Ledger: gateway accepted-diffs A6.5-TOOLS-SCHEDULE-001 (unapproved).
 /// Deliberate deviation (fixtures/tool-runtime/README.md): a concurrencySafe
 /// tool that is not read-only (TS agent.ts:166-167) runs concurrently in TS
 /// but in the sequential phase here, so a concurrent error never drops it.
@@ -895,6 +898,7 @@ async fn abort_and_outer_operation_deadline_leave_no_detached_futures() {
     assert_eq!(probe.events.lock().unwrap().len(), before);
 }
 
+/// Ledger: gateway accepted-diffs A6.5-TOOLS-CANCEL-001 (unapproved).
 /// Deliberate deviation from Promise.all: the first concurrent error rejects
 /// at once (as in TS) and the batch drops the started siblings instead of
 /// leaving them running, so a non-cooperative sibling cannot delay or hang it.

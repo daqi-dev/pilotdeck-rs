@@ -54,6 +54,7 @@ fn encode(value: &JsValue) -> String {
 }
 
 // Only a NOFOLLOW open failure denotes our deliberate security divergence.
+// Ledger: specs/gateway-parity/accepted-diffs.md A4-FILE-TOCTOU-001 (human-approved).
 // A realpath ELOOP is an ordinary measured Node error, not evidence of a race.
 #[derive(Debug)]
 struct NoFollowLoop;
@@ -213,7 +214,8 @@ pub(crate) fn has_unpaired_surrogate(value: &pilotdeck_protocol::JsString) -> bo
 /// Residual divergence: a real U+E000..U+E7FF character compared against a
 /// mapped surrogate at the deciding position lands on the same weight instead
 /// of just above it. Node v22.22.0 measurements and that trade-off are recorded
-/// in the A6.6-pr10a RESULT「修复轮 2」and「修复轮 3」.
+/// in the A6.6-pr10a RESULT「修复轮 2」and「修复轮 3」. Ledger:
+/// specs/gateway-parity/accepted-diffs.md A6-COLLATION-PUA-001 (unapproved).
 pub(crate) fn node_collation_units(value: &pilotdeck_protocol::JsString) -> Cow<'_, [u16]> {
     if !has_unpaired_surrogate(value) {
         return Cow::Borrowed(value.units());
