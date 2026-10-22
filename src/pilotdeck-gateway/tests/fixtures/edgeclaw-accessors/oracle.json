@@ -649,6 +649,71 @@
       }
     },
     {
+      "method": "entries",
+      "input": {
+        "id": "external-project:39343c0058",
+        "options": {
+          "includeExternal": 0
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "external-project:39343c0058",
+        "options": {
+          "includeExternal": ""
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "external-project:39343c0058",
+        "options": {
+          "includeExternal": 1
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeExternal": 0
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "includeExternal": null
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "limit": 1,
+          "offset": 1
+        }
+      }
+    },
+    {
+      "method": "entries",
+      "input": {
+        "id": "mirror",
+        "options": {
+          "query": "local",
+          "limit": 1
+        }
+      }
+    },
+    {
       "method": "listGlobalMemoryEntries",
       "input": {}
     },
@@ -698,6 +763,47 @@
       "method": "listGlobalMemoryEntries",
       "input": {
         "includeDeprecated": true
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "projectId": "x"
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "kinds": "project"
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "kinds": "project",
+        "scope": "project"
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "kinds": 42
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "kinds": null
+      }
+    },
+    {
+      "method": "listGlobalMemoryEntries",
+      "input": {
+        "query": "",
+        "limit": "2",
+        "offset": null,
+        "includeTmp": true,
+        "projectId": "x"
       }
     },
     {
@@ -1265,6 +1371,148 @@
     ],
     [],
     [],
+    [],
+    [],
+    [
+      {
+        "name": "Zebra feedback",
+        "description": "Zebra feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Zebra feedback",
+        "file": "zebra-feedback-55a91eb42f.md",
+        "relativePath": "external:17d15d07a7:Feedback/zebra-feedback-55a91eb42f.md",
+        "absolutePath": "$ROOT/workspaces/beta/memory/Feedback/zebra-feedback-55a91eb42f.md"
+      },
+      {
+        "name": "Zebra project",
+        "description": "Zebra project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Zebra project",
+        "file": "zebra-project-c08e4d9416.md",
+        "relativePath": "external:17d15d07a7:Project/zebra-project-c08e4d9416.md",
+        "absolutePath": "$ROOT/workspaces/beta/memory/Project/zebra-project-c08e4d9416.md"
+      }
+    ],
+    [
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    [
+      {
+        "name": "éclair project",
+        "description": "éclair project description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair project",
+        "file": "clair-project-65a0f38419.md",
+        "relativePath": "external:bb9103a9bd:Project/clair-project-65a0f38419.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Project/clair-project-65a0f38419.md"
+      },
+      {
+        "name": "éclair feedback",
+        "description": "éclair feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-éclair feedback",
+        "file": "clair-feedback-bcb3b998dd.md",
+        "relativePath": "external:bb9103a9bd:Feedback/clair-feedback-bcb3b998dd.md",
+        "absolutePath": "$ROOT/workspaces/alpha/memory/Feedback/clair-feedback-bcb3b998dd.md"
+      },
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
+    [
+      {
+        "name": "local feedback",
+        "description": "local feedback description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "mirror",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-local feedback",
+        "file": "local-feedback-33ca421a17.md",
+        "relativePath": "Feedback/local-feedback-33ca421a17.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/local-feedback-33ca421a17.md"
+      }
+    ],
     [
       {
         "name": "Second",
@@ -1335,6 +1583,96 @@
       }
     ],
     [
+      {
+        "name": "User😀",
+        "description": "User😀 description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-User😀",
+        "file": "user-19a3957c6a.md",
+        "relativePath": "global/UserIdentityNotes/user-19a3957c6a.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/user-19a3957c6a.md"
+      }
+    ],
+    [
+      {
+        "name": "Second",
+        "description": "Second description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second",
+        "file": "second-0ae65c1a62.md",
+        "relativePath": "global/UserIdentityNotes/second-0ae65c1a62.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-0ae65c1a62.md"
+      },
+      {
+        "name": "User😀",
+        "description": "User😀 description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-User😀",
+        "file": "user-19a3957c6a.md",
+        "relativePath": "global/UserIdentityNotes/user-19a3957c6a.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/user-19a3957c6a.md"
+      }
+    ],
+    [
+      {
+        "name": "Second",
+        "description": "Second description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second",
+        "file": "second-0ae65c1a62.md",
+        "relativePath": "global/UserIdentityNotes/second-0ae65c1a62.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-0ae65c1a62.md"
+      },
+      {
+        "name": "User😀",
+        "description": "User😀 description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-User😀",
+        "file": "user-19a3957c6a.md",
+        "relativePath": "global/UserIdentityNotes/user-19a3957c6a.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/user-19a3957c6a.md"
+      }
+    ],
+    {
+      "error": "TypeError",
+      "message": "options.kinds?.filter is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "options.kinds?.filter is not a function"
+    },
+    {
+      "error": "TypeError",
+      "message": "options.kinds?.filter is not a function"
+    },
+    [
+      {
+        "name": "Second",
+        "description": "Second description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second",
+        "file": "second-0ae65c1a62.md",
+        "relativePath": "global/UserIdentityNotes/second-0ae65c1a62.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-0ae65c1a62.md"
+      },
       {
         "name": "User😀",
         "description": "User😀 description",

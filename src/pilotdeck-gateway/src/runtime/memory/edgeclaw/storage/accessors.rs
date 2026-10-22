@@ -1,19 +1,19 @@
 //! Repository accessors, external workspace discovery and readable catalogs.
 //! Source: fixed baseline `core/storage/sqlite.ts:592-909`.
+use super::js_truthy;
+use crate::metadata::js_trim;
 use crate::runtime::memory::edgeclaw::file_memory::{
     EdgeClawFileStores, FileMemoryClock, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
+    absolute,
+    helpers::{extract_objects, hash, map_global, objects, s, sort_manifest_entries, text},
 };
-use crate::{
-    metadata::js_trim,
-    project_files::{node_collator, node_compare_utf16, node_locale},
-};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json};
 use rusqlite::{Connection, OptionalExtension};
-use sha1::{Digest, Sha1};
 use std::{
     collections::HashMap,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 type Result<T> = std::result::Result<T, FileMemoryError>;
@@ -34,6 +34,14 @@ struct Snapshot {
 }
 impl RepositoryContext {
     pub(crate) fn new(memory: &Path, mode: &str, clock: FileMemoryClock) -> Result<Self> {
+        Self::with_general(memory, mode, general_workspace()?, clock)
+    }
+    pub(crate) fn with_general(
+        memory: &Path,
+        mode: &str,
+        general_workspace: PathBuf,
+        clock: FileMemoryClock,
+    ) -> Result<Self> {
         let memory = absolute(memory)?;
         let root = memory
             .parent()
@@ -42,7 +50,7 @@ impl RepositoryContext {
             .to_path_buf();
         Ok(Self {
             workspace: root.clone(),
-            general_workspace: general_workspace()?,
+            general_workspace: absolute(&general_workspace)?,
             workspaces_root: root,
             mode: mode.into(),
             clock,
@@ -51,52 +59,69 @@ impl RepositoryContext {
         })
     }
 }
-fn absolute(path: &Path) -> Result<PathBuf> {
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            c => out.push(c.as_os_str()),
+/// `os.homedir()`: `$HOME` wins even when empty; otherwise libuv falls back to
+/// `getpwuid_r` (NSS). The workspace forbids `unsafe`, so the fallback asks the
+/// platform passwd lookup instead of calling libc directly.
+fn homedir() -> Result<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Ok(PathBuf::from(home));
+    }
+    passwd_home().ok_or_else(|| FileMemoryError::Invalid("os.homedir() is unavailable".into()))
+}
+#[cfg(target_os = "macos")]
+fn passwd_home() -> Option<PathBuf> {
+    // `id -P` prints the BSD passwd entry; `pw_dir` is the second-to-last field.
+    let output = Command::new("/usr/bin/id").arg("-P").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let line = String::from_utf8(output.stdout).ok()?;
+    let fields: Vec<&str> = line.trim_end().split(':').collect();
+    let home = PathBuf::from(fields.get(fields.len().checked_sub(2)?)?);
+    home.is_absolute().then_some(home)
+}
+#[cfg(all(unix, not(target_os = "macos")))]
+fn passwd_home() -> Option<PathBuf> {
+    // `getent` follows NSS like getpwuid_r; `/etc/passwd` is the last resort.
+    let uid = Command::new("id").arg("-u").output().ok()?;
+    if !uid.status.success() {
+        return None;
+    }
+    let uid = String::from_utf8(uid.stdout).ok()?;
+    let uid = uid.trim();
+    if let Ok(output) = Command::new("getent").args(["passwd", uid]).output()
+        && output.status.success()
+        && let Ok(line) = String::from_utf8(output.stdout)
+        && let Some(home) = line.trim_end().split(':').nth(5)
+    {
+        let home = PathBuf::from(home);
+        if home.is_absolute() {
+            return Some(home);
         }
     }
-    Ok(out)
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        fields.next()?;
+        fields.next()?;
+        if fields.next()? != uid {
+            return None;
+        }
+        fields.next()?;
+        fields.next()?;
+        let home = PathBuf::from(fields.next()?);
+        home.is_absolute().then_some(home)
+    })
+}
+#[cfg(not(unix))]
+fn passwd_home() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE").map(PathBuf::from)
 }
 fn general_workspace() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .ok_or_else(|| FileMemoryError::Invalid("HOME is unavailable".into()))?;
-    absolute(&PathBuf::from(home).join(".pilotdeck"))
-}
-fn text(o: &JsObject, key: &str) -> String {
-    o.get(key)
-        .and_then(JsValue::as_string)
-        .map(|s| String::from_utf16_lossy(s.units()))
-        .unwrap_or_default()
-}
-fn s(v: impl AsRef<str>) -> JsValue {
-    JsValue::from(v.as_ref())
+    absolute(&homedir()?.join(".pilotdeck"))
 }
 fn put(o: &mut JsObject, k: &str, v: JsValue) {
     o.insert(k.into(), v);
-}
-fn objects(v: JsValue) -> Vec<JsObject> {
-    match &v {
-        JsValue::Array(a) => a.iter().filter_map(|v| v.as_object().cloned()).collect(),
-        _ => vec![],
-    }
-}
-fn values(v: Vec<JsObject>) -> JsValue {
-    JsValue::Array(v.into_iter().map(JsValue::Object).collect())
-}
-fn hash(v: &str) -> String {
-    format!("{:x}", Sha1::digest(v.as_bytes()))[..10].into()
 }
 fn path_text(p: &Path) -> String {
     p.to_string_lossy().into_owned()
@@ -107,45 +132,71 @@ fn external_id(workspace: &Path, project: &str) -> String {
         hash(&format!("{}::{project}", workspace.display()))
     )
 }
-fn sort(entries: &mut [JsObject], time: impl Fn(&JsObject) -> String, tie: &str) -> Result<()> {
-    if entries.len() < 2 {
-        return Ok(());
+/// `options.includeExternal ?? true`, then JS truthiness. Only nullish values
+/// default to true; `0`, `""`, `false` and `NaN` skip external entries.
+fn include_external(options: &JsObject) -> bool {
+    match options.get("includeExternal") {
+        None | Some(JsValue::Undefined | JsValue::Null) => true,
+        Some(value) => js_truthy(value),
     }
-    let collator = node_collator(&node_locale(|k| std::env::var(k).ok()))
-        .map_err(|e| FileMemoryError::Collation(format!("{e:?}")))?;
-    entries.sort_by(|a, b| {
-        let at = time(a);
-        let bt = time(b);
-        if at != bt {
-            node_compare_utf16(&collator, &JsString::from(bt), &JsString::from(at))
-        } else {
-            let a = a
-                .get(tie)
-                .and_then(JsValue::as_string)
-                .cloned()
-                .unwrap_or_default();
-            let b = b
-                .get(tie)
-                .and_then(JsValue::as_string)
-                .cloned()
-                .unwrap_or_default();
-            node_compare_utf16(&collator, &a, &b)
-        }
-    });
-    Ok(())
 }
-fn map_global(mut o: JsObject) -> JsObject {
-    let path = text(&o, "relativePath").replace('\\', "/");
+/// `listReadableProjectEntries` builds a fresh store input: caller limit/offset
+/// are ignored (TS hardcodes 5000/0) and only the documented keys are forwarded.
+fn project_entry_input(options: &JsObject, kinds: JsValue, project_id: &str) -> JsObject {
+    let mut input = JsObject::new();
+    put(&mut input, "kinds", kinds);
+    put(&mut input, "scope", s("project"));
+    put(&mut input, "projectId", s(project_id));
+    if let Some(value) = options.get("includeDeprecated") {
+        put(&mut input, "includeDeprecated", value.clone());
+    }
+    if let Some(query) = options.get("query").filter(|v| js_truthy(v)) {
+        put(&mut input, "query", query.clone());
+    }
+    put(&mut input, "limit", JsValue::Number(5000.0));
+    put(&mut input, "offset", JsValue::Number(0.0));
+    input
+}
+/// `options.kinds?.filter(kind => kind === "user")`: non-array values throw
+/// `TypeError` before the `scope` check, exactly like the TS optional chain.
+fn global_entry_kinds(options: &JsObject) -> Result<Option<Vec<JsValue>>> {
+    match options.get("kinds") {
+        None | Some(JsValue::Undefined | JsValue::Null) => Ok(None),
+        Some(JsValue::Array(values)) => Ok(Some(
+            values
+                .iter()
+                .filter(|value| **value == s("user"))
+                .cloned()
+                .collect(),
+        )),
+        Some(_) => Err(FileMemoryError::Type(
+            "options.kinds?.filter is not a function".into(),
+        )),
+    }
+}
+/// `listGlobalMemoryEntries` forwards only its whitelisted keys to the global
+/// store; extra keys such as `projectId` never leak into `listMemoryEntries`.
+fn global_entry_input(options: &JsObject, kinds: Option<Vec<JsValue>>) -> JsObject {
+    let mut input = JsObject::new();
     put(
-        &mut o,
-        "relativePath",
-        s(if path.starts_with("global/") {
-            path
-        } else {
-            format!("global/{path}")
-        }),
+        &mut input,
+        "kinds",
+        JsValue::Array(kinds.unwrap_or_else(|| vec![s("user")])),
     );
-    o
+    if let Some(query) = options.get("query").filter(|v| js_truthy(v)) {
+        put(&mut input, "query", query.clone());
+    }
+    if let Some(JsValue::Number(limit)) = options.get("limit") {
+        put(&mut input, "limit", JsValue::Number(*limit));
+    }
+    if let Some(JsValue::Number(offset)) = options.get("offset") {
+        put(&mut input, "offset", JsValue::Number(*offset));
+    }
+    put(&mut input, "scope", s("global"));
+    if let Some(value) = options.get("includeDeprecated") {
+        put(&mut input, "includeDeprecated", value.clone());
+    }
+    input
 }
 impl EdgeClawFileStores {
     /// Repository constructor with TS path defaults and workspace mode detection.
@@ -190,6 +241,7 @@ impl EdgeClawFileStores {
         )
     }
     /// Explicit home/workspace and clock dependencies for isolated hosts and replay.
+    /// The injected general workspace means construction never reads `$HOME`.
     pub fn with_workspace_clock(
         db: impl AsRef<Path>,
         memory: impl AsRef<Path>,
@@ -205,9 +257,9 @@ impl EdgeClawFileStores {
         } else {
             "single"
         };
-        let mut repository = Self::with_clock(db, memory, global, mode, clock)?;
+        let mut repository =
+            Self::with_clock_general(db, memory, global, mode, Some(general_workspace), clock)?;
         repository.repository.workspace = workspace;
-        repository.repository.general_workspace = general_workspace;
         Ok(repository)
     }
     pub fn close(&self) -> Result<()> {
@@ -299,10 +351,10 @@ impl EdgeClawFileStores {
         if self.get_workspace_mode() != "general" {
             let meta = self.workspace_memory.get_project_meta(&JsObject::new())?;
             let Some(meta) = meta.as_object() else {
-                return Ok(values(vec![]));
+                return Ok(objects(vec![]));
             };
             let workspace = self.current_workspace()?;
-            return Ok(values(vec![catalog_entry(
+            return Ok(objects(vec![catalog_entry(
                 meta.clone(),
                 self.get_workspace_mode(),
                 &workspace,
@@ -314,7 +366,7 @@ impl EdgeClawFileStores {
             )]));
         }
         let workspace = self.current_workspace()?;
-        let locals = objects(self.workspace_memory.list_project_metas()?);
+        let locals = extract_objects(&self.workspace_memory.list_project_metas()?);
         let mut mirrors = HashMap::new();
         for meta in &locals {
             if text(meta, "sourceKind") == "workspace_external_mirror"
@@ -407,7 +459,7 @@ impl EdgeClawFileStores {
                 summary,
             ));
         }
-        sort(
+        sort_manifest_entries(
             &mut catalog,
             |e| {
                 e.get("summary")
@@ -417,10 +469,10 @@ impl EdgeClawFileStores {
             },
             "projectName",
         )?;
-        Ok(values(catalog))
+        Ok(objects(catalog))
     }
     pub fn get_readable_project(&self, logical: &str) -> Result<JsValue> {
-        Ok(objects(self.list_readable_project_catalog()?)
+        Ok(extract_objects(&self.list_readable_project_catalog()?)
             .into_iter()
             .find(|e| text(e, "logicalProjectId") == logical)
             .map(JsValue::Object)
@@ -433,28 +485,26 @@ impl EdgeClawFileStores {
     ) -> Result<JsValue> {
         let project = self.get_readable_project(logical)?;
         let Some(project) = project.as_object() else {
-            return Ok(values(vec![]));
+            return Ok(objects(vec![]));
         };
-        let mut input = options.clone();
-        if !input.contains_key("kinds")
-            || matches!(input.get("kinds"), Some(JsValue::Undefined | JsValue::Null))
-        {
-            put(
-                &mut input,
-                "kinds",
-                JsValue::Array(vec![s("project"), s("feedback")]),
-            );
-        }
-        put(&mut input, "scope", s("project"));
-        put(&mut input, "projectId", s(text(project, "projectId")));
-        put(&mut input, "limit", JsValue::Number(5000.0));
-        put(&mut input, "offset", JsValue::Number(0.0));
+        // `options.kinds ?? ["project", "feedback"]`; unlike the global accessor
+        // TS hands any other value to the store, which yields no matches.
+        let kinds = match options.get("kinds") {
+            None | Some(JsValue::Null | JsValue::Undefined) => {
+                JsValue::Array(vec![s("project"), s("feedback")])
+            }
+            Some(value) => value.clone(),
+        };
+        let include_external = include_external(options);
         let source = text(project, "sourceType");
         let mut entries = vec![];
         if source == "general_local" || source == "workspace_external_mirror" {
-            entries.extend(objects(self.workspace_memory.list_memory_entries(&input)?));
+            let input = project_entry_input(options, kinds.clone(), &text(project, "projectId"));
+            entries.extend(extract_objects(
+                &self.workspace_memory.list_memory_entries(&input)?,
+            ));
         }
-        if !matches!(options.get("includeExternal"), Some(JsValue::Bool(false)))
+        if include_external
             && (source == "workspace_external" || source == "workspace_external_mirror")
         {
             let target = text(project, "sourceWorkspacePath");
@@ -468,11 +518,14 @@ impl EdgeClawFileStores {
                     continue;
                 }
                 let source_id = text(project, "sourceProjectId");
-                if !source_id.is_empty() {
-                    put(&mut input, "projectId", s(source_id));
-                }
+                let project_id = if source_id.is_empty() {
+                    text(project, "projectId")
+                } else {
+                    source_id
+                };
+                let input = project_entry_input(options, kinds.clone(), &project_id);
                 entries.extend(
-                    objects(snapshot.store.list_memory_entries(&input)?)
+                    extract_objects(&snapshot.store.list_memory_entries(&input)?)
                         .into_iter()
                         .map(|mut e| {
                             let path = text(&e, "relativePath").replace('\\', "/");
@@ -490,8 +543,8 @@ impl EdgeClawFileStores {
                 break;
             }
         }
-        sort(&mut entries, |o| text(o, "updatedAt"), "relativePath")?;
-        Ok(values(entries))
+        sort_manifest_entries(&mut entries, |o| text(o, "updatedAt"), "relativePath")?;
+        Ok(objects(entries))
     }
     pub fn repair_workspace_manifest(&self) -> Result<JsValue> {
         self.workspace_memory.repair_manifests()
@@ -499,35 +552,33 @@ impl EdgeClawFileStores {
     pub fn get_user_summary(&self) -> Result<JsValue> {
         let summary = self.global_user_memory.get_user_summary()?;
         let mut summary = summary.as_object().cloned().unwrap_or_default();
-        let files = summary
-            .get("files")
-            .cloned()
-            .unwrap_or(JsValue::Array(vec![]));
+        let files = extract_objects(
+            &summary
+                .get("files")
+                .cloned()
+                .unwrap_or(JsValue::Array(vec![])),
+        );
         put(
             &mut summary,
             "files",
-            values(objects(files).into_iter().map(map_global).collect()),
+            objects(files.into_iter().map(map_global).collect()),
         );
         Ok(JsValue::Object(summary))
     }
     /// Internal TS helper, exposed for repository consumers needing the same filter.
     pub fn list_global_memory_entries(&self, options: &JsObject) -> Result<JsValue> {
-        let kinds = options.get("kinds");
-        let user = kinds.and_then(|v| {
-            if let JsValue::Array(a) = v {
-                Some(a.iter().any(|v| v == &s("user")))
-            } else {
-                None
-            }
-        });
-        if text(options, "scope") == "project" || user == Some(false) {
-            return Ok(values(vec![]));
+        // The TS filter runs before the scope check, so a non-array `kinds`
+        // throws even when `scope` is `"project"`.
+        let kinds = global_entry_kinds(options)?;
+        if text(options, "scope") == "project" {
+            return Ok(objects(vec![]));
         }
-        let mut input = options.clone();
-        put(&mut input, "kinds", JsValue::Array(vec![s("user")]));
-        put(&mut input, "scope", s("global"));
-        Ok(values(
-            objects(self.global_user_memory.list_memory_entries(&input)?)
+        if matches!(&kinds, Some(kinds) if kinds.is_empty()) {
+            return Ok(objects(vec![]));
+        }
+        let input = global_entry_input(options, kinds);
+        Ok(objects(
+            extract_objects(&self.global_user_memory.list_memory_entries(&input)?)
                 .into_iter()
                 .map(map_global)
                 .collect(),
@@ -536,6 +587,9 @@ impl EdgeClawFileStores {
 }
 fn read_workspace(db: &Path) -> Option<PathBuf> {
     // Match TS: open without initializing/migrating and swallow all read errors.
+    // node:sqlite's `DatabaseSync` defaults to timeout 0 (measured: a locked
+    // read returns "database is locked" in 0 ms), so a concurrent writer makes
+    // TS skip the workspace too.
     let conn = Connection::open(db).ok()?;
     conn.busy_timeout(std::time::Duration::ZERO).ok()?;
     let value: Option<String> = conn
@@ -567,7 +621,7 @@ fn summary(store: &FileMemoryStore, id: &str) -> Result<JsObject> {
     put(&mut options, "includeDeprecated", JsValue::Bool(false));
     put(&mut options, "limit", JsValue::Number(5000.0));
     put(&mut options, "offset", JsValue::Number(0.0));
-    let entries = objects(store.list_memory_entries(&options)?);
+    let entries = extract_objects(&store.list_memory_entries(&options)?);
     let mut out = JsObject::new();
     for (key, n) in [
         ("totalEntries", entries.len()),

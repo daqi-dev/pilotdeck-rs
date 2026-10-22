@@ -1,10 +1,12 @@
 //! Real TS repository accessor transcript: TS .db -> Rust, and Rust -> TS.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pilotdeck_gateway::runtime::memory::edgeclaw::{
-    EdgeClawFileStores, FileMemoryError, StorageError,
+    EdgeClawFileStores, FileMemoryError, StorageError, file_memory::FileMemoryClock,
 };
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     collections::HashMap,
     fs,
@@ -75,6 +77,7 @@ fn error(e: FileMemoryError) -> Value {
         FileMemoryError::Storage(StorageError::Closed) => {
             json!({"error":"ERR_INVALID_STATE","message":"database is not open"})
         }
+        FileMemoryError::Type(message) => json!({"error":"TypeError","message":message}),
         e => panic!("unexpected repository error: {e}"),
     }
 }
@@ -283,7 +286,12 @@ fn real_ts_reads_rust_databases_and_files() {
     let output_dir = Scratch::new();
     let output = output_dir.0.join("verify.json");
     let root = &scratch.0;
-    let mut child = Command::new("node")
+    // Regular files (not pipes) mean a chatty verifier can never block on a
+    // full pipe; the helper still bounds the run and kills the whole group.
+    let stdout = output_dir.0.join("verify.stdout");
+    let stderr = output_dir.0.join("verify.stderr");
+    let mut command = Command::new("node");
+    command
         .arg("--import")
         .arg(Path::new(&baseline).join("node_modules/tsx/dist/loader.mjs"))
         .arg(
@@ -293,28 +301,263 @@ fn real_ts_reads_rust_databases_and_files() {
         .arg(root)
         .arg(&output)
         .env("PDRS_BASELINE", baseline)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let start = Instant::now();
-    loop {
-        if child.try_wait().unwrap().is_some() {
-            break;
-        }
-        if start.elapsed() > Duration::from_secs(45) {
-            child.kill().unwrap();
-            panic!("Node verifier exceeded 45s");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let result = child.wait_with_output().unwrap();
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&stderr).unwrap()));
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command.spawn().unwrap();
+    let status = wait_for_process(child, &stdout, &stderr, Duration::from_secs(45))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
+        status.success(),
+        "{}{}",
+        fs::read_to_string(&stdout).unwrap(),
+        fs::read_to_string(&stderr).unwrap()
     );
     let actual: Value = serde_json::from_str(&fs::read_to_string(output).unwrap()).unwrap();
     assert_eq!(actual["observations"], o["observations"]);
     assert_eq!(actual["files"], o["files"]);
+}
+
+/// Poll a child whose stdout/stderr already point at files. On timeout kill its
+/// process group (so tsx/esbuild helpers die too), reap it, then report both
+/// streams instead of losing them with `wait_with_output`.
+fn wait_for_process(
+    mut child: std::process::Child,
+    stdout: &Path,
+    stderr: &Path,
+    limit: Duration,
+) -> std::result::Result<std::process::ExitStatus, String> {
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Ok(status);
+        }
+        if start.elapsed() > limit {
+            #[cfg(unix)]
+            let group = rustix::process::kill_process_group(
+                rustix::process::Pid::from_raw(child.id() as i32).expect("child pid"),
+                rustix::process::Signal::KILL,
+            );
+            #[cfg(not(unix))]
+            let group: std::io::Result<()> = Ok(());
+            let direct = child.kill();
+            let reaped = child.wait();
+            return Err(format!(
+                "subprocess exceeded {limit:?} (group kill {group:?}, direct kill {direct:?}, reap {reaped:?}):\n{}\n{}",
+                fs::read_to_string(stdout).unwrap_or_default(),
+                fs::read_to_string(stderr).unwrap_or_default()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The old verifier piped 64 KiB-bounded streams without reading them; a large
+/// diagnostic dump deadlocked the child. Files keep the runner unblocked.
+#[cfg(unix)]
+#[test]
+fn subprocess_runner_drains_output_larger_than_a_pipe_buffer() {
+    let scratch = Scratch::new();
+    let stdout = scratch.0.join("stdout");
+    let stderr = scratch.0.join("stderr");
+    let child = Command::new("sh")
+        .arg("-c")
+        .arg("head -c 262144 /dev/zero | tr '\\0' x; head -c 262144 /dev/zero | tr '\\0' y >&2")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&stderr).unwrap()))
+        .spawn()
+        .unwrap();
+    let status = wait_for_process(child, &stdout, &stderr, Duration::from_secs(20)).unwrap();
+    assert!(status.success());
+    assert!(fs::metadata(&stdout).unwrap().len() >= 262144);
+    assert!(fs::metadata(&stderr).unwrap().len() >= 262144);
+}
+
+/// A timeout must kill descendants, not just the `sh` leader: tsx leaves
+/// esbuild helpers in the same owned group. Without the group kill the
+/// background subshell survives and writes the marker.
+#[cfg(unix)]
+#[test]
+fn subprocess_timeout_kills_the_whole_process_group() {
+    let scratch = Scratch::new();
+    let stdout = scratch.0.join("stdout");
+    let stderr = scratch.0.join("stderr");
+    let marker = scratch.0.join("survived");
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(format!("(sleep 1; : > {}) & wait", marker.display()))
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&stderr).unwrap()))
+        .process_group(0);
+    let child = command.spawn().unwrap();
+    let result = wait_for_process(child, &stdout, &stderr, Duration::from_millis(200));
+    assert!(result.is_err(), "unexpected exit: {result:?}");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        !marker.exists(),
+        "timeout left a descendant alive in the process group"
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn system_passwd_home() -> PathBuf {
+    let output = Command::new("/usr/bin/id").arg("-P").output().unwrap();
+    let line = String::from_utf8(output.stdout).unwrap();
+    let fields: Vec<&str> = line.trim_end().split(':').collect();
+    PathBuf::from(fields[fields.len() - 2])
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_passwd_home() -> PathBuf {
+    let uid = Command::new("id").arg("-u").output().unwrap();
+    let uid = String::from_utf8(uid.stdout).unwrap();
+    let output = Command::new("getent")
+        .args(["passwd", uid.trim()])
+        .output()
+        .unwrap();
+    let line = String::from_utf8(output.stdout).unwrap();
+    PathBuf::from(line.trim_end().split(':').nth(5).unwrap())
+}
+
+#[test]
+fn repository_home_fallback_matches_ts_homedir() {
+    if std::env::var_os("PDRS_HOME_FALLBACK_CHILD").is_some() {
+        home_fallback_child();
+        return;
+    }
+    for (mode, expected) in [
+        ("unset", system_passwd_home().join(".pilotdeck")),
+        ("empty", std::env::current_dir().unwrap().join(".pilotdeck")),
+    ] {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "home_fallback_child", "--ignored", "--nocapture"])
+            .env("PDRS_HOME_FALLBACK_CHILD", mode)
+            .env("PDRS_EXPECTED_GENERAL", &expected);
+        if mode == "unset" {
+            command.env_remove("HOME");
+        } else {
+            command.env("HOME", "");
+        }
+        let output = command.output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{mode} child failed: {text}");
+        assert!(
+            text.contains("test result: ok. 1 passed"),
+            "{mode} child did not run: {text}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE with Node 22 and tsx"]
+fn real_ts_homedir_matches_rust_without_home() {
+    let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE"));
+    for mode in ["unset", "empty"] {
+        let mut probe = Command::new("node");
+        probe
+            .arg("--import")
+            .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/edgeclaw-accessors/home.mts"),
+            )
+            .env("PDRS_BASELINE", &baseline)
+            .stdin(Stdio::null());
+        if mode == "unset" {
+            probe.env_remove("HOME");
+        } else {
+            probe.env("HOME", "");
+        }
+        let output = probe.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let observed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let general = observed["general"].as_str().expect("general workspace");
+        if mode == "empty" {
+            assert_eq!(
+                observed["home"].as_str(),
+                Some(""),
+                "empty HOME must not fall back"
+            );
+        } else {
+            assert_eq!(
+                Path::new(general),
+                system_passwd_home().join(".pilotdeck").as_path()
+            );
+        }
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "home_fallback_child", "--ignored", "--nocapture"])
+            .env("PDRS_HOME_FALLBACK_CHILD", mode)
+            .env("PDRS_EXPECTED_GENERAL", general);
+        if mode == "unset" {
+            child.env_remove("HOME");
+        } else {
+            child.env("HOME", "");
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{mode} Rust child disagreed with TS {general}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+#[ignore = "spawned by repository_home_fallback_matches_ts_homedir"]
+fn home_fallback_child() {
+    let Ok(mode) = std::env::var("PDRS_HOME_FALLBACK_CHILD") else {
+        return;
+    };
+    let expected = PathBuf::from(std::env::var("PDRS_EXPECTED_GENERAL").unwrap());
+    let scratch = Scratch::new();
+    let clock: FileMemoryClock = Arc::new(|| NOW.into());
+    // Explicit general workspace: no HOME lookup at all.
+    EdgeClawFileStores::with_workspace_clock(
+        scratch.0.join("explicit/control.sqlite"),
+        scratch.0.join("explicit/memory"),
+        scratch.0.join("global"),
+        scratch.0.join("workspace"),
+        scratch.0.join("explicit/general"),
+        clock.clone(),
+    )
+    .unwrap()
+    .close()
+    .unwrap();
+    // Default constructor: succeeds through the same homedir resolution Node
+    // uses (HOME wins, then passwd), including an empty HOME.
+    EdgeClawFileStores::with_clock(
+        scratch.0.join("default/control.sqlite"),
+        scratch.0.join("default/memory"),
+        scratch.0.join("global"),
+        "single",
+        clock,
+    )
+    .unwrap()
+    .close()
+    .unwrap();
+    let stores = EdgeClawFileStores::open_repository(
+        scratch.0.join("repo/control.sqlite"),
+        None,
+        Some(&scratch.0.join("global")),
+        Some(&expected),
+    )
+    .unwrap();
+    assert_eq!(stores.get_workspace_mode(), "general", "{mode}");
+    stores.close().unwrap();
 }

@@ -10,13 +10,13 @@ pub(super) fn obj(fields: &[(&str, JsValue)]) -> JsObject {
     }
     o
 }
-pub(super) fn s(v: impl AsRef<str>) -> JsValue {
+pub(crate) fn s(v: impl AsRef<str>) -> JsValue {
     JsValue::from(v.as_ref())
 }
 pub(super) fn num(v: usize) -> JsValue {
     JsValue::Number(v as f64)
 }
-pub(super) fn text(o: &JsObject, k: &str) -> String {
+pub(crate) fn text(o: &JsObject, k: &str) -> String {
     o.get(k)
         .and_then(JsValue::as_string)
         .map(|s| String::from_utf16_lossy(s.units()))
@@ -28,8 +28,19 @@ pub(super) fn flag(o: &JsObject, k: &str) -> bool {
 pub(super) fn strings(v: &[String]) -> JsValue {
     JsValue::Array(v.iter().map(s).collect())
 }
-pub(super) fn objects(v: Vec<JsObject>) -> JsValue {
+pub(crate) fn objects(v: Vec<JsObject>) -> JsValue {
     JsValue::Array(v.into_iter().map(JsValue::Object).collect())
+}
+/// Extract the object elements of a JS array. The inverse of [`objects`]; TS
+/// accepts the same untyped array shape from `listMemoryEntries`.
+pub(crate) fn extract_objects(value: &JsValue) -> Vec<JsObject> {
+    match value {
+        JsValue::Array(items) => items
+            .iter()
+            .filter_map(|v| v.as_object().cloned())
+            .collect(),
+        _ => vec![],
+    }
 }
 pub(super) fn array(o: &JsObject, k: &str) -> Vec<String> {
     match o.get(k) {
@@ -194,7 +205,7 @@ pub(super) fn slug(value: &str) -> String {
         result
     }
 }
-pub(super) fn hash(value: &str) -> String {
+pub(crate) fn hash(value: &str) -> String {
     format!("{:x}", Sha1::digest(value.as_bytes()))[..10].into()
 }
 pub(super) fn copy(o: &mut JsObject, source: &JsObject, keys: &[&str]) {
@@ -717,4 +728,58 @@ pub(super) fn input_error(prefix: &str, input: &JsObject, key: &str) -> FileMemo
         units.extend(value.units());
     }
     FileMemoryError::InvalidUtf16(JsString::from_utf16(units))
+}
+
+/// `toExposedGlobalRelativePath` / `mapGlobalFileRecord`: prefix `global/`.
+pub(crate) fn map_global(mut o: JsObject) -> JsObject {
+    let path = text(&o, "relativePath").replace('\\', "/");
+    o.insert(
+        "relativePath".into(),
+        s(if path.starts_with("global/") {
+            path
+        } else {
+            format!("global/{path}")
+        }),
+    );
+    o
+}
+
+/// `sortManifestEntries`: `updatedAt` descending, then `relativePath` ascending,
+/// both via the locale collator used by TS `localeCompare`.
+pub(crate) fn sort_manifest_entries(
+    entries: &mut [JsObject],
+    time: impl Fn(&JsObject) -> String,
+    tie: &str,
+) -> Result<()> {
+    if entries.len() < 2 {
+        return Ok(());
+    }
+    let collator = crate::project_files::node_collator(&crate::project_files::node_locale(|key| {
+        std::env::var(key).ok()
+    }))
+    .map_err(|e| FileMemoryError::Collation(format!("{e:?}")))?;
+    entries.sort_by(|a, b| {
+        let at = time(a);
+        let bt = time(b);
+        if at != bt {
+            crate::project_files::node_compare_utf16(
+                &collator,
+                &JsString::from(bt),
+                &JsString::from(at),
+            )
+        } else {
+            let a = a
+                .get(tie)
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            let b = b
+                .get(tie)
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            crate::project_files::node_compare_utf16(&collator, &a, &b)
+        }
+    });
+    Ok(())
 }

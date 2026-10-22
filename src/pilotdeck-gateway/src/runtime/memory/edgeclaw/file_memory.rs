@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
-mod helpers;
+pub(crate) mod helpers;
 use helpers::*;
 
 pub const CURRENT_PROJECT_ID: &str = "current_project";
@@ -66,6 +66,9 @@ pub enum FileMemoryError {
     Invalid(String),
     InvalidUtf16(JsString),
     Collation(String),
+    /// A TS-conformance `TypeError` raised before any store call, e.g. a
+    /// non-array `kinds` passed to `listGlobalMemoryEntries`.
+    Type(String),
     Storage(StorageError),
 }
 impl fmt::Display for FileMemoryError {
@@ -73,7 +76,7 @@ impl fmt::Display for FileMemoryError {
         match self {
             Self::Io(e) => write!(f, "{e}"),
             Self::InvalidUtf16(e) => write!(f, "{}", String::from_utf16_lossy(e.units())),
-            Self::Invalid(e) | Self::Collation(e) => write!(f, "{e}"),
+            Self::Invalid(e) | Self::Collation(e) | Self::Type(e) => write!(f, "{e}"),
             Self::Storage(e) => write!(f, "{e}"),
         }
     }
@@ -290,6 +293,19 @@ impl EdgeClawFileStores {
         mode: &str,
         clock: FileMemoryClock,
     ) -> Result<Self> {
+        Self::with_clock_general(db, memory, global, mode, None, clock)
+    }
+    /// Shared constructor. An explicit general workspace skips the `$HOME`
+    /// lookup entirely, so repository callers that already know it do not
+    /// acquire an environment dependency (`with_workspace_clock`).
+    pub(crate) fn with_clock_general(
+        db: impl AsRef<Path>,
+        memory: impl AsRef<Path>,
+        global: impl AsRef<Path>,
+        mode: &str,
+        general_workspace: Option<PathBuf>,
+        clock: FileMemoryClock,
+    ) -> Result<Self> {
         let global_user_memory = Arc::new(FileMemoryStore::with_clock(
             global,
             repository_global_options(),
@@ -308,18 +324,7 @@ impl EdgeClawFileStores {
                         JsValue::Array(v) => v
                             .iter()
                             .filter_map(|v| v.as_object().cloned())
-                            .map(|mut e| {
-                                let path = text(&e, "relativePath").replace('\\', "/");
-                                e.insert(
-                                    "relativePath".into(),
-                                    s(if path.starts_with("global/") {
-                                        path
-                                    } else {
-                                        format!("global/{path}")
-                                    }),
-                                );
-                                e
-                            })
+                            .map(map_global)
                             .collect(),
                         _ => vec![],
                     })
@@ -328,12 +333,21 @@ impl EdgeClawFileStores {
             },
             clock.clone(),
         )?;
-        Ok(Self {
-            repository: super::storage::accessors::RepositoryContext::new(
+        let repository = match general_workspace {
+            Some(general) => super::storage::accessors::RepositoryContext::with_general(
+                memory.as_ref(),
+                mode,
+                general,
+                clock.clone(),
+            )?,
+            None => super::storage::accessors::RepositoryContext::new(
                 memory.as_ref(),
                 mode,
                 clock.clone(),
             )?,
+        };
+        Ok(Self {
+            repository,
             storage: EdgeClawStorage::open(db)?,
             workspace_memory,
             global_user_memory,
@@ -347,7 +361,7 @@ fn now_iso() -> String {
     };
     pilotdeck_transport::system_clock::format_epoch_iso(ms)
 }
-pub(super) fn absolute(path: &Path) -> Result<PathBuf> {
+pub(crate) fn absolute(path: &Path) -> Result<PathBuf> {
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -453,32 +467,7 @@ impl Core {
         Ok(records)
     }
     fn sort(&self, entries: &mut [JsObject]) -> Result<()> {
-        if entries.len() < 2 {
-            return Ok(());
-        }
-        let collator =
-            crate::project_files::node_collator(&crate::project_files::node_locale(|key| {
-                std::env::var(key).ok()
-            }))
-            .map_err(|e| FileMemoryError::Collation(format!("{e:?}")))?;
-        entries.sort_by(|a, b| {
-            let a_time = text(a, "updatedAt");
-            let b_time = text(b, "updatedAt");
-            if a_time != b_time {
-                crate::project_files::node_compare_utf16(
-                    &collator,
-                    &JsString::from(b_time),
-                    &JsString::from(a_time),
-                )
-            } else {
-                crate::project_files::node_compare_utf16(
-                    &collator,
-                    &JsString::from(text(a, "relativePath")),
-                    &JsString::from(text(b, "relativePath")),
-                )
-            }
-        });
-        Ok(())
+        sort_manifest_entries(entries, |e| text(e, "updatedAt"), "relativePath")
     }
     fn all(&self) -> Result<Vec<JsObject>> {
         let mut entries = vec![];
