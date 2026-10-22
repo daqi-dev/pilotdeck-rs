@@ -1521,3 +1521,5 @@ mod tests {
 pub(crate) mod accessors;
 
 pub mod snapshots;
+
+pub mod entries;

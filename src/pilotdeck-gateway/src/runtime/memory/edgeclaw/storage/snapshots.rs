@@ -331,7 +331,7 @@ impl EdgeClawFileStores {
     pub fn set_snapshot_io_hook(&mut self, hook: SnapshotIoHook) {
         self.repository.snapshot_io = hook;
     }
-    fn snapshot_operation<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn snapshot_operation<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let mut roots = vec![
             absolute(self.workspace_memory.get_root_dir())?,
             absolute(self.global_user_memory.get_root_dir())?,

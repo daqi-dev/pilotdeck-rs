@@ -707,3 +707,87 @@ fn catalog_entry(
     }
     meta
 }
+
+// Entries uses the same discovery/cache and collation as readable catalogs.
+impl EdgeClawFileStores {
+    pub(super) fn entry_external_records(
+        &self,
+        ids: &[JsString],
+        max_lines: f64,
+    ) -> Result<Vec<JsValue>> {
+        let mut groups: Vec<(String, Vec<JsValue>)> = vec![];
+        for id in ids {
+            let Some(payload) = id
+                .units()
+                .strip_prefix(&[101, 120, 116, 101, 114, 110, 97, 108, 58])
+            else {
+                continue;
+            };
+            let Some(separator) = payload.iter().position(|u| *u == 58) else {
+                continue;
+            };
+            let key = crate::runtime::memory::js_trim_units(&payload[..separator]);
+            let path = crate::runtime::memory::js_trim_units(&payload[separator + 1..]);
+            if key.is_empty() || path.is_empty() {
+                continue;
+            }
+            let key = String::from_utf16_lossy(key);
+            let path = JsValue::String(JsString::from_utf16(
+                path.iter()
+                    .map(|u| if *u == 92 { 47 } else { *u })
+                    .collect(),
+            ));
+            if let Some((_, paths)) = groups.iter_mut().find(|(k, _)| k == &key) {
+                paths.push(path);
+            } else {
+                groups.push((key, vec![path]));
+            }
+        }
+        let mut records = vec![];
+        if groups.is_empty() {
+            return Ok(records);
+        }
+        let snapshots = self.external_snapshots()?;
+        for (key, paths) in groups {
+            let Some(snapshot) = snapshots
+                .iter()
+                .find(|s| hash(&path_text(&s.workspace)) == key)
+            else {
+                continue;
+            };
+            let mut input = JsObject::new();
+            put(&mut input, "ids", JsValue::Array(paths));
+            put(&mut input, "maxLines", JsValue::Number(max_lines));
+            for mut record in objects(snapshot.store.get_memory_records_by_ids(&input)?) {
+                let mut path = format!("external:{key}:")
+                    .encode_utf16()
+                    .collect::<Vec<_>>();
+                path.extend(
+                    record
+                        .get("relativePath")
+                        .and_then(JsValue::as_string)
+                        .unwrap()
+                        .units()
+                        .iter()
+                        .map(|u| if *u == 92 { 47 } else { *u }),
+                );
+                put(
+                    &mut record,
+                    "relativePath",
+                    JsValue::String(JsString::from_utf16(path)),
+                );
+                records.push(JsValue::Object(record));
+            }
+        }
+        Ok(records)
+    }
+}
+pub(super) fn sort_entry_values(entries: &mut Vec<JsValue>) -> Result<()> {
+    let mut records = entries
+        .iter()
+        .filter_map(|v| v.as_object().cloned())
+        .collect::<Vec<_>>();
+    sort(&mut records, |o| text(o, "updatedAt"), "relativePath")?;
+    *entries = records.into_iter().map(JsValue::Object).collect();
+    Ok(())
+}
