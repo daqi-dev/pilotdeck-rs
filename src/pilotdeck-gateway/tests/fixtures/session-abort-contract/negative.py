@@ -70,10 +70,14 @@ def main():
             'target', '.git', 'node_modules', '.env*'))
         shutil.copytree(rust.parent / 'specs', Path(directory) / 'specs')
         env = dict(os.environ, CARGO_NET_OFFLINE='true', CARGO_TARGET_DIR=str(scratch / 'target'))
+        # Restore every mutated file each round, then inject only the current
+        # mutation; a mutation must never ride along into a later round.
         for name, file, before, after, marker in [('baseline', None, None, None, None)] + mutants:
-            if file is not None:
-                (scratch / file).write_text(originals[file] if before is None
-                                            else originals[file].replace(before, after, 1))
+            for path, original in originals.items():
+                content = original
+                if path == file:
+                    content = content.replace(before, after, 1)
+                (scratch / path).write_text(content)
             gate_logs = []
             while True:
                 gate = subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'],
@@ -99,7 +103,6 @@ def main():
             print(f'{name}: {"PASS" if valid else "INVALID"} exit={result.returncode}', flush=True)
             if not valid:
                 raise SystemExit(1)
-        (scratch / handle).write_text(originals[handle])
     print('all mutations detected; scratch workspace restored and removed', flush=True)
 
 

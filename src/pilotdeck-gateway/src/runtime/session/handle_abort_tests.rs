@@ -192,8 +192,31 @@ async fn abort_at_lease_and_dispose_windows_matches_ts() {
     const ORACLE: &str = include_str!("../../../tests/fixtures/session-abort-contract/oracle.json");
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    for expected in oracle["cases"].as_array().unwrap() {
+    // Fail closed on an empty or truncated corpus: the generator records
+    // exactly these six gated phases per case, so a vacuous replay over zero
+    // or reshaped cases must not pass (same fail-closed shape as owner_tests).
+    const PHASES: [&str; 6] = [
+        "lease_pending",
+        "lease_aborts",
+        "session_pending",
+        "session_aborts",
+        "disposed",
+        "late_abort",
+    ];
+    let cases = oracle["cases"].as_array().unwrap();
+    assert!(!cases.is_empty(), "oracle cases must not be empty");
+    for expected in cases {
         let active = expected["active"].as_bool().unwrap();
+        assert_eq!(
+            expected["checkpoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|checkpoint| checkpoint["phase"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            PHASES,
+            "oracle checkpoint phases; active={active}"
+        );
         let actual = tokio::time::timeout(std::time::Duration::from_secs(3), record(active))
             .await
             .expect("controlled dispose/lease interleaving hung");
