@@ -25,7 +25,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -1094,6 +1097,304 @@ fn empty_source_and_created_at_use_the_ts_defaults() {
     assert_eq!(&created_at[10..11], "T");
     assert_eq!(&created_at[19..20], ".");
     assert!(created_at.ends_with('Z'), "{created_at}");
+}
+
+/// `sanitizeTraceArray` must not turn unpaired surrogates into a Rust-only
+/// `HostRequired` error: Node/ICU4C collates them as distinct implicit weights,
+/// so TS saves, sorts and dedupes them. Mirrors the review probe (two distinct
+/// keys saved one after the other, then queried from existing state).
+#[test]
+fn unpaired_surrogates_in_started_at_save_sort_and_dedupe_like_node() {
+    let directory = TempDir::new("surrogates");
+    let path = directory.path().join("surrogates.db");
+    let storage = EdgeClawStorage::open(&path).expect("create Rust database");
+    let record = |id: &str, started: &str| {
+        parse_json(&format!(r#"{{"caseId":"{id}","startedAt":"{started}"}}"#)).unwrap()
+    };
+    storage
+        .save_case_trace(&record("a", r"\ud800a"), 30)
+        .expect("save first surrogate key");
+    storage
+        .save_case_trace(&record("b", r"\ud800b"), 30)
+        .expect("save second surrogate key");
+    storage
+        .save_case_trace(&record("c", r"\ud801"), 30)
+        .expect("save D801");
+    storage
+        .save_case_trace(&record("d", r"\udfff"), 30)
+        .expect("save DFFF");
+    storage
+        .save_case_trace(&record("e", r"\ud800a"), 30)
+        .expect("save duplicate id");
+    storage
+        .save_case_trace(&record("e", r"\ud801a"), 30)
+        .expect("save duplicate id again");
+
+    let listed = storage.list_recent_case_traces(30).expect("list");
+    let ids: Vec<String> = listed
+        .iter()
+        .map(|record| {
+            record
+                .get("caseId")
+                .and_then(JsValue::as_string)
+                .expect("caseId")
+                .to_utf8()
+                .expect("id is UTF-8")
+        })
+        .collect();
+    // Node 22.22.0: "\udfff" > "\ud801a" > "\ud801" > "\ud800b" > "\ud800a".
+    assert_eq!(ids, ["d", "e", "c", "b", "a"]);
+
+    // The existing-state query reads the same sorted, deduped array that was
+    // persisted; the duplicate id keeps the newer "\ud801a" record.
+    let stored = storage
+        .get_pipeline_state("recentCaseTraces")
+        .expect("read stored traces")
+        .expect("stored traces exist");
+    let JsValue::Array(stored) = &stored else {
+        panic!("recentCaseTraces is not an array");
+    };
+    assert_eq!(stored.len(), 5);
+    let duplicate = storage
+        .get_case_trace("e")
+        .expect("get e")
+        .expect("e exists");
+    assert_eq!(
+        duplicate
+            .get("startedAt")
+            .and_then(JsValue::as_string)
+            .expect("startedAt")
+            .units(),
+        [0xD801, u16::from(b'a')]
+    );
+}
+
+fn create_legacy_database(path: &Path) {
+    let connection = Connection::open(path).expect("create legacy database");
+    connection
+        .busy_timeout(Duration::ZERO)
+        .expect("disable timeout");
+    connection
+        .execute_batch("PRAGMA journal_mode = WAL;")
+        .expect("enable WAL");
+    connection
+        .execute_batch(
+            "CREATE TABLE pipeline_state (
+               state_key TEXT PRIMARY KEY,
+               state_json TEXT,
+               state_value TEXT,
+               updated_at TEXT NOT NULL
+             );
+             INSERT INTO pipeline_state (state_key, state_json, state_value, updated_at)
+             VALUES ('workspaceDir', NULL, '\"legacy\"', '2026-10-20T00:00:00.000Z');",
+        )
+        .expect("create legacy schema");
+}
+
+fn pipeline_state_columns(connection: &Connection) -> Vec<String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(pipeline_state)")
+        .expect("prepare table_info");
+    statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query table_info")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect columns")
+}
+
+/// A migration that cannot take the write lock must leave the legacy table and
+/// its rows untouched (all-or-nothing), so the next `open()` can migrate them.
+#[test]
+fn failed_migration_keeps_the_legacy_table_and_rows() {
+    let directory = TempDir::new("migration-busy");
+    let path = directory.path().join("legacy.db");
+    create_legacy_database(&path);
+    let blocker = Connection::open(&path).expect("open blocker");
+    blocker
+        .busy_timeout(Duration::ZERO)
+        .expect("disable blocker timeout");
+    blocker
+        .execute_batch("BEGIN IMMEDIATE;")
+        .expect("take the write lock");
+
+    let error = match EdgeClawStorage::open(&path) {
+        Ok(_) => panic!("busy database must reject the migration"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("database is locked"),
+        "unexpected migration error: {error}"
+    );
+
+    let columns = pipeline_state_columns(&blocker);
+    assert!(columns.iter().any(|column| column == "state_value"));
+    assert!(columns.iter().any(|column| column == "state_json"));
+    let (state_json, state_value): (Option<String>, Option<String>) = blocker
+        .query_row(
+            "SELECT state_json, state_value FROM pipeline_state WHERE state_key = 'workspaceDir'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("legacy row survives");
+    assert_eq!(state_json, None);
+    assert_eq!(state_value.as_deref(), Some("\"legacy\""));
+    let leftovers: i64 = blocker
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name = 'pipeline_state_v2'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count leftovers");
+    assert_eq!(leftovers, 0, "a failed migration left pipeline_state_v2");
+    blocker
+        .execute_batch("ROLLBACK;")
+        .expect("release the write lock");
+
+    let storage = EdgeClawStorage::open(&path).expect("migrate once the lock is gone");
+    assert_eq!(
+        storage.get_pipeline_state("workspaceDir").unwrap(),
+        Some(JsValue::from("legacy"))
+    );
+    drop(storage);
+    let connection = Connection::open(&path).expect("open migrated database");
+    let columns = pipeline_state_columns(&connection);
+    assert!(columns.iter().any(|column| column == "state_json"));
+    assert!(!columns.iter().any(|column| column == "state_value"));
+}
+
+/// A migration whose `INSERT` fails (here `COALESCE(NULL, NULL)` violates
+/// `pipeline_state_v2.state_json NOT NULL`) must roll the already-created
+/// `pipeline_state_v2` back; otherwise the file is left with an empty v2 table
+/// next to the legacy one. Removing the `BEGIN IMMEDIATE`/`ROLLBACK` wrapper
+/// makes this assertion fail.
+#[test]
+fn failed_migration_leaves_no_half_built_pipeline_state_v2() {
+    let directory = TempDir::new("migration-partial");
+    let path = directory.path().join("legacy.db");
+    let connection = Connection::open(&path).expect("create legacy database");
+    connection
+        .busy_timeout(Duration::ZERO)
+        .expect("disable timeout");
+    connection
+        .execute_batch("PRAGMA journal_mode = WAL;")
+        .expect("enable WAL");
+    connection
+        .execute_batch(
+            "CREATE TABLE pipeline_state (
+               state_key TEXT PRIMARY KEY,
+               state_json TEXT,
+               state_value TEXT,
+               updated_at TEXT NOT NULL
+             );
+             INSERT INTO pipeline_state (state_key, state_json, state_value, updated_at)
+             VALUES ('broken', NULL, NULL, '2026-10-20T00:00:00.000Z');",
+        )
+        .expect("create un-migratable legacy row");
+    drop(connection);
+
+    let error = match EdgeClawStorage::open(&path) {
+        Ok(_) => panic!("a NULL state_json/state_value must fail the migration"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("NOT NULL"),
+        "unexpected migration error: {error}"
+    );
+
+    let connection = Connection::open(&path).expect("open after failed migration");
+    let leftovers: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name = 'pipeline_state_v2'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count leftovers");
+    assert_eq!(
+        leftovers, 0,
+        "a failed migration left a half-built pipeline_state_v2"
+    );
+    let columns = pipeline_state_columns(&connection);
+    assert!(columns.iter().any(|column| column == "state_value"));
+    let (state_json, state_value): (Option<String>, Option<String>) = connection
+        .query_row(
+            "SELECT state_json, state_value FROM pipeline_state WHERE state_key = 'broken'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("legacy row survives");
+    assert_eq!((state_json, state_value), (None, None));
+
+    // Repairing the row lets the next open migrate it normally.
+    connection
+        .execute(
+            "UPDATE pipeline_state SET state_value = '\"repaired\"' WHERE state_key = 'broken'",
+            [],
+        )
+        .expect("repair legacy row");
+    drop(connection);
+    let storage = EdgeClawStorage::open(&path).expect("migrate after repair");
+    assert_eq!(
+        storage.get_pipeline_state("broken").unwrap(),
+        Some(JsValue::from("repaired"))
+    );
+}
+
+/// Two threads opening the same legacy file must not interleave their
+/// migrations (the second `CREATE TABLE IF NOT EXISTS pipeline_state` used to
+/// be able to land between the first writer's `DROP` and `RENAME`). At least
+/// one opener wins; the loser may see SQLITE_BUSY (busy_timeout is 0, like
+/// Node), but the file must end up migrated with the legacy rows intact.
+#[test]
+fn concurrent_open_migrates_a_legacy_database_without_orphaning_rows() {
+    for round in 0..16 {
+        let directory = TempDir::new(&format!("migration-race-{round}"));
+        let path = directory.path().join("legacy.db");
+        create_legacy_database(&path);
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    EdgeClawStorage::open(&path).map(drop)
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("opener thread"))
+            .collect();
+        assert!(
+            results.iter().any(Result::is_ok),
+            "round {round}: no opener migrated the database: {results:?}"
+        );
+
+        let storage = EdgeClawStorage::open(&path)
+            .unwrap_or_else(|error| panic!("round {round}: reopen failed: {error}"));
+        assert_eq!(
+            storage.get_pipeline_state("workspaceDir").unwrap(),
+            Some(JsValue::from("legacy")),
+            "round {round}: legacy row was lost"
+        );
+        drop(storage);
+
+        let connection = Connection::open(&path).expect("open migrated database");
+        let leftovers: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'pipeline_state_v2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count leftovers");
+        assert_eq!(
+            leftovers, 0,
+            "round {round}: orphaned pipeline_state_v2 left behind"
+        );
+        let columns = pipeline_state_columns(&connection);
+        assert!(columns.iter().any(|column| column == "state_json"));
+        assert!(!columns.iter().any(|column| column == "state_value"));
+    }
 }
 
 /// Rust -> TS: a real baseline process reopens the Rust-written database. This

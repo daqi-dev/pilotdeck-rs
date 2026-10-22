@@ -12,7 +12,7 @@
 
 use crate::{
     metadata::js_trim,
-    project_files::{has_unpaired_surrogate, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
     runtime::memory::{js_is_space_unit, js_trim_units},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -84,9 +84,10 @@ pub enum StorageError {
     /// object, a number or a boolean is a JS `TypeError`; a string is
     /// iterable and its characters are dropped by the sanitizer.
     NotIterable(String),
-    /// The comparison cannot be reproduced without the Node host: ICU4X
-    /// folds unpaired surrogates to U+FFFD while Node's collation keeps them
-    /// distinct. Mirrors the existing `workspace_snapshot` boundary.
+    /// ICU collation data could not be loaded, so `localeCompare`-based trace
+    /// ordering cannot be reproduced. (Unpaired surrogates are no longer a
+    /// host boundary: `trace_collation_units` maps them onto the unassigned
+    /// U+E000..U+E7FF band the way Node/ICU4C weights them.)
     HostRequired(String),
 }
 impl fmt::Display for StorageError {
@@ -203,23 +204,52 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:567-590`: migrate only when `pipeline_state` still carries a
     /// legacy `state_value` column; an already-v2 table is untouched.
+    ///
+    /// TS runs the four statements on its single-threaded event loop, so they
+    /// never interleave. `exec` still auto-commits each one, which leaves a
+    /// cross-process crash window that the baseline itself has. Rust adds a
+    /// second, avoidable window: two threads can open the same file at once,
+    /// and a second writer's `CREATE TABLE IF NOT EXISTS pipeline_state` can
+    /// land between the first writer's `DROP` and `RENAME`, orphaning rows in
+    /// `pipeline_state_v2` and failing the first `open()`. Take the write lock
+    /// before re-checking the columns so the migration is all-or-nothing;
+    /// the common already-v2 path stays a plain read.
     fn migrate_pipeline_state(&self) -> Result<(), StorageError> {
-        let columns = {
-            let conn = self.conn();
-            let mut statement = conn.prepare("PRAGMA table_info(pipeline_state)")?;
-            let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
+        if !Self::pipeline_state_needs_migration(&self.conn())? {
+            return Ok(());
+        }
+        let conn = self.conn();
+        conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let outcome = (|| -> Result<(), StorageError> {
+            if !Self::pipeline_state_needs_migration(&conn)? {
+                return Ok(());
+            }
+            conn.execute_batch(MIGRATE_PIPELINE_STATE_SQL)?;
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => {
+                conn.execute_batch("COMMIT;")?;
+                Ok(())
+            }
+            Err(error) => {
+                // `execute_batch` autocommitted nothing inside our transaction;
+                // roll it back so a failed migration leaves the legacy table
+                // and its rows exactly as they were.
+                let _ = conn.execute_batch("ROLLBACK;");
+                Err(error)
+            }
+        }
+    }
+
+    fn pipeline_state_needs_migration(conn: &Connection) -> Result<bool, StorageError> {
+        let mut statement = conn.prepare("PRAGMA table_info(pipeline_state)")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+        let columns = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
         let has_state_json = columns.iter().any(|column| column == "state_json");
         let has_state_value = columns.iter().any(|column| column == "state_value");
-        if has_state_json && !has_state_value {
-            return Ok(());
-        }
-        if !has_state_json && !has_state_value {
-            return Ok(());
-        }
-        self.conn().execute_batch(MIGRATE_PIPELINE_STATE_SQL)?;
-        Ok(())
+        Ok(!((has_state_json && !has_state_value) || (!has_state_json && !has_state_value)))
     }
 
     // -- pipeline_state ---------------------------------------------------
@@ -654,42 +684,24 @@ fn sanitize_trace_array(
     let JsValue::Array(items) = value else {
         return Ok(Vec::new());
     };
-    let mut filtered: Vec<&JsValue> = items
+    let mut filtered: Vec<(&JsValue, Vec<u16>)> = items
         .iter()
         .filter(|item| {
             item.get(id_key).and_then(JsValue::as_string).is_some()
                 && item.get(sort_key).and_then(JsValue::as_string).is_some()
         })
+        .map(|item| (item, trace_collation_units(trace_sort_key(item, sort_key))))
         .collect();
-    // ICU4X folds unpaired surrogates to U+FFFD while V8's collation keeps
-    // distinct weights. Only refuse when such a key actually takes part in a
-    // comparison; a single distinct key never calls the comparator.
-    let has_distinct_keys = filtered.first().is_some_and(|first| {
-        let first = trace_sort_key(first, sort_key);
-        filtered
-            .iter()
-            .skip(1)
-            .any(|item| trace_sort_key(item, sort_key).units() != first.units())
-    });
-    if has_distinct_keys
-        && filtered
-            .iter()
-            .any(|item| has_unpaired_surrogate(trace_sort_key(item, sort_key)))
-    {
-        return Err(StorageError::HostRequired(
-            "trace startedAt collation requires the Node host for unpaired surrogates.".into(),
-        ));
+    // `Array#sort` is stable and never invokes the comparator for zero or one
+    // element, so the collator (and its ICU data) is only loaded when a
+    // comparison is actually needed.
+    if filtered.len() >= 2 {
+        let collator = trace_collator()?;
+        filtered.sort_by(|(_, left), (_, right)| collator.compare_utf16(right, left));
     }
-    let collator = trace_collator()?;
-    filtered.sort_by(|left, right| {
-        collator.compare_utf16(
-            trace_sort_key(right, sort_key).units(),
-            trace_sort_key(left, sort_key).units(),
-        )
-    });
     let mut seen = HashSet::new();
     let mut records = Vec::new();
-    for item in filtered {
+    for (item, _) in filtered {
         let id = item
             .get(id_key)
             .and_then(JsValue::as_string)
@@ -706,6 +718,38 @@ fn trace_sort_key<'a>(item: &'a JsValue, sort_key: &str) -> &'a JsString {
     item.get(sort_key)
         .and_then(JsValue::as_string)
         .expect("filtered trace has a sort key")
+}
+
+/// UTF-16 units whose `localeCompare` order matches Node's for every unpaired
+/// surrogate.
+///
+/// V8/ICU4C collates an unpaired surrogate with the UCA implicit weight of the
+/// code point it names, so `\ud800 < \ud801 < ... < \udfff`, all of them sort
+/// just above U+D7FF, and each is distinct. ICU4X (`Collator::compare_utf16`)
+/// folds every unpaired surrogate to U+FFFD, which loses both the order and the
+/// distinction. Re-encode each unpaired surrogate `u` as the private-use scalar
+/// `U+E000 + (u - 0xD800)`: those 2048 code points are collation-unassigned, so
+/// ICU4X gives them implicit weights in the same band, and the mapping is
+/// strictly increasing, preserving order and adjacency. Valid UTF-16 passes
+/// through unchanged.
+///
+/// The residual divergence is a real U+E000..U+E7FF character compared against
+/// a surrogate at the deciding position: the mapped surrogate lands on that
+/// character instead of just below U+E000. Private-use characters are not
+/// timestamp input (no baseline fixture or production path stores them); the
+/// Node probe and this trade-off are recorded in RESULT「修复轮 2」.
+fn trace_collation_units(value: &JsString) -> Vec<u16> {
+    let mut units = Vec::with_capacity(value.units().len());
+    for decoded in char::decode_utf16(value.units().iter().copied()) {
+        match decoded {
+            Ok(character) => {
+                let mut buffer = [0; 2];
+                units.extend_from_slice(character.encode_utf16(&mut buffer));
+            }
+            Err(error) => units.push(0xE000 + (error.unpaired_surrogate() - 0xD800)),
+        }
+    }
+    units
 }
 
 fn normalize_traces(records: Vec<JsValue>, kind: TraceKind) -> Result<Vec<JsValue>, StorageError> {
@@ -1047,19 +1091,68 @@ mod tests {
     }
 
     #[test]
-    fn trace_collation_stops_at_unpaired_surrogates_that_must_be_compared() {
-        // ICU4X folds unpaired surrogates to U+FFFD while V8 keeps distinct
-        // weights; the module refuses only when such a key takes part in a
-        // comparison (mirrors the `workspace_snapshot` boundary).
+    fn trace_collation_orders_unpaired_surrogates_like_node() {
+        // Measured with Node 22.22.0 (`'\ud800'.localeCompare('\ud801')` etc.):
+        // unpaired surrogates collate as distinct implicit weights in code-unit
+        // order, above every assigned character and below U+FFFD. This used to
+        // be a Rust-only `HostRequired` error branch while TS saved and listed
+        // these records.
         let record = |id: &str, started: &str| {
             parse_json(&format!(r#"{{"caseId":"{id}","startedAt":"{started}"}}"#)).unwrap()
         };
-        let lone = sanitize_trace_array(
-            &JsValue::Array(vec![record("a", r"\ud800a"), record("b", r"\ud800b")]),
+        let sorted = sanitize_trace_array(
+            &JsValue::Array(vec![
+                record("a", r"\ud800a"),
+                record("b", r"\ud800b"),
+                record("c", r"\ud801"),
+                record("d", r"\udfff"),
+                record("r", r"\ufffd"),
+                record("z", "zzz"),
+            ]),
             "caseId",
             "startedAt",
+        )
+        .unwrap();
+        let started: Vec<Vec<u16>> = sorted
+            .iter()
+            .map(|record| {
+                record
+                    .get("startedAt")
+                    .and_then(JsValue::as_string)
+                    .expect("startedAt")
+                    .units()
+                    .to_vec()
+            })
+            .collect();
+        let unit = |text: &str| text.encode_utf16().collect::<Vec<_>>();
+        assert_eq!(
+            started,
+            vec![
+                unit("\u{fffd}"),
+                vec![0xDFFF],
+                vec![0xD801],
+                vec![0xD800, u16::from(b'b')],
+                vec![0xD800, u16::from(b'a')],
+                unit("zzz"),
+            ]
         );
-        assert!(matches!(lone, Err(StorageError::HostRequired(_))));
+        // Duplicate ids keep the first record after the descending stable sort,
+        // i.e. the newer (larger) startedAt, exactly like TS.
+        let deduped = sanitize_trace_array(
+            &JsValue::Array(vec![record("dup", r"\ud800a"), record("dup", r"\ud801a")]),
+            "caseId",
+            "startedAt",
+        )
+        .unwrap();
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0]
+                .get("startedAt")
+                .and_then(JsValue::as_string)
+                .expect("startedAt")
+                .units(),
+            vec![0xD801, u16::from(b'a')]
+        );
         // A single record never runs the comparator, so it still stores.
         let single = sanitize_trace_array(
             &JsValue::Array(vec![record("a", r"\ud800a")]),

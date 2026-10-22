@@ -29,6 +29,9 @@ RESULT「依赖与 SQLite 版本」）。
 脚本还固定了这些边界：
 
 - `localeCompare` 与 UTF-16 码元序不同的记录（`0Z` / `0a`），含重复 id 的去重赢家。
+- `startedAt` 含孤立代理：Node/ICU4C 按码点的 UCA 隐式权重排序
+  （`\ud800` < `\ud801` < `\udfff`，且都高于已分配字符、低于 U+FFFD）。
+  含连续保存、已有状态查询与重复 id 保留；Rust 侧的单测另覆盖 U+FFFD 边界。
 - TEXT 中的 NUL：`session_key`、`timestamp`、`source`、`created_at` 与
   `pipeline_state.state_json`。node:sqlite 读出到首个 NUL 为止（列内字节完整）。
 - `insertL0Session` 的空 `source`（→ `"openclaw"`）与空 `createdAt`（→ `nowIso()`）；
@@ -53,7 +56,9 @@ PDRS_BASELINE=/abs/PilotDeck \
 
 生成器冻结 `Date`（2026-10-21T00:00:00.000Z），两次独立运行必须逐字节一致；
 A6.6-pr10a 修复轮 1 记录为
-`sha256 0274519e489a5611a50162be77b5faf1670e1400d7db897e7b0c093d1990e202`。
+`sha256 0274519e489a5611a50162be77b5faf1670e1400d7db897e7b0c093d1990e202`，
+修复轮 2 加入孤立代理记录后为
+`sha256 bc1e7a4aadb8e028fa9d0ad362a9de57b0c653924844659e91733cb0e234a845`。
 
 ## 回放
 
