@@ -1,8 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 11:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #460 | coord | doing | PR #460 board 更新（chore/waiver），入合并队列等合入
+updated: 2026-10-22 11:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- #460 | coord | doing | PR #460 board chore，在合并队列等合入
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #458 | impl | blocked | 入站孤立代理（#421 拆出），前置于 A7.2
@@ -14,6 +14,12 @@ updated: 2026-10-22 11:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 11:50 · /loop 协调轮
+> **合并**：#461（board 11:40 段落）合入 main（2ce465ce），邮箱 noreply ✅。#460 仍在合并队列。
+> **本轮汇总**：本会话核心成果——#421 A7.1-pr3 合入（循环困境脱困：回滚修复轮7，保留修复轮6 params JsValue 展开，gate8 P0/P1=0）；#459（#390 LazyLock）合入；#434（#410 token_accounting）合入；#455（P2-跟进第5批）合入；#386/#443 关单；#458 登记（入站孤立代理，前置 A7.2）。
+> **清理**：wt-a63-pr1/wt-a68-pr1/wt-a64-pr7 全部回收归档（4880+1359+196 文件）。worktree 1/12，磁盘 44.7 GiB。
+> **下一步**：① 等 #460 合入；② #458 待排期（A7.2 前置）；③ READY 无 ready 项，下一产品单待开发优先安排（A7.2 session adapter 接线、A6.6 EdgeClaw 等）。
 
 > ## 2026-10-22 11:40 · /loop 协调轮
 > **合并**：#421（A7.1-pr3 连接 context/auth/binding）合入 main（25abd804），邮箱核验 noreply ✅。#459（#390 LazyLock+openai url）合入 main（2026-10-22T03:22:11Z）。#434（#410 token_accounting）、#455（P2-跟进第5批）此前已合入。
