@@ -825,10 +825,7 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
 }
 
 fn duration_ms(value: f64) -> Duration {
-    if !value.is_finite() || value < 1.0 {
-        return Duration::from_millis(1);
-    }
-    Duration::from_millis(value as u64)
+    crate::runtime::network::node_timer_duration(value)
 }
 
 async fn read_pipe(pipe: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>) -> Vec<u8> {
@@ -1793,5 +1790,30 @@ mod signal_tests {
         assert!(!result.timed_out);
         test_support::assert_reset_report(std::str::from_utf8(&result.stdout).unwrap());
         test_support::assert_inherited();
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn hook_timeout_conversion_matches_node_timer_lists() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/hook-router-timers/oracle.json"
+    ));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("timer cases")
+    };
+    for case in cases {
+        let input = case.get("input").unwrap();
+        let value = match input.as_string().map(|s| s.to_utf8().unwrap()).as_deref() {
+            Some("NaN") => f64::NAN,
+            Some("Infinity") => f64::INFINITY,
+            Some("-Infinity") => f64::NEG_INFINITY,
+            _ => input.as_number().unwrap(),
+        };
+        assert_eq!(
+            duration_ms(value).as_millis() as f64,
+            case.get("hookMs").unwrap().as_number().unwrap(),
+            "input={input:?}"
+        );
     }
 }

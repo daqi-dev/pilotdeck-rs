@@ -1,0 +1,75 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/tool/execution-world/SubprocessPort.ts": "741522f149f6e01232777fbf5bf8269bff60886c46f81457dae0b9d6c7586d74",
+    "src/router/tokenSaver/classifyAndRoute.ts": "d4172d8ef7999a8863411ca2135d2576bbb9a733c72ad168002a4998bc0961d0"
+  },
+  "node": "v22.22.0",
+  "cases": [
+    {
+      "input": "-Infinity",
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": -5,
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": 0,
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": 0.5,
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": 1,
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": 1.9,
+      "hookMs": 1,
+      "routerMs": 500
+    },
+    {
+      "input": 499.5,
+      "hookMs": 499,
+      "routerMs": 500
+    },
+    {
+      "input": 500.9,
+      "hookMs": 500,
+      "routerMs": 500
+    },
+    {
+      "input": 2147483647,
+      "hookMs": 2147483647,
+      "routerMs": 2147483647
+    },
+    {
+      "input": 2147483647.5,
+      "hookMs": 1,
+      "routerMs": 1
+    },
+    {
+      "input": 2147483648,
+      "hookMs": 1,
+      "routerMs": 1
+    },
+    {
+      "input": "Infinity",
+      "hookMs": 1,
+      "routerMs": 1
+    },
+    {
+      "input": "NaN",
+      "hookMs": 1,
+      "routerMs": 1
+    }
+  ]
+}

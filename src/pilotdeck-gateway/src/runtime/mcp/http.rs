@@ -297,6 +297,38 @@ fn retry_delay(retry_after: Option<&str>) -> Duration {
     Duration::from_millis(500 + jitter)
 }
 
+/// TS normalizeNetworkError: an existing NetworkFetchError owns its outcome;
+/// only raw rejections recheck cancellation in their error continuation.
+fn normalize_network_failure(
+    error: McpClientError,
+    signal: &ToolCancellation,
+    before_abort: bool,
+) -> McpClientError {
+    if error.name() == "NetworkFetchError" {
+        return error;
+    }
+    if !before_abort && signal.is_cancelled() {
+        return network_error(
+            "network_abort",
+            "Network request aborted by parent signal.".into(),
+        );
+    }
+    let code = match error.code() {
+        Some(McpErrorCode::Text(code)) if code.starts_with("network_") => *code,
+        code => {
+            crate::runtime::model::http::NetworkFetchError::classify(
+                error.message(),
+                match code {
+                    Some(McpErrorCode::Text(code)) | Some(McpErrorCode::Errno(code)) => Some(code),
+                    _ => None,
+                },
+            )
+            .code
+        }
+    };
+    network_error(code, error.message().into())
+}
+
 /// How a request is fetched.
 #[derive(Clone, Copy)]
 enum Fetch {
@@ -331,9 +363,27 @@ async fn network_fetch(
                 headers.clone(),
                 body.clone(),
             );
-            ExchangeFuture::io(
-                async move { fetch_once(&client, method, &url, &headers, body).await },
-            )
+            ExchangeFuture::io(async move {
+                fetch_once(&client, method, &url, &headers, body)
+                    .await
+                    .map_err(|error| {
+                        // fetch_once carries socket classification metadata in an
+                        // SDK-shaped error. Network mode must normalize this raw
+                        // fetch failure only after the await/cancellation race.
+                        // Plain keeps its existing bare-fetch projection.
+                        if matches!(mode, Fetch::Network { .. })
+                            && error.name() == "NetworkFetchError"
+                        {
+                            McpClientError::with_code(
+                                "TypeError",
+                                error.code().cloned().unwrap(),
+                                error.message().into(),
+                            )
+                        } else {
+                            error
+                        }
+                    })
+            })
         },
     )
     .await
@@ -382,7 +432,11 @@ async fn network_fetch_continuing_with<B: Send + 'static>(
         {
             Exchange::Response(outcome, before_abort) => {
                 continuation_before_abort = before_abort;
-                outcome
+                if retries {
+                    outcome.map_err(|error| normalize_network_failure(error, aborted, before_abort))
+                } else {
+                    outcome
+                }
             }
             Exchange::Timeout { before_abort } => {
                 continuation_before_abort = before_abort;
@@ -2372,4 +2426,109 @@ mod tests {
             "Invalid URL"
         );
     }
+}
+
+#[cfg(test)]
+#[tokio::test(start_paused = true)]
+async fn final_network_error_rechecks_parent_like_real_ts() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/network-error-order/oracle.json"
+    ));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("network cases")
+    };
+    for case in cases {
+        let mode = case
+            .get("mode")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap();
+        let signal = ToolCancellation::new();
+        let calls = std::cell::Cell::new(0);
+        let start = tokio::time::Instant::now();
+        let mut pending = Box::pin(network_fetch_with(
+            if mode.starts_with("last-get") {
+                Method::GET
+            } else {
+                Method::POST
+            },
+            Fetch::Network { timeout_ms: 0.0 },
+            &signal,
+            || {
+                calls.set(calls.get() + 1);
+                let error = if mode == "normalized-sync-abort" {
+                    network_error("network_tls_error", "already normalized".into())
+                } else {
+                    McpClientError::new(
+                        "TypeError",
+                        Some(McpErrorCode::Errno("ECONNRESET")),
+                        "socket hang up",
+                    )
+                };
+                if mode.contains("before-") {
+                    return ExchangeFuture::<Result<hyper::Response<()>, McpClientError>>::after(
+                        Duration::from_millis(10),
+                        Err(error),
+                    );
+                }
+                if mode == "ready-rejection-sync-abort"
+                    || mode == "normalized-sync-abort"
+                    || (mode.starts_with("last-get") && calls.get() == 2)
+                {
+                    signal.cancel_synchronously();
+                }
+                ExchangeFuture::ready(Err(error))
+            },
+        ));
+        if mode.contains("before-") {
+            std::future::poll_fn(|cx| {
+                assert!(pending.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            tokio::time::advance(Duration::from_millis(40)).await;
+            signal.cancel_at(
+                start
+                    + Duration::from_millis(if mode == "timer-error-before-parent" {
+                        20
+                    } else {
+                        5
+                    }),
+            );
+        }
+        let error = pending.await.unwrap_err();
+        let expected = case.get("expected").unwrap();
+        let string = |key| {
+            expected
+                .get(key)
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap()
+        };
+        assert_eq!(error.name(), string("name"), "{mode}");
+        let Some(McpErrorCode::Text(code)) = error.code() else {
+            panic!("expected network error code")
+        };
+        assert_eq!(*code, string("code"), "{mode}");
+        assert_eq!(error.message(), string("message"), "{mode}");
+        assert_eq!(
+            calls.get() as f64,
+            case.get("calls").unwrap().as_number().unwrap(),
+            "{mode}"
+        );
+    }
+    // Legacy/SSE bare fetch never gets Network mode's new normalization/recheck.
+    let signal = ToolCancellation::new();
+    let error = network_fetch_with::<()>(Method::POST, Fetch::Plain, &signal, || {
+        signal.cancel_synchronously();
+        ExchangeFuture::ready(Err(McpClientError::plain("TypeError", "socket hang up")))
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(error.name(), "TypeError");
+    assert_eq!(error.message(), "socket hang up");
 }

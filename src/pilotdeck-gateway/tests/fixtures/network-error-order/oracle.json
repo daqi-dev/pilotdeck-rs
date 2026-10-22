@@ -1,0 +1,62 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "cases": [
+    {
+      "mode": "raw-no-abort",
+      "calls": 1,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_connection_reset",
+        "message": "socket hang up"
+      }
+    },
+    {
+      "mode": "ready-rejection-sync-abort",
+      "calls": 1,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_abort",
+        "message": "Network request aborted by parent signal."
+      }
+    },
+    {
+      "mode": "timer-error-before-parent",
+      "calls": 1,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_connection_reset",
+        "message": "socket hang up"
+      }
+    },
+    {
+      "mode": "parent-before-error",
+      "calls": 1,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_abort",
+        "message": "Network request aborted by parent signal."
+      }
+    },
+    {
+      "mode": "normalized-sync-abort",
+      "calls": 1,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_tls_error",
+        "message": "already normalized"
+      }
+    },
+    {
+      "mode": "last-get-rejection-sync-abort",
+      "calls": 2,
+      "expected": {
+        "name": "NetworkFetchError",
+        "code": "network_abort",
+        "message": "Network request aborted by parent signal."
+      }
+    }
+  ]
+}

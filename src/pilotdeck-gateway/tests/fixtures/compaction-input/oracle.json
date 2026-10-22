@@ -1,0 +1,1164 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/compaction/CompactionOrchestrator.ts": "b2e3229bb100dc455fc072d3781e5996cb93c74ae2f0992a9c04480a325a344b",
+    "src/context/compaction/CompactionPort.ts": "6508b753372a501cc8724178fe569f45b98fe28282eeb1233ed6c812f9aa0344",
+    "src/context/DefaultContextRuntime.ts": "649673bc23b1b335415ddd35bc09f0814088c3ff9f2794a3055bcf637ef9c700",
+    "src/context/budget/TokenBudgetManager.ts": "539e7a0473b88138321f27979ecc21a6410dc4b7f0ff382f06e81ee4a2d0777d",
+    "src/context/budget/effectiveContext.ts": "0e9e8f663189a6b2ca970d3a1edf6d3c898afb6c7dec4f1cdc3c41c8aae11c81"
+  },
+  "cases": [
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": []
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": []
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 100,
+            "effectiveContextTokens": 100,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": []
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "maxContextTokens": null
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "maxContextTokens": null
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 100,
+            "effectiveContextTokens": 100,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "maxContextTokens": null
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "maxContextTokens": "20"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": "20",
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "maxContextTokens": "20"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 20,
+            "maxContextTokens": "20",
+            "effectiveContextTokens": "20",
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "maxContextTokens": "20"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "maxContextTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": false,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "maxContextTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 1,
+            "maxContextTokens": false,
+            "effectiveContextTokens": false,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "maxContextTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "maxContextTokens": 0
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 0,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "maxContextTokens": 0
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 1,
+            "maxContextTokens": 0,
+            "effectiveContextTokens": 0,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "maxContextTokens": 0
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "maxContextTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": {},
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "maxContextTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": null,
+            "maxContextTokens": {},
+            "effectiveContextTokens": {},
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "maxContextTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": "3"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": "3"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 97,
+            "effectiveContextTokens": 97,
+            "maxOutputTokens": 3,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 3
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": "3"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 100,
+            "effectiveContextTokens": 100,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 100,
+            "effectiveContextTokens": 100,
+            "maxOutputTokens": null,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": null
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": [],
+        "reservedOutputTokens": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": []
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {},
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {},
+      "expected": {
+        "error": "messages is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {},
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok"
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": null
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": null
+      },
+      "expected": {
+        "error": "messages is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": null
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": null
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": {}
+      },
+      "expected": {
+        "error": "messages is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": {}
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": {}
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": 4
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": 4
+      },
+      "expected": {
+        "error": "messages is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": 4
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": 4
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": false
+      },
+      "expected": {
+        "error": "messages is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": false
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": false
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": ""
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": ""
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "estimateSource": "estimator",
+            "totalContextTokens": 100,
+            "maxContextTokens": 100,
+            "effectiveContextTokens": 100,
+            "maxOutputTokens": 0,
+            "warningRatio": 0.8,
+            "blockingRatio": 0.9,
+            "state": "ok",
+            "ratio": 0,
+            "reservedOutputTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": ""
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": ""
+          }
+        }
+      }
+    },
+    {
+      "mode": "disabled",
+      "input": {
+        "messages": "abc"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "warningRatio": 0,
+            "blockingRatio": 0,
+            "state": "ok",
+            "ratio": 0
+          }
+        }
+      }
+    },
+    {
+      "mode": "native",
+      "input": {
+        "messages": "abc"
+      },
+      "expected": {
+        "error": "message.content is not iterable"
+      }
+    },
+    {
+      "mode": "evaluator",
+      "input": {
+        "messages": "abc"
+      },
+      "expected": {
+        "result": {
+          "type": "skipped",
+          "snapshot": {
+            "tokens": 0,
+            "maxContextTokens": 100,
+            "ratio": 0,
+            "state": "ok",
+            "observed": "abc"
+          }
+        }
+      }
+    }
+  ],
+  "fallbackCases": [
+    {
+      "input": {
+        "messages": []
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": 100,
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    },
+    {
+      "input": {
+        "messages": [],
+        "maxContextTokens": null
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": 100,
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    },
+    {
+      "input": {
+        "messages": [],
+        "maxContextTokens": "20"
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": "20",
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    },
+    {
+      "input": {
+        "messages": [],
+        "maxContextTokens": false
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": false,
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    },
+    {
+      "input": {
+        "messages": [],
+        "maxContextTokens": 0
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": 0,
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    },
+    {
+      "input": {
+        "messages": [],
+        "maxContextTokens": {}
+      },
+      "expected": {
+        "type": "skipped",
+        "snapshot": {
+          "tokens": 0,
+          "maxContextTokens": {},
+          "warningRatio": 0,
+          "blockingRatio": 0,
+          "state": "ok",
+          "ratio": 0
+        }
+      }
+    }
+  ],
+  "summaryCases": [
+    {
+      "snapshot": {
+        "tokens": 95,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": "40",
+        "ratio": 0.95,
+        "state": "blocking"
+      },
+      "expected": {
+        "effective": 40,
+        "target": 24
+      }
+    },
+    {
+      "snapshot": {
+        "tokens": 95,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": false,
+        "ratio": 0.95,
+        "state": "blocking"
+      },
+      "expected": {
+        "effective": 1,
+        "target": 1
+      }
+    },
+    {
+      "snapshot": {
+        "tokens": 95,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": null,
+        "ratio": 0.95,
+        "state": "blocking"
+      },
+      "expected": {
+        "effective": 100,
+        "target": 60
+      }
+    },
+    {
+      "snapshot": {
+        "tokens": 95,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": {},
+        "ratio": 0.95,
+        "state": "blocking"
+      },
+      "expected": {
+        "effective": null,
+        "target": null
+      }
+    },
+    {
+      "snapshot": {
+        "tokens": 95,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 60,
+        "ratio": 0.95,
+        "state": "blocking"
+      },
+      "expected": {
+        "effective": 60,
+        "target": 36
+      }
+    }
+  ],
+  "projectionCases": [
+    {
+      "input": {},
+      "expected": {
+        "stage": "pre_route",
+        "trigger": "auto"
+      }
+    },
+    {
+      "input": {
+        "maxContextTokens": null
+      },
+      "expected": {
+        "stage": "routed",
+        "trigger": "auto",
+        "maxContextTokens": null
+      }
+    },
+    {
+      "input": {
+        "maxContextTokens": 0
+      },
+      "expected": {
+        "stage": "routed",
+        "trigger": "auto",
+        "maxContextTokens": 0
+      }
+    },
+    {
+      "input": {
+        "allowFallbackOnFailure": true,
+        "manualForce": false,
+        "reservedOutputTokens": 0
+      },
+      "expected": {
+        "stage": "recovery",
+        "trigger": "auto",
+        "reservedOutputTokens": 0,
+        "manualForce": false,
+        "allowFallbackOnFailure": true
+      }
+    },
+    {
+      "input": {
+        "budgetStage": "custom",
+        "trigger": null,
+        "budgetRequest": {
+          "provider": "p"
+        },
+        "budgetPreparation": {
+          "tools": []
+        },
+        "budgetCalibration": {}
+      },
+      "expected": {
+        "stage": "custom",
+        "trigger": "auto",
+        "request": {
+          "provider": "p"
+        },
+        "preparation": {
+          "tools": []
+        },
+        "calibration": {}
+      }
+    },
+    {
+      "input": {
+        "budgetStage": null,
+        "trigger": "manual",
+        "budgetRequest": false,
+        "budgetPreparation": 0
+      },
+      "expected": {
+        "stage": "pre_route",
+        "trigger": "manual"
+      }
+    }
+  ]
+}

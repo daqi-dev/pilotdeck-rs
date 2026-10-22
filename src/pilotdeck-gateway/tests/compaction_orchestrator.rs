@@ -859,3 +859,176 @@ async fn dispatcher_budget_branches_drive_native_orchestrator() {
         );
     }
 }
+
+// The same owner seam used by session consumers, rather than a second lock in
+// CompactionOrchestrator. The guard covers the entire maintenance future.
+#[tokio::test]
+async fn compaction_maintenance_reentry_matches_real_ts() {
+    use pilotdeck_gateway::runtime::{
+        project::{DisposeFuture, RuntimeResult},
+        session::{LiveSession, LiveSessionHandle},
+    };
+    struct Session;
+    impl LiveSession for Session {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Undefined
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    let oracle = baseline::oracle(ORACLE);
+    let handle = LiveSessionHandle::new(Arc::new(Session), None);
+    let first = handle.begin_maintenance().unwrap();
+    let second = handle
+        .clone()
+        .begin_maintenance()
+        .err()
+        .expect("reject reentry");
+    assert_eq!(
+        JsValue::String(second.message.into()),
+        f(f(&oracle, "admissionProbe"), "handleSecond").clone()
+    );
+    assert!(handle.begin_activity().is_err());
+    drop(first);
+    // Both successful completion and an early error release the RAII slot.
+    let fail = || -> Result<(), &'static str> {
+        let _maintenance = handle.begin_maintenance().unwrap();
+        Err("summary failure")
+    };
+    assert!(fail().is_err());
+    drop(handle.begin_maintenance().unwrap());
+    let turn = handle.begin_activity().unwrap();
+    assert_eq!(
+        JsValue::String(handle.begin_maintenance().err().unwrap().message.into()),
+        f(f(&oracle, "admissionProbe"), "handleSecond").clone()
+    );
+    drop(turn);
+    drop(handle.begin_maintenance().unwrap());
+}
+
+#[tokio::test]
+async fn compaction_input_values_match_real_ts() {
+    use pilotdeck_gateway::host::modules::context::CompactionBudgetEvaluator;
+    struct Evaluator;
+    impl CompactionBudgetEvaluator for Evaluator {
+        fn evaluate(&self, messages: JsValue) -> HostFuture<JsValue> {
+            Box::pin(async move {
+                Ok(obj([
+                    ("tokens", JsValue::Number(0.0)),
+                    ("maxContextTokens", JsValue::Number(100.0)),
+                    ("ratio", JsValue::Number(0.0)),
+                    ("state", "ok".into()),
+                    ("observed", messages),
+                ]))
+            })
+        }
+    }
+    struct Skip;
+    impl CompactionPolicyPort for Skip {
+        fn evaluate_snapshot(&self, snapshot: JsValue) -> Result<JsValue, HostError> {
+            Ok(obj([("type", "skip".into()), ("snapshot", snapshot)]))
+        }
+    }
+    let oracle = baseline::oracle(include_str!("fixtures/compaction-input/oracle.json"));
+    for case in a(f(&oracle, "cases")) {
+        let mode = s(f(case, "mode"));
+        let port = CompactionPort {
+            budget: (mode != "disabled")
+                .then(|| Arc::new(TokenBudgetManager::default()) as Arc<dyn CompactionBudgetPort>),
+            policy: Some(Arc::new(Skip)),
+            ..Default::default()
+        };
+        let mut call = input(f(case, "input"));
+        if mode == "evaluator" {
+            call.budget_evaluator = Some(Arc::new(Evaluator));
+        }
+        let result = port.try_auto_compact(call, 100.0).await;
+        let result = match result {
+            Ok(value) => obj([("result", value)]),
+            Err(e) => obj([("error", error(e))]),
+        };
+        same(
+            &result,
+            f(case, "expected"),
+            &format!("input {mode}: {:?}", f(case, "input")),
+        );
+    }
+    let runtime = DefaultContextRuntime::new(Options {
+        max_context_tokens: 100.0,
+        ..Default::default()
+    });
+    for case in a(f(&oracle, "fallbackCases")) {
+        same(
+            &runtime
+                .try_auto_compact(input(f(case, "input")))
+                .await
+                .unwrap(),
+            f(case, "expected"),
+            "fallback input",
+        );
+    }
+    struct Snapshot(JsValue);
+    impl CompactionBudgetPort for Snapshot {
+        fn evaluate(&self, _: &[JsValue], _: f64, _: Option<f64>) -> Result<JsValue, HostError> {
+            Ok(self.0.clone())
+        }
+        fn estimate_messages(&self, _: &[JsValue]) -> Result<f64, HostError> {
+            Ok(0.0)
+        }
+    }
+    struct Trigger;
+    impl CompactionPolicyPort for Trigger {
+        fn evaluate_snapshot(&self, snapshot: JsValue) -> Result<JsValue, HostError> {
+            Ok(obj([("type", "trigger".into()), ("snapshot", snapshot)]))
+        }
+    }
+    struct Summary(Arc<Mutex<JsValue>>);
+    impl CompactionSummaryPort for Summary {
+        fn run(&self, i: CompactionInput) -> HostFuture<CompactionResult> {
+            *self.0.lock().unwrap() = obj([
+                (
+                    "effective",
+                    JsValue::Number(i.effective_context_tokens.unwrap()),
+                ),
+                ("target", JsValue::Number(i.target_post_tokens.unwrap())),
+            ]);
+            Box::pin(async { Err(ModuleError::new("stop").into()) })
+        }
+    }
+    for case in a(f(&oracle, "summaryCases")) {
+        let captured = Arc::new(Mutex::new(JsValue::Undefined));
+        let port = CompactionPort {
+            budget: Some(Arc::new(Snapshot(f(case, "snapshot").clone()))),
+            policy: Some(Arc::new(Trigger)),
+            summary: Some(Arc::new(Summary(captured.clone()))),
+            ..Default::default()
+        };
+        assert!(
+            port.try_auto_compact(input(&obj([("messages", JsValue::Array(vec![]))])), 100.0)
+                .await
+                .is_err()
+        );
+        same(
+            &captured.lock().unwrap(),
+            f(case, "expected"),
+            "effective context coercion",
+        );
+    }
+    for case in a(f(&oracle, "projectionCases")) {
+        same(
+            &project_compaction_budget(f(case, "input")),
+            f(case, "expected"),
+            "shared projection",
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and Node 22"]
+fn compaction_input_generator_twice_is_byte_identical() {
+    baseline::regenerates_identically("compaction-input");
+}

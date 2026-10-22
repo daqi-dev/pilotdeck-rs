@@ -2847,3 +2847,96 @@ async fn html_string_limit_has_exact_ts_error_and_is_not_cached() {
         );
     }
 }
+
+/// Real TS networkFetch catch ordering, including POST and the last GET error.
+#[tokio::test(start_paused = true)]
+async fn final_network_error_rechecks_parent_like_real_ts() {
+    use pilotdeck_gateway::runtime::model::http::TransportFailure;
+    struct FailureTransport {
+        mode: String,
+        signal: ToolCancellation,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl ModelHttpTransport for FailureTransport {
+        fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let error = TransportFailure {
+                cause_code: Some("ECONNRESET"),
+                message: "socket hang up".into(),
+            };
+            if self.mode.contains("before-") {
+                return TransportFuture::after(Duration::from_millis(10), Err(error));
+            }
+            if self.mode == "ready-rejection-sync-abort"
+                || (self.mode.starts_with("last-get") && call == 2)
+            {
+                self.signal.cancel_synchronously();
+            }
+            TransportFuture::ready(Err(error))
+        }
+    }
+    let oracle = baseline::oracle(include_str!("fixtures/network-error-order/oracle.json"));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("network cases")
+    };
+    for case in cases {
+        let mode = text(get(case, "mode"));
+        // ModelHttpTransport's failure type represents raw fetch failures only.
+        // Existing typed NetworkFetchError branches (timeouts/build errors) stay
+        // outside this recheck; MCP additionally accepts a normalized error port.
+        if mode == "normalized-sync-abort" {
+            continue;
+        }
+        let signal = ToolCancellation::new();
+        let ctx = context(None, empty_env(), Some(signal.clone()));
+        let transport = FailureTransport {
+            mode: mode.clone(),
+            signal: signal.clone(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let request = HttpRequest {
+            method: if mode.starts_with("last-get") {
+                "GET"
+            } else {
+                "POST"
+            },
+            url: "https://example.com/".into(),
+            headers: vec![],
+            body: None,
+        };
+        let mut options = network_fetch_options(0.0);
+        options.parent = Some(&ctx);
+        options.retry.max_retries = 1;
+        let start = tokio::time::Instant::now();
+        let mut pending = Box::pin(network_fetch(&transport, &request, &options));
+        if mode.contains("before-") {
+            std::future::poll_fn(|cx| {
+                assert!(pending.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            tokio::time::advance(Duration::from_millis(40)).await;
+            signal.cancel_at(
+                start
+                    + Duration::from_millis(if mode == "timer-error-before-parent" {
+                        20
+                    } else {
+                        5
+                    }),
+            );
+        }
+        let error = pending.await.err().expect("fetch rejection");
+        let expected = get(case, "expected");
+        assert_eq!(error.code, text(get(expected, "code")), "{mode}");
+        assert_eq!(
+            error.message,
+            get(expected, "message").as_string().unwrap().clone(),
+            "{mode}"
+        );
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst) as f64,
+            get(case, "calls").as_number().unwrap(),
+            "{mode}"
+        );
+    }
+}

@@ -1097,6 +1097,55 @@ fn sanitize_failure_message_matches_js_regex_semantics() {
     assert_eq!(output.units()[299], 0xd83d);
 }
 
+#[tokio::test(start_paused = true)]
+async fn judge_timeout_conversion_matches_real_ts_timers() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../../tests/fixtures/hook-router-timers/oracle.json"
+    ));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("timer cases")
+    };
+    for case in cases {
+        let input = case.get("input").unwrap();
+        let mut config = saver();
+        config.judge_timeout_ms = match input.as_string().map(|s| s.to_utf8().unwrap()).as_deref() {
+            Some("NaN") => f64::NAN,
+            Some("Infinity") => f64::INFINITY,
+            Some("-Infinity") => f64::NEG_INFINITY,
+            _ => input.as_number().unwrap(),
+        };
+        let invoker = Invoker::new(vec![Step::Hang]);
+        let start = tokio::time::Instant::now();
+        let decision = classify_and_route(
+            &config,
+            &[user_message("hi")],
+            &invoker,
+            None,
+            None,
+            &"s".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(decision.failure_reason, Some("timeout"));
+        assert_eq!(invoker.calls(), 1);
+        assert_eq!(
+            start.elapsed().as_millis() as f64,
+            case.get("routerMs").unwrap().as_number().unwrap(),
+            "input={input:?}"
+        );
+        assert!(
+            invoker
+                .last_abort
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .is_aborted()
+        );
+    }
+}
+
 /// A stream that reports no usage and ends in a terminal, non-retryable error
 /// after one text delta. With the V8 string limit shrunk, `final_usage` throws
 /// while appending the buffered delta.
