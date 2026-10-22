@@ -722,6 +722,165 @@ record('tool-result-deep-array-content-text', {
   result: successResult([{ type: 'text', text: nestedArray(600, 'leaf') }]),
 });
 
+// Fix round 4: null/missing/wrong-typed values at every read/concat position,
+// measured against real TS (probe-r4.mts). Join semantics: a nullish `text`
+// block renders as the empty string; ToString semantics: template
+// interpolation and `+` convert arrays by joining and objects to
+// `[object Object]`, while an own `toString` property throws
+// `TypeError: Cannot convert object to primitive value`.
+record('tool-result-text-nullish-values', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([
+    { type: 'text', text: null },
+    { type: 'text' },
+    { type: 'text', text: 'b' },
+  ]),
+});
+record('tool-result-text-non-string-values', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([
+    { type: 'text', text: 123 },
+    { type: 'text', text: true },
+    { type: 'text', text: [1, 2] },
+    { type: 'text', text: { a: 1 } },
+  ]),
+});
+record('error-tool-result-text-to-string-throws', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'text', text: { toString: null } }]),
+});
+record('tool-results-projected-fulltext-text-nullish', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{
+    type: 'tool_result', toolCallId: 'call-t',
+    content: [{ type: 'text', text: null }, { type: 'text', text: 'b' }],
+  }]),
+});
+record('subagent-tool-result-text-nullish', {
+  type: 'subagent_tool_result', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore',
+  result: successResult([{ type: 'text', text: null }, { type: 'text', text: 'b' }]),
+});
+// Nullish array elements: TS reads the first property off each element, which
+// throws; a null element after a truthy-timeline block is never visited.
+record('error-tool-calls-null-call', {
+  type: 'tool_calls_detected', sessionId: SESSION, turnId: TURN, calls: [null],
+});
+record('error-tool-calls-null-call-after-ok', {
+  type: 'tool_calls_detected', sessionId: SESSION, turnId: TURN,
+  calls: [{ id: 'call-a', name: 'bash' }, null],
+});
+record('error-steer-content-null-block', {
+  type: 'steer_applied', sessionId: SESSION, turnId: TURN, itemId: 'item-1',
+  message: { role: 'user', content: [null] },
+});
+record('steer-content-null-block-after-timeline', {
+  type: 'steer_applied', sessionId: SESSION, turnId: TURN, itemId: 'item-1',
+  message: { role: 'user', content: [
+    { type: 'text', text: 'x', timeline: tl(12) },
+    null,
+  ] },
+});
+record('error-assistant-content-null-block', {
+  type: 'assistant_message', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant', content: [null] },
+});
+record('error-subagent-tool-calls-null-call', {
+  type: 'subagent_tool_calls_detected', sessionId: SESSION, turnId: TURN,
+  subagentId: 'sub-1', subagentType: 'explore', calls: [null],
+});
+// Non-array receivers: V8 prints the full property-access expression.
+record('error-tool-result-content-map-number', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult(123 as never),
+});
+record('error-tool-result-content-map-string', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult('abc' as never),
+});
+record('error-assistant-content-flat-map-number', {
+  type: 'assistant_message', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant', content: 123 },
+});
+record('error-steer-content-find-number', {
+  type: 'steer_applied', sessionId: SESSION, turnId: TURN, itemId: 'item-1',
+  message: { role: 'user', content: 123 },
+});
+record('error-tool-calls-map-number', {
+  type: 'tool_calls_detected', sessionId: SESSION, turnId: TURN, calls: 123,
+});
+record('error-subagent-tool-calls-map-number', {
+  type: 'subagent_tool_calls_detected', sessionId: SESSION, turnId: TURN,
+  subagentId: 'sub-1', subagentType: 'explore', calls: 123,
+});
+record('error-subagent-tool-result-content-map-number', {
+  type: 'subagent_tool_result', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore', result: successResult(123 as never),
+});
+record('error-flatten-content-map-number', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{ type: 'tool_result', toolCallId: 'call-t', content: 123 }]),
+});
+// Own `toString` on interpolated fields throws `Cannot convert object to
+// primitive value`; `media_reference` paths hit `.split` first instead.
+record('error-tool-result-image-mime-to-string-throws', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'image', mimeType: { toString: null }, data: 'QUJD' }]),
+});
+record('error-tool-result-file-path-to-string-throws', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'file', path: { toString: null } }], { toolName: 'write_file' }),
+});
+record('error-tool-result-pdf-pages-to-string-throws', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([
+    { type: 'pdf', mimeType: 'application/pdf', data: 'QUJD', pages: { toString: null } },
+  ]),
+});
+record('error-tool-result-image-data-length-to-string-throws', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([
+    { type: 'image', mimeType: 'image/png', data: { length: { toString: null } } },
+  ]),
+});
+// `+` in the context_budget totals: containers convert (arrays join, plain
+// objects become `[object Object]`), null is 0 and undefined is NaN.
+record('context-budget-array-and-string-addition', {
+  type: 'context_budget', sessionId: SESSION, turnId: TURN,
+  snapshot: {
+    tokens: 1, maxContextTokens: '5', effectiveContextTokens: [1, 2], maxOutputTokens: 20,
+  },
+});
+record('context-budget-null-and-undefined-addition', {
+  type: 'context_budget', sessionId: SESSION, turnId: TURN,
+  snapshot: {
+    tokens: 1, maxContextTokens: null, maxOutputTokens: 20,
+  },
+});
+record('error-context-budget-to-string-throws', {
+  type: 'context_budget', sessionId: SESSION, turnId: TURN,
+  snapshot: { tokens: 1, maxContextTokens: { toString: null }, maxOutputTokens: 20 },
+});
+// A string `content` iterates its characters in the for-of loop; none of them
+// has a `type`, so no frames are produced.
+record('tool-results-projected-content-string-iterates-no-blocks', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant', content: 'abc' },
+});
+// `previewUnknown` and `stringifyProviderRaw` reach their catch only for
+// values `JSON.stringify` itself rejects; an own `toString` stringifies fine.
+record('tool-calls-detected-input-own-to-string', {
+  type: 'tool_calls_detected', sessionId: SESSION, turnId: TURN,
+  calls: [{ id: 'call-a', name: 'bash', input: { toString: null } }],
+});
+record('turn-failed-details-raw-own-to-string', {
+  type: 'turn_failed', sessionId: SESSION, turnId: TURN,
+  error: {
+    code: 'agent_model_error', message: 'failed', userHint: 'retry later',
+    details: { provider: 'anthropic', raw: { toString: null } },
+  },
+});
+
 // Fix round 3 (gate3 P1): fields that are present but not strings. TS calls a
 // String method on some (`.trim()`, `.split()`, `.toLowerCase()` → TypeError
 // for number/boolean/array/object) and only reads `.length` on others (number

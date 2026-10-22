@@ -401,15 +401,17 @@ fn string_method<'a>(receiver: &'a JsValue, expression: &str) -> ProjectionResul
     }
 }
 
-/// JS `value.map(...)` / `value.flatMap(...)`; only arrays expose the method.
-fn required_array<'a>(value: &'a JsValue, method: &str) -> ProjectionResult<&'a [JsValue]> {
+/// JS `value.map(...)` / `value.flatMap(...)` / `value.find(...)`; only arrays
+/// expose the method. `expression` is the property-access text V8 prints in
+/// both messages, e.g. `event.result.content.map` (the property name is its
+/// last segment).
+fn required_array<'a>(value: &'a JsValue, expression: &str) -> ProjectionResult<&'a [JsValue]> {
+    let method = expression.rsplit('.').next().unwrap_or(expression);
     match value {
         JsValue::Array(items) => Ok(items),
         JsValue::Undefined | JsValue::Null => Err(missing_property_error(value, method)),
-        // V8's message includes the source expression; no wire value reaches
-        // this arm, so the terse form is enough to keep the throw observable.
         _ => Err(ProjectionError::type_error(format!(
-            "{method} is not a function"
+            "{expression} is not a function"
         ))),
     }
 }
@@ -481,13 +483,24 @@ fn nullish(value: &JsValue) -> bool {
 }
 
 /// ECMAScript `String(value)` as UTF-16 units, via the shared
-/// [`crate::js_value::to_string_units`] (same `Array.prototype.join` semantics
-/// and container-depth bound as the rest of the crate). Template-literal
-/// interpolation and `String()` must not degrade deep arrays to
-/// `[object Object]`: TS joins them, and throws `RangeError` past the bound.
+/// [`crate::js_value::to_string_units_checked`] (same `Array.prototype.join`
+/// semantics and container-depth bound as the rest of the crate). Template-
+/// literal interpolation and `String()` must not degrade deep arrays to
+/// `[object Object]`: TS joins them and throws `RangeError` past the bound,
+/// and a wire object with an own `toString` property throws
+/// `TypeError: Cannot convert object to primitive value` (JSON cannot hold a
+/// callable, so the property shadows `Object.prototype.toString` while
+/// `valueOf` returns the object itself).
 fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
-    crate::js_value::to_string_units(value)
-        .map_err(|_| ProjectionError::range_error(crate::js_value::StackOverflow::MESSAGE))
+    match crate::js_value::to_string_units_checked(value) {
+        Ok(units) => Ok(units),
+        Err(crate::js_value::ToStringError::StackOverflow) => Err(ProjectionError::range_error(
+            crate::js_value::StackOverflow::MESSAGE,
+        )),
+        Err(crate::js_value::ToStringError::NotPrimitive) => Err(ProjectionError::type_error(
+            crate::js_value::ToStringError::NOT_PRIMITIVE,
+        )),
+    }
 }
 
 /// `String(value)` as used inside a `catch` block.
@@ -721,12 +734,15 @@ fn project_event(
             ("type", text("prompt_suggestion")),
             ("suggestion", field(event, "suggestion").clone()),
         ])],
-        "tool_calls_detected" => required_array(field(event, "calls"), "map")?
+        "tool_calls_detected" => required_array(field(event, "calls"), "event.calls.map")?
             .iter()
             .map(|call| {
+                // The spread reads `call.timeline` first; a nullish element
+                // throws before `id`/`name`/`input` are ever read.
+                let timeline = required(call, "timeline")?;
                 let mut frame = JsObject::new();
-                if truthy(field(call, "timeline")) {
-                    frame.insert(JsString::from("timeline"), field(call, "timeline").clone());
+                if truthy(timeline) {
+                    frame.insert(JsString::from("timeline"), timeline.clone());
                 }
                 frame.insert(JsString::from("type"), text("tool_call_started"));
                 frame.insert(JsString::from("toolCallId"), field(call, "id").clone());
@@ -939,10 +955,13 @@ fn project_event(
             ])]
         }
         "subagent_model_event" => map_subagent_model_event(event, forward_subagent_text)?,
-        "subagent_tool_calls_detected" => required_array(field(event, "calls"), "map")?
+        "subagent_tool_calls_detected" => required_array(field(event, "calls"), "event.calls.map")?
             .iter()
             .map(|call| {
-                object([
+                // `call.id` is the first property read off the element (the
+                // subagentId/subagentType reads above it are off the event).
+                let id = required(call, "id")?;
+                Ok(object([
                     ("type", text("agent_status")),
                     ("event", text("subagent_tool_call_started")),
                     (
@@ -950,14 +969,14 @@ fn project_event(
                         object([
                             ("subagentId", field(event, "subagentId").clone()),
                             ("subagentType", field(event, "subagentType").clone()),
-                            ("toolCallId", field(call, "id").clone()),
+                            ("toolCallId", id.clone()),
                             ("toolName", field(call, "name").clone()),
                             ("input", field(call, "input").clone()),
                         ]),
                     ),
-                ])
+                ]))
             })
-            .collect(),
+            .collect::<ProjectionResult<Vec<_>>>()?,
         "subagent_tool_result" => subagent_tool_result_frames(event)?,
         "subagent_status" => vec![object([
             ("type", text("agent_status")),
@@ -1040,20 +1059,29 @@ fn finish_frame(mut frame: JsValue, event: &JsValue, run_id: &str) -> JsValue {
     frame
 }
 
-/// `event.message.content.find(block => block.timeline)?.timeline`.
+/// `event.message.content.find(block => block.timeline)?.timeline`. The
+/// callback reads `block.timeline`, so a nullish element throws while blocks
+/// after the first truthy timeline are never visited (find short-circuits).
 fn first_block_timeline(content: &JsValue) -> ProjectionResult<Option<JsValue>> {
-    Ok(required_array(content, "find")?
-        .iter()
-        .find(|block| truthy(field(block, "timeline")))
-        .map(|block| field(block, "timeline").clone()))
+    for block in required_array(content, "event.message.content.find")? {
+        let timeline = required(block, "timeline")?;
+        if truthy(timeline) {
+            return Ok(Some(timeline.clone()));
+        }
+    }
+    Ok(None)
 }
 
 fn assistant_message_frames(message: &JsValue) -> ProjectionResult<Vec<JsValue>> {
     let model = field(field(message, "metadata"), "model");
-    let content = required_array(required(message, "content")?, "flatMap")?;
+    let content = required_array(
+        required(message, "content")?,
+        "event.message.content.flatMap",
+    )?;
     let mut frames = Vec::new();
     for block in content {
-        let block_type = field(block, "type");
+        // The callback's first read is `block.type`; a nullish element throws.
+        let block_type = required(block, "type")?;
         let block_id = field(block, "blockId");
         let timeline = field(block, "timeline");
         let is_closed_block = (is_type(block_type, "text") || is_type(block_type, "thinking"))
@@ -1126,7 +1154,7 @@ fn tool_result_frames(
     store: &dyn GatewayToolResultArtifactStorePort,
 ) -> ProjectionResult<Vec<JsValue>> {
     let result = field(event, "result");
-    let content = required_array(required(result, "content")?, "map")?;
+    let content = required_array(required(result, "content")?, "event.result.content.map")?;
     let full_text = join_units(
         &content
             .iter()
@@ -1148,7 +1176,11 @@ fn tool_result_frames(
     let mut images = Vec::new();
     let mut attachments = Vec::new();
     for item in content {
-        if is_type(field(item, "type"), "image") {
+        // Both TS flatMap passes read `item.type` first; a nullish element
+        // throws. (Unreachable here in practice: the `contentToText` pass
+        // above already throws the same `reading 'type'` for nullish items.)
+        let item_type = required(item, "type")?;
+        if is_type(item_type, "image") {
             let mut image = JsObject::new();
             image.insert(JsString::from("mimeType"), field(item, "mimeType").clone());
             image.insert(JsString::from("data"), field(item, "data").clone());
@@ -1190,7 +1222,7 @@ fn tool_result_frames(
                     ),
                 ]));
             }
-        } else if is_type(field(item, "type"), "file") {
+        } else if is_type(item_type, "file") {
             attachments.push(object([
                 ("type", text("assistant_attachment")),
                 (
@@ -1343,7 +1375,13 @@ fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
     let kind = required(item, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        out.extend(checked_string_units(field(item, "text"))?);
+        // The return value is an `Array.prototype.join` element, so a nullish
+        // `text` renders as the empty string; any other value converts via
+        // `ToString` (an own `toString` throws there).
+        let value = field(item, "text");
+        if !nullish(value) {
+            out.extend(checked_string_units(value)?);
+        }
     } else if is_type(kind, "json") {
         // `JSON.stringify(undefined)` is undefined and `Array.prototype.join`
         // renders that element as the empty string; a deep value throws.
@@ -1396,7 +1434,12 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
     let kind = required(block, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        out.extend(checked_string_units(field(block, "text"))?);
+        // Join element like `tool_result_content_text`: nullish renders as the
+        // empty string, everything else converts via `ToString`.
+        let value = field(block, "text");
+        if !nullish(value) {
+            out.extend(checked_string_units(value)?);
+        }
     } else if is_type(kind, "image") {
         push_str(&mut out, "[Image: ");
         push_units(&mut out, field(block, "mimeType"))?;
@@ -1425,7 +1468,7 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
 }
 
 fn flatten_tool_result_block_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
-    let content = required_array(required(block, "content")?, "map")?;
+    let content = required_array(required(block, "content")?, "content.map")?;
     Ok(join_units(
         &content
             .iter()
@@ -1778,14 +1821,31 @@ fn nullish_or<'a>(value: &'a JsValue, fallback: &'a JsValue) -> &'a JsValue {
     if nullish(value) { fallback } else { value }
 }
 
-/// JS `+` for the numeric snapshot fields (string operands concatenate).
+/// JS `+` for the numeric snapshot fields. Both operands go through
+/// `ToPrimitive` (hint default) first: arrays join to their string form,
+/// objects become `[object Object]` (an own `toString` throws like
+/// `String(value)`). A string on either side then concatenates; otherwise the
+/// numeric addition runs (`null` is 0, `undefined` is `NaN`).
 fn js_add(left: &JsValue, right: &JsValue) -> ProjectionResult<JsValue> {
-    if left.as_string().is_some() || right.as_string().is_some() {
-        let mut units = checked_string_units(left)?;
-        units.extend(checked_string_units(right)?);
+    let left = js_to_primitive(left)?;
+    let right = js_to_primitive(right)?;
+    if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
+        let mut units = checked_string_units(&left)?;
+        units.extend(checked_string_units(&right)?);
         return Ok(JsValue::String(JsString::from_utf16(units)));
     }
-    Ok(JsValue::Number(js_number(left) + js_number(right)))
+    Ok(JsValue::Number(js_number(&left) + js_number(&right)))
+}
+
+/// `ToPrimitive(value, "default")` for wire values: primitives pass through
+/// unchanged and containers take their `toString` form.
+fn js_to_primitive(value: &JsValue) -> ProjectionResult<JsValue> {
+    match value {
+        JsValue::Array(_) | JsValue::Object(_) => Ok(JsValue::String(JsString::from_utf16(
+            checked_string_units(value)?,
+        ))),
+        other => Ok(other.clone()),
+    }
 }
 
 fn js_number(value: &JsValue) -> f64 {
@@ -1947,7 +2007,7 @@ fn map_subagent_model_event(
 
 fn subagent_tool_result_frames(event: &JsValue) -> ProjectionResult<Vec<JsValue>> {
     let result = field(event, "result");
-    let content = required_array(required(result, "content")?, "map")?;
+    let content = required_array(required(result, "content")?, "event.result.content.map")?;
     let full_text = join_units(
         &content
             .iter()

@@ -100,7 +100,7 @@ fn assert_range_error(result: ProjectionResult<Vec<JsValue>>, case: &str) {
 fn agent_event_projections_match_ts_oracle() {
     let oracle = crate::test_baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 192, "oracle case count");
+    assert_eq!(cases.len(), 221, "oracle case count");
 
     for case in cases {
         let name = field(case, "name")

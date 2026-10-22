@@ -16,12 +16,12 @@ Node 22（基线根已含 `node_modules/tsx`）。
 并把每次 `persist` 入参和返回值记入金样。投影本身的排序、截断、附件、错误和
 budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报错的 Proxy 隔离。
 
-192 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
+221 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
 与未知/缺 type 的 default 分支）、`model_event`/`subagent_model_event` 的各子类型、
 `forwardSubagentText` 真假、timeline/streamBoundary 传播、tool_result 的 bytes/UTF-16
 截断边界、4 种 mime 扩展名与 `value` 回退、providerError 的 raw 截断
 （在代理对中间切开）、`??` 与 `!== undefined` 的 null/缺失差异，以及 persist 阈值。
-另有 60 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
+另有 79 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
 `TypeError: Cannot read properties of undefined (reading 'content')`；其中 7 条钉住
 附件/media 路径缺字段时 `reading 'trim'/'split'/'toLowerCase'/'length'` 的抛错与
 「附件循环先于 errorCode」的求值顺序）与 4 个 `__proto__` 工具数据 case（TS 的属性
@@ -40,6 +40,30 @@ budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报�
 `persist` 的 `sessionId`/`turnId`/`toolCallId` 在 4096 字节阈值以下原样记录（保留
 数字/布尔/数组/对象类型），超阈值时 `safePathPart(...).trim()` 抛
 `TypeError: value.trim is not a function`。
+
+修复轮 4 追加 29 个 case，钉住全部读属性/调方法/拼接位置对 null、undefined、
+数字、数组、对象五类值的真实 TS 行为（探针 `_tmp/…/probe-r4.mts`）：
+
+- **join 语义**：text 块的 `text` 为 null/缺失渲染成空串（`"\nb"` 而非
+  `"null\nb"`），其它值经 `ToString`（数字 `"123"`、数组 `"1,2"`、普通对象
+  `[object Object]`）；
+- **nullish 数组元素**：`calls:[null]`、steer/assistant 的 `content:[null]` 抛
+  `Cannot read properties of null (reading 'timeline'/'type'/'id')`（find 短路，
+  命中后不再读后续元素）；
+- **非数组方法接收者**：V8 报错带完整属性访问表达式
+  （`event.result.content.map is not a function`、`content.map is not a function` 等）；
+- **自有 `toString`**：模板插值（`mimeType`/`path`/`pages`/`data.length`）与
+  context_budget 的 `+` 抛 `TypeError: Cannot convert object to primitive value`；
+  `previewUnknown`/`safeJsonStringify` 的 `JSON.stringify` 对此类值正常序列化，
+  永远到不了 `String()` 回退；
+- **`+` 的 ToPrimitive**：数组转串拼接（`[1,2]+20` → `"1,220"`）、字符串拼接
+  （`"5"+20` → `"520"`）、`null+20` → 20、`undefined+20` → NaN；
+- 字符串 `content` 在 for-of 中逐字符迭代，无一有 `type`，产出 0 帧。
+
+已知覆盖边界：金样回放注入的是不会抛错的确定性 `RecordingStore`，默认
+`GatewayToolResultArtifactStore` 超阈值时对非字符串路径字段的抛错由单测
+`default_store_throws_on_non_string_path_part_like_ts` 单独守护（Grok r4 P2 #4
+已登记，接受现状）。
 
 合法 case 的 `frames` 是 `mapAgentEvent` 返回对象的 `JSON.stringify` 语义快照：
 Rust 回放逐条比 `stringify_json` 的**文本**，因此键顺序、数字格式、lone surrogate

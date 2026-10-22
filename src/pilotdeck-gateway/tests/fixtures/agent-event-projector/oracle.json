@@ -5673,6 +5673,807 @@
       ]
     },
     {
+      "name": "tool-result-text-nullish-values",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            },
+            {
+              "type": "text"
+            },
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "tool_call_finished",
+          "toolCallId": "call-1",
+          "ok": true,
+          "resultPreview": "\n\nb",
+          "resultLineCount": 3,
+          "resultBytes": 3,
+          "toolName": "read_file",
+          "runId": "run-1"
+        }
+      ],
+      "persist": [
+        {
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "toolCallId": "call-1",
+          "text": "\n\nb",
+          "bytes": 3
+        }
+      ]
+    },
+    {
+      "name": "tool-result-text-non-string-values",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": 123
+            },
+            {
+              "type": "text",
+              "text": true
+            },
+            {
+              "type": "text",
+              "text": [
+                1,
+                2
+              ]
+            },
+            {
+              "type": "text",
+              "text": {
+                "a": 1
+              }
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "tool_call_finished",
+          "toolCallId": "call-1",
+          "ok": true,
+          "resultPreview": "123\ntrue\n1,2\n[object Object]",
+          "resultLineCount": 4,
+          "resultBytes": 28,
+          "toolName": "read_file",
+          "runId": "run-1"
+        }
+      ],
+      "persist": [
+        {
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "toolCallId": "call-1",
+          "text": "123\ntrue\n1,2\n[object Object]",
+          "bytes": 28
+        }
+      ]
+    },
+    {
+      "name": "error-tool-result-text-to-string-throws",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "toString": null
+              }
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "tool-results-projected-fulltext-text-nullish",
+      "event": {
+        "type": "tool_results_projected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "call-t",
+              "content": [
+                {
+                  "type": "text",
+                  "text": null
+                },
+                {
+                  "type": "text",
+                  "text": "b"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "tool_result_detail_available",
+          "toolCallId": "call-t",
+          "fullText": "\nb",
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "subagent-tool-result-text-nullish",
+      "event": {
+        "type": "subagent_tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "subagentId": "sub-1",
+        "subagentType": "explore",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": null
+            },
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "agent_status",
+          "event": "subagent_tool_result",
+          "detail": {
+            "subagentId": "sub-1",
+            "subagentType": "explore",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "content": "\nb",
+            "preview": "\nb",
+            "resultLineCount": 2,
+            "resultBytes": 2
+          },
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "error-tool-calls-null-call",
+      "event": {
+        "type": "tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "calls": [
+          null
+        ]
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'timeline')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-calls-null-call-after-ok",
+      "event": {
+        "type": "tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "calls": [
+          {
+            "id": "call-a",
+            "name": "bash"
+          },
+          null
+        ]
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'timeline')",
+      "persist": []
+    },
+    {
+      "name": "error-steer-content-null-block",
+      "event": {
+        "type": "steer_applied",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "itemId": "item-1",
+        "message": {
+          "role": "user",
+          "content": [
+            null
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'timeline')",
+      "persist": []
+    },
+    {
+      "name": "steer-content-null-block-after-timeline",
+      "event": {
+        "type": "steer_applied",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "itemId": "item-1",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "x",
+              "timeline": {
+                "version": 1,
+                "turnId": "turn-1",
+                "id": "timeline-12",
+                "order": 12,
+                "revision": 12
+              }
+            },
+            null
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "steer_applied",
+          "itemId": "item-1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "timeline": {
+                  "version": 1,
+                  "turnId": "turn-1",
+                  "id": "timeline-12",
+                  "order": 12,
+                  "revision": 12
+                }
+              },
+              null
+            ]
+          },
+          "timeline": {
+            "version": 1,
+            "turnId": "turn-1",
+            "id": "timeline-12",
+            "order": 12,
+            "revision": 12
+          },
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "error-assistant-content-null-block",
+      "event": {
+        "type": "assistant_message",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": [
+            null
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'type')",
+      "persist": []
+    },
+    {
+      "name": "error-subagent-tool-calls-null-call",
+      "event": {
+        "type": "subagent_tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "subagentId": "sub-1",
+        "subagentType": "explore",
+        "calls": [
+          null
+        ]
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot read properties of null (reading 'id')",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-content-map-number",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": 123,
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.result.content.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-content-map-string",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": "abc",
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.result.content.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-assistant-content-flat-map-number",
+      "event": {
+        "type": "assistant_message",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": 123
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.message.content.flatMap is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-steer-content-find-number",
+      "event": {
+        "type": "steer_applied",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "itemId": "item-1",
+        "message": {
+          "role": "user",
+          "content": 123
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.message.content.find is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-tool-calls-map-number",
+      "event": {
+        "type": "tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "calls": 123
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.calls.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-subagent-tool-calls-map-number",
+      "event": {
+        "type": "subagent_tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "subagentId": "sub-1",
+        "subagentType": "explore",
+        "calls": 123
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.calls.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-subagent-tool-result-content-map-number",
+      "event": {
+        "type": "subagent_tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "subagentId": "sub-1",
+        "subagentType": "explore",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": 123,
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: event.result.content.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-flatten-content-map-number",
+      "event": {
+        "type": "tool_results_projected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_result",
+              "toolCallId": "call-t",
+              "content": 123
+            }
+          ]
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: content.map is not a function",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-image-mime-to-string-throws",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "image",
+              "mimeType": {
+                "toString": null
+              },
+              "data": "QUJD"
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-file-path-to-string-throws",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "write_file",
+          "content": [
+            {
+              "type": "file",
+              "path": {
+                "toString": null
+              }
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-pdf-pages-to-string-throws",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "pdf",
+              "mimeType": "application/pdf",
+              "data": "QUJD",
+              "pages": {
+                "toString": null
+              }
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "error-tool-result-image-data-length-to-string-throws",
+      "event": {
+        "type": "tool_result",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "result": {
+          "type": "success",
+          "toolCallId": "call-1",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": {
+                "length": {
+                  "toString": null
+                }
+              }
+            }
+          ],
+          "startedAt": "2026-10-22T00:00:00.000Z",
+          "completedAt": "2026-10-22T00:00:01.000Z"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "context-budget-array-and-string-addition",
+      "event": {
+        "type": "context_budget",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "snapshot": {
+          "tokens": 1,
+          "maxContextTokens": "5",
+          "effectiveContextTokens": [
+            1,
+            2
+          ],
+          "maxOutputTokens": 20
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "context_budget",
+          "used": 1,
+          "displayUsed": 1,
+          "total": "1,220",
+          "maxContextTokens": "5",
+          "effectiveTotal": [
+            1,
+            2
+          ],
+          "effectiveContextTokens": [
+            1,
+            2
+          ],
+          "maxOutputTokens": 20,
+          "reservedOutputTokens": 20,
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "context-budget-null-and-undefined-addition",
+      "event": {
+        "type": "context_budget",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "snapshot": {
+          "tokens": 1,
+          "maxContextTokens": null,
+          "maxOutputTokens": 20
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "context_budget",
+          "used": 1,
+          "displayUsed": 1,
+          "total": 20,
+          "maxContextTokens": null,
+          "effectiveTotal": null,
+          "maxOutputTokens": 20,
+          "reservedOutputTokens": 20,
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "error-context-budget-to-string-throws",
+      "event": {
+        "type": "context_budget",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "snapshot": {
+          "tokens": 1,
+          "maxContextTokens": {
+            "toString": null
+          },
+          "maxOutputTokens": 20
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "error": "TypeError: Cannot convert object to primitive value",
+      "persist": []
+    },
+    {
+      "name": "tool-results-projected-content-string-iterates-no-blocks",
+      "event": {
+        "type": "tool_results_projected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "message": {
+          "role": "assistant",
+          "content": "abc"
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [],
+      "persist": []
+    },
+    {
+      "name": "tool-calls-detected-input-own-to-string",
+      "event": {
+        "type": "tool_calls_detected",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "calls": [
+          {
+            "id": "call-a",
+            "name": "bash",
+            "input": {
+              "toString": null
+            }
+          }
+        ]
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "tool_call_started",
+          "toolCallId": "call-a",
+          "name": "bash",
+          "argsPreview": "{\"toString\":null}",
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
+      "name": "turn-failed-details-raw-own-to-string",
+      "event": {
+        "type": "turn_failed",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "error": {
+          "code": "agent_model_error",
+          "message": "failed",
+          "userHint": "retry later",
+          "details": {
+            "provider": "anthropic",
+            "raw": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "runId": "run-1",
+      "forwardSubagentText": false,
+      "frames": [
+        {
+          "type": "error",
+          "code": "agent_model_error",
+          "message": "failed",
+          "recoverable": false,
+          "userHint": "retry later",
+          "providerError": {
+            "provider": "anthropic",
+            "raw": "{\"toString\":null}"
+          },
+          "runId": "run-1"
+        }
+      ],
+      "persist": []
+    },
+    {
       "name": "type-tool-result-image-tool-name-number",
       "event": {
         "type": "tool_result",
