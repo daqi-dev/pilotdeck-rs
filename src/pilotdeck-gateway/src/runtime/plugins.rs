@@ -7,23 +7,8 @@
 //! - `src/cli/GatewayCommandCatalogBundle.ts:46-70` (commandsList: refresh →
 //!   acquire → list → finally release; release failure only warns)
 //!
-//! **Scope of this PR (A6.3-pr7)**: the generation/lease lifecycle, the
-//! contribution snapshot builders, the command-catalog bundle wiring, and a
-//! thin I/O bridge that loads real plugin data from disk. The full plugin
-//! loader (PluginLoader.ts, PluginCommandLoader.ts, hooks, skill discovery —
-//! roughly 770 TS lines in `extension/plugins/`) is left to **A6.3-pr7b**.
-//! The split point is `PluginRuntime::perform_refresh`: the method is present
-//! and correct in its loading logic, delegating to `loader::load_from_disk`.
-//!
-//! ## Plugin loading (A6.3-pr7b scope)
-//!
-//! `loader::load_from_disk` is the stable interface. It must:
-//! 1. Call `discoverPluginPaths` / `discoverSkillPaths` over the resolved dirs.
-//! 2. Attempt `loadPluginFromPath` / `loadSkillFromPath` for each candidate.
-//! 3. Return `LoadFromDiskResult` (staged failures + loaded plugins).
-//!
-//! The function signature and types are in `plugins/loader.rs`; the body is
-//! `todo!()` and must be filled in by A6.3-pr7b.
+//! Disk discovery/loading is staged by `loader::load_from_disk`. The runtime
+//! owns generation publication, failure rollback, and lease retirement.
 //!
 //! ## JsValue / manifest traversal
 //!
@@ -244,8 +229,13 @@ impl PluginRegistry {
         self.order.clear();
         for plugin in &next {
             let key = format!("{}@{}", plugin.name, plugin.source.as_str());
-            self.plugins.insert(key.clone(), Arc::clone(plugin));
-            self.order.push(key);
+            if self
+                .plugins
+                .insert(key.clone(), Arc::clone(plugin))
+                .is_none()
+            {
+                self.order.push(key);
+            }
         }
         self.waiters.notify_waiters();
         for p in &retired {
