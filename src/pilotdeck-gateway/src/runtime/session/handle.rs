@@ -138,8 +138,9 @@ impl LiveSessionHandle {
         drop(progress);
         let handle = self.clone();
         tokio::spawn(async move {
-            // DisposeGuard guarantees result.send_replace and lease release even
-            // if any step (including session.abort or session.dispose) panics.
+            // DisposeGuard is constructed first so every subsequent step —
+            // including session.abort() and session.dispose() — is covered.
+            // If anything panics, Drop sends a result and releases the lease.
             struct DisposeGuard<'a> {
                 result: &'a watch::Sender<Option<RuntimeResult>>,
                 lease: Option<RuntimeLease>,
@@ -155,8 +156,16 @@ impl LiveSessionHandle {
                     self.result.send_replace(Some(outcome));
                 }
             }
-            // Abort is called inside the spawn so it is covered by DisposeGuard.
-            // session.abort() is called outside the progress lock (no poison risk).
+            // Guard takes the lease now; abort and dispose run under its Drop.
+            let lease = handle.0.lease.lock().unwrap().take();
+            let mut guard = DisposeGuard {
+                result: &result,
+                lease,
+                handle_progress: &handle.0.progress,
+                outcome: None,
+            };
+            // session.abort() is outside the progress lock (no poison risk).
+            // Called before the drain wait so the session can begin cancellation.
             let abort_error = if active {
                 handle.0.session.abort(&reason).err()
             } else {
@@ -170,13 +179,6 @@ impl LiveSessionHandle {
                 }
                 let _ = changed.changed().await;
             }
-            let lease = handle.0.lease.lock().unwrap().take();
-            let mut guard = DisposeGuard {
-                result: &result,
-                lease,
-                handle_progress: &handle.0.progress,
-                outcome: None,
-            };
             let mut disposal_failures = Vec::new();
             if let Err(error) = handle.0.session.dispose().await {
                 disposal_failures.push(error);
@@ -282,8 +284,9 @@ mod tests {
     }
 
     /// dispose() with an active turn calls session.abort() exactly once (inside
-    /// the progress lock, before the drain task starts). A concurrent external
-    /// abort after dispose() has set state=Draining must not call session.abort()
+    /// the spawned drain task, outside the progress lock, before the drain
+    /// wait loop). A concurrent external abort after dispose() has set
+    /// state=Draining must not call session.abort()
     /// a second time.
     #[tokio::test]
     async fn abort_during_draining_sets_reason_without_session_abort() {
