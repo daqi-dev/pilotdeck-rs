@@ -134,6 +134,253 @@
       }
     ]
   },
+  "sameRootWiring": {
+    "candidate": {
+      "type": "project",
+      "scope": "project",
+      "name": "  产品 🚀 Café  ",
+      "description": "  产品 🚀 Café    description",
+      "capturedAt": "2026-10-20T00:00:00Z",
+      "sourceSessionKey": "session-  产品 🚀 Café  ",
+      "stage": "  active\n work ",
+      "summary": "项目摘要\ud800😀",
+      "decisions": [
+        " a ",
+        "a",
+        "b"
+      ],
+      "constraints": [
+        "never"
+      ],
+      "nextSteps": [
+        "next"
+      ],
+      "blockers": [
+        "none"
+      ],
+      "timeline": [
+        "today"
+      ],
+      "notes": [
+        "note"
+      ]
+    },
+    "global": {
+      "rootDir": "$ROOT",
+      "workspaceMode": "single",
+      "generalMode": false,
+      "profilePath": "UserIdentity/user-profile.md",
+      "entries": [
+        {
+          "name": "User😀",
+          "description": "身份",
+          "type": "user",
+          "scope": "global",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-22T00:00:00.000Z",
+          "sourceSessionKey": "s",
+          "file": "user-adcb012790.md",
+          "relativePath": "UserIdentityNotes/user-adcb012790.md",
+          "absolutePath": "$ROOT/UserIdentityNotes/user-adcb012790.md"
+        }
+      ],
+      "records": [
+        {
+          "name": "User😀",
+          "description": "身份",
+          "type": "user",
+          "scope": "global",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-22T00:00:00.000Z",
+          "sourceSessionKey": "s",
+          "file": "user-adcb012790.md",
+          "relativePath": "UserIdentityNotes/user-adcb012790.md",
+          "absolutePath": "$ROOT/UserIdentityNotes/user-adcb012790.md",
+          "content": "## 身份背景\n- Rust 工程师",
+          "preview": "身份背景 - Rust 工程师"
+        }
+      ],
+      "summary": {
+        "identityBackground": [],
+        "files": []
+      },
+      "metas": [],
+      "hints": [],
+      "overview": {
+        "totalFiles": 1,
+        "projectMemories": 0,
+        "feedbackMemories": 0,
+        "userProfiles": 1,
+        "changedFilesSinceLastDream": 1,
+        "tmpTotalFiles": 0,
+        "tmpFeedbackMemories": 0,
+        "tmpProjectMemories": 0,
+        "projectMetaCount": 0,
+        "latestMemoryAt": "2026-10-22T00:00:00.000Z"
+      },
+      "bundle": {
+        "memoryFiles": [
+          {
+            "name": "User😀",
+            "description": "身份",
+            "type": "user",
+            "scope": "global",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "s",
+            "file": "user-adcb012790.md",
+            "relativePath": "UserIdentityNotes/user-adcb012790.md",
+            "content": "## 身份背景\n- Rust 工程师"
+          }
+        ],
+        "projectMetas": []
+      },
+      "version": "9ed39693a7",
+      "snapshot": [
+        {
+          "relativePath": "UserIdentityNotes/user-adcb012790.md",
+          "content": "---\nname: User😀\ndescription: 身份\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: s\n---\n## 身份背景\n- Rust 工程师\n"
+        }
+      ]
+    },
+    "workspace": {
+      "rootDir": "$ROOT",
+      "workspaceMode": "single",
+      "generalMode": false,
+      "profilePath": null,
+      "entries": [
+        {
+          "name": "产品 🚀 Café",
+          "description": "产品 🚀 Café description",
+          "type": "project",
+          "scope": "project",
+          "projectId": "current_project",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-20T00:00:00Z",
+          "sourceSessionKey": "session-  产品 🚀 Café",
+          "file": "产品-caf-d5e37a2637.md",
+          "relativePath": "Project/产品-caf-d5e37a2637.md",
+          "absolutePath": "$ROOT/Project/产品-caf-d5e37a2637.md"
+        }
+      ],
+      "records": [
+        {
+          "name": "产品 🚀 Café",
+          "description": "产品 🚀 Café description",
+          "type": "project",
+          "scope": "project",
+          "projectId": "current_project",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-20T00:00:00Z",
+          "sourceSessionKey": "session-  产品 🚀 Café",
+          "file": "产品-caf-d5e37a2637.md",
+          "relativePath": "Project/产品-caf-d5e37a2637.md",
+          "absolutePath": "$ROOT/Project/产品-caf-d5e37a2637.md",
+          "content": "## Current Stage\nactive work\n\n## Decisions\n- a\n- b\n\n## Constraints\n- never\n\n## Next Steps\n- next\n\n## Blockers\n- none\n\n## Timeline\n- today\n\n## Notes\n- note\n\n## Summary\n项目摘要�😀",
+          "preview": "Current Stage active work Decisions - a - b Constraints - never Next Steps - next Blockers - none Timeline - today Notes - note Summary 项目摘要�😀"
+        }
+      ],
+      "summary": {
+        "identityBackground": [],
+        "files": []
+      },
+      "metas": [
+        {
+          "projectId": "current_project",
+          "projectName": "产品 🚀 Café",
+          "description": "产品 🚀 Café description",
+          "status": "in_progress",
+          "createdAt": "2026-10-22T00:00:00.000Z",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "relativePath": "project.meta.md",
+          "absolutePath": "$ROOT/project.meta.md"
+        }
+      ],
+      "hints": [
+        {
+          "identityKey": "current_project",
+          "projectId": "current_project",
+          "projectName": "产品 🚀 Café",
+          "description": "产品 🚀 Café description",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "scope": "formal"
+        }
+      ],
+      "overview": {
+        "totalFiles": 1,
+        "projectMemories": 1,
+        "feedbackMemories": 0,
+        "userProfiles": 0,
+        "changedFilesSinceLastDream": 1,
+        "tmpTotalFiles": 0,
+        "tmpFeedbackMemories": 0,
+        "tmpProjectMemories": 0,
+        "projectMetaCount": 1,
+        "latestMemoryAt": "2026-10-22T00:00:00.000Z"
+      },
+      "bundle": {
+        "memoryFiles": [
+          {
+            "name": "产品 🚀 Café",
+            "description": "产品 🚀 Café description",
+            "type": "project",
+            "scope": "project",
+            "projectId": "current_project",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "capturedAt": "2026-10-20T00:00:00Z",
+            "sourceSessionKey": "session-  产品 🚀 Café",
+            "file": "产品-caf-d5e37a2637.md",
+            "relativePath": "Project/产品-caf-d5e37a2637.md",
+            "content": "## Current Stage\nactive work\n\n## Decisions\n- a\n- b\n\n## Constraints\n- never\n\n## Next Steps\n- next\n\n## Blockers\n- none\n\n## Timeline\n- today\n\n## Notes\n- note\n\n## Summary\n项目摘要�😀"
+          }
+        ],
+        "projectMetas": [
+          {
+            "projectId": "current_project",
+            "projectName": "产品 🚀 Café",
+            "description": "产品 🚀 Café description",
+            "status": "in_progress",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "relativePath": "project.meta.md"
+          }
+        ]
+      },
+      "version": "ab4d5df18b",
+      "snapshot": [
+        {
+          "relativePath": "MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [产品 🚀 Café](project.meta.md) — 产品 🚀 Café description\n\n## Project Memory\n- [产品 🚀 Café](Project/产品-caf-d5e37a2637.md) — 产品 🚀 Café description\n\n## User Memory\n- [User😀](global/UserIdentityNotes/user-adcb012790.md) — 身份\n"
+        },
+        {
+          "relativePath": "project.meta.md",
+          "content": "---\nproject_id: current_project\nproject_name: 产品 🚀 Café\ndescription: 产品 🚀 Café description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\n产品 🚀 Café description\n"
+        },
+        {
+          "relativePath": "Project/产品-caf-d5e37a2637.md",
+          "content": "---\nname: 产品 🚀 Café\ndescription: 产品 🚀 Café description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-20T00:00:00Z\nsource_session_key: session-  产品 🚀 Café  \n---\n## Current Stage\nactive work\n\n## Decisions\n- a\n- b\n\n## Constraints\n- never\n\n## Next Steps\n- next\n\n## Blockers\n- none\n\n## Timeline\n- today\n\n## Notes\n- note\n\n## Summary\n项目摘要�😀\n"
+        }
+      ]
+    },
+    "files": [
+      {
+        "relativePath": "MEMORY.md",
+        "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [产品 🚀 Café](project.meta.md) — 产品 🚀 Café description\n\n## Project Memory\n- [产品 🚀 Café](Project/产品-caf-d5e37a2637.md) — 产品 🚀 Café description\n\n## User Memory\n- [User😀](global/UserIdentityNotes/user-adcb012790.md) — 身份\n"
+      },
+      {
+        "relativePath": "Project/产品-caf-d5e37a2637.md",
+        "content": "---\nname: 产品 🚀 Café\ndescription: 产品 🚀 Café description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-20T00:00:00Z\nsource_session_key: session-  产品 🚀 Café  \n---\n## Current Stage\nactive work\n\n## Decisions\n- a\n- b\n\n## Constraints\n- never\n\n## Next Steps\n- next\n\n## Blockers\n- none\n\n## Timeline\n- today\n\n## Notes\n- note\n\n## Summary\n项目摘要�😀\n"
+      },
+      {
+        "relativePath": "UserIdentityNotes/user-adcb012790.md",
+        "content": "---\nname: User😀\ndescription: 身份\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: s\n---\n## 身份背景\n- Rust 工程师\n"
+      },
+      {
+        "relativePath": "project.meta.md",
+        "content": "---\nproject_id: current_project\nproject_name: 产品 🚀 Café\ndescription: 产品 🚀 Café description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\n产品 🚀 Café description\n"
+      }
+    ]
+  },
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "sourceSha256": {
     "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
@@ -4715,6 +4962,182 @@
         {
           "relativePath": "Project/number.md",
           "content": "---\nname: Number\ndescription: Number\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ndeprecated: true\ndream_attempts: 1e+21\n---\nbody\n"
+        }
+      ]
+    },
+    {
+      "name": "edit-meta-whitelist",
+      "options": {},
+      "operations": [
+        {
+          "method": "editProjectMeta",
+          "input": {
+            "projectName": "Initial",
+            "description": "first edit",
+            "status": "open",
+            "dreamUpdatedAt": "must-not-be-created"
+          }
+        },
+        {
+          "method": "upsertProjectMeta",
+          "input": {
+            "projectName": "Seeded",
+            "dreamUpdatedAt": "existing-dream"
+          }
+        },
+        {
+          "method": "editProjectMeta",
+          "input": {
+            "projectName": "Edited",
+            "description": "second edit",
+            "status": "done",
+            "dreamUpdatedAt": "must-not-replace-existing"
+          }
+        },
+        {
+          "method": "getProjectMeta",
+          "input": {}
+        },
+        {
+          "method": "exportSnapshotFiles",
+          "input": {}
+        }
+      ],
+      "observations": [
+        {
+          "projectId": "current_project",
+          "projectName": "Initial",
+          "description": "first edit",
+          "status": "open",
+          "createdAt": "2026-10-22T00:00:00.000Z",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "relativePath": "project.meta.md",
+          "absolutePath": "$ROOT/project.meta.md"
+        },
+        {
+          "projectId": "current_project",
+          "projectName": "Seeded",
+          "description": "first edit",
+          "status": "open",
+          "createdAt": "2026-10-22T00:00:00.000Z",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "dreamUpdatedAt": "existing-dream",
+          "relativePath": "project.meta.md",
+          "absolutePath": "$ROOT/project.meta.md"
+        },
+        {
+          "projectId": "current_project",
+          "projectName": "Edited",
+          "description": "second edit",
+          "status": "done",
+          "createdAt": "2026-10-22T00:00:00.000Z",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "dreamUpdatedAt": "existing-dream",
+          "relativePath": "project.meta.md",
+          "absolutePath": "$ROOT/project.meta.md"
+        },
+        {
+          "projectId": "current_project",
+          "projectName": "Edited",
+          "description": "second edit",
+          "status": "done",
+          "createdAt": "2026-10-22T00:00:00.000Z",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "dreamUpdatedAt": "existing-dream",
+          "relativePath": "project.meta.md",
+          "absolutePath": "$ROOT/project.meta.md"
+        },
+        [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Edited](project.meta.md) — second edit\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Edited\ndescription: second edit\nstatus: done\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\ndream_updated_at: existing-dream\n---\n\n## Summary\nsecond edit\n"
+          }
+        ]
+      ],
+      "readback": {
+        "rootDir": "$ROOT",
+        "workspaceMode": "single",
+        "generalMode": false,
+        "profilePath": "global/UserIdentity/user-profile.md",
+        "entries": [],
+        "records": [],
+        "summary": {
+          "identityBackground": [],
+          "files": []
+        },
+        "metas": [
+          {
+            "projectId": "current_project",
+            "projectName": "Edited",
+            "description": "second edit",
+            "status": "done",
+            "createdAt": "2026-10-22T00:00:00.000Z",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "dreamUpdatedAt": "existing-dream",
+            "relativePath": "project.meta.md",
+            "absolutePath": "$ROOT/project.meta.md"
+          }
+        ],
+        "hints": [
+          {
+            "identityKey": "current_project",
+            "projectId": "current_project",
+            "projectName": "Edited",
+            "description": "second edit",
+            "updatedAt": "2026-10-22T00:00:00.000Z",
+            "scope": "formal"
+          }
+        ],
+        "overview": {
+          "totalFiles": 0,
+          "projectMemories": 0,
+          "feedbackMemories": 0,
+          "userProfiles": 0,
+          "changedFilesSinceLastDream": 0,
+          "tmpTotalFiles": 0,
+          "tmpFeedbackMemories": 0,
+          "tmpProjectMemories": 0,
+          "projectMetaCount": 1
+        },
+        "bundle": {
+          "memoryFiles": [],
+          "projectMetas": [
+            {
+              "projectId": "current_project",
+              "projectName": "Edited",
+              "description": "second edit",
+              "status": "done",
+              "createdAt": "2026-10-22T00:00:00.000Z",
+              "updatedAt": "2026-10-22T00:00:00.000Z",
+              "dreamUpdatedAt": "existing-dream",
+              "relativePath": "project.meta.md"
+            }
+          ]
+        },
+        "version": "48a4251534",
+        "snapshot": [
+          {
+            "relativePath": "MEMORY.md",
+            "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Edited](project.meta.md) — second edit\n"
+          },
+          {
+            "relativePath": "project.meta.md",
+            "content": "---\nproject_id: current_project\nproject_name: Edited\ndescription: second edit\nstatus: done\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\ndream_updated_at: existing-dream\n---\n\n## Summary\nsecond edit\n"
+          }
+        ]
+      },
+      "files": [
+        {
+          "relativePath": "MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [Edited](project.meta.md) — second edit\n"
+        },
+        {
+          "relativePath": "project.meta.md",
+          "content": "---\nproject_id: current_project\nproject_name: Edited\ndescription: second edit\nstatus: done\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\ndream_updated_at: existing-dream\n---\n\n## Summary\nsecond edit\n"
         }
       ]
     },
