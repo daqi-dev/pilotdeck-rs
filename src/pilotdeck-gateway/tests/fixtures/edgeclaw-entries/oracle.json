@@ -2924,7 +2924,6 @@
           "method": "deprecateMemoryEntries",
           "ids": [
             "missing",
-            "../escape",
             "external:unknown:x",
             "global/missing",
             ""
@@ -2934,7 +2933,6 @@
           "method": "restoreMemoryEntries",
           "ids": [
             "missing",
-            "../escape",
             "external:unknown:x",
             "global/missing",
             ""
@@ -2944,7 +2942,6 @@
           "method": "deleteMemoryEntries",
           "ids": [
             "missing",
-            "../escape",
             "external:unknown:x",
             "global/missing",
             ""
@@ -3731,7 +3728,8 @@
         },
         {
           "result": {
-            "error": "EISDIR"
+            "error": "EISDIR",
+            "message": "EISDIR: illegal operation on a directory, read"
           },
           "disk": [
             {
@@ -3855,7 +3853,8 @@
         },
         {
           "result": {
-            "error": "EISDIR"
+            "error": "EISDIR",
+            "message": "EISDIR: illegal operation on a directory, read"
           },
           "disk": [
             {
@@ -3979,7 +3978,8 @@
         },
         {
           "result": {
-            "error": "EPERM"
+            "error": "EPERM",
+            "message": "EPERM: operation not permitted, unlink '$ROOT/memory'"
           },
           "disk": [
             {
@@ -12234,7 +12234,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/memory/Project/project-3d8e09b7f2.md'"
           },
           "disk": [
             {
@@ -13340,7 +13341,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/last_dream/metadata.json'"
           },
           "disk": [
             {
@@ -14853,7 +14855,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/memory/Project/project-3d8e09b7f2.md'"
           },
           "disk": [
             {
@@ -15985,7 +15988,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/last_dream/metadata.json'"
           },
           "disk": [
             {
@@ -16839,7 +16843,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/global/UserIdentityNotes/user-5d923d9eac.md'"
           },
           "disk": [
             {
@@ -20699,7 +20704,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, open '$ROOT/memory/Project/project-3d8e09b7f2.md'"
           },
           "disk": [
             {
@@ -21085,7 +21091,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, open '$ROOT/memory/project.meta.md'"
           },
           "disk": [
             {
@@ -21494,7 +21501,8 @@
         },
         {
           "result": {
-            "error": "EACCES"
+            "error": "EACCES",
+            "message": "EACCES: permission denied, unlink '$ROOT/global/UserIdentityNotes/user-5d923d9eac.md'"
           },
           "disk": [
             {

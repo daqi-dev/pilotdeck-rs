@@ -38,3 +38,14 @@ metadata 和 pipeline，再跑 CRUD/clear，最后让真实 TS 重开所有成�
 
 负控逐项改坏生产实现、要求运行到具体 scenario/observation 后断言失败，finally 恢复原字节并
 记录 SHA256；编译失败不算杀死。`PDRS_ENTRIES_CASE` 可筛选单场景（仅调试用，未命中即失败）。
+
+修复轮 1：IO 结果同时比较 errno 和完整 Node message（含 syscall、路径；仍只归一化临时根）。
+`invalid-entry-operations` 的复合 mutation 不再混入 `../escape`：安全偏离由专用测试覆盖，
+真实 TS 金样仍原样保存 TS 行为，不把 Rust 安全期望伪装成 TS 输出。
+`entry_paths_reject_escape_without_touching_outside_files` 覆盖 workspace/global repository 与
+store 读、edit、delete、deprecate、restore；`direct_entry_write_rejects_unsafe_paths` 覆盖底层写入。
+包含 `..`、绝对路径、越界文件/目录 symlink、缺失叶节点和根内 `..`，逐次核对根外文件未动。
+拒绝错误取自真实 TS `editEntry(missing)` 金样，只替换输入路径。
+`negative_fix1.py --out <目录>` 分别移除每个入口的路径校验、snapshot-version 操作锁，
+必须运行时断言失败；既有 `negative.py` 还覆盖 IO message、global id 分类和映射回归。
+两个负控脚本均保留调用者的 Cargo 环境，恢复并核对源文件字节。

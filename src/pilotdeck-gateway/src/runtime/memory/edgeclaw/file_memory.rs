@@ -74,7 +74,13 @@ pub enum FileMemoryError {
 impl fmt::Display for FileMemoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "{e}"),
+            Self::Io(e) => match e
+                .get_ref()
+                .and_then(|_| crate::node_io::diagnostic(e, "", None))
+            {
+                Some((_, message)) => write!(f, "{message}"),
+                None => write!(f, "{e}"),
+            },
             Self::InvalidUtf16(e) => write!(f, "{}", String::from_utf16_lossy(e.units())),
             Self::Invalid(e) | Self::Collation(e) | Self::Type(e) => write!(f, "{e}"),
             Self::Storage(e) => write!(f, "{e}"),
@@ -83,6 +89,12 @@ impl fmt::Display for FileMemoryError {
 }
 impl std::error::Error for FileMemoryError {}
 impl FileMemoryError {
+    pub fn io_code(&self) -> Option<&'static str> {
+        match self {
+            Self::Io(e) => crate::node_io::lookup(e).map(|(code, _)| code),
+            _ => None,
+        }
+    }
     pub fn js_message(&self) -> JsString {
         match self {
             Self::InvalidUtf16(s) => s.clone(),
@@ -193,6 +205,10 @@ impl FileMemoryStore {
             core,
             operation,
         })
+    }
+    pub(super) fn validate_entry_path(&self, path: &JsString) -> Result<()> {
+        self.core.within(&String::from_utf16_lossy(path.units()))?;
+        Ok(())
     }
     pub fn get_root_dir(&self) -> &Path {
         &self.declared_root
@@ -388,31 +404,74 @@ impl Core {
         self.options.workspace_mode == "general"
     }
     fn path(&self, relative: &str) -> Result<PathBuf> {
+        self.within(relative)?;
         absolute(&self.root.join(relative))
     }
     fn within(&self, relative: &str) -> Result<bool> {
-        let absolute = self.path(relative)?;
-        let rel = relative_path(&self.root, &absolute);
-        // Preserve TS's unusual first disjunct, including canonical ../ paths.
-        Ok(rel == relative || (!rel.starts_with("..") && !rel.contains("..")))
+        let denied = || FileMemoryError::Invalid(format!("Memory entry not found: {relative}"));
+        if Path::new(relative).is_absolute() || relative.split(['/', '\\']).any(|part| part == "..")
+        {
+            return Err(denied());
+        }
+        let path = absolute(&self.root.join(relative))?;
+        if !path.starts_with(&self.root) {
+            return Err(denied());
+        }
+        // Resolve existing ancestors as well as the leaf: a missing file beneath
+        // an escaping directory symlink is unsafe too. Reject dangling links.
+        fn resolved(path: &Path, boundary: &Path, root: &Path) -> std::io::Result<PathBuf> {
+            if path == boundary {
+                return Ok(root.to_owned());
+            }
+            match fs::symlink_metadata(path) {
+                Ok(_) => fs::canonicalize(path),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::NotADirectory
+                            | std::io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    // A non-searchable directory cannot be traversed by this
+                    // process. Validate its accessible ancestors, then let the
+                    // actual exists/read/write boundary retain Node semantics.
+                    let parent = path.parent().ok_or(e)?;
+                    Ok(
+                        resolved(parent, boundary, root)?
+                            .join(path.file_name().unwrap_or_default()),
+                    )
+                }
+                Err(e) => Err(e),
+            }
+        }
+        // The root itself may be a symlink (including a dangling root during
+        // clear). Treat it as the trust boundary; only descendants are inputs.
+        let root = fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        match resolved(&path, &self.root, &root) {
+            Ok(path) if path.starts_with(root) => Ok(true),
+            Ok(_) => Err(denied()),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => Err(denied()),
+            Err(e) => Err(crate::node_io::path_error(e, "realpath", &path).into()),
+        }
     }
     fn ensure_layout(&self) -> Result<()> {
-        fs::create_dir_all(&self.root)?;
+        io_mkdir(&self.root)?;
         if self.options.manage_user_profile {
             if let Some(path) = &self.options.user_profile_relative_path {
-                fs::create_dir_all(self.path(path)?.parent().expect("absolute parent"))?;
+                io_mkdir(self.path(path)?.parent().expect("absolute parent"))?;
             }
             if let Some(path) = &self.options.user_notes_relative_dir {
-                fs::create_dir_all(self.path(path)?)?;
+                io_mkdir(self.path(path)?)?;
             }
         }
         if self.options.manage_project_files {
             for dir in ["Project", "Feedback"] {
-                fs::create_dir_all(self.root.join(dir))?;
+                io_mkdir(self.root.join(dir))?;
             }
         }
         if self.options.manage_project_meta && self.general() {
-            fs::create_dir_all(self.root.join(GENERAL))?;
+            io_mkdir(self.root.join(GENERAL))?;
         }
         Ok(())
     }
@@ -447,7 +506,9 @@ impl Core {
             return Ok(vec![]);
         }
         let mut paths = vec![];
-        for entry in fs::read_dir(path)? {
+        for entry in
+            fs::read_dir(&path).map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
+        {
             let entry = entry?;
             let file = entry.file_name().to_string_lossy().into_owned();
             if entry.file_type()?.is_file()
@@ -571,8 +632,8 @@ impl Core {
     }
     fn write(&self, path: &str, fm: &JsObject, body: &str) -> Result<JsObject> {
         let absolute = self.path(path)?;
-        fs::create_dir_all(absolute.parent().expect("absolute parent"))?;
-        fs::write(absolute, render(fm, body))?;
+        io_mkdir(absolute.parent().expect("absolute parent"))?;
+        io_write(absolute, render(fm, body))?;
         self.repair()?;
         self.records(&[path.into()], 5000.0)?
             .into_iter()
@@ -905,7 +966,7 @@ impl Core {
             description,
             "".into(),
         ]);
-        fs::write(
+        io_write(
             self.path("project.meta.md")?,
             format!("{}\n", crate::metadata::js_trim(&lines.join("\n"))),
         )?;
@@ -1025,7 +1086,7 @@ impl Core {
                 String::new()
             };
             if next != prev {
-                fs::write(path, next)?;
+                io_write(path, next)?;
                 (1, "Rebuilt workspace memory manifest.")
             } else {
                 (0, "Workspace memory manifest already up to date.")
@@ -1445,7 +1506,9 @@ impl Core {
                 let mut changed = vec![];
                 for path in array(input, "relativePaths") {
                     if self.within(&path)? && self.path(&path)?.exists() {
-                        fs::remove_file(self.path(&path)?)?;
+                        let absolute = self.path(&path)?;
+                        fs::remove_file(&absolute)
+                            .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
                         changed.push(path);
                     }
                 }
@@ -1682,7 +1745,9 @@ impl Core {
                     for r in records.iter().skip(1) {
                         let path = text(r, "relativePath");
                         if self.path(&path)?.exists() {
-                            fs::remove_file(self.path(&path)?)?;
+                            let absolute = self.path(&path)?;
+                            fs::remove_file(&absolute)
+                                .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
                             deleted.push(path);
                         }
                     }
@@ -1738,4 +1803,55 @@ fn relative_path(from: &Path, to: &Path) -> String {
             .map(|p| p.as_os_str().to_string_lossy().into_owned()),
     );
     parts.join("/")
+}
+
+#[cfg(test)]
+mod entry_write_security_tests {
+    use super::*;
+    #[test]
+    #[cfg(unix)]
+    fn direct_entry_write_rejects_unsafe_paths() {
+        use std::os::unix::fs::symlink;
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/edgeclaw-entries/oracle.json"
+        ))
+        .unwrap();
+        let missing = &oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "invalid-entry-operations")
+            .unwrap()["observations"][0]["result"]["message"];
+        let scratch =
+            std::env::temp_dir().join(format!("pdrs-entry-write-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&scratch).unwrap();
+        for name in ["memory", "global"] {
+            let store = FileMemoryStore::new(scratch.join(name), FileMemoryStoreOptions::default())
+                .unwrap();
+            let victim = scratch.join("victim.md");
+            fs::write(&victim, "valuable contents").unwrap();
+            symlink(&victim, store.core.root.join("escape.md")).unwrap();
+            symlink(&scratch, store.core.root.join("escape-dir")).unwrap();
+            for path in [
+                "../victim.md",
+                victim.to_str().unwrap(),
+                "escape.md",
+                "escape-dir/victim.md",
+                "escape-dir/new.md",
+                "Project/../safe.md",
+            ] {
+                let e = store
+                    .core
+                    .write(path, &JsObject::new(), "changed")
+                    .expect_err("unsafe write accepted");
+                assert_eq!(
+                    e.to_string(),
+                    missing.as_str().unwrap().replace("missing", path)
+                );
+                assert_eq!(fs::read_to_string(&victim).unwrap(), "valuable contents");
+                assert!(!scratch.join("new.md").exists());
+            }
+        }
+        fs::remove_dir_all(scratch).unwrap();
+    }
 }

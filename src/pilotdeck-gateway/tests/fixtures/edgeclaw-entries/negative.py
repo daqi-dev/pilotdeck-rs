@@ -9,6 +9,10 @@ out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
 base=pathlib.Path('src/pilotdeck-gateway/src/runtime/memory/edgeclaw')
 e=base/'storage/entries.rs';a=base/'storage/accessors.rs';f=base/'file_memory.rs'
 mutations=[
+ ('exposed-prefix',e,'"global/".encode_utf16().collect()','"broken/".encode_utf16().collect()','entry-lifecycle'),
+ ('global-classification',e,'&& matches!(id.units()[6], 47 | 92)','&& false','entry-lifecycle'),
+ ('records-global-map',e,'.map(map_record)','.map(|record| record)','entry-lifecycle'),
+ ('io-message',f,'Some((_, message)) => write!(f, "{message}"),','Some((_, _message)) => write!(f, "{e}"),','edit-entry-write-fail'),
  ('count-cap',e,'input.insert("limit".into(), JsValue::Number(5000.0));','input.insert("limit".into(), JsValue::Number(1.0));','entry-lifecycle'),
  ('record-duplicates',e,'ids.iter().filter_map(|id| by_id.get(id).cloned()).collect()','ids.iter().filter_map(|id| by_id.get(id).cloned()).take(1).collect()','entry-lifecycle'),
  ('external-records',e,'records.extend(self.entry_external_records(&external, max_lines)?);','let _ = (&external,max_lines);','general-meta'),
@@ -33,8 +37,8 @@ rows=[]
 try:
  for name,path,old,new,case in mutations:
   text=originals[path].decode();assert text.count(old)==1,(name,text.count(old));path.write_text(text.replace(old,new))
-  env=os.environ.copy();env['CARGO_TARGET_DIR']=str(root/'target');env['PDRS_ENTRIES_CASE']=case
-  slot=subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'],capture_output=True,text=True)
+  env=os.environ.copy();env['PDRS_ENTRIES_CASE']=case
+  slot=subprocess.run([str(root/'scripts/cargo-slots.sh')],capture_output=True,text=True)
   if slot.returncode:raise RuntimeError('cargo slots full')
   cmd=['cargo','test','--manifest-path','src/Cargo.toml','--locked','--offline','-p','pilotdeck-gateway','--test','edgeclaw_entries','--','--exact','ts_entries_and_failure_residue_replay','--nocapture']
   try:

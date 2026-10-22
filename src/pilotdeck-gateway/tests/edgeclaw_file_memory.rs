@@ -152,15 +152,10 @@ fn references(v: &JsValue, vars: &HashMap<String, JsValue>) -> JsValue {
     }
 }
 fn error(e: FileMemoryError) -> JsValue {
+    let io_code = e.io_code();
     match e {
         FileMemoryError::Io(e) => {
-            let code = match e.raw_os_error() {
-                Some(libc::EACCES) | Some(libc::EPERM) => "EACCES",
-                Some(libc::ENOENT) => "ENOENT",
-                Some(libc::ENOTDIR) => "ENOTDIR",
-                Some(libc::EISDIR) => "EISDIR",
-                other => panic!("unhandled IO error {other:?} {e}"),
-            };
+            let code = io_code.unwrap_or_else(|| panic!("unhandled IO error {e}"));
             JsValue::Object(obj(&[("error", string(code))]))
         }
         e => JsValue::Object(obj(&[

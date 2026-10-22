@@ -217,9 +217,11 @@ fn seed_rust(root: &Path, general: bool) {
     r.close().unwrap();
 }
 fn error(e: FileMemoryError) -> Value {
+    let io_code = e.io_code();
     match e {
         FileMemoryError::Io(e) => {
-            json!({"error":match e.raw_os_error(){Some(1)=>"EPERM",Some(2)=>"ENOENT",Some(5)=>"EIO",Some(13)=>"EACCES",Some(17)=>"EEXIST",Some(20)=>"ENOTDIR",Some(21)=>"EISDIR",Some(28)=>"ENOSPC",_=>panic!("unclassified IO {e:?}")}})
+            let message = FileMemoryError::Io(e).js_message();
+            json!({"error":io_code.expect("known Node errno"),"message":String::from_utf16_lossy(message.units())})
         }
         e @ FileMemoryError::Storage(StorageError::Sqlite(_)) => {
             json!({"error":"ERR_SQLITE_ERROR","message":String::from_utf16_lossy(e.js_message().units())})
@@ -418,7 +420,10 @@ fn replay(root: &Path, c: &Value) -> Value {
         })();
         let actual = json!({"result":clean(&result.map(value).unwrap_or_else(error),root),"disk":disk(root)});
         if actual != c["observations"][i] {
-            let evidence = std::env::temp_dir().join("pdrs-entries-mismatch.json");
+            let evidence = std::env::temp_dir().join(format!(
+                "pdrs-entries-mismatch-{}.json",
+                uuid::Uuid::new_v4()
+            ));
             fs::write(
                 &evidence,
                 serde_json::to_vec_pretty(
@@ -709,4 +714,150 @@ fn same_process_clear_write_and_manifest_provider_do_not_deadlock() {
     assert!(matches!(files, JsValue::Array(_)));
     r.repair_workspace_manifest().unwrap();
     r.close().unwrap();
+}
+
+// The error value is measured from real TS editEntry(missing), rather than
+// inventing a security-only wire error. Only the supplied path is substituted.
+#[test]
+#[cfg(unix)]
+fn entry_paths_reject_escape_without_touching_outside_files() {
+    use std::os::unix::fs::symlink;
+    let oracle = oracle();
+    let missing = &oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "invalid-entry-operations")
+        .unwrap()["observations"][0]["result"];
+    for global in [false, true] {
+        for attack in [
+            "parent",
+            "absolute",
+            "leaf-link",
+            "directory-link",
+            "inside-parent",
+        ] {
+            for operation in [
+                "read",
+                "store-read",
+                "edit",
+                "delete",
+                "deprecate",
+                "restore",
+            ] {
+                if std::env::var("PDRS_ENTRY_SECURITY_OPERATION")
+                    .is_ok_and(|only| only != operation)
+                {
+                    continue;
+                }
+                let scratch = Scratch::new();
+                let r = open(&scratch.0, false);
+                let store = if global {
+                    r.global_user_memory.as_ref()
+                } else {
+                    &r.workspace_memory
+                };
+                let root = store.get_root_dir();
+                let outside = scratch.0.join("victim.md");
+                let content =
+                    "---\ntype: project\nname: victim\nscope: project\n---\nvaluable contents\n";
+                fs::write(&outside, content).unwrap();
+                symlink(&outside, root.join("escape.md")).unwrap();
+                symlink(&scratch.0, root.join("escape-dir")).unwrap();
+                fs::write(root.join("safe.md"), content).unwrap();
+                let path = match attack {
+                    "parent" => "../victim.md".to_owned(),
+                    "absolute" => outside.to_str().unwrap().to_owned(),
+                    "leaf-link" => "escape.md".to_owned(),
+                    "directory-link" => "escape-dir/victim.md".to_owned(),
+                    _ => "Project/../safe.md".to_owned(),
+                };
+                let id = if global {
+                    format!("global/{path}")
+                } else {
+                    path.clone()
+                };
+                let ids = [JsString::from(id.clone())];
+                let before = disk(&scratch.0);
+                let result = match operation {
+                    "read" => r.get_memory_records_by_ids(&ids, 80.0),
+                    "store-read" => store.get_memory_records_by_ids(&obj(&json!({"ids":[path]}))),
+                    "edit" => r.edit_memory_entry(&obj(&json!({"id":id,"name":"changed"}))),
+                    "delete" => r.delete_memory_entries(&ids),
+                    "deprecate" => r.deprecate_memory_entries(&ids),
+                    _ => r.restore_memory_entries(&ids),
+                };
+                let expected = clean(
+                    &json!({"error":missing["error"],"message":missing["message"].as_str().unwrap().replace("missing", &path)}),
+                    &scratch.0,
+                );
+                assert_eq!(
+                    clean(
+                        &error(result.expect_err("unsafe entry accepted")),
+                        &scratch.0
+                    ),
+                    expected,
+                    "{global} {attack} {operation}"
+                );
+                assert_eq!(fs::read_to_string(&outside).unwrap(), content);
+                assert_eq!(
+                    disk(&scratch.0),
+                    before,
+                    "{global} {attack} {operation} changed disk"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn snapshot_version_waits_for_clear_to_finish() {
+    use pilotdeck_gateway::runtime::memory::edgeclaw::storage::snapshots::SnapshotIoOperation;
+    use std::sync::{Barrier, mpsc};
+    use std::time::Duration;
+    let s = Scratch::new();
+    seed_ts(&s.0, &oracle()["cases"][0]);
+    let mut clearing = open(&s.0, false);
+    let reader = open(&s.0, false);
+    let state_writer = open(&s.0, false);
+    let paused = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let p = paused.clone();
+    let r = release.clone();
+    let root = s.0.join("memory");
+    clearing.set_snapshot_io_hook(Arc::new(move |op, path, _| {
+        if op == SnapshotIoOperation::Remove && path == root {
+            p.wait();
+            r.wait();
+        }
+        Ok(())
+    }));
+    let clear = std::thread::spawn(move || clearing.clear_all_memory_data());
+    paused.wait();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
+    let read = std::thread::spawn(move || {
+        ready_tx.send(()).unwrap();
+        tx.send(reader.get_snapshot_version()).unwrap();
+    });
+    ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let early = rx.recv_timeout(Duration::from_millis(200));
+    // Without the repository lock the reader has already captured lastDreamAt
+    // before blocking on the store's export lock. A state update exposes that
+    // mixed view even though the store lock prevents an early return.
+    state_writer
+        .storage
+        .set_pipeline_state("lastDreamAt", &JsValue::from("after-clear-state"))
+        .unwrap();
+    release.wait();
+    clear.join().unwrap().unwrap();
+    read.join().unwrap();
+    assert!(
+        matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+        "snapshot observed an unfinished clear: {early:?}"
+    );
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(),
+        open(&s.0, false).get_snapshot_version().unwrap()
+    );
 }

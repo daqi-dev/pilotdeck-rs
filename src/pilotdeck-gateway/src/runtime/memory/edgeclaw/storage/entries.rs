@@ -172,6 +172,15 @@ impl EdgeClawFileStores {
     }
     fn mutate_entries(&self, ids: &[JsString], method: &str) -> Result<JsValue> {
         self.snapshot_operation(|| {
+            // Reject the whole request before either store can repair/write.
+            for id in ids {
+                if global(id) {
+                    self.global_user_memory.validate_entry_path(&internal(id))?;
+                } else {
+                    self.workspace_memory.validate_entry_path(id)?;
+                }
+            }
+
             let workspace = ids
                 .iter()
                 .filter(|id| !global(id))
@@ -218,6 +227,9 @@ impl EdgeClawFileStores {
         self.workspace_memory.archive_tmp_entries(&next)
     }
     pub fn get_snapshot_version(&self) -> Result<String> {
+        self.snapshot_operation(|| self.snapshot_version_locked())
+    }
+    fn snapshot_version_locked(&self) -> Result<String> {
         let last = self
             .storage
             .get_pipeline_state("lastDreamAt")?
