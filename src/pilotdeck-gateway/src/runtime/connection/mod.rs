@@ -4,9 +4,11 @@ pub mod binding;
 mod context;
 
 use binding::WsBinding;
-use context::{SessionKey, State, truthy};
-use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsValue};
-use serde_json::{Value, json};
+use context::{SessionKey, State, js_value, truthy};
+use pilotdeck_protocol::{
+    GATEWAY_PROTOCOL_VERSION, JsObject, JsString, JsValue, parse_json, stringify_json,
+};
+use serde_json::Value;
 use std::{
     future::Future,
     pin::Pin,
@@ -22,12 +24,14 @@ pub trait GatewayTextConnection: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct RequestError {
     pub code: String,
-    pub message: String,
+    /// JS strings are UTF-16 code units: an unknown-method message must echo a
+    /// lone surrogate exactly as TS does, so no lossy UTF-8 conversion happens.
+    pub message: JsString,
     pub details: Option<Value>,
     pub validation: Option<Value>,
 }
 impl RequestError {
-    pub fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<JsString>) -> Self {
         Self {
             code: "gateway_request_failed".into(),
             message: message.into(),
@@ -37,13 +41,14 @@ impl RequestError {
     }
 }
 /// Session lifecycle injection point. The pr2 owner adapter is deliberately not
-/// implemented here. Request/submit params use JsValue so JS string spread can
-/// pass lone UTF-16 surrogate code units without replacement. disconnect must
-/// select/remove under its owner lock using the supplied binding. abort receives
-/// exactly {sessionKey}, with no runId, preserving A5's unfenced socket-close behavior (including old sockets).
+/// implemented here. Every inbound protocol string (method, params, sessionKey,
+/// clientName) is a JsString/JsValue so lone UTF-16 surrogate code units pass
+/// through without replacement. disconnect must select/remove under its owner
+/// lock using the supplied binding. abort receives exactly {sessionKey}, with no
+/// runId, preserving A5's unfenced socket-close behavior (including old sockets).
 pub trait ConnectionGateway: Send + Sync {
     fn describe_server(&self) -> Call<'_, Result<Value, RequestError>>;
-    fn request(&self, method: String, params: JsValue) -> Call<'_, Result<Value, RequestError>>;
+    fn request(&self, method: JsString, params: JsValue) -> Call<'_, Result<Value, RequestError>>;
     fn submit<'a>(
         &'a self,
         params: JsValue,
@@ -51,10 +56,10 @@ pub trait ConnectionGateway: Send + Sync {
     ) -> Call<'a, Result<(), RequestError>>;
     fn disconnect(
         &self,
-        session: Value,
+        session: JsValue,
         binding: WsBinding,
     ) -> Call<'_, Result<bool, RequestError>>;
-    fn abort_on_close(&self, params: Value) -> Call<'_, Result<(), RequestError>>;
+    fn abort_on_close(&self, params: JsValue) -> Call<'_, Result<(), RequestError>>;
 }
 
 pub struct GatewayConnection {
@@ -93,21 +98,28 @@ impl GatewayConnection {
     pub fn binding(&self) -> &WsBinding {
         &self.binding
     }
-    fn send(&self, frame: Value) {
-        self.text.send_text(frame.to_string());
+    // Outbound frames are built as JsValue too: a response id may contain a
+    // lone surrogate and JSON.stringify must re-escape it, not replace it.
+    fn send(&self, frame: JsValue) {
+        let text = stringify_json(&frame)
+            .expect("connection frames are JSON values")
+            .expect("connection frames are never undefined");
+        self.text.send_text(text);
     }
-    pub fn notify(&self, name: &str, payload: Option<Value>) {
+    pub fn notify(&self, name: &str, payload: Option<JsValue>) {
         // Snapshot authorization before invoking a potentially reentrant sink.
         let state = self.state.lock().unwrap();
         if !state.authed {
             return;
         }
         drop(state);
-        let mut frame = json!({"type":"notification", "name":name});
+        let mut frame = JsObject::new();
+        frame.insert("type".into(), JsValue::from("notification"));
+        frame.insert("name".into(), JsValue::from(name));
         if let Some(payload) = payload {
-            frame["payload"] = payload;
+            frame.insert("payload".into(), payload);
         }
-        self.send(frame);
+        self.send(JsValue::Object(frame));
     }
     /// The synchronous prefix reserves context before returning the future,
     /// like TS before its first await. SDK classification and binding capture
@@ -118,55 +130,94 @@ impl GatewayConnection {
     /// while calling closed(); no synthetic terminal event is sent on cancellation.
     pub fn receive<'a>(&'a self, message: &str) -> Call<'a, Result<(), RequestError>> {
         let mut state = self.state.lock().unwrap();
-        let Ok(frame) = serde_json::from_str::<Value>(message) else {
+        // parse_json accepts lone UTF-16 surrogates; serde_json would reject the
+        // frame with 4002 while TS JSON.parse accepts it.
+        let Ok(frame) = parse_json(message) else {
             drop(state);
             self.text.close(4002, "invalid_json");
             return Box::pin(async { Ok(()) });
         };
         if !state.authed {
-            if frame["type"] != "hello"
+            let is_hello = frame
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("hello"));
+            if !is_hello
                 || !["protocolVersion", "clientName", "clientVersion", "token"]
                     .iter()
-                    .all(|key| frame[*key].is_string())
+                    .all(|key| frame.get(key).and_then(JsValue::as_string).is_some())
             {
                 drop(state);
                 self.text.close(4001, "hello_required");
                 return Box::pin(async { Ok(()) });
             }
-            if frame["protocolVersion"] != GATEWAY_PROTOCOL_VERSION {
+            let protocol_matches = frame
+                .get("protocolVersion")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str(GATEWAY_PROTOCOL_VERSION));
+            if !protocol_matches {
                 drop(state);
                 self.text.close(4001, "protocol_mismatch");
                 return Box::pin(async { Ok(()) });
             }
-            if frame["token"] != self.token {
+            let token_matches = frame
+                .get("token")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str(&self.token));
+            if !token_matches {
                 drop(state);
                 self.text.close(4003, "auth_failed");
                 return Box::pin(async { Ok(()) });
             }
             state.authed = true;
-            state.client_name = frame["clientName"].as_str().map(str::to_owned);
+            state.client_name = frame
+                .get("clientName")
+                .and_then(JsValue::as_string)
+                .cloned();
             return Box::pin(async move {
                 // As in TS, authentication is published before describe awaits.
                 let info = self.gateway.describe_server().await?;
-                self.send(
-                    json!({"type":"hello_ok", "protocolVersion":GATEWAY_PROTOCOL_VERSION,
-                        "serverVersion":self.server_version, "serverInfo":info,
-                        "interactionBinding":self.binding.to_json()}),
+                let mut out = JsObject::new();
+                out.insert("type".into(), JsValue::from("hello_ok"));
+                out.insert(
+                    "protocolVersion".into(),
+                    JsValue::from(GATEWAY_PROTOCOL_VERSION),
                 );
+                out.insert(
+                    "serverVersion".into(),
+                    JsValue::from(self.server_version.as_str()),
+                );
+                out.insert("serverInfo".into(), js_value(&info));
+                out.insert(
+                    "interactionBinding".into(),
+                    js_value(&self.binding.to_json()),
+                );
+                self.send(JsValue::Object(out));
                 Ok(())
             });
         }
-        if frame["type"] != "request" || !frame["id"].is_string() || !frame["method"].is_string() {
+        let is_request = frame
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|kind| kind.equals_str("request"));
+        if !is_request
+            || frame.get("id").and_then(JsValue::as_string).is_none()
+            || frame.get("method").and_then(JsValue::as_string).is_none()
+        {
             drop(state);
             self.text.close(4002, "invalid_frame");
             return Box::pin(async { Ok(()) });
         }
-        let id = frame["id"].clone();
-        let method = frame["method"].as_str().unwrap().to_owned();
-        let input = frame.get("params").cloned().unwrap_or(Value::Null);
-        let session =
-            truthy(&input["sessionKey"]).then(|| SessionKey::new(input["sessionKey"].clone()));
-        let is_submit = method == "submit_turn";
+        let id = frame.get("id").cloned().unwrap();
+        let method = frame
+            .get("method")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap();
+        let input = frame.get("params").cloned().unwrap_or(JsValue::Null);
+        let session_value = input.get("sessionKey").cloned().unwrap_or(JsValue::Null);
+        let session = truthy(&session_value).then(|| SessionKey::new(session_value));
+        let is_submit = method.equals_str("submit_turn");
         if is_submit && let Some(session) = session.as_ref() {
             state.track_interaction(session);
             state.track_in_flight(session);
@@ -189,7 +240,8 @@ impl GatewayConnection {
                     .and_then(|result| {
                         // TS reads the original params only after dispatch succeeds.
                         // Null/undefined throw here even though dispatch saw an object.
-                        if method == "permission_decide" && input.is_null() {
+                        if method.equals_str("permission_decide") && matches!(input, JsValue::Null)
+                        {
                             let kind = if frame.get("params").is_some() {
                                 "null"
                             } else {
@@ -205,28 +257,59 @@ impl GatewayConnection {
             };
             match result {
                 Ok(Some(result)) => {
-                    if method == "permission_decide"
-                        && input.is_object()
-                        && input["sessionKey"].is_string()
-                        && input["requestId"].is_string()
+                    if method.equals_str("permission_decide")
+                        && input
+                            .get("sessionKey")
+                            .and_then(JsValue::as_string)
+                            .is_some()
+                        && input
+                            .get("requestId")
+                            .and_then(JsValue::as_string)
+                            .is_some()
                     {
-                        let mut payload = json!({"type":"resolved", "sessionKey":input["sessionKey"], "requestId":input["requestId"]});
-                        if input["projectKey"].is_string() {
-                            payload["projectKey"] = input["projectKey"].clone();
+                        let mut payload = JsObject::new();
+                        payload.insert("type".into(), JsValue::from("resolved"));
+                        payload.insert(
+                            "sessionKey".into(),
+                            input.get("sessionKey").cloned().unwrap(),
+                        );
+                        payload
+                            .insert("requestId".into(), input.get("requestId").cloned().unwrap());
+                        if input
+                            .get("projectKey")
+                            .and_then(JsValue::as_string)
+                            .is_some()
+                        {
+                            payload.insert(
+                                "projectKey".into(),
+                                input.get("projectKey").cloned().unwrap(),
+                            );
                         }
-                        self.notify("permission_changed", Some(payload));
+                        self.notify("permission_changed", Some(JsValue::Object(payload)));
                     }
-                    self.send(json!({"type":"response", "id":id, "ok":true, "result":result}));
+                    let mut out = JsObject::new();
+                    out.insert("type".into(), JsValue::from("response"));
+                    out.insert("id".into(), id);
+                    out.insert("ok".into(), JsValue::Bool(true));
+                    out.insert("result".into(), js_value(&result));
+                    self.send(JsValue::Object(out));
                 }
                 Ok(None) => {}
-                Err(error) => {
-                    let mut detail = json!({"code":error.code, "message":error.message});
-                    if let Some(validation) = error.validation {
-                        detail["validation"] = validation;
-                    } else if let Some(details) = error.details {
-                        detail["details"] = details;
+                Err(failure) => {
+                    let mut detail = JsObject::new();
+                    detail.insert("code".into(), JsValue::from(failure.code.as_str()));
+                    detail.insert("message".into(), JsValue::String(failure.message));
+                    if let Some(validation) = failure.validation {
+                        detail.insert("validation".into(), js_value(&validation));
+                    } else if let Some(details) = failure.details {
+                        detail.insert("details".into(), js_value(&details));
                     }
-                    self.send(json!({"type":"response", "id":id, "ok":false, "error":detail}));
+                    let mut out = JsObject::new();
+                    out.insert("type".into(), JsValue::from("response"));
+                    out.insert("id".into(), id);
+                    out.insert("ok".into(), JsValue::Bool(false));
+                    out.insert("error".into(), JsValue::Object(detail));
+                    self.send(JsValue::Object(out));
                 }
             }
             Ok(())
@@ -234,9 +317,9 @@ impl GatewayConnection {
     }
     async fn submit(
         &self,
-        id: &Value,
+        id: &JsValue,
         params: JsValue,
-        input: &Value,
+        input: &JsValue,
         cleanup: Option<SubmitCleanup<'_>>,
     ) -> Result<(), RequestError> {
         let stream = Mutex::new((0u64, None, None));
@@ -248,22 +331,29 @@ impl GatewayConnection {
             if event["type"] == "error" {
                 stream.2 = Some(event.clone());
             }
-            if event["type"] == "permission_request" && truthy(&input["sessionKey"]) {
-                let mut payload = json!({"type":"requested", "sessionKey":input["sessionKey"]});
-                for key in ["projectKey", "requestId"] {
-                    if let Some(value) = if key == "requestId" {
-                        event.get(key)
-                    } else {
-                        input.get(key)
-                    } {
-                        payload[key] = value.clone();
-                    }
+            if event["type"] == "permission_request" && input.get("sessionKey").is_some_and(truthy)
+            {
+                let mut payload = JsObject::new();
+                payload.insert("type".into(), JsValue::from("requested"));
+                payload.insert(
+                    "sessionKey".into(),
+                    input.get("sessionKey").cloned().unwrap(),
+                );
+                if let Some(value) = input.get("projectKey") {
+                    payload.insert("projectKey".into(), value.clone());
                 }
-                self.notify("permission_changed", Some(payload));
+                if let Some(value) = event.get("requestId") {
+                    payload.insert("requestId".into(), js_value(value));
+                }
+                self.notify("permission_changed", Some(JsValue::Object(payload)));
             }
-            self.send(
-                json!({"type":"event", "id":id, "seq":stream.0, "final":false, "event":event}),
-            );
+            let mut out = JsObject::new();
+            out.insert("type".into(), JsValue::from("event"));
+            out.insert("id".into(), id.clone());
+            out.insert("seq".into(), JsValue::Number(stream.0 as f64));
+            out.insert("final".into(), JsValue::Bool(false));
+            out.insert("event".into(), js_value(&event));
+            self.send(JsValue::Object(out));
             stream.0 += 1;
         };
         let result = self.gateway.submit(params.clone(), &emit).await;
@@ -272,10 +362,16 @@ impl GatewayConnection {
         result?;
         let (seq, completed, error) = stream.into_inner().unwrap();
         let terminal = error.or(completed).unwrap_or_else(|| {
-            json!({"type":"error", "code":"result_unknown",
+            serde_json::json!({"type":"error", "code":"result_unknown",
             "message":"Gateway stream ended without a terminal result.", "recoverable":true})
         });
-        self.send(json!({"type":"event", "id":id, "seq":seq, "final":true, "event":terminal}));
+        let mut out = JsObject::new();
+        out.insert("type".into(), JsValue::from("event"));
+        out.insert("id".into(), id.clone());
+        out.insert("seq".into(), JsValue::Number(seq as f64));
+        out.insert("final".into(), JsValue::Bool(true));
+        out.insert("event".into(), js_value(&terminal));
+        self.send(JsValue::Object(out));
         Ok(())
     }
     // TS propagates disconnect rejection immediately; it neither aborts that
@@ -291,10 +387,9 @@ impl GatewayConnection {
                 let in_flight = self.state.lock().unwrap().in_flight.contains(&session);
                 if in_flight && !preserve_turn {
                     // A5 explicitly requires a session-wide abort, without runId.
-                    let _ = self
-                        .gateway
-                        .abort_on_close(json!({"sessionKey":session.value()}))
-                        .await;
+                    let mut params = JsObject::new();
+                    params.insert("sessionKey".into(), session.value().clone());
+                    let _ = self.gateway.abort_on_close(JsValue::Object(params)).await;
                 }
             }
             let mut state = self.state.lock().unwrap();
