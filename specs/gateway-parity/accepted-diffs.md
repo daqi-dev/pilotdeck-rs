@@ -497,3 +497,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅超时路径上 session 端口 `has_active_turn` panic；不影响其他端口失败、正常超时回滚与 active 推迟的对拍。Rust 端口签名返回 bool，没有与 JS throw 对应的 Err 通道，只有 panic 会走到这里。
 - **机器判据**：`runtime::replacement` 单测中 #518 新增的 panic 场景（证据 `_tmp/20261023-issue-518-replacement/RESULT.md`）。
 - **批准记录**：无；实现方按 #518 任务实现并给出候选登记文字；**已知未对齐（未批准）**，待人批。
+
+## 已知未对齐（未批准，待人批）· D2 CLI chat search
+
+### D2-CHATSEARCH-REGEX-BACKTRACK-001 · `--regex` 灾难性回溯：TS 长时间不返回，Rust 有界失败
+
+- **类别**：安全方向偏离（基线无界执行 → 有界资源失败）；CLI 范围，记入本账本是沿用 #502 全仓自述差异集中登记的做法。
+- **TS 依据**（cc7c4e6）：`src/session/search/NodeSessionSearchPort.ts:85`、`:87` 直接执行无超时的 V8 RegExp。真实 Node v22.22.0 对 `\b(a+)+$` 与 `(a|aa)+\bc$`，输入 `"a".repeat(100)+"!"`，各在 2,000 ms 内未返回，由探针超时终止（证据 `_tmp/20261023-d2-pr2-chat-search/backtrack-probe.cjs`、`backtrack-ts.log`）；只证明「超过 2 s 未返回」，不断言永久挂起。
+- **Rust 行为**：`src/pilotdeck-cli/src/chat_search/matcher.rs` 保留 fancy-regex 默认回溯上限 1,000,000，超限时 exit 1、stdout 为空、stderr 精确为 `Chat search regex exceeded backtracking limit\n`。
+- **范围**：仅 `pilotdeck chat search --regex` 执行时回溯超限；不放宽其他正则编译错误、匹配结果、snippet 或输出的逐字节对拍。
+- **机器判据**：`src/pilotdeck-cli/tests/chat_search_exit.rs` 的 `chat_search_backtracking_limit_is_a_bounded_error`（exit、空 stdout、stderr 原文、耗时 < 10 s）；负控「改坏回溯超限文本」转红。
+- **批准记录**：无；PR #513 评审（Grok r1 #4）建议保留上限并登记；**已知未对齐（未批准）**，待人批是否接受为向安全偏离。
