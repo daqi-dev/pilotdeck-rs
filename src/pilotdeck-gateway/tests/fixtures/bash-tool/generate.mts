@@ -170,65 +170,73 @@ async function killEscaped(root: string): Promise<number | undefined> {
 }
 
 const real: any[] = [];
-for (const scenario of cases.real) {
-  const root = join(scratch, scenario.name);
-  await mkdir(root);
-  await writeFile(join(root, 'file'), 'not a directory\n');
-  await chmod(join(root, 'file'), 0o644);
-  const tool = createBashTool();
-  const controller = new AbortController();
-  if (scenario.preAborted) controller.abort();
-  const streams = { stdout: '', stderr: '' };
-  let progressEvents = 0;
-  const context: any = {
-    cwd: substitute(root)(scenario.cwd ?? '<root>'),
-    env: substitute(root)(scenario.env),
-    sessionId: 's1',
-    turnId: 't1',
-    now: () => new Date(fixed),
-    ...(scenario.abortAfterMs !== undefined || scenario.preAborted ? { abortSignal: controller.signal } : {}),
-    ...(scenario.progress ? {
-      progress: (event: any) => {
-        progressEvents += 1;
-        const { stream, chunk, byteCount } = event.metadata;
-        assert.equal(event.message, `${stream}: ${chunk.length} bytes`);
-        assert.equal(byteCount, Buffer.byteLength(chunk, 'utf8'));
-        streams[stream as 'stdout' | 'stderr'] += chunk;
-      },
-    } : {}),
-  };
-  const started = Date.now();
-  const timer = scenario.abortAfterMs !== undefined ? setTimeout(() => controller.abort(), scenario.abortAfterMs) : undefined;
-  const execution = tool.execute(substitute(root)(scenario.input), context);
-  let raw: any;
-  const result = await outcome(execution.then((output: any) => { raw = output; return output; }), placeholders(root));
-  const wallMs = Date.now() - started;
-  if (timer) clearTimeout(timer);
-  await killEscaped(root);
-  if (scenario.minWallMs !== undefined) assert.ok(wallMs >= scenario.minWallMs, `${scenario.name}: ${wallMs}ms < ${scenario.minWallMs}`);
-  if (scenario.maxWallMs !== undefined) assert.ok(wallMs <= scenario.maxWallMs, `${scenario.name}: ${wallMs}ms > ${scenario.maxWallMs}`);
-  const entry: any = { ...scenario };
-  if (scenario.hashOnly) {
-    assert.ok(raw, `${scenario.name} must succeed`);
-    entry.expected = {
-      sha256: sha(JSON.stringify(result)),
-      stdoutLength: raw.data.stdout.length,
-      previewLimit: clean(applyResultSizeLimit(raw.content, definitionTool.maxResultBytes).metadata),
-    };
-  } else {
-    entry.expected = result;
+try {
+  for (const scenario of cases.real) {
+    const root = join(scratch, scenario.name);
+    await mkdir(root);
+    await writeFile(join(root, 'file'), 'not a directory\n');
+    await chmod(join(root, 'file'), 0o644);
+    try {
+      const tool = createBashTool();
+      const controller = new AbortController();
+      if (scenario.preAborted) controller.abort();
+      const streams = { stdout: '', stderr: '' };
+      let progressEvents = 0;
+      const context: any = {
+        cwd: substitute(root)(scenario.cwd ?? '<root>'),
+        env: substitute(root)(scenario.env),
+        sessionId: 's1',
+        turnId: 't1',
+        now: () => new Date(fixed),
+        ...(scenario.abortAfterMs !== undefined || scenario.preAborted ? { abortSignal: controller.signal } : {}),
+        ...(scenario.progress ? {
+          progress: (event: any) => {
+            progressEvents += 1;
+            const { stream, chunk, byteCount } = event.metadata;
+            assert.equal(event.message, `${stream}: ${chunk.length} bytes`);
+            assert.equal(byteCount, Buffer.byteLength(chunk, 'utf8'));
+            streams[stream as 'stdout' | 'stderr'] += chunk;
+          },
+        } : {}),
+      };
+      const started = Date.now();
+      const timer = scenario.abortAfterMs !== undefined ? setTimeout(() => controller.abort(), scenario.abortAfterMs) : undefined;
+      const execution = tool.execute(substitute(root)(scenario.input), context);
+      let raw: any;
+      const result = await outcome(execution.then((output: any) => { raw = output; return output; }), placeholders(root));
+      const wallMs = Date.now() - started;
+      if (timer) clearTimeout(timer);
+      if (scenario.minWallMs !== undefined) assert.ok(wallMs >= scenario.minWallMs, `${scenario.name}: ${wallMs}ms < ${scenario.minWallMs}`);
+      if (scenario.maxWallMs !== undefined) assert.ok(wallMs <= scenario.maxWallMs, `${scenario.name}: ${wallMs}ms > ${scenario.maxWallMs}`);
+      const entry: any = { ...scenario };
+      if (scenario.hashOnly) {
+        assert.ok(raw, `${scenario.name} must succeed`);
+        entry.expected = {
+          sha256: sha(JSON.stringify(result)),
+          stdoutLength: raw.data.stdout.length,
+          previewLimit: clean(applyResultSizeLimit(raw.content, definitionTool.maxResultBytes).metadata),
+        };
+      } else {
+        entry.expected = result;
+      }
+      if (scenario.progress) entry.progressStreams = streams, assert.ok(progressEvents > 0);
+      if (scenario.postCheckAtMs !== undefined) {
+        const wait = started + scenario.postCheckAtMs - Date.now();
+        assert.ok(wait > 0, `${scenario.name}: post check already late`);
+        await new Promise((done) => setTimeout(done, wait));
+        entry.postFilesExist = await Promise.all(scenario.postFiles.map((name: string) =>
+          readFile(join(root, name)).then(() => true, () => false)));
+      }
+      real.push(entry);
+    } finally {
+      // The escaped job is a detached process group: kill it even when an
+      // assertion above fails before the success-path cleanup.
+      await killEscaped(root);
+    }
   }
-  if (scenario.progress) entry.progressStreams = streams, assert.ok(progressEvents > 0);
-  if (scenario.postCheckAtMs !== undefined) {
-    const wait = started + scenario.postCheckAtMs - Date.now();
-    assert.ok(wait > 0, `${scenario.name}: post check already late`);
-    await new Promise((done) => setTimeout(done, wait));
-    entry.postFilesExist = await Promise.all(scenario.postFiles.map((name: string) =>
-      readFile(join(root, name)).then(() => true, () => false)));
-  }
-  real.push(entry);
+} finally {
+  await removeScratch();
 }
-await removeScratch();
 
 const oracle = {
   sourceCommit: commit,

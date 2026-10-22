@@ -43,6 +43,23 @@ const sourceSha256 = sourceClosureSha256(baseline, commit, git, entries);
 const fixed = Date.parse('2026-01-01T00:00:00.000Z');
 const clean = (value: unknown) => value === undefined ? null : JSON.parse(JSON.stringify(value));
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+// The baseline dispose can wait forever (README `dispose-hang`). Every dispose
+// the generator waits on is bounded so that cleanup can still kill the process
+// groups and delete the scratch tree instead of hanging with them alive.
+const DISPOSE_TIMEOUT_MS = 6_000;
+const DISPOSE_TIMED_OUT = Symbol('dispose timed out');
+function boundedDispose(runtime: any): Promise<void | typeof DISPOSE_TIMED_OUT> {
+  const pending = Promise.resolve().then(() => runtime.dispose());
+  // If the deadline wins, a late rejection must not become unhandled.
+  pending.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DISPOSE_TIMED_OUT>((done) => {
+    timer = setTimeout(() => done(DISPOSE_TIMED_OUT), DISPOSE_TIMEOUT_MS);
+  });
+  return Promise.race([pending, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 const errorOf = (error: any) => ({
   error: {
     name: error?.name ?? 'Error',
@@ -125,16 +142,24 @@ async function killTrackedGroups(): Promise<void> {
   }
 }
 async function stopActiveSequence(): Promise<void> {
-  if (active) {
-    if (active.disposable && !active.disposed) {
+  const current = active;
+  if (current) {
+    if (current.disposable && !current.disposed) {
       try {
-        await active.runtime.dispose();
+        if (await boundedDispose(current.runtime) === DISPOSE_TIMED_OUT) {
+          console.error(`cleanup dispose exceeded ${DISPOSE_TIMEOUT_MS}ms; killing tracked process groups`);
+        }
       } catch (error) {
         // The group KILL below is the fallback; report so the failure stays visible.
         console.error(`dispose failed during cleanup: ${String(error)}`);
       }
     }
-    active.subagents.shutdown();
+    try {
+      current.subagents.shutdown();
+    } catch (error) {
+      // A throwing shutdown must not skip the group KILL below.
+      console.error(`subagents.shutdown failed during cleanup: ${String(error)}`);
+    }
   }
   await killTrackedGroups();
 }
@@ -166,7 +191,6 @@ try {
     const tools = Object.fromEntries((Object.values(createTaskTools({ runtime })) as any[]).map((tool) => [tool.name, tool]));
     const taskIds: string[] = [];
     const subIds: string[] = [];
-    const pids = new Set<number>();
     const releases: Array<() => void> = [];
     const placeholders = (value: any): any => {
       if (typeof value === 'string') {
@@ -211,7 +235,7 @@ try {
           const output = await tools[step.tool].execute(substitute(step.input), context);
           if (step.tool === 'task_create') {
             taskIds.push(output.data.taskId);
-            if (typeof output.data.pid === 'number') { pids.add(output.data.pid); trackedGroups.add(output.data.pid); }
+            if (typeof output.data.pid === 'number') trackedGroups.add(output.data.pid);
           }
           entry.result = placeholders(clean({ content: output.content, data: output.data }));
         } catch (error: any) {
@@ -233,9 +257,13 @@ try {
         await until(`${sequence.name} group ${pid}`, () => !groupExists(pid));
         entry.result = true;
       } else if (step.op === 'dispose') {
-        await runtime.dispose();
-        subagents.shutdown();
+        const settled = await boundedDispose(runtime);
+        // Even a timed-out dispose must not be retried by the cleanup path: the
+        // groups are killed next.
         if (active) active.disposed = true;
+        assert.notEqual(settled, DISPOSE_TIMED_OUT,
+          `${sequence.name}: dispose exceeded ${DISPOSE_TIMEOUT_MS}ms`);
+        subagents.shutdown();
         entry.result = true;
       } else if (step.op === 'sdkStop' || step.op === 'sdkList') {
         const input: any = { sessionKey: step.sessionKey, ...('task' in step ? { taskId: substitute(step.task) } : {}) };
@@ -277,8 +305,16 @@ try {
       }
       steps.push(entry);
     }
-    if (!sequence.noDispose) {
-      for (const pid of pids) await until(`${sequence.name} leftover group ${pid}`, () => !groupExists(pid));
+    if (sequence.noDispose) {
+      // The baseline hangs on dispose for this class, so the generator never
+      // calls it; any child the sequence did start is still ours to stop. Kill
+      // the tracked groups before forgetting their pids: clearing first would
+      // silently orphan them (the exact bug #519 fixed).
+      await killTrackedGroups();
+    } else {
+      for (const pid of trackedGroups) {
+        await until(`${sequence.name} leftover group ${pid}`, () => !groupExists(pid));
+      }
     }
     recorded.push({
       name: sequence.name,
@@ -293,8 +329,8 @@ try {
         Number(/\d+/.exec(a.taskId)![0]) - Number(/\d+/.exec(b.taskId)![0])),
     });
     active = undefined;
-    // Groups are gone (or this sequence deliberately has no child); forget the
-    // PIDs so a later cleanup can never signal a reused one.
+    // Every group above is gone (killed above for noDispose sequences), so
+    // forgetting the PIDs can never signal a reused one.
     trackedGroups.clear();
   }
 } catch (error) {

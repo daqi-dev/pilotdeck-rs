@@ -638,17 +638,39 @@ async function startHttpMock(dir: string) {
     env: { ...process.env, MOCK_DIR: dir },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
-  const port = await new Promise<number>((done, fail) => {
-    let out = '';
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      out += chunk;
-      const match = /^PORT (\d+)\n/.exec(out);
-      if (match) done(Number(match[1]));
+  // A pipe closed by an exiting recorder can surface as EPIPE; that is not a
+  // transport failure.
+  child.stdin.on('error', () => undefined);
+  let port: number;
+  try {
+    port = await new Promise<number>((done, fail) => {
+      let out = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        out += chunk;
+        const match = /^PORT (\d+)\n/.exec(out);
+        if (match) done(Number(match[1]));
+      });
+      child.on('exit', () => fail(new Error('HTTP mock exited before listening')));
     });
-    child.on('exit', () => fail(new Error('HTTP mock exited before listening')));
+  } catch (error) {
+    // Do not keep a half-started mock alive when startup fails.
+    child.kill('SIGKILL');
+    throw error;
+  }
+  // Bounded: a mock that is already gone must not turn cleanup into a hang.
+  const stop = () => new Promise<void>((done) => {
+    if (child.exitCode !== null || child.signalCode !== null) return done();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => { if (timer) clearTimeout(timer); done(); };
+    timer = setTimeout(() => { child.kill('SIGKILL'); finish(); }, 5_000);
+    child.once('exit', finish);
+    try { child.stdin.end(); } catch {
+      // A destroyed pipe may never deliver EOF; the 5 s deadline above still
+      // kills the mock, so do not settle early and leave it running.
+    }
   });
-  return { port, stop: () => new Promise((done) => { child.on('exit', done); child.stdin.end(); }) };
+  return { port, stop };
 }
 
 function readHttpLog(dir: string) {
@@ -661,48 +683,66 @@ function readHttpLog(dir: string) {
 }
 
 const recorded: any[] = [];
-for (const scenario of scenarios) {
-  const dir = join(runRoot, scenario.id);
-  mkdirSync(join(dir, 'work'), { recursive: true });
-  writeFileSync(join(dir, 'script.json'), JSON.stringify({ procs: scenario.procs, http: scenario.http }));
-  const mock = scenario.http ? await startHttpMock(dir) : undefined;
-  hosts = mock ? [[`127.0.0.1:${mock.port}`, '<host>'], [`127.0.0.1:${await refusedPort()}`, '<refused>']] : [];
-  const spec = scenario.http
-    ? { id: 'mock', ...scenario.spec }
-    : {
-      id: 'mock',
-      transport: 'stdio',
-      command: 'node',
-      args: ['<mock>'],
-      env: { MOCK_DIR: '<dir>' },
-      ...scenario.spec,
-    };
-  const client = new McpClient(fill(spec, dir), scenario.options ?? {});
-  const steps: any[] = [];
-  for (const op of scenario.ops) {
-    steps.push({ step: op, ...(await runOp(client, op, dir)), status: client.getStatus() });
+let mock: Awaited<ReturnType<typeof startHttpMock>> | undefined;
+let loopDone = false;
+try {
+  for (const scenario of scenarios) {
+    const dir = join(runRoot, scenario.id);
+    mkdirSync(join(dir, 'work'), { recursive: true });
+    writeFileSync(join(dir, 'script.json'), JSON.stringify({ procs: scenario.procs, http: scenario.http }));
+    mock = scenario.http ? await startHttpMock(dir) : undefined;
+    try {
+      hosts = mock ? [[`127.0.0.1:${mock.port}`, '<host>'], [`127.0.0.1:${await refusedPort()}`, '<refused>']] : [];
+      const spec = scenario.http
+        ? { id: 'mock', ...scenario.spec }
+        : {
+          id: 'mock',
+          transport: 'stdio',
+          command: 'node',
+          args: ['<mock>'],
+          env: { MOCK_DIR: '<dir>' },
+          ...scenario.spec,
+        };
+      const client = new McpClient(fill(spec, dir), scenario.options ?? {});
+      const steps: any[] = [];
+      for (const op of scenario.ops) {
+        steps.push({ step: op, ...(await runOp(client, op, dir)), status: client.getStatus() });
+      }
+      let httpLog: any[] | undefined;
+      if (mock) {
+        // Let detached posts (ping replies, cancellations) land.
+        await sleep(300);
+        httpLog = readHttpLog(dir);
+      } else {
+        await settle(dir, !!scenario.orphan);
+      }
+      recorded.push({
+        id: scenario.id,
+        spec,
+        options: scenario.options ?? {},
+        script: { procs: scenario.procs, ...(scenario.http ? { http: scenario.http } : {}) },
+        orphan: !!scenario.orphan,
+        steps: scrub(steps, dir),
+        processes: readLogs(dir),
+        ...(httpLog ? { http: httpLog } : {}),
+      });
+    } finally {
+      // Stop the listening mock even when a step/assertion above throws; the
+      // success path also stops it here, after its log has been read.
+      const current = mock;
+      mock = undefined;
+      if (current) await current.stop();
+    }
   }
-  let httpLog: any[] | undefined;
-  if (mock) {
-    // Let detached posts (ping replies, cancellations) land.
-    await sleep(300);
-    httpLog = readHttpLog(dir);
-    await mock.stop();
-  } else {
-    await settle(dir, !!scenario.orphan);
-  }
-  recorded.push({
-    id: scenario.id,
-    spec,
-    options: scenario.options ?? {},
-    script: { procs: scenario.procs, ...(scenario.http ? { http: scenario.http } : {}) },
-    orphan: !!scenario.orphan,
-    steps: scrub(steps, dir),
-    processes: readLogs(dir),
-    ...(httpLog ? { http: httpLog } : {}),
-  });
+  loopDone = true;
+} finally {
+  // A scenario that fails before its own stop must not leave the mock (or the
+  // run tree) behind.
+  if (mock) await mock.stop();
+  mock = undefined;
+  hosts = [];
+  if (!loopDone) removeOwned(runRoot);
 }
-hosts = [];
 
 // Pure helpers. Strings that JSON cannot carry exactly are avoided: every case
 // round-trips through JSON.stringify unchanged.
@@ -773,24 +813,27 @@ const configCases = [
   { id: 'bom', project: '﻿{"mcpServers":{}}' },
   { id: 'directory', globalDir: true },
 ];
-const config = configCases.map((item: any) => {
-  const dir = join(configRoot, item.id);
-  const home = join(dir, 'home');
-  const project = join(dir, 'project');
-  mkdirSync(home, { recursive: true });
-  mkdirSync(join(project, '.pilotdeck'), { recursive: true });
-  const write = (path: string, value: unknown) => {
-    if (value === undefined) return;
-    writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value));
-  };
-  write(join(home, 'mcp.json'), item.global);
-  write(join(project, '.pilotdeck/mcp.json'), item.project);
-  if (item.globalDir) mkdirSync(join(home, 'mcp.json'));
-  const result = loadMcpServerConfig(project, home);
-  return { ...item, output: scrub(result, dir) };
-});
-
-removeOwned(runRoot);
+let config: any;
+try {
+  config = configCases.map((item: any) => {
+    const dir = join(configRoot, item.id);
+    const home = join(dir, 'home');
+    const project = join(dir, 'project');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(project, '.pilotdeck'), { recursive: true });
+    const write = (path: string, value: unknown) => {
+      if (value === undefined) return;
+      writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value));
+    };
+    write(join(home, 'mcp.json'), item.global);
+    write(join(project, '.pilotdeck/mcp.json'), item.project);
+    if (item.globalDir) mkdirSync(join(home, 'mcp.json'));
+    const result = loadMcpServerConfig(project, home);
+    return { ...item, output: scrub(result, dir) };
+  });
+} finally {
+  removeOwned(runRoot);
+}
 
 const scenario = (id: string) => recorded.find((item) => item.id === id)!;
 const stepCount = recorded.reduce((sum, item) => sum + item.steps.length, 0);
