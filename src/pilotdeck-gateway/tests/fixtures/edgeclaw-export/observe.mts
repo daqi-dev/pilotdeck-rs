@@ -5,8 +5,8 @@
 // observations so a TS-produced bundle can be fed straight back into import.
 import { readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { freezeClock, clean, tree, invoke as invokeStore, resolveRefs } from '../edgeclaw-file-memory/observe.mts';
-export {freezeClock, clean};
+import { freezeClock, clean, tree, invoke as invokeStore, resolveRefs, stepClock } from '../edgeclaw-file-memory/observe.mts';
+export {freezeClock, clean, stepClock};
 export const configs = [
   {id:'main',workspace:'/fixture/Main'},
   {id:'target',workspace:'/fixture/Target'},
@@ -15,7 +15,9 @@ export const configs = [
   {id:'general',workspace:'$ROOT/home/.pilotdeck'},
 ];
 export function expand(v:any,root:string):any {
-  if(typeof v==='string') return v.replaceAll('$ROOT',root);
+  // `$NAN` carries a NaN number through JSON (impossible to encode directly),
+  // for the NaN offset/limit pagination inputs.
+  if(typeof v==='string') return v==='$NAN' ? NaN : v.replaceAll('$ROOT',root);
   if(Array.isArray(v)) return v.map(x=>expand(x,root));
   if(v && typeof v==='object') return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,expand(x,root)]));
   return v;

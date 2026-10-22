@@ -138,7 +138,7 @@ thread_local! {
 // TS providers run synchronously inside the calling operation. A provider may
 // read another store with the same root, so only the outer call takes the mutex.
 // Keeping that guard alive still excludes every other thread until it returns.
-pub(super) struct OperationGuard<'a> {
+pub(crate) struct OperationGuard<'a> {
     outer: Option<MutexGuard<'a, ()>>,
     key: usize,
 }
@@ -239,6 +239,12 @@ impl FileMemoryStore {
     pub fn execute(&self, method: &str, input: &JsObject) -> Result<JsValue> {
         let _guard = OperationGuard::enter(&self.operation)?;
         self.core.execute(method, input)
+    }
+    /// Holds this store's per-root operation lock across a multi-step
+    /// sequence (import's directory swap). Reentrant with `execute` on the
+    /// same thread; keep the returned guard alive for the whole sequence.
+    pub(crate) fn operation_scope(&self) -> Result<OperationGuard<'_>> {
+        OperationGuard::enter(&self.operation)
     }
     object_methods! {
         upsert_candidate => "upsertCandidate", upsert_user_profile => "upsertUserProfile",
@@ -377,7 +383,7 @@ impl EdgeClawFileStores {
         };
         Ok(Self {
             repository,
-            storage: EdgeClawStorage::open(db)?,
+            storage: EdgeClawStorage::with_clock(db, clock)?,
             workspace_memory,
             global_user_memory,
         })
@@ -495,7 +501,9 @@ impl Core {
         if !path.exists() {
             return Ok(None);
         }
-        Ok(parse(&read(&path)?, &self.now()))
+        // The clock is read only for the `updated_at` fallback, like TS's
+        // lazy `??` operand, so a progressing clock advances identically.
+        Ok(parse(&read(&path)?, || self.now()))
     }
     fn entry(&self, path: &str) -> Result<Option<JsObject>> {
         let Some((mut fm, _)) = self.parsed(path)? else {
@@ -686,9 +694,26 @@ impl Core {
         if name.is_empty() {
             return Ok(None);
         }
-        let parsed = parse(&raw, &self.now())
-            .map(|(p, _)| text(&p, "updatedAt"))
-            .unwrap_or_else(|| self.now());
+        // `values.get(key) ?? parsed?.frontmatter.updatedAt ?? nowIso()`: the
+        // parse and the clock are only consulted when the raw header lacks
+        // the date (TS `??` short-circuit), and shared between the two fields
+        // like the single `parsed` value the TS function computes once.
+        let mut parsed_updated_at: Option<String> = None;
+        let mut date_of = |key: &str| -> String {
+            if header.contains_key(key) {
+                text(&header, key)
+            } else {
+                parsed_updated_at
+                    .get_or_insert_with(|| {
+                        parse(&raw, || self.now())
+                            .map(|(p, _)| text(&p, "updatedAt"))
+                            .unwrap_or_else(|| self.now())
+                    })
+                    .clone()
+            }
+        };
+        let created_at = date_of("created_at");
+        let updated_at = date_of("updated_at");
         let mut meta = obj(&[
             ("projectId", s(CURRENT_PROJECT_ID)),
             ("projectName", s(&name)),
@@ -697,22 +722,8 @@ impl Core {
                 "status",
                 s(first(&[n(&header, "status"), "in_progress".into()])),
             ),
-            (
-                "createdAt",
-                s(if header.contains_key("created_at") {
-                    text(&header, "created_at")
-                } else {
-                    parsed.clone()
-                }),
-            ),
-            (
-                "updatedAt",
-                s(if header.contains_key("updated_at") {
-                    text(&header, "updated_at")
-                } else {
-                    parsed
-                }),
-            ),
+            ("createdAt", s(&created_at)),
+            ("updatedAt", s(&updated_at)),
             ("relativePath", s("project.meta.md")),
             ("absolutePath", s(path.to_string_lossy())),
         ]);

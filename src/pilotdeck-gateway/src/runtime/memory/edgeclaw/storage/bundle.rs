@@ -19,7 +19,6 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
 };
 type Result<T> = std::result::Result<T, FileMemoryError>;
 
@@ -142,20 +141,19 @@ fn is_path_within_root(root_dir: &Path, target_path: &Path) -> bool {
 }
 /// `createSiblingTempPath` (`sqlite.ts:422-428`): a hidden sibling of the
 /// target directory. TS mixes `Date.now()` and `Math.random()`; the exact name
-/// is never observable, only its uniqueness within the parent directory.
-fn create_sibling_temp_path(target_dir: &Path, label: &str) -> PathBuf {
+/// is never observable, only its uniqueness within the parent directory. The
+/// `Date.now()` half comes from the injected clock so replays observe the
+/// same clock reads as TS.
+fn create_sibling_temp_path(target_dir: &Path, label: &str, clock: &FileMemoryClock) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = target_dir
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let parent = target_dir.parent().unwrap_or_else(|| Path::new("/"));
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    let now = hash(&(clock)());
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed) ^ u64::from(std::process::id());
-    parent.join(format!(".{base}.{label}-{now:x}-{unique:016x}"))
+    parent.join(format!(".{base}.{label}-{now}-{unique:016x}"))
 }
 fn copy_dir_all(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::create_dir_all(destination)?;
@@ -193,9 +191,19 @@ fn robust_rename(source: &Path, destination: &Path) -> std::io::Result<()> {
 }
 /// `replaceDirectoryWithStaged` (`sqlite.ts:1265-1290`): swap the staged
 /// directory in for the live one through a backup, restoring the live
-/// directory when the swap fails partway.
-fn replace_directory_with_staged(live_root: &Path, staged_root: &Path) -> Result<()> {
-    let backup_root = create_sibling_temp_path(live_root, "backup");
+/// directory when the swap fails partway. Registered deviation from the TS
+/// restore condition (`!existsSync(liveRoot)`, which its single-threaded host
+/// can never observe as false): the backup is restored on every swap failure,
+/// because a partially-installed live root — recreated by a concurrent writer
+/// between the two renames, or left by a failed copy fallback — must not
+/// strand the pre-import tree in the hidden backup directory
+/// (`specs/parity/accepted-diffs.md` #6).
+fn replace_directory_with_staged(
+    live_root: &Path,
+    staged_root: &Path,
+    clock: &FileMemoryClock,
+) -> Result<()> {
+    let backup_root = create_sibling_temp_path(live_root, "backup", clock);
     let mut moved_live_root = false;
     let outcome: std::io::Result<()> = (|| {
         if live_root.exists() {
@@ -218,7 +226,12 @@ fn replace_directory_with_staged(live_root: &Path, staged_root: &Path) -> Result
             if staged_root.exists() {
                 let _ = remove_dir_force(staged_root);
             }
-            if moved_live_root && !live_root.exists() && backup_root.exists() {
+            if moved_live_root && backup_root.exists() {
+                // Drop whatever partially landed at the live root before
+                // restoring the pre-import tree.
+                if live_root.exists() {
+                    let _ = remove_dir_force(live_root);
+                }
                 robust_rename(&backup_root, live_root)?;
             }
             Err(error.into())
@@ -357,8 +370,10 @@ fn normalize_snapshot_file_record(value: &JsValue, index: usize) -> Result<JsObj
 fn has_legacy_multi_project_path(relative_path: &str) -> bool {
     relative_path.starts_with("projects/") || relative_path.contains("/project.meta.md")
 }
-/// `normalizeMemoryBundle` (`sqlite.ts:298-353`).
-fn normalize_memory_bundle(value: &JsValue, now: &str) -> Result<JsObject> {
+/// `normalizeMemoryBundle` (`sqlite.ts:298-353`). The clock is read only
+/// for the `exportedAt` fallback, exactly like the TS `||` short-circuit, so
+/// a progressing clock observes the same call order as TS.
+fn normalize_memory_bundle(value: &JsValue, clock: &FileMemoryClock) -> Result<JsObject> {
     let Some(record) = value.as_object() else {
         return Err(bundle_error("Invalid memory bundle"));
     };
@@ -370,15 +385,11 @@ fn normalize_memory_bundle(value: &JsValue, now: &str) -> Result<JsObject> {
     }
     let mut metadata = JsObject::new();
     let exported_at = js_trim(&text(record, "exportedAt")).to_owned();
-    put(
-        &mut metadata,
-        "exportedAt",
-        s(if exported_at.is_empty() {
-            now
-        } else {
-            &exported_at
-        }),
-    );
+    if exported_at.is_empty() {
+        put(&mut metadata, "exportedAt", s((clock)()));
+    } else {
+        put(&mut metadata, "exportedAt", s(&exported_at));
+    }
     for key in ["lastIndexedAt", "lastDreamAt"] {
         let trimmed = js_trim(&text(record, key)).to_owned();
         if !trimmed.is_empty() {
@@ -417,10 +428,15 @@ fn normalize_memory_bundle(value: &JsValue, now: &str) -> Result<JsObject> {
         return Err(bundle_error("Invalid memory snapshot bundle files"));
     };
     let mut normalized_files = Vec::new();
-    let mut seen_paths: HashSet<String> = HashSet::new();
     for (index, item) in files.iter().enumerate() {
-        let file = normalize_snapshot_file_record(item, index)?;
-        let relative_path = text(&file, "relativePath");
+        // TS maps every record before any duplicate or legacy check
+        // (`files.map(...)` then the `for` loop), so a later record's
+        // validation error outranks an earlier record's duplicate path.
+        normalized_files.push(normalize_snapshot_file_record(item, index)?);
+    }
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    for file in &normalized_files {
+        let relative_path = text(file, "relativePath");
         if !seen_paths.insert(relative_path.clone()) {
             return Err(bundle_error(format!(
                 "Duplicate imported snapshot file path: {relative_path}"
@@ -431,7 +447,6 @@ fn normalize_memory_bundle(value: &JsValue, now: &str) -> Result<JsObject> {
                 "Legacy multi-project memory bundles are not supported in current-project memory mode",
             ));
         }
-        normalized_files.push(file);
     }
     let mut bundle = JsObject::new();
     put(
@@ -592,12 +607,13 @@ impl EdgeClawFileStores {
             .collect();
         let live_workspace_root = self.workspace_memory.get_root_dir().to_path_buf();
         let live_global_root = self.global_user_memory.get_root_dir().to_path_buf();
-        let staged_workspace_root = create_sibling_temp_path(&live_workspace_root, "import");
-        let staged_global_root = create_sibling_temp_path(&live_global_root, "import");
+        let clock = self.repository.clock().clone();
+        let staged_workspace_root =
+            create_sibling_temp_path(&live_workspace_root, "import", &clock);
+        let staged_global_root = create_sibling_temp_path(&live_global_root, "import", &clock);
         fs::create_dir_all(&staged_workspace_root)?;
         fs::create_dir_all(&staged_global_root)?;
         let staged = (|| -> Result<StagedImport> {
-            let clock = self.repository.clock().clone();
             let workspace_store = materialize_snapshot_bundle(
                 &staged_workspace_root,
                 &workspace_files,
@@ -726,13 +742,20 @@ impl EdgeClawFileStores {
     }
     /// `importMemoryBundle` (`sqlite.ts:1627-1658`).
     pub fn import_memory_bundle(&self, bundle: &JsValue) -> Result<JsValue> {
-        let now = (self.repository.clock())();
-        let normalized = normalize_memory_bundle(bundle, &now)?;
+        let normalized = normalize_memory_bundle(bundle, self.repository.clock())?;
         let staged = self.stage_import_bundle(&normalized)?;
+        // The directory swap, manifest repair and runtime reset hold both live
+        // stores' per-root operation locks (workspace first, then global — the
+        // provider nesting order): a concurrent writer could otherwise rebuild
+        // the live root after it was moved to the backup, fail the staged
+        // rename with ENOTEMPTY and strand the pre-import tree.
+        let _workspace_lock = self.workspace_memory.operation_scope()?;
+        let _global_lock = self.global_user_memory.operation_scope()?;
         let outcome = (|| -> Result<JsValue> {
             replace_directory_with_staged(
                 self.workspace_memory.get_root_dir(),
                 &staged.staged_workspace_root,
+                self.repository.clock(),
             )?;
             self.workspace_memory.repair_manifests()?;
             self.clear_last_dream_snapshot()?;
@@ -749,7 +772,9 @@ impl EdgeClawFileStores {
                 "imported",
                 JsValue::Object(staged.counts.clone()),
             );
-            put(&mut result, "importedAt", s(now));
+            // TS reads `nowIso()` here, after the swap and reset, not the
+            // normalization timestamp.
+            put(&mut result, "importedAt", s((self.repository.clock())()));
             if staged.ignored_global_file_count > 0 {
                 put(
                     &mut result,
@@ -803,6 +828,12 @@ impl EdgeClawFileStores {
     fn capture_live_memory_snapshot(&self) -> Result<(String, String)> {
         let workspace_files = objects(self.workspace_memory.export_snapshot_files()?);
         let global_files = objects(self.global_user_memory.export_snapshot_files()?);
+        // `counts: this.buildTransferCounts(...)` (sqlite.ts:1238): the counts
+        // feed the Dream rollback (a pr10e write path), but the call re-runs
+        // `exportSnapshotFiles` on the workspace store, whose manifest repair
+        // ticks the clock and may rewrite `MEMORY.md` — both observable from
+        // the overview — so it is kept even though its result is discarded.
+        let _ = build_transfer_counts(&self.workspace_memory, &self.global_user_memory)?;
         Ok((
             snapshot_version_from_files(&workspace_files)?,
             snapshot_version_from_files(&global_files)?,
@@ -887,5 +918,73 @@ impl EdgeClawStorage {
     fn clear_l0_sessions(&self) -> std::result::Result<(), StorageError> {
         self.conn()?.execute("DELETE FROM l0_sessions", [])?;
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Fix rv-codex-r1 P0 / rv-grok-r1 #1: when the staged swap fails after
+    /// the live root was moved to the backup, the pre-import tree must be
+    /// restored even though a partially-installed directory already sits at
+    /// the live root (the old `!live_root.exists()` condition skipped the
+    /// restore and stranded the tree in the orphaned backup). `chflags uchg`
+    /// on the staged root makes the second rename fall back to a copy and
+    /// then fail the source removal — the only deterministic route into that
+    /// error path with a populated live root.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn failed_swap_restores_live_root_even_when_recreated() {
+        fn chflags(path: &Path, flags: &str) {
+            let status = std::process::Command::new("chflags")
+                .arg(flags)
+                .arg(path)
+                .status()
+                .expect("chflags runs");
+            assert!(status.success(), "chflags {flags} {}", path.display());
+        }
+        let parent = std::env::temp_dir().join(format!(
+            "pdrs-bundle-swap-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&parent).unwrap();
+        let live_root = parent.join("live");
+        let staged_root = parent.join("staged");
+        fs::create_dir_all(&live_root).unwrap();
+        fs::write(live_root.join("original.md"), "original").unwrap();
+        fs::create_dir_all(&staged_root).unwrap();
+        fs::write(staged_root.join("imported.md"), "imported").unwrap();
+        chflags(&staged_root, "uchg");
+        let clock: FileMemoryClock = std::sync::Arc::new(|| "unit-test".into());
+        let swap = replace_directory_with_staged(&live_root, &staged_root, &clock);
+        chflags(&staged_root, "nouchg");
+        assert!(swap.is_err(), "the flagged staged root must fail the swap");
+        assert_eq!(
+            fs::read_to_string(live_root.join("original.md")).unwrap(),
+            "original",
+            "the pre-import tree must be restored at the live root"
+        );
+        assert!(
+            !live_root.join("imported.md").exists(),
+            "the partially-installed copy must not survive the rollback"
+        );
+        // The flagged staged root survives its best-effort removal, but the
+        // pre-import backup must not be left behind as an orphan.
+        let backups: Vec<String> = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".live.backup"))
+            .collect();
+        assert!(
+            backups.is_empty(),
+            "no orphaned backup directories may remain: {backups:?}"
+        );
+        fs::remove_dir_all(&parent).unwrap();
     }
 }

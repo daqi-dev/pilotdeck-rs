@@ -237,7 +237,10 @@ pub(super) fn copy(o: &mut JsObject, source: &JsObject, keys: &[&str]) {
         }
     }
 }
-pub(super) fn parse(raw: &str, now: &str) -> Option<(JsObject, String)> {
+/// `parseFrontmatterBlock` (`file-memory.ts:159-200`): the `now` fallback for
+/// a missing `updated_at` is read lazily (TS `??` short-circuit), so callers
+/// pass a closure and the clock only ticks when the value is consumed.
+pub(super) fn parse(raw: &str, now: impl FnOnce() -> String) -> Option<(JsObject, String)> {
     if !raw.starts_with("---\n") {
         return None;
     }
@@ -255,17 +258,18 @@ pub(super) fn parse(raw: &str, now: &str) -> Option<(JsObject, String)> {
         ("type", s(text(&values, "type"))),
         ("scope", s(text(&values, "scope"))),
     ]);
+    // `FM_FIELDS` has exactly one `updatedAt` entry, so the lazy fallback is
+    // resolved once up front; the `FnOnce` clock still only ticks when the
+    // frontmatter omits `updated_at`.
+    let updated_at = if values.contains_key("updated_at") {
+        text(&values, "updated_at")
+    } else {
+        now()
+    };
     for (disk, key) in FM_FIELDS {
         let value = text(&values, disk);
         if *key == "updatedAt" {
-            fm.insert(
-                (*key).into(),
-                s(if values.contains_key(disk) {
-                    value
-                } else {
-                    now.into()
-                }),
-            );
+            fm.insert((*key).into(), s(updated_at.clone()));
         } else if !value.is_empty() {
             fm.insert((*key).into(), s(value));
         }
