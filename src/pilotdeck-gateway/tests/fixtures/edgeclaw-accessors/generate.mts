@@ -60,7 +60,18 @@ const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',
 {method:'project',input:{id:'missing'}},{method:'project',input:{id:'mirror'}},{method:'project',input:{id:extBeta}},
 ...[{}, {includeExternal:false},{kinds:['feedback']},{query:'local'}, {includeDeprecated:true}, {kinds:[]}].map(options=>({method:'entries',input:{id:'mirror',options}})),
 {method:'entries',input:{id:extBeta}},{method:'entries',input:{id:extBeta,options:{includeExternal:false}}},{method:'entries',input:{id:'missing'}},
+// includeExternal is `?? true` then JS truthiness: 0/"" skip external entries, 1 includes.
+{method:'entries',input:{id:extBeta,options:{includeExternal:0}}},{method:'entries',input:{id:extBeta,options:{includeExternal:''}}},
+{method:'entries',input:{id:extBeta,options:{includeExternal:1}}},{method:'entries',input:{id:'mirror',options:{includeExternal:0}}},
+{method:'entries',input:{id:'mirror',options:{includeExternal:null}}},
+// listReadableProjectEntries hardcodes limit 5000/offset 0; caller values are ignored.
+{method:'entries',input:{id:'mirror',options:{limit:1,offset:1}}},{method:'entries',input:{id:'mirror',options:{query:'local',limit:1}}},
 ...[{}, {scope:'project'},{kinds:['project']},{kinds:[]},{kinds:['feedback','user']},{query:'Second'}, {limit:1,offset:1},{includeDeprecated:true}].map(input=>({method:'listGlobalMemoryEntries',input})),
+// Only whitelisted keys reach the global store; non-array kinds throws before scope.
+{method:'listGlobalMemoryEntries',input:{projectId:'x'}},{method:'listGlobalMemoryEntries',input:{kinds:'project'}},
+{method:'listGlobalMemoryEntries',input:{kinds:'project',scope:'project'}},{method:'listGlobalMemoryEntries',input:{kinds:42}},
+{method:'listGlobalMemoryEntries',input:{kinds:null}},
+{method:'listGlobalMemoryEntries',input:{query:'',limit:'2',offset:null,includeTmp:true,projectId:'x'}},
 {method:'getUserSummary'},
 {method:'raw',input:{path:'workspaces/main/memory/MEMORY.md',content:'broken manifest'}},{method:'repairWorkspaceManifest'},{method:'repairWorkspaceManifest'},
 {method:'state',input:'/fixture/Beta'},{method:'listReadableProjectCatalog'},{method:'state',input:'$ROOT/home/.pilotdeck'},
