@@ -1,11 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A7.1-pr3 | gate | blocked | PR #421 @0a75d155：孤立代理 P1 连续 3 轮（gate5/6/7 boundary），挂起；需人实测 `{"type":"request","id":"\ud800","method":"describe_server"}` TS 行为；决策卡 state/decisions-20261022.md:#421-surrogate-p1
-- #434 | gate | ready | PR #434 token_accounting；gate PASS（旧 head），pr-gate CI FAILURE（head 不符，需重跑 run-review-roles.py）
-- #455 | gate | ready | PR #455 P2-跟进第5批；无结果块，需首次跑 run-review-roles.py
-- #390 | impl | ready | codex/issue-390 已推 origin（含 boundary P2 金样）；需开 PR 再走评审
+updated: 2026-10-22 11:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A7.1-pr3 | gate | doing | PR #421 @756ca70e：回滚修复轮7（循环困境），gate8 P0=0 P1=0 PASS，入合并队列；孤立代理入站问题拆出为 #458；#458 前置于 A7.2
+- #459 | gate | doing | PR #459（#390 LazyLock+openai url）：gate1 P0=0 P1=0，入合并队列；等合并
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
@@ -16,6 +14,13 @@ updated: 2026-10-22 10:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - A6.6-pr10 | impl | human | EdgeClaw memory:sqlite依赖待人批、D6
 <!-- READY:END -->
+
+> ## 2026-10-22 11:30 · /loop 协调轮
+> **合并**：#457（board/memory/decisions）合入；#434（token_accounting #410）合入；#455（P2-跟进第5批 #437/#436/#446/#451）合入。
+> **#421 脱困**：反思后确认循环困境根因——修复轮 7 把整个入站帧改为 JsValue，但 id/method/clientName 是 ASCII 协议字段不含孤立代理，只有 params 需要 JsValue。回滚修复轮 7（3 个提交 revert），只保留修复轮 6（params 展开语义）。gate8 P0=0 P1=0 PASS，check CI 绿，入合并队列。入站孤立代理问题拆出为 #458（前置于 A7.2）。
+> **#459**：#390 分支开 PR，gate1 P0=0 P1=0 PASS，入合并队列。
+> **清理**：回收 wt-a63-pr1、wt-a68-pr1（已合入），归档 1359 文件。worktree 2/12。
+> **下一步**：① 等 #421/#459 合入后核邮箱；② #458 独立 issue 待排期；③ READY 清空后取 next-task.sh 下一单。
 
 > ## 2026-10-22 10:30 · /loop 协调轮（新会话接续）
 > **清理**：8 棵已合入 worktree 全部归档 `_tmp/archive/worktrees-20261022/`（4880 文件，rsync -aH --sparse），git worktree remove 删除；磁盘 96.6→60.8 GiB，worktree 12→4/12。
