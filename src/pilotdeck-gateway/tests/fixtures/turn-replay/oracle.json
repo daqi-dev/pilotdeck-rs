@@ -1,0 +1,4495 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/GatewayTurnReplayStore.ts": "ff3f8206be88afac0336f0aede66c084ce40eef5ea6318d1e751c3902bc135ce",
+    "src/gateway/client/GatewayTurnEventCoordinator.ts": "48c8b51b02003f47b2eb682dc9d058be79cb5304937dc915135354bf500bee1e",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a"
+  },
+  "storeCases": [
+    {
+      "name": "default-count-limit-and-sticky-truncation",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "recordMany",
+          "session": "s",
+          "count": 501
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r2"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "tick",
+              "index": 1
+            },
+            {
+              "type": "tick",
+              "index": 2
+            },
+            {
+              "type": "tick",
+              "index": 3
+            },
+            {
+              "type": "tick",
+              "index": 4
+            },
+            {
+              "type": "tick",
+              "index": 5
+            },
+            {
+              "type": "tick",
+              "index": 6
+            },
+            {
+              "type": "tick",
+              "index": 7
+            },
+            {
+              "type": "tick",
+              "index": 8
+            },
+            {
+              "type": "tick",
+              "index": 9
+            },
+            {
+              "type": "tick",
+              "index": 10
+            },
+            {
+              "type": "tick",
+              "index": 11
+            },
+            {
+              "type": "tick",
+              "index": 12
+            },
+            {
+              "type": "tick",
+              "index": 13
+            },
+            {
+              "type": "tick",
+              "index": 14
+            },
+            {
+              "type": "tick",
+              "index": 15
+            },
+            {
+              "type": "tick",
+              "index": 16
+            },
+            {
+              "type": "tick",
+              "index": 17
+            },
+            {
+              "type": "tick",
+              "index": 18
+            },
+            {
+              "type": "tick",
+              "index": 19
+            },
+            {
+              "type": "tick",
+              "index": 20
+            },
+            {
+              "type": "tick",
+              "index": 21
+            },
+            {
+              "type": "tick",
+              "index": 22
+            },
+            {
+              "type": "tick",
+              "index": 23
+            },
+            {
+              "type": "tick",
+              "index": 24
+            },
+            {
+              "type": "tick",
+              "index": 25
+            },
+            {
+              "type": "tick",
+              "index": 26
+            },
+            {
+              "type": "tick",
+              "index": 27
+            },
+            {
+              "type": "tick",
+              "index": 28
+            },
+            {
+              "type": "tick",
+              "index": 29
+            },
+            {
+              "type": "tick",
+              "index": 30
+            },
+            {
+              "type": "tick",
+              "index": 31
+            },
+            {
+              "type": "tick",
+              "index": 32
+            },
+            {
+              "type": "tick",
+              "index": 33
+            },
+            {
+              "type": "tick",
+              "index": 34
+            },
+            {
+              "type": "tick",
+              "index": 35
+            },
+            {
+              "type": "tick",
+              "index": 36
+            },
+            {
+              "type": "tick",
+              "index": 37
+            },
+            {
+              "type": "tick",
+              "index": 38
+            },
+            {
+              "type": "tick",
+              "index": 39
+            },
+            {
+              "type": "tick",
+              "index": 40
+            },
+            {
+              "type": "tick",
+              "index": 41
+            },
+            {
+              "type": "tick",
+              "index": 42
+            },
+            {
+              "type": "tick",
+              "index": 43
+            },
+            {
+              "type": "tick",
+              "index": 44
+            },
+            {
+              "type": "tick",
+              "index": 45
+            },
+            {
+              "type": "tick",
+              "index": 46
+            },
+            {
+              "type": "tick",
+              "index": 47
+            },
+            {
+              "type": "tick",
+              "index": 48
+            },
+            {
+              "type": "tick",
+              "index": 49
+            },
+            {
+              "type": "tick",
+              "index": 50
+            },
+            {
+              "type": "tick",
+              "index": 51
+            },
+            {
+              "type": "tick",
+              "index": 52
+            },
+            {
+              "type": "tick",
+              "index": 53
+            },
+            {
+              "type": "tick",
+              "index": 54
+            },
+            {
+              "type": "tick",
+              "index": 55
+            },
+            {
+              "type": "tick",
+              "index": 56
+            },
+            {
+              "type": "tick",
+              "index": 57
+            },
+            {
+              "type": "tick",
+              "index": 58
+            },
+            {
+              "type": "tick",
+              "index": 59
+            },
+            {
+              "type": "tick",
+              "index": 60
+            },
+            {
+              "type": "tick",
+              "index": 61
+            },
+            {
+              "type": "tick",
+              "index": 62
+            },
+            {
+              "type": "tick",
+              "index": 63
+            },
+            {
+              "type": "tick",
+              "index": 64
+            },
+            {
+              "type": "tick",
+              "index": 65
+            },
+            {
+              "type": "tick",
+              "index": 66
+            },
+            {
+              "type": "tick",
+              "index": 67
+            },
+            {
+              "type": "tick",
+              "index": 68
+            },
+            {
+              "type": "tick",
+              "index": 69
+            },
+            {
+              "type": "tick",
+              "index": 70
+            },
+            {
+              "type": "tick",
+              "index": 71
+            },
+            {
+              "type": "tick",
+              "index": 72
+            },
+            {
+              "type": "tick",
+              "index": 73
+            },
+            {
+              "type": "tick",
+              "index": 74
+            },
+            {
+              "type": "tick",
+              "index": 75
+            },
+            {
+              "type": "tick",
+              "index": 76
+            },
+            {
+              "type": "tick",
+              "index": 77
+            },
+            {
+              "type": "tick",
+              "index": 78
+            },
+            {
+              "type": "tick",
+              "index": 79
+            },
+            {
+              "type": "tick",
+              "index": 80
+            },
+            {
+              "type": "tick",
+              "index": 81
+            },
+            {
+              "type": "tick",
+              "index": 82
+            },
+            {
+              "type": "tick",
+              "index": 83
+            },
+            {
+              "type": "tick",
+              "index": 84
+            },
+            {
+              "type": "tick",
+              "index": 85
+            },
+            {
+              "type": "tick",
+              "index": 86
+            },
+            {
+              "type": "tick",
+              "index": 87
+            },
+            {
+              "type": "tick",
+              "index": 88
+            },
+            {
+              "type": "tick",
+              "index": 89
+            },
+            {
+              "type": "tick",
+              "index": 90
+            },
+            {
+              "type": "tick",
+              "index": 91
+            },
+            {
+              "type": "tick",
+              "index": 92
+            },
+            {
+              "type": "tick",
+              "index": 93
+            },
+            {
+              "type": "tick",
+              "index": 94
+            },
+            {
+              "type": "tick",
+              "index": 95
+            },
+            {
+              "type": "tick",
+              "index": 96
+            },
+            {
+              "type": "tick",
+              "index": 97
+            },
+            {
+              "type": "tick",
+              "index": 98
+            },
+            {
+              "type": "tick",
+              "index": 99
+            },
+            {
+              "type": "tick",
+              "index": 100
+            },
+            {
+              "type": "tick",
+              "index": 101
+            },
+            {
+              "type": "tick",
+              "index": 102
+            },
+            {
+              "type": "tick",
+              "index": 103
+            },
+            {
+              "type": "tick",
+              "index": 104
+            },
+            {
+              "type": "tick",
+              "index": 105
+            },
+            {
+              "type": "tick",
+              "index": 106
+            },
+            {
+              "type": "tick",
+              "index": 107
+            },
+            {
+              "type": "tick",
+              "index": 108
+            },
+            {
+              "type": "tick",
+              "index": 109
+            },
+            {
+              "type": "tick",
+              "index": 110
+            },
+            {
+              "type": "tick",
+              "index": 111
+            },
+            {
+              "type": "tick",
+              "index": 112
+            },
+            {
+              "type": "tick",
+              "index": 113
+            },
+            {
+              "type": "tick",
+              "index": 114
+            },
+            {
+              "type": "tick",
+              "index": 115
+            },
+            {
+              "type": "tick",
+              "index": 116
+            },
+            {
+              "type": "tick",
+              "index": 117
+            },
+            {
+              "type": "tick",
+              "index": 118
+            },
+            {
+              "type": "tick",
+              "index": 119
+            },
+            {
+              "type": "tick",
+              "index": 120
+            },
+            {
+              "type": "tick",
+              "index": 121
+            },
+            {
+              "type": "tick",
+              "index": 122
+            },
+            {
+              "type": "tick",
+              "index": 123
+            },
+            {
+              "type": "tick",
+              "index": 124
+            },
+            {
+              "type": "tick",
+              "index": 125
+            },
+            {
+              "type": "tick",
+              "index": 126
+            },
+            {
+              "type": "tick",
+              "index": 127
+            },
+            {
+              "type": "tick",
+              "index": 128
+            },
+            {
+              "type": "tick",
+              "index": 129
+            },
+            {
+              "type": "tick",
+              "index": 130
+            },
+            {
+              "type": "tick",
+              "index": 131
+            },
+            {
+              "type": "tick",
+              "index": 132
+            },
+            {
+              "type": "tick",
+              "index": 133
+            },
+            {
+              "type": "tick",
+              "index": 134
+            },
+            {
+              "type": "tick",
+              "index": 135
+            },
+            {
+              "type": "tick",
+              "index": 136
+            },
+            {
+              "type": "tick",
+              "index": 137
+            },
+            {
+              "type": "tick",
+              "index": 138
+            },
+            {
+              "type": "tick",
+              "index": 139
+            },
+            {
+              "type": "tick",
+              "index": 140
+            },
+            {
+              "type": "tick",
+              "index": 141
+            },
+            {
+              "type": "tick",
+              "index": 142
+            },
+            {
+              "type": "tick",
+              "index": 143
+            },
+            {
+              "type": "tick",
+              "index": 144
+            },
+            {
+              "type": "tick",
+              "index": 145
+            },
+            {
+              "type": "tick",
+              "index": 146
+            },
+            {
+              "type": "tick",
+              "index": 147
+            },
+            {
+              "type": "tick",
+              "index": 148
+            },
+            {
+              "type": "tick",
+              "index": 149
+            },
+            {
+              "type": "tick",
+              "index": 150
+            },
+            {
+              "type": "tick",
+              "index": 151
+            },
+            {
+              "type": "tick",
+              "index": 152
+            },
+            {
+              "type": "tick",
+              "index": 153
+            },
+            {
+              "type": "tick",
+              "index": 154
+            },
+            {
+              "type": "tick",
+              "index": 155
+            },
+            {
+              "type": "tick",
+              "index": 156
+            },
+            {
+              "type": "tick",
+              "index": 157
+            },
+            {
+              "type": "tick",
+              "index": 158
+            },
+            {
+              "type": "tick",
+              "index": 159
+            },
+            {
+              "type": "tick",
+              "index": 160
+            },
+            {
+              "type": "tick",
+              "index": 161
+            },
+            {
+              "type": "tick",
+              "index": 162
+            },
+            {
+              "type": "tick",
+              "index": 163
+            },
+            {
+              "type": "tick",
+              "index": 164
+            },
+            {
+              "type": "tick",
+              "index": 165
+            },
+            {
+              "type": "tick",
+              "index": 166
+            },
+            {
+              "type": "tick",
+              "index": 167
+            },
+            {
+              "type": "tick",
+              "index": 168
+            },
+            {
+              "type": "tick",
+              "index": 169
+            },
+            {
+              "type": "tick",
+              "index": 170
+            },
+            {
+              "type": "tick",
+              "index": 171
+            },
+            {
+              "type": "tick",
+              "index": 172
+            },
+            {
+              "type": "tick",
+              "index": 173
+            },
+            {
+              "type": "tick",
+              "index": 174
+            },
+            {
+              "type": "tick",
+              "index": 175
+            },
+            {
+              "type": "tick",
+              "index": 176
+            },
+            {
+              "type": "tick",
+              "index": 177
+            },
+            {
+              "type": "tick",
+              "index": 178
+            },
+            {
+              "type": "tick",
+              "index": 179
+            },
+            {
+              "type": "tick",
+              "index": 180
+            },
+            {
+              "type": "tick",
+              "index": 181
+            },
+            {
+              "type": "tick",
+              "index": 182
+            },
+            {
+              "type": "tick",
+              "index": 183
+            },
+            {
+              "type": "tick",
+              "index": 184
+            },
+            {
+              "type": "tick",
+              "index": 185
+            },
+            {
+              "type": "tick",
+              "index": 186
+            },
+            {
+              "type": "tick",
+              "index": 187
+            },
+            {
+              "type": "tick",
+              "index": 188
+            },
+            {
+              "type": "tick",
+              "index": 189
+            },
+            {
+              "type": "tick",
+              "index": 190
+            },
+            {
+              "type": "tick",
+              "index": 191
+            },
+            {
+              "type": "tick",
+              "index": 192
+            },
+            {
+              "type": "tick",
+              "index": 193
+            },
+            {
+              "type": "tick",
+              "index": 194
+            },
+            {
+              "type": "tick",
+              "index": 195
+            },
+            {
+              "type": "tick",
+              "index": 196
+            },
+            {
+              "type": "tick",
+              "index": 197
+            },
+            {
+              "type": "tick",
+              "index": 198
+            },
+            {
+              "type": "tick",
+              "index": 199
+            },
+            {
+              "type": "tick",
+              "index": 200
+            },
+            {
+              "type": "tick",
+              "index": 201
+            },
+            {
+              "type": "tick",
+              "index": 202
+            },
+            {
+              "type": "tick",
+              "index": 203
+            },
+            {
+              "type": "tick",
+              "index": 204
+            },
+            {
+              "type": "tick",
+              "index": 205
+            },
+            {
+              "type": "tick",
+              "index": 206
+            },
+            {
+              "type": "tick",
+              "index": 207
+            },
+            {
+              "type": "tick",
+              "index": 208
+            },
+            {
+              "type": "tick",
+              "index": 209
+            },
+            {
+              "type": "tick",
+              "index": 210
+            },
+            {
+              "type": "tick",
+              "index": 211
+            },
+            {
+              "type": "tick",
+              "index": 212
+            },
+            {
+              "type": "tick",
+              "index": 213
+            },
+            {
+              "type": "tick",
+              "index": 214
+            },
+            {
+              "type": "tick",
+              "index": 215
+            },
+            {
+              "type": "tick",
+              "index": 216
+            },
+            {
+              "type": "tick",
+              "index": 217
+            },
+            {
+              "type": "tick",
+              "index": 218
+            },
+            {
+              "type": "tick",
+              "index": 219
+            },
+            {
+              "type": "tick",
+              "index": 220
+            },
+            {
+              "type": "tick",
+              "index": 221
+            },
+            {
+              "type": "tick",
+              "index": 222
+            },
+            {
+              "type": "tick",
+              "index": 223
+            },
+            {
+              "type": "tick",
+              "index": 224
+            },
+            {
+              "type": "tick",
+              "index": 225
+            },
+            {
+              "type": "tick",
+              "index": 226
+            },
+            {
+              "type": "tick",
+              "index": 227
+            },
+            {
+              "type": "tick",
+              "index": 228
+            },
+            {
+              "type": "tick",
+              "index": 229
+            },
+            {
+              "type": "tick",
+              "index": 230
+            },
+            {
+              "type": "tick",
+              "index": 231
+            },
+            {
+              "type": "tick",
+              "index": 232
+            },
+            {
+              "type": "tick",
+              "index": 233
+            },
+            {
+              "type": "tick",
+              "index": 234
+            },
+            {
+              "type": "tick",
+              "index": 235
+            },
+            {
+              "type": "tick",
+              "index": 236
+            },
+            {
+              "type": "tick",
+              "index": 237
+            },
+            {
+              "type": "tick",
+              "index": 238
+            },
+            {
+              "type": "tick",
+              "index": 239
+            },
+            {
+              "type": "tick",
+              "index": 240
+            },
+            {
+              "type": "tick",
+              "index": 241
+            },
+            {
+              "type": "tick",
+              "index": 242
+            },
+            {
+              "type": "tick",
+              "index": 243
+            },
+            {
+              "type": "tick",
+              "index": 244
+            },
+            {
+              "type": "tick",
+              "index": 245
+            },
+            {
+              "type": "tick",
+              "index": 246
+            },
+            {
+              "type": "tick",
+              "index": 247
+            },
+            {
+              "type": "tick",
+              "index": 248
+            },
+            {
+              "type": "tick",
+              "index": 249
+            },
+            {
+              "type": "tick",
+              "index": 250
+            },
+            {
+              "type": "tick",
+              "index": 251
+            },
+            {
+              "type": "tick",
+              "index": 252
+            },
+            {
+              "type": "tick",
+              "index": 253
+            },
+            {
+              "type": "tick",
+              "index": 254
+            },
+            {
+              "type": "tick",
+              "index": 255
+            },
+            {
+              "type": "tick",
+              "index": 256
+            },
+            {
+              "type": "tick",
+              "index": 257
+            },
+            {
+              "type": "tick",
+              "index": 258
+            },
+            {
+              "type": "tick",
+              "index": 259
+            },
+            {
+              "type": "tick",
+              "index": 260
+            },
+            {
+              "type": "tick",
+              "index": 261
+            },
+            {
+              "type": "tick",
+              "index": 262
+            },
+            {
+              "type": "tick",
+              "index": 263
+            },
+            {
+              "type": "tick",
+              "index": 264
+            },
+            {
+              "type": "tick",
+              "index": 265
+            },
+            {
+              "type": "tick",
+              "index": 266
+            },
+            {
+              "type": "tick",
+              "index": 267
+            },
+            {
+              "type": "tick",
+              "index": 268
+            },
+            {
+              "type": "tick",
+              "index": 269
+            },
+            {
+              "type": "tick",
+              "index": 270
+            },
+            {
+              "type": "tick",
+              "index": 271
+            },
+            {
+              "type": "tick",
+              "index": 272
+            },
+            {
+              "type": "tick",
+              "index": 273
+            },
+            {
+              "type": "tick",
+              "index": 274
+            },
+            {
+              "type": "tick",
+              "index": 275
+            },
+            {
+              "type": "tick",
+              "index": 276
+            },
+            {
+              "type": "tick",
+              "index": 277
+            },
+            {
+              "type": "tick",
+              "index": 278
+            },
+            {
+              "type": "tick",
+              "index": 279
+            },
+            {
+              "type": "tick",
+              "index": 280
+            },
+            {
+              "type": "tick",
+              "index": 281
+            },
+            {
+              "type": "tick",
+              "index": 282
+            },
+            {
+              "type": "tick",
+              "index": 283
+            },
+            {
+              "type": "tick",
+              "index": 284
+            },
+            {
+              "type": "tick",
+              "index": 285
+            },
+            {
+              "type": "tick",
+              "index": 286
+            },
+            {
+              "type": "tick",
+              "index": 287
+            },
+            {
+              "type": "tick",
+              "index": 288
+            },
+            {
+              "type": "tick",
+              "index": 289
+            },
+            {
+              "type": "tick",
+              "index": 290
+            },
+            {
+              "type": "tick",
+              "index": 291
+            },
+            {
+              "type": "tick",
+              "index": 292
+            },
+            {
+              "type": "tick",
+              "index": 293
+            },
+            {
+              "type": "tick",
+              "index": 294
+            },
+            {
+              "type": "tick",
+              "index": 295
+            },
+            {
+              "type": "tick",
+              "index": 296
+            },
+            {
+              "type": "tick",
+              "index": 297
+            },
+            {
+              "type": "tick",
+              "index": 298
+            },
+            {
+              "type": "tick",
+              "index": 299
+            },
+            {
+              "type": "tick",
+              "index": 300
+            },
+            {
+              "type": "tick",
+              "index": 301
+            },
+            {
+              "type": "tick",
+              "index": 302
+            },
+            {
+              "type": "tick",
+              "index": 303
+            },
+            {
+              "type": "tick",
+              "index": 304
+            },
+            {
+              "type": "tick",
+              "index": 305
+            },
+            {
+              "type": "tick",
+              "index": 306
+            },
+            {
+              "type": "tick",
+              "index": 307
+            },
+            {
+              "type": "tick",
+              "index": 308
+            },
+            {
+              "type": "tick",
+              "index": 309
+            },
+            {
+              "type": "tick",
+              "index": 310
+            },
+            {
+              "type": "tick",
+              "index": 311
+            },
+            {
+              "type": "tick",
+              "index": 312
+            },
+            {
+              "type": "tick",
+              "index": 313
+            },
+            {
+              "type": "tick",
+              "index": 314
+            },
+            {
+              "type": "tick",
+              "index": 315
+            },
+            {
+              "type": "tick",
+              "index": 316
+            },
+            {
+              "type": "tick",
+              "index": 317
+            },
+            {
+              "type": "tick",
+              "index": 318
+            },
+            {
+              "type": "tick",
+              "index": 319
+            },
+            {
+              "type": "tick",
+              "index": 320
+            },
+            {
+              "type": "tick",
+              "index": 321
+            },
+            {
+              "type": "tick",
+              "index": 322
+            },
+            {
+              "type": "tick",
+              "index": 323
+            },
+            {
+              "type": "tick",
+              "index": 324
+            },
+            {
+              "type": "tick",
+              "index": 325
+            },
+            {
+              "type": "tick",
+              "index": 326
+            },
+            {
+              "type": "tick",
+              "index": 327
+            },
+            {
+              "type": "tick",
+              "index": 328
+            },
+            {
+              "type": "tick",
+              "index": 329
+            },
+            {
+              "type": "tick",
+              "index": 330
+            },
+            {
+              "type": "tick",
+              "index": 331
+            },
+            {
+              "type": "tick",
+              "index": 332
+            },
+            {
+              "type": "tick",
+              "index": 333
+            },
+            {
+              "type": "tick",
+              "index": 334
+            },
+            {
+              "type": "tick",
+              "index": 335
+            },
+            {
+              "type": "tick",
+              "index": 336
+            },
+            {
+              "type": "tick",
+              "index": 337
+            },
+            {
+              "type": "tick",
+              "index": 338
+            },
+            {
+              "type": "tick",
+              "index": 339
+            },
+            {
+              "type": "tick",
+              "index": 340
+            },
+            {
+              "type": "tick",
+              "index": 341
+            },
+            {
+              "type": "tick",
+              "index": 342
+            },
+            {
+              "type": "tick",
+              "index": 343
+            },
+            {
+              "type": "tick",
+              "index": 344
+            },
+            {
+              "type": "tick",
+              "index": 345
+            },
+            {
+              "type": "tick",
+              "index": 346
+            },
+            {
+              "type": "tick",
+              "index": 347
+            },
+            {
+              "type": "tick",
+              "index": 348
+            },
+            {
+              "type": "tick",
+              "index": 349
+            },
+            {
+              "type": "tick",
+              "index": 350
+            },
+            {
+              "type": "tick",
+              "index": 351
+            },
+            {
+              "type": "tick",
+              "index": 352
+            },
+            {
+              "type": "tick",
+              "index": 353
+            },
+            {
+              "type": "tick",
+              "index": 354
+            },
+            {
+              "type": "tick",
+              "index": 355
+            },
+            {
+              "type": "tick",
+              "index": 356
+            },
+            {
+              "type": "tick",
+              "index": 357
+            },
+            {
+              "type": "tick",
+              "index": 358
+            },
+            {
+              "type": "tick",
+              "index": 359
+            },
+            {
+              "type": "tick",
+              "index": 360
+            },
+            {
+              "type": "tick",
+              "index": 361
+            },
+            {
+              "type": "tick",
+              "index": 362
+            },
+            {
+              "type": "tick",
+              "index": 363
+            },
+            {
+              "type": "tick",
+              "index": 364
+            },
+            {
+              "type": "tick",
+              "index": 365
+            },
+            {
+              "type": "tick",
+              "index": 366
+            },
+            {
+              "type": "tick",
+              "index": 367
+            },
+            {
+              "type": "tick",
+              "index": 368
+            },
+            {
+              "type": "tick",
+              "index": 369
+            },
+            {
+              "type": "tick",
+              "index": 370
+            },
+            {
+              "type": "tick",
+              "index": 371
+            },
+            {
+              "type": "tick",
+              "index": 372
+            },
+            {
+              "type": "tick",
+              "index": 373
+            },
+            {
+              "type": "tick",
+              "index": 374
+            },
+            {
+              "type": "tick",
+              "index": 375
+            },
+            {
+              "type": "tick",
+              "index": 376
+            },
+            {
+              "type": "tick",
+              "index": 377
+            },
+            {
+              "type": "tick",
+              "index": 378
+            },
+            {
+              "type": "tick",
+              "index": 379
+            },
+            {
+              "type": "tick",
+              "index": 380
+            },
+            {
+              "type": "tick",
+              "index": 381
+            },
+            {
+              "type": "tick",
+              "index": 382
+            },
+            {
+              "type": "tick",
+              "index": 383
+            },
+            {
+              "type": "tick",
+              "index": 384
+            },
+            {
+              "type": "tick",
+              "index": 385
+            },
+            {
+              "type": "tick",
+              "index": 386
+            },
+            {
+              "type": "tick",
+              "index": 387
+            },
+            {
+              "type": "tick",
+              "index": 388
+            },
+            {
+              "type": "tick",
+              "index": 389
+            },
+            {
+              "type": "tick",
+              "index": 390
+            },
+            {
+              "type": "tick",
+              "index": 391
+            },
+            {
+              "type": "tick",
+              "index": 392
+            },
+            {
+              "type": "tick",
+              "index": 393
+            },
+            {
+              "type": "tick",
+              "index": 394
+            },
+            {
+              "type": "tick",
+              "index": 395
+            },
+            {
+              "type": "tick",
+              "index": 396
+            },
+            {
+              "type": "tick",
+              "index": 397
+            },
+            {
+              "type": "tick",
+              "index": 398
+            },
+            {
+              "type": "tick",
+              "index": 399
+            },
+            {
+              "type": "tick",
+              "index": 400
+            },
+            {
+              "type": "tick",
+              "index": 401
+            },
+            {
+              "type": "tick",
+              "index": 402
+            },
+            {
+              "type": "tick",
+              "index": 403
+            },
+            {
+              "type": "tick",
+              "index": 404
+            },
+            {
+              "type": "tick",
+              "index": 405
+            },
+            {
+              "type": "tick",
+              "index": 406
+            },
+            {
+              "type": "tick",
+              "index": 407
+            },
+            {
+              "type": "tick",
+              "index": 408
+            },
+            {
+              "type": "tick",
+              "index": 409
+            },
+            {
+              "type": "tick",
+              "index": 410
+            },
+            {
+              "type": "tick",
+              "index": 411
+            },
+            {
+              "type": "tick",
+              "index": 412
+            },
+            {
+              "type": "tick",
+              "index": 413
+            },
+            {
+              "type": "tick",
+              "index": 414
+            },
+            {
+              "type": "tick",
+              "index": 415
+            },
+            {
+              "type": "tick",
+              "index": 416
+            },
+            {
+              "type": "tick",
+              "index": 417
+            },
+            {
+              "type": "tick",
+              "index": 418
+            },
+            {
+              "type": "tick",
+              "index": 419
+            },
+            {
+              "type": "tick",
+              "index": 420
+            },
+            {
+              "type": "tick",
+              "index": 421
+            },
+            {
+              "type": "tick",
+              "index": 422
+            },
+            {
+              "type": "tick",
+              "index": 423
+            },
+            {
+              "type": "tick",
+              "index": 424
+            },
+            {
+              "type": "tick",
+              "index": 425
+            },
+            {
+              "type": "tick",
+              "index": 426
+            },
+            {
+              "type": "tick",
+              "index": 427
+            },
+            {
+              "type": "tick",
+              "index": 428
+            },
+            {
+              "type": "tick",
+              "index": 429
+            },
+            {
+              "type": "tick",
+              "index": 430
+            },
+            {
+              "type": "tick",
+              "index": 431
+            },
+            {
+              "type": "tick",
+              "index": 432
+            },
+            {
+              "type": "tick",
+              "index": 433
+            },
+            {
+              "type": "tick",
+              "index": 434
+            },
+            {
+              "type": "tick",
+              "index": 435
+            },
+            {
+              "type": "tick",
+              "index": 436
+            },
+            {
+              "type": "tick",
+              "index": 437
+            },
+            {
+              "type": "tick",
+              "index": 438
+            },
+            {
+              "type": "tick",
+              "index": 439
+            },
+            {
+              "type": "tick",
+              "index": 440
+            },
+            {
+              "type": "tick",
+              "index": 441
+            },
+            {
+              "type": "tick",
+              "index": 442
+            },
+            {
+              "type": "tick",
+              "index": 443
+            },
+            {
+              "type": "tick",
+              "index": 444
+            },
+            {
+              "type": "tick",
+              "index": 445
+            },
+            {
+              "type": "tick",
+              "index": 446
+            },
+            {
+              "type": "tick",
+              "index": 447
+            },
+            {
+              "type": "tick",
+              "index": 448
+            },
+            {
+              "type": "tick",
+              "index": 449
+            },
+            {
+              "type": "tick",
+              "index": 450
+            },
+            {
+              "type": "tick",
+              "index": 451
+            },
+            {
+              "type": "tick",
+              "index": 452
+            },
+            {
+              "type": "tick",
+              "index": 453
+            },
+            {
+              "type": "tick",
+              "index": 454
+            },
+            {
+              "type": "tick",
+              "index": 455
+            },
+            {
+              "type": "tick",
+              "index": 456
+            },
+            {
+              "type": "tick",
+              "index": 457
+            },
+            {
+              "type": "tick",
+              "index": 458
+            },
+            {
+              "type": "tick",
+              "index": 459
+            },
+            {
+              "type": "tick",
+              "index": 460
+            },
+            {
+              "type": "tick",
+              "index": 461
+            },
+            {
+              "type": "tick",
+              "index": 462
+            },
+            {
+              "type": "tick",
+              "index": 463
+            },
+            {
+              "type": "tick",
+              "index": 464
+            },
+            {
+              "type": "tick",
+              "index": 465
+            },
+            {
+              "type": "tick",
+              "index": 466
+            },
+            {
+              "type": "tick",
+              "index": 467
+            },
+            {
+              "type": "tick",
+              "index": 468
+            },
+            {
+              "type": "tick",
+              "index": 469
+            },
+            {
+              "type": "tick",
+              "index": 470
+            },
+            {
+              "type": "tick",
+              "index": 471
+            },
+            {
+              "type": "tick",
+              "index": 472
+            },
+            {
+              "type": "tick",
+              "index": 473
+            },
+            {
+              "type": "tick",
+              "index": 474
+            },
+            {
+              "type": "tick",
+              "index": 475
+            },
+            {
+              "type": "tick",
+              "index": 476
+            },
+            {
+              "type": "tick",
+              "index": 477
+            },
+            {
+              "type": "tick",
+              "index": 478
+            },
+            {
+              "type": "tick",
+              "index": 479
+            },
+            {
+              "type": "tick",
+              "index": 480
+            },
+            {
+              "type": "tick",
+              "index": 481
+            },
+            {
+              "type": "tick",
+              "index": 482
+            },
+            {
+              "type": "tick",
+              "index": 483
+            },
+            {
+              "type": "tick",
+              "index": 484
+            },
+            {
+              "type": "tick",
+              "index": 485
+            },
+            {
+              "type": "tick",
+              "index": 486
+            },
+            {
+              "type": "tick",
+              "index": 487
+            },
+            {
+              "type": "tick",
+              "index": 488
+            },
+            {
+              "type": "tick",
+              "index": 489
+            },
+            {
+              "type": "tick",
+              "index": 490
+            },
+            {
+              "type": "tick",
+              "index": 491
+            },
+            {
+              "type": "tick",
+              "index": 492
+            },
+            {
+              "type": "tick",
+              "index": 493
+            },
+            {
+              "type": "tick",
+              "index": 494
+            },
+            {
+              "type": "tick",
+              "index": 495
+            },
+            {
+              "type": "tick",
+              "index": 496
+            },
+            {
+              "type": "tick",
+              "index": 497
+            },
+            {
+              "type": "tick",
+              "index": 498
+            },
+            {
+              "type": "tick",
+              "index": 499
+            },
+            {
+              "type": "tick",
+              "index": 500
+            }
+          ],
+          "truncated": true
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r2",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "custom-event-limit",
+      "options": {
+        "eventLimit": 3,
+        "byteLimit": 1000000
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "recordMany",
+          "session": "s",
+          "count": 5
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "tick",
+              "index": 2
+            },
+            {
+              "type": "tick",
+              "index": 3
+            },
+            {
+              "type": "tick",
+              "index": 4
+            }
+          ],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "multibyte-byte-boundary-one-over",
+      "options": {
+        "byteLimit": 65
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "eventBytes",
+          "event": {
+            "type": "text",
+            "text": "😀中"
+          }
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "😀中"
+          }
+        },
+        {
+          "op": "eventBytes",
+          "event": {
+            "type": "text",
+            "text": "A😀中B"
+          }
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "A😀中B"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "bytes": 32
+        },
+        null,
+        {
+          "bytes": 34
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "text",
+              "text": "A😀中B"
+            }
+          ],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "lone-surrogate-exact-limit-kept",
+      "options": {
+        "byteLimit": 33
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "eventBytes",
+          "event": {
+            "type": "text",
+            "text": "x\ud800y"
+          }
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "x\ud800y"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "bytes": 33
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "text",
+              "text": "x\ud800y"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "lone-surrogate-one-over-drops-itself",
+      "options": {
+        "byteLimit": 32
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "x\ud800y"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "mixed-surrogate-multibyte-exact-limit-kept",
+      "options": {
+        "byteLimit": 38
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "eventBytes",
+          "event": {
+            "type": "text",
+            "text": "😀\ud800中"
+          }
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "😀\ud800中"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "bytes": 38
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "text",
+              "text": "😀\ud800中"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "mixed-surrogate-multibyte-one-over-drops-itself",
+      "options": {
+        "byteLimit": 37
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "text",
+            "text": "😀\ud800中"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "single-event-over-custom-byte-limit",
+      "options": {
+        "eventLimit": 100,
+        "byteLimit": 10
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "x",
+            "text": "0123456789"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "default-byte-limit-exact-boundary",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "recordPadded",
+          "session": "s",
+          "jsonBytes": 262144
+        },
+        {
+          "op": "snapshot",
+          "session": "s",
+          "includeEvents": false
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "small"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "actualBytes": 262144
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": []
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "small"
+            }
+          ],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "default-byte-limit-one-over",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "recordPadded",
+          "session": "s",
+          "jsonBytes": 262145
+        },
+        {
+          "op": "snapshot",
+          "session": "s",
+          "includeEvents": false
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "actualBytes": 262145
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "truncated": true
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "truncated": true
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "terminal-default-30s-expiry",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "kept"
+          }
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 29999
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 1
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "kept"
+            }
+          ],
+          "terminal": true
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "kept"
+            }
+          ],
+          "terminal": true
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "terminal-custom-retention-and-restart-cancels-timer",
+      "options": {
+        "terminalRetentionMs": 5000
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 4999
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r2"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 1
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "terminal": true
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r2",
+          "events": []
+        },
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r2",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        5000
+      ]
+    },
+    {
+      "name": "terminal-mismatched-run-is-noop",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "other"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "terminal-retain-twice-resets-deadline",
+      "options": {
+        "terminalRetentionMs": 1000
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 600
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 400
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 600
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "terminal": true
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        1000,
+        1000
+      ]
+    },
+    {
+      "name": "terminal-zero-retention-synchronous-snapshot",
+      "options": {
+        "terminalRetentionMs": 0
+      },
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "kept"
+          }
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 0
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "kept"
+            }
+          ],
+          "terminal": true
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        0
+      ]
+    },
+    {
+      "name": "record-while-terminal-then-clear",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "late"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "clearTerminal",
+          "session": "s"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "late"
+            }
+          ],
+          "terminal": true
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "clear-terminal-active-keeps-replay",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "clearTerminal",
+          "session": "s"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "dispose-clears-replay-and-timer",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 30000
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "with-run-id-variants",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "type": "a"
+          }
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "type": "b",
+            "runId": "own"
+          }
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "type": "c",
+            "runId": "  \t﻿"
+          }
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "type": "d",
+            "runId": 5
+          }
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "runId": "own",
+            "type": "e"
+          }
+        },
+        {
+          "op": "withRunId",
+          "session": "missing",
+          "event": {
+            "type": "f"
+          }
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "withRunId",
+          "session": "s",
+          "event": {
+            "type": "g"
+          }
+        }
+      ],
+      "results": [
+        null,
+        {
+          "type": "a",
+          "runId": "r1"
+        },
+        {
+          "type": "b",
+          "runId": "own"
+        },
+        {
+          "type": "c",
+          "runId": "r1"
+        },
+        {
+          "type": "d",
+          "runId": "r1"
+        },
+        {
+          "runId": "own",
+          "type": "e"
+        },
+        {
+          "type": "f"
+        },
+        null,
+        {
+          "type": "g"
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "with-run-id-non-object-spread",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": 5
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": true
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": "a😀\ud800b"
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": [
+            "a",
+            2,
+            null
+          ]
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": null
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "s",
+          "event": {
+            "type": "obj"
+          }
+        },
+        {
+          "op": "withRunIdEdge",
+          "session": "missing",
+          "event": 5
+        }
+      ],
+      "results": [
+        null,
+        {
+          "value": {
+            "runId": "r1"
+          }
+        },
+        {
+          "value": {
+            "runId": "r1"
+          }
+        },
+        {
+          "value": {
+            "0": "a",
+            "1": "\ud83d",
+            "2": "\ude00",
+            "3": "\ud800",
+            "4": "b",
+            "runId": "r1"
+          }
+        },
+        {
+          "value": {
+            "0": "a",
+            "1": 2,
+            "2": null,
+            "runId": "r1"
+          }
+        },
+        {
+          "thrown": "TypeError"
+        },
+        {
+          "value": {
+            "type": "obj",
+            "runId": "r1"
+          }
+        },
+        {
+          "value": 5
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "snapshot-without-replay",
+      "options": null,
+      "steps": [
+        {
+          "op": "snapshot",
+          "session": "never"
+        },
+        {
+          "op": "snapshot",
+          "session": "never",
+          "includeEvents": false
+        }
+      ],
+      "results": [
+        {
+          "active": false,
+          "sessionKey": "never",
+          "events": []
+        },
+        {
+          "active": false,
+          "sessionKey": "never",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    }
+  ],
+  "coordinatorCases": [
+    {
+      "name": "emit-requires-a-started-sink",
+      "options": null,
+      "steps": [
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "ignored"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        {
+          "accepted": false,
+          "delivered": []
+        },
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "emit-fills-run-and-records-before-delivery",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "x"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "snapshot",
+          "session": "s",
+          "includeEvents": false
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "x",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "x",
+              "runId": "r1"
+            }
+          ]
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "emit-preserves-own-run-and-blank-run-becomes-current",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "own",
+            "runId": "mine"
+          }
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "blank",
+            "runId": " \t"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "own",
+                "runId": "mine"
+              }
+            }
+          ]
+        },
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "blank",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "own",
+              "runId": "mine"
+            },
+            {
+              "type": "blank",
+              "runId": "r1"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "record-does-not-deliver",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "silent"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "silent"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "start-replaces-sink-and-buffer",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "old"
+          }
+        },
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r2"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "new"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "old",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s2",
+              "event": {
+                "type": "new",
+                "runId": "r2"
+              }
+            }
+          ]
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r2",
+          "events": [
+            {
+              "type": "new",
+              "runId": "r2"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "retain-terminal-removes-sink-even-on-run-mismatch",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "other"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "dropped"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        {
+          "accepted": false,
+          "delivered": []
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": []
+        },
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [],
+          "terminal": true
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "dispose-clears-sinks-and-replay",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "before"
+          }
+        },
+        {
+          "op": "dispose"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "after"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "before",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        null,
+        {
+          "accepted": false,
+          "delivered": []
+        },
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "record-after-terminal-keeps-event-without-sink",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "record",
+          "session": "s",
+          "event": {
+            "type": "late"
+          }
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "ignored"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "accepted": false,
+          "delivered": []
+        },
+        {
+          "active": false,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "late"
+            }
+          ],
+          "terminal": true
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "coordinator-terminal-expiry-uses-default-30s",
+      "options": null,
+      "steps": [
+        {
+          "op": "start",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "retainTerminal",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "advanceTime",
+          "ms": 30000
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        null,
+        null,
+        {
+          "active": false,
+          "sessionKey": "s",
+          "events": []
+        }
+      ],
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "reentrant-emit-delivers-inner-before-outer-returns",
+      "options": null,
+      "steps": [
+        {
+          "op": "startNested",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "outer"
+          }
+        },
+        {
+          "op": "markers"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "plain"
+          }
+        },
+        {
+          "op": "markers"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "outer",
+                "runId": "r1"
+              }
+            },
+            {
+              "sink": "s1",
+              "event": {
+                "type": "inner",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        [
+          "outer-enter",
+          "inner-enter",
+          "inner-returned:true",
+          "outer-exit"
+        ],
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "plain",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        [
+          "outer-enter",
+          "inner-enter",
+          "inner-returned:true",
+          "outer-exit"
+        ]
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "reentrant-emit-failure-is-caught-at-the-inner-call-site",
+      "options": null,
+      "steps": [
+        {
+          "op": "startCatching",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "trigger"
+          }
+        },
+        {
+          "op": "markers"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "plain"
+          }
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "trigger",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        [
+          "trigger-enter",
+          "caught",
+          "continued"
+        ],
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "plain",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "trigger",
+              "runId": "r1"
+            },
+            {
+              "type": "plain",
+              "runId": "r1"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    },
+    {
+      "name": "reentrant-emit-inner-sink-throw-is-caught-at-the-inner-call-site",
+      "options": null,
+      "steps": [
+        {
+          "op": "startThrowing",
+          "session": "s",
+          "run": "r1"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "outer"
+          }
+        },
+        {
+          "op": "markers"
+        },
+        {
+          "op": "emit",
+          "session": "s",
+          "event": {
+            "type": "plain"
+          }
+        },
+        {
+          "op": "markers"
+        },
+        {
+          "op": "snapshot",
+          "session": "s"
+        }
+      ],
+      "results": [
+        null,
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "outer",
+                "runId": "r1"
+              }
+            },
+            {
+              "sink": "s1",
+              "event": {
+                "type": "inner",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        [
+          "outer-enter",
+          "inner-sink",
+          "caught-at-inner",
+          "outer-exit"
+        ],
+        {
+          "accepted": true,
+          "delivered": [
+            {
+              "sink": "s1",
+              "event": {
+                "type": "plain",
+                "runId": "r1"
+              }
+            }
+          ]
+        },
+        [
+          "outer-enter",
+          "inner-sink",
+          "caught-at-inner",
+          "outer-exit"
+        ],
+        {
+          "active": true,
+          "sessionKey": "s",
+          "runId": "r1",
+          "events": [
+            {
+              "type": "outer",
+              "runId": "r1"
+            },
+            {
+              "type": "inner",
+              "runId": "r1"
+            },
+            {
+              "type": "plain",
+              "runId": "r1"
+            }
+          ]
+        }
+      ],
+      "timerDelays": []
+    }
+  ],
+  "epochCases": [
+    {
+      "name": "stable-active-turn",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "stable-terminal-turn",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          }
+        }
+      },
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "stable-missing-turn",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "terminal-during-read-retries",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          }
+        }
+      },
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "run-replacement-during-read-retries",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "same-run-restart-keeps-epoch",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "truncation-does-not-change-epoch",
+      "options": {
+        "eventLimit": 2
+      },
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "e2"
+              },
+              {
+                "type": "e3"
+              }
+            ],
+            "truncated": true
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [
+              {
+                "type": "e2"
+              },
+              {
+                "type": "e3"
+              }
+            ],
+            "truncated": true
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "mismatched-retain-keeps-epoch",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 0,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "terminal-restart-same-run-changes-epoch",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "dispose-during-read-retries",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": []
+    },
+    {
+      "name": "terminal-expiry-during-read-retries",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "clear-terminal-during-read-retries",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": [],
+            "terminal": true
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "after": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          },
+          "sameEpoch": true
+        }
+      ],
+      "outcome": {
+        "result": {
+          "messages": [],
+          "attempt": 1,
+          "stream": {
+            "active": false,
+            "sessionKey": "s",
+            "events": []
+          }
+        }
+      },
+      "timerDelays": [
+        30000
+      ]
+    },
+    {
+      "name": "three-changing-attempts-throw",
+      "options": null,
+      "attempts": [
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r1",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r2",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r3",
+            "events": []
+          },
+          "sameEpoch": false
+        },
+        {
+          "before": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r3",
+            "events": []
+          },
+          "after": {
+            "active": true,
+            "sessionKey": "s",
+            "runId": "r4",
+            "events": []
+          },
+          "sameEpoch": false
+        }
+      ],
+      "outcome": {
+        "error": "Session changed during transcript synchronization; retry the snapshot."
+      },
+      "timerDelays": []
+    }
+  ]
+}

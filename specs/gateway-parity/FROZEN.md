@@ -1,5 +1,17 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 A7.2-pr1 修复轮 8 重登记（PR 待开，sink 所有权条目承诺范围更正）**：按本单 codex r8 两条 P1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay/rv-codex-r8.md`），对 accepted-diffs.md 的 A7.2-COORDINATOR-SINK-OWNERSHIP-001 做**只追加更正**（原条目文字未删改，范围以追加块为准）：① 轮 7「最后一个注册 drop 后 emit 拒收」并未成立——emit 以 sink 强引用存活代理注册存活，在途交付与队列均持强 sink；轮 8 起注册存活标记与交付用强 sink 分离（map 弱持注册记录、队列只持内层 sink）；② 「泄漏已从设计上消除」收窄为仅 coordinator 侧环——宿主侧 `Host → registration → sink → Host` 环任何库 API 无法阻止，本轮删除代码注释与轮 7 登记注中的过度承诺，改为文档化所有权约定（sink 回调宿主须弱捕获；会话结束显式 drop 注册或调用新增显式注销 `unregister`），宿主侧残余环按条目登记为已知残余。新增五条钉住测试（断言消息含编号），negative.py 各配专属变异（实测转红）。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。
+
+> **2026-10-23 A7.2-pr1 修复轮 7 重登记（PR 待开，sink 所有权模型差异补登）**：按本单 gate7 P1 #1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay-gate7/`），对 accepted-diffs.md 的 A7.2 节做只追加变更：新增 A7.2-COORDINATOR-SINK-OWNERSHIP-001（sink 所有权模型：coordinator 只持 `Weak` sink、`start` 返回强所有者 `TurnSinkRegistration`，最后一个注册 drop 后 emit 拒收——TS 的 sink 存 `Map` 由 GC 管生命周期；类别实现选择、未批准，引用循环泄漏本身已按 gate 优先项从设计上消除、不登记）。coordinator.rs 模块文档加账本指针，新增两条钉住测试（断言消息含编号），negative.py 各配专属变异（实测转红）；`with_run_id` 非对象事件改为照 TS `{ ...event, runId }` 展开（真实 TS 金样新增 `with-run-id-non-object-spread`，oracle.json 重生成两次逐字节一致，含 number/string/array/null/boolean 五类与缺会话负控）。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。（轮 8 注：本条中「已从设计上消除」的表述已由轮 8 重登记注收窄，原文保留。）
+
+> **2026-10-22 A7.2-pr1 修复轮 6 重登记（PR 待开，交付语义差异补登 + 状态行统一）**：按本单 gate6 sibling P1 与 Grok r6 P1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay-gate6/sibling.md`、`_tmp/20261022-a72-pr1-replay/rv-grok-r6.md`），对 accepted-diffs.md 的 A7.2 节做只追加变更：① 在 A7.2-REPLAY-RETENTION-TIMER-001 条目末尾追加「当前状态（以本行为准）」一行（已知未对齐、人批 2026-10-22、前置于 A7.2-pr5、非已接受差异），消除同条目内「未批准/待人定」与「人批」的表述冲突，原有文字未删改；② 新增 A7.2-COORDINATOR-DELIVERY-001（多线程宿主下的事件交付边缘与 TS 单线程同步交付不一致：(a) `retain_terminal`/替换性 `start` 返回后旧 sink 的在途交付、(b) sink panic/`dispose` 静默丢弃已接受未交付事件、(c) 重入 `emit` 的 panic 归因、(d) 无界交付队列无背压；类别实现选择、未批准、前置于 A7.2-pr5），补登依据 gate6 sibling P1——此前只在 `coordinator.rs` 模块文档自我披露、账本无条目；③ coordinator.rs 模块文档加账本指针，并新增四条钉住测试（断言消息含编号），negative.py 各配一条专属变异（实测转红）。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。
+
+> **2026-10-22 人批重登记（PR #487）**：A7.2-REPLAY-RETENTION-TIMER-001 人批为已知未对齐，前置于 A7.2-pr5 对齐（采纳决策卡建议 B）；只重登记 accepted-diffs.md 哈希。
+
+> **2026-10-22 A7.2-pr1 修复轮 5 重登记（PR 待开，范围与证据更正）**：按本单 codex r5 P1 #2/#3 与 Grok r5 P1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay/rv-codex-r5.md`、`rv-grok-r5.md`），对 accepted-diffs.md 的 A7.2 节做**只追加更正**：在原 A7.2-ZERO-RETENTION-TIMER-001 条目下追加「更正」一行（该条范围写错——差异不限于 `terminalRetentionMs=0`，生产 `ThreadTimer` 下所有保留时长的到期回收都不等调用方当前同步段与微任务；「不可避免」归类依据不足，`with_timer` 已提供宿主调度注入口），再新增 A7.2-REPLAY-RETENTION-TIMER-001（类别：实现选择，待人定——接受，或在 A7.2-pr5 接宿主串行计时器后对齐；基线证据换为真实 timer 探针：不替换 `setTimeout`，retention 0/5/30000 的同步段与 Promise 微任务内均可见、下一个 timer 回合才回收，`_tmp/20261022-a72-pr1-replay/probe-retention-real-timer.mts`，两次运行一致）。原条目文字未删改。同步更正代码注释与 fixture README 的范围表述，Rust 测试宣称收窄为可证部分（生产忙转测试只断言最终回收、不对「忙转期间已回收」做宣称；边界改由注入受控计时器 + 回调执行标记钉住，覆盖 0/5/30000）；`ThreadTimer` 回收行为未改。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。另：本分支已 rebase 到 main，A6.4 stats 节与 A7.2 节已在同一文件并存，修复轮 4 注中「合并时须 reconcile」的提示已完成使命（Grok r5 P3）。两家评审见 PR；人批另行。
+
+> **2026-10-22 A7.2-pr1 修复轮 4 重登记（PR 待开，透明披露补齐）**：按本单 codex r4 P1 #2 与 gate4 sibling P1 的要求（评审原件 `_tmp/20261022-a72-pr1-replay/rv-codex-r4.md`、`_tmp/20261022-a72-pr1-replay-gate4/sibling.md`，两评审均指出 A7.2-ZERO-RETENTION-TIMER-001 差异此前只在代码注释与 fixtures README 自我披露、账本无条目），在 accepted-diffs.md 末尾新增「已知未对齐（未接受，待人批）· A7.2 turn replay」一节：A7.2-ZERO-RETENTION-TIMER-001（零保留终态的生产回收时机：真实 TS 的 `setTimeout(0)` 依赖宿主事件循环，同步忙转 20 ms 仍可见；Rust 生产 `ThreadTimer` 取 Node 自身 1 ms 下限、到期即回收）。状态为「未批准，非已接受差异」，不新增豁免、不改判分语义、不改门禁；登记流程沿用 PR #476 对 gate3 sibling P1 的同类补登（只追加待批条目，check_frozen 通过，人批前不算已接受）。只重登记 accepted-diffs.md 哈希，其余文件哈希不变。两家评审见 PR；人批另行。注：本分支基线早于 PR #476 的 A6.4 stats 节，合并时须与其追加节 reconcile 后一次性重登记哈希。
+
 > **2026-10-23 重登记（PR #510，边界登记）**：accepted-diffs.md 末尾追加 A7.3-INTERACTION-BOUNDARY-001（pending 输入类型域与线程映射），类别为边界登记、非豁免，不新增已接受差异、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-22 人批重登记（PR #476）**：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 两条接受为已知差异（用户本人在协调者会话批准），并要求 Rust 补实现（见 accepted-diffs.md 该节末尾的跟进 issue）；只重登记 accepted-diffs.md 哈希。
@@ -27,7 +39,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-1ec1ccc1e49a53cf3b98ea5c48b0c7e7a79a068dce0ed2a3339d2d60ef30e409  accepted-diffs.md
+c9fd5413829d9e83f3adb74c7c3c10c2ea3c08a01039238e486cdeb48ff583fb  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

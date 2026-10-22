@@ -418,3 +418,58 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **线程映射**：TS 没有跨线程重叠的 bus 调用。Rust 在共享 mutex 内记录 bulk 结算线程，其他线程不得 consume 或重复 bulk 结算已领取条目；同线程同步回调重入保留 TS 已拒条目可再次取出的结果。这是同步语义的实现约束，不是放宽行为验收。
 - **机器判据**：`runtime::interaction::tests::interaction_real_ts_stepwise_oracle`（46 场景、268 步，含两种 kind 的同步嵌套 reject 与 consume）；`interaction_reject_cross_thread_response_and_bulk_have_one_winner`（channel 固定交错，含 delivered observer）；`tests/fixtures/interaction-bus/README.md` 为复现与类型边界。
 - **批准状态**：无行为豁免授权；类型域外的 producer 适配待后续接线补齐。本记录不允许忽略 Date/BigInt 等适用输入，也不允许把跨线程双结算登记为接受。
+
+## 已知未对齐（未接受，待人批）· A7.2 turn replay
+
+以下一条为 A7.2-pr1（ReplayStore / EventCoordinator）行为差异的透明披露，**未批准，非已接受差异**；不新增豁免、不改判分语义，待人批。补登依据：codex r4 P1 #2 与 gate4 sibling P1——该差异此前只在代码注释、fixture README 与 `_tmp/` 的 RESULT.md 中自我披露，账本无条目，仓内读者会得出「该区域无已知差异」的假象；登记流程沿用 PR #476 对 gate3 sibling P1 的同类补登（只追加待批条目，check_frozen 通过，人批前不算已接受）。
+
+### A7.2-ZERO-RETENTION-TIMER-001 · 零保留终态的生产回收时机（不可避免）
+
+- **类别**：不可避免（JS 宏任务边界依赖宿主事件循环，Rust 库级无「调用栈已退回事件循环」的钩子）。
+- **基线依据**（cc7c4e6 `src/` + Node 22.22.0 实测）：`gateway/client/GatewayTurnReplayStore.ts:81-90` 的 `setTimeout(0)` 只在调用栈退回事件循环后执行；经基线 tsx 加载未改源的真实 store 实测：`retainTerminal(0) → 同步忙转 20.06 ms 不让出事件循环 → snapshot` 仍 `{terminal:true, events:[{type:"kept"}]}`，`timerDelays:[0]`（探针 `_tmp/20261022-a72-pr1-replay/probe-zero-retention.mts`）。
+- **Rust 行为**：生产 `ThreadTimer` 对 0 延迟取 Node 自身 1 ms 下限（`pilotdeck_protocol::timer_delay_ms`），到期即在 timer 线程删除；不承诺「调用方同步段内不删」。宿主需要精确 JS 边界时经 `TurnReplayOptions::with_timer` 注入自己的 `ReplayTimer`（如把 0 延迟推迟到宿主自己的调度回合）。
+- **范围**：仅生产 `ThreadTimer` 且 `terminalRetentionMs=0`；默认 30000 与注入 timer（`ManualTimer` 等）路径不受影响。
+- **机器判据**：`src/pilotdeck-gateway/src/runtime/turn/replay.rs` 的 `zero_retention_terminal_stays_visible_until_the_timer_runs`（注入 timer 钉精确边界）与 `production_zero_retention_after_a_busy_gap_is_already_reclaimed`（生产路径：忙转 20 ms、无 store 调用，轮询内部状态确认已回收，断言消息含本编号）。
+- **批准记录**：无。`未批准，非已接受差异`；人批另行。
+- **更正（2026-10-22 修复轮 5，本节自此含两条）**：本条范围与类别均有误——差异不限于 `terminalRetentionMs=0`，生产 `ThreadTimer` 下**所有**保留时长（含默认 30000）的到期回收都不等调用方当前同步段与微任务结束；「不可避免」归类依据不足（`with_timer` 已有宿主调度注入口）。见下方 A7.2-REPLAY-RETENTION-TIMER-001；原文字保留不改。
+
+### A7.2-REPLAY-RETENTION-TIMER-001 · 生产 ThreadTimer 终态回收不等调用方同步段（实现选择，待人定）
+
+- **类别**：实现选择（待人定：接受为已知差异，或在 A7.2-pr5 接宿主串行计时器后对齐）。codex r5 P1 #1/#2 与 Grok r5 指出轮 2-4 的「不可避免」归类依据不足：「库无法探知调用栈边界」只证明当前默认调度方式不能保证一致，不能证明产品无法实现；`TurnReplayOptions::with_timer` 已提供宿主调度注入口，宿主串行计时器（到期只排队、由宿主在当前这一步处理完之后执行，类似 JS 的下一个宏任务）待 A7.2-pr5（生产 ConnectionGateway 的宿主调度循环）接线。决策卡：`_tmp/20261022-loop/card-replay-timer.md`（选项 A 接受 / 选项 B 分两步对齐）。
+- **基线依据**（cc7c4e6 `src/` + Node 22.22.0，**真实 timer，不替换 `setTimeout`**）：`gateway/client/GatewayTurnReplayStore.ts:81-90` 的 `setTimeout(terminalRetentionMs)` 回调只在后续 timer 回合执行。实测（`_tmp/20261022-a72-pr1-replay/probe-retention-real-timer.mts`，两次运行一致）：retention 0（同步忙转 20 ms）、5（忙转 25 ms）、30000（忙转 30020 ms）三种保留时长的到期时间均落在调用方同步段内，同步段 snapshot 与随后 Promise 微任务内 snapshot 均仍见 `terminal:true`，下一个 timer 回合（`await new Promise(r => setTimeout(r, 0))` 之后）才回收。
+- **Rust 行为**：生产 `ThreadTimer` 对**所有**保留时长：到期回调在 timer 线程上按 `Instant` 到期即执行，不等调用方当前同步段或微任务结束（0 延迟仍取 Node 自身 1 ms 下限 `pilotdeck_protocol::timer_delay_ms`）。修复轮 5 未改该回收行为，仅更正登记范围与类别、并把测试宣称收窄为可证部分。
+- **范围**：生产 `ThreadTimer` 的所有 `terminalRetentionMs` 值（含默认 30000 与 0）；注入 timer（`ManualTimer` 等）路径不受影响。可观测场景：调用方在同一逻辑步骤内先 `retain_terminal` 再读快照、且两者之间跨过到期时刻——TS 仍可见，Rust 可能已回收（如客户端重连重放时偶发缺失）。另注：TS 侧默认 retention 为 30000（`GatewayTurnReplayStore.ts:44`），唯一生产构造点 `cli/createLocalGateway.ts:929` 不传参，0 仅显式配置可达；差异对 0 与 30000 同构（见基线依据实测）。
+- **机器判据**：`src/pilotdeck-gateway/src/runtime/turn/replay.rs` 的 `terminal_stays_visible_until_the_injected_timer_runs`（注入受控计时器 + 回调执行标记，覆盖 retention 0/5/30000，钉「timer 回合执行前可见」一侧）与 `production_retention_reclaims_eventually_after_a_busy_gap`（生产路径 retention 0/5：忙转跨过到期后**只断言最终回收**、无任何 store 调用，断言消息含本编号；不对「忙转期间已回收」做任何宣称）。
+- **批准记录**：无。`未批准，非已接受差异`；待人定（接受，或在 A7.2-pr5 对齐并标「差异消除」），人批另行。
+
+人批（2026-10-22，用户本人在协调者会话，采纳决策卡建议 B）：A7.2-REPLAY-RETENTION-TIMER-001 本 PR 以**已知未对齐（人批）**状态合入，**前置于 A7.2-pr5**：pr5 接入生产 ConnectionGateway 时实现宿主串行计时器（到期只排队，宿主处理完当前步骤后再回收），用真实 TS 边界金样对拍，届时在本节追加「已实现，差异消除」。决策卡 `state/decisions-20261022.md`「A7.2-pr1：重放缓存终态的回收时机」。
+
+- **当前状态（以本行为准）**：已知未对齐（人批 2026-10-22，决策卡 state/decisions-20261022.md「A7.2-pr1：重放缓存终态的回收时机」），前置于 A7.2-pr5；非已接受差异。本行按 Grok r6 P1（`_tmp/20261022-a72-pr1-replay/rv-grok-r6.md` #1）追加，统一本条目内「未批准/待人定」与「人批」的表述冲突；上文原有文字（含「未批准」字样）保留不改，状态以本行为准。
+
+### A7.2-COORDINATOR-DELIVERY-001 · 多线程宿主下的事件交付边缘与 TS 单线程同步交付不一致（实现选择，未批准）
+
+补登（2026-10-22 修复轮 6，本节自此含三条）：gate6 sibling P1（`_tmp/20261022-a72-pr1-replay-gate6/sibling.md` #1）指出 coordinator 模块文档自我披露的其余 port-only 交付差异同源漏登——与轮 4 补登 A7.2-ZERO-RETENTION-TIMER-001、轮 5 补登 A7.2-REPLAY-RETENTION-TIMER-001 是同一反模式（差异只在代码注释与 fixture README 自我披露、账本无条目，仓内读者会得出「该区域无已知差异」的假象）。本条合并登记 a-d 四点；登记流程沿用 PR #476（只追加待批条目，check_frozen 通过，人批前不算已接受）。逐条评估结论：四点均需宿主调度（A7.2-pr5 的宿主串行接线）才能对齐，本 PR 内无可低成本对齐项——(a) 让 `retain_terminal`/`start` 等待在途 drainer 会在 sink 内重入同一会话时死锁；(d) 让并发 emitter 阻塞到 sink 完成等于推翻 codex-r3 P1 #1 已钉的「入队即返回」回归测试，均属需重新谈判既有评审结论的改动，未自行实施。
+
+- **类别**：实现选择（未批准；对齐需宿主调度）。四点同源于宿主并发模型：TS 的 `emit` 在单线程事件循环上同步调用 sink 后才返回，`start`/`retainTerminal`/`dispose` 与 `emit` 在同一事件循环上串行，不存在「已接受未交付」的中间态，也不存在并发 emitter；Rust `TurnEventCoordinator` 面向多线程宿主，交付走每会话 FIFO 队列、由成为 drainer 的 emitter 异步完成。
+- **基线依据**（cc7c4e6 `src/`）：`gateway/client/GatewayTurnEventCoordinator.ts:38-45`——`emit` 查 sink、`withRunId`+`record` 之后**同步调用 `sink(eventWithRunId)` 再 `return true`**；`:29-32`（`start` 先 `replayStore.start` 再替换 sink）、`:47-50`（`retainTerminal` 先 `sinks.delete`）、`:56-59`（`dispose` 清空 sinks）都在同一事件循环上与 `emit` 串行执行，故 TS 中最后一次 sink 调用总在 sink 的移除/替换之前，且任何时刻都没有事件处于「已接受未交付」状态。
+- **Rust 行为**（`src/pilotdeck-gateway/src/runtime/turn/coordinator.rs:21-37` 模块文档披露，本轮补登记并在该处加账本指针）：(a) `retain_terminal`/替换性 `start` 返回后，在途 drainer 仍会把此前已接受的事件交付给旧 sink（其 emitter 已拿到 `true`）；(b) sink panic 或 `dispose` 静默丢弃已接受未交付的事件，emitter 无任何信号（`dispose` 例外：在途 drainer 已弹出的那一条仍会交付，sink 句柄随队列条目出行）；(c) 重入 `emit` 会先交付并发 emitter 先记录的事件，它们的 sink panic 归因到重入调用点而非原 emitter 的调用点（port-only attribution）；(d) 交付队列无界，慢 sink 不向 emitter 施加背压（并发 emitter 入队即返回）。
+- **范围**：仅多线程宿主并发调用 `TurnEventCoordinator` 时的交付边缘（`start`/`emit`/`retain_terminal`/`dispose` 的跨线程交错）。单线程顺序使用与 TS 逐字节一致（`tests/fixtures/turn-replay/oracle.json` 全部 `coordinatorCases`，含重入 emit 的 TS 返回边界与失败归因）；`record`/`snapshot`/重放缓存终态回收时机不在本条（后者见 A7.2-REPLAY-RETENTION-TIMER-001）。可观测场景：宿主在 sink 执行期间从另一线程 `retain_terminal`/`start`/`dispose`（如会话关闭/重启与事件发布并发）时，交付时序、丢弃与 panic 归因与 TS 不同。
+- **机器判据**：(a) `coordinator::tests::accepted_events_reach_the_old_sink_after_retain_terminal_returns` 与 `accepted_events_reach_the_old_sink_after_a_replacing_start_returns`；(b) `dispose_drops_events_accepted_but_not_yet_delivered` 与 `sink_panic_drops_events_queued_behind_it`（四条均为本轮新增、断言消息含本编号）；(c) `nested_delivery_panic_keeps_the_queue_for_the_outer_drainer`（codex-r3 P2 #4 回归）；(d) `reentrant_emit_waits_for_concurrently_queued_events` 与 `stale_reentrant_marker_goes_through_the_restarted_queue`（断言并发 emitter 在 drainer 停留 sink 期间入队即返回 `true`）。四条新增正控在 `tests/fixtures/turn-replay/negative.py` 各配一条专属变异（`retain-terminal-invalidates-drain`、`replacing-start-invalidates-drain`、`dispose-keeps-delivery-queue`、`panic-guard-keeps-queued-events`），实测转红记录见 `_tmp/20261022-a72-pr1-replay/RESULT.md`「修复轮 6」。
+- **批准记录**：无。`未批准，非已接受差异`；前置于 A7.2-pr5（生产 ConnectionGateway 宿主调度接线：宿主串行驱动 coordinator 后 (a)-(d) 的并发交错场景消失、届时可声明差异消除，或人批接受现状）。A7.2-pr3（发布管线）只是 coordinator 的调用方，不解决本条。
+
+### A7.2-COORDINATOR-SINK-OWNERSHIP-001 · sink 所有权模型：弱引用注册 + 调用方持强句柄（实现选择，未批准）
+
+补登（2026-10-22 修复轮 7，本节自此含四条）：gate7 P1 #1（`_tmp/20261022-a72-pr1-replay-gate7/`）指出 sink 强捕获 `Arc<coordinator>`（重入式 sink 的自然写法）会形成 `Arc` 引用循环，coordinator 及其 replay store 的 `ThreadTimer` 工作线程在最后一个宿主句柄 drop 后永久泄漏。本轮按 gate 优先项**从设计上消除**了循环（coordinator 只持 `Weak` sink，`start` 返回强所有者 `TurnSinkRegistration`，泄漏测试钉住「drop 后 sink 释放、coordinator 回收、timer 线程退出」）；消除不了的残余是**所有权语义本身与 TS 不同**，按账本纪律登记如下。
+
+- **类别**：实现选择（未批准；由 Rust `Arc` 无循环 GC 决定，非宿主调度可对齐）。TS 的 sink 存在普通 `Map` 里，宿主丢失回调引用不影响注册，GC 连循环一起回收；Rust 若持强引用则泄漏，故注册生命周期改为显式：宿主持有 `TurnSinkRegistration` 的最后一个克隆期间 sink 有效，全部 drop 即注销。
+- **基线依据**（cc7c4e6 `src/`）：`gateway/client/GatewayTurnEventCoordinator.ts:23`（`sinks = new Map` 持 sink 强引用）、`:29-32`（`start` 先 `replayStore.start` 再 `sinks.set`，返回值无人持有；TS 单线程 + GC，无泄漏）。
+- **Rust 行为**（`src/pilotdeck-gateway/src/runtime/turn/coordinator.rs:36-49` 模块文档披露，本轮登记并在该处加账本指针）：`CoordinatorState.sinks` 持 `Weak<dyn Fn>`；`start` 返回 `TurnSinkRegistration`（`Clone`，持强 `Arc`）。最后一个注册 drop 后：后续 `emit` 走 `retain_terminal` 同款拒绝路径（`false`，并顺手剪除死弱引用）——**与 TS 的差异**：TS 中宿主丢掉回调引用后 sink 仍在 Map 里、emit 照常交付，Rust 中直接拒收。已接受未交付的事件不受影响（强 sink 句柄随队列条目出行）。
+- **范围**：仅 `TurnEventCoordinator` 的 sink 注册生命周期（`start`/`emit` 的注册检查）。单线程宿主持注册至会话结束（与 TS `retainTerminal`/`dispose`/替换 `start` 同跨度）时行为与 TS 逐字节一致（`tests/fixtures/turn-replay/oracle.json` 全部 `coordinatorCases`，本轮 harness 显式持注册、金样不变）；交付时序差异见 A7.2-COORDINATOR-DELIVERY-001，终态回收时机见 A7.2-REPLAY-RETENTION-TIMER-001。可观测场景：宿主提前 drop 注册（如注册被短暂绑定在块作用域内）后继续 emit。
+- **机器判据**：`coordinator::tests::strongly_capturing_sink_release_drops_the_coordinator_and_stops_the_timer`（强捕获写法下 drop 注册→sink 释放（drop 标记）、coordinator 回收（`Weak` 升级失败）、生产 `ThreadTimer` 工作线程退出（worker 返回前置位的 `exited` 标志，5 s 轮询期限）；断言消息含本编号）与 `dropping_the_registration_unregisters_the_sink_but_keeps_the_coordinator`（drop 注册→emit `false`→重新 `start`→emit `true`）。`tests/fixtures/turn-replay/negative.py` 配三条专属变异（`start-retains-strong-sink`：往交付队列强持 sink 重建循环、`timer-exit-flag-never-set`、`registration-drop-accepted`），实测转红记录见 `_tmp/20261022-a72-pr1-replay/RESULT.md`「修复轮 7」。
+- **批准记录**：无。`未批准，非已接受差异`；泄漏本身已消除（不登记），登记的是所有权语义偏离；人批另行。
+
+**修复轮 8 追加更正（2026-10-23，codex-r8 P1 #1/#2，`_tmp/20261022-a72-pr1-replay/rv-codex-r8.md`；本块为承诺范围更正，上文原文字保留不改，范围以本块为准）**：
+
+1. 「最后一个注册 drop 后 emit 拒收」在轮 7 的实现里**并未成立**：`emit` 以「sink 的强引用是否还在」代理注册存活，而队列条目与在途交付都持强 sink——另一线程停在 sink 内时 drop 最后一个注册，随后 `emit` 仍返回 `true` 并记录（单线程下 sink 自 drop 注册后重入 `emit` 同理）。轮 8 起注册存活标记与交付用强 sink 分离：`CoordinatorState.sinks` 改持 `Weak<SinkRegistration>`（注册记录），交付队列只持其内层 `Sink`；`emit` 的注册检查只看注册弱引用，已接受事件仍由队列条目的强 sink 交付完。上文「Rust 行为」一行按此更正。
+2. 「泄漏已从设计上消除、不登记」的承诺范围收窄为**仅 coordinator 侧的环**（sink 强捕获 coordinator）。宿主侧结构（评审反例：`Arc<Host>` 同时保存 coordinator 与注册句柄、sink 强捕获 `Arc<Host>` 以调用宿主方法）形成 `Host → registration → sink → Host`，drop 全部外部句柄后 sink、coordinator 与 `ThreadTimer` 均不释放——Rust `Arc` 无环 GC，任何库 API 原理上无法从外部断开宿主内部环，与 TS 闭包可泄漏同类（差别仅在 TS GC 最终能收环）。本轮已删除代码注释与 FROZEN 登记注中「已从设计上消除」的过度承诺，改为文档化所有权约定（`start`/`TurnSinkRegistration`/模块文档）：sink 需回调宿主必须弱捕获（`Weak<Host>`）；会话结束由宿主显式 drop 最后注册或调用新增的显式注销 `unregister(&session_key)`（只摘 map 中注册、后续 `emit` 拒收，不动重放缓存/终态保留，注册句柄仍在宿主手里也生效），不依赖 drop 顺序。宿主侧残余环属本条目登记的已知残余（非「已消除」）。
+3. 机器判据追加（均在 `coordinator.rs` tests、断言消息含本编号）：`registration_check_fails_while_a_delivery_is_in_flight`（停在 sink 内时 drop 最后注册→emit `false` 且不记录，已接受事件交付完）、`sink_dropping_its_own_registration_rejects_the_reentrant_emit`（sink 内自 drop 注册后重入 emit→`false` 且不记录）、`unregister_detaches_the_sink_without_touching_the_replay`（注册仍存活时 `unregister`→emit `false`、重放缓存/终态不动、随后 `start` 恢复交付）、`weakly_capturing_host_releases_the_sink_coordinator_and_timer_on_drop`（按约定弱捕获：drop 外部句柄→sink 释放、host/coordinator 回收、生产 timer 线程退出）、`strongly_capturing_host_leaks_on_drop_and_releases_through_explicit_unregister`（按反例强捕获：drop 全部外部句柄→泄漏被钉住〔host/coordinator/sink/timer 均存活〕，经显式注销+释放注册后同样全部释放）。`negative.py` 各配专属变异（`emit-accepts-while-in-flight`、`emit-accepts-while-queued`、`unregister-keeps-sink`、`weak-host-release-blocked-by-strong-sink`、`strong-host-release-blocked-by-strong-sink`），实测转红记录见 `_tmp/20261022-a72-pr1-replay/RESULT.md`「修复轮 8」。
