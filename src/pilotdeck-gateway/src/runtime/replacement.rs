@@ -6,7 +6,9 @@ use super::{refresh::BoxFuture, session::SessionOwner};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::{HashMap, HashSet},
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, Mutex},
+    task::Poll,
     time::Duration,
 };
 use tokio::task::AbortHandle;
@@ -172,7 +174,7 @@ impl ReplacementCoordinator {
     }
     pub fn fork_session(&self, input: JsValue) -> BoxFuture<ReplacementResult> {
         match &self.0.storage.fork_session {
-            Some(fork) => running(fork(input)),
+            Some(fork) => running(port(|| fork(input))),
             None => failed(ReplacementError::new(
                 "fork_session is not configured. Wire `forkSession` via createLocalGateway.",
             )),
@@ -205,11 +207,10 @@ impl ReplacementCoordinator {
                     "A replacement transaction is already pending for this session.",
                 ));
             }
-            let active = self
-                .0
-                .session
-                .active_turn_run_id(&key)
-                .filter(|id| !id.is_empty());
+            let active = match port_call(|| self.0.session.active_turn_run_id(&key)) {
+                Ok(active) => active.filter(|id| !id.is_empty()),
+                Err(error) => return failed(error),
+            };
             if let Some(active) = &active
                 && *active != string(&input, "expectedTurnId")
             {
@@ -239,14 +240,14 @@ impl ReplacementCoordinator {
         };
         let this = self.clone();
         // Invoke abort synchronously, as the TS async prefix does.
-        let abort = active.map(|run| self.0.session.abort_expected_turn(&key, &run));
+        let abort = active.map(|run| port(|| self.0.session.abort_expected_turn(&key, &run)));
         running(async move {
             let result = async {
                 if let Some(abort) = abort {
                     abort.await?;
                 }
-                this.0.session.close_session(&key).await?;
-                let result = replace(input.clone()).await?;
+                port(|| this.0.session.close_session(&key)).await?;
+                let result = port(|| replace(input.clone())).await?;
                 let pending = Pending {
                     transaction_id: string(&result, "transactionId"),
                     replacement_turn_id: replacement,
@@ -257,6 +258,8 @@ impl ReplacementCoordinator {
                 };
                 {
                     let mut state = this.0.state.lock().unwrap();
+                    // TS :107 publishes by key even after dispose; an older
+                    // completion may overwrite a newer pending transaction.
                     state.pending.insert(key.clone(), pending);
                     this.schedule_locked(&mut state, &key);
                 }
@@ -271,6 +274,8 @@ impl ReplacementCoordinator {
             result
         })
     }
+    /// Like TS, claiming disables expiry until explicit release or commit.
+    /// Admission callers must own that cleanup if their submit future is dropped.
     pub fn claim_for_submit(&self, key: &JsString, run: &JsString) -> SubmitClaim {
         let mut state = self.0.state.lock().unwrap();
         let Some(pending) = state.pending.get_mut(key) else {
@@ -310,15 +315,21 @@ impl ReplacementCoordinator {
             finalize_input(key, pending, "commit")
         };
         let (this, key) = (self.clone(), key.clone());
-        let operation = finalize(input);
-        running(async move {
+        let operation = port(|| finalize(input));
+        let commit = running(async move {
             if let Err(error) = operation.await {
                 (this.0.warn)(
                     "[pilotdeck] failed to remove accepted replacement backup:",
                     &error,
                 );
             }
+            // TS clearPending(:175) deliberately clears the current key, even
+            // if dispose allowed a newer transaction while this port awaited.
             this.0.state.lock().unwrap().pending.remove(&key);
+            Ok(JsValue::Null)
+        });
+        Box::pin(async move {
+            let _ = commit.await;
         })
     }
     pub fn finalize_last_turn_replacement(&self, input: JsValue) -> BoxFuture<ReplacementResult> {
@@ -354,14 +365,21 @@ impl ReplacementCoordinator {
         // Run the active-turn check before returning control to the caller.
         let rollback = string(&input, "action") == JsString::from("rollback");
         let close = if rollback {
-            if this.0.session.has_active_turn(&key) {
+            let active = match port_call(|| this.0.session.has_active_turn(&key)) {
+                Ok(active) => active,
+                Err(error) => {
+                    this.reset_prepared(&key, &identity);
+                    return failed(error);
+                }
+            };
+            if active {
                 this.reset_prepared(&key, &identity);
                 return failed(ReplacementError::dialog(
                     "replace_transaction_active",
                     "The replacement cannot be rolled back while its turn is active.",
                 ));
             }
-            Some(this.0.session.close_session(&key))
+            Some(port(|| this.0.session.close_session(&key)))
         } else {
             None
         };
@@ -370,7 +388,7 @@ impl ReplacementCoordinator {
                 if let Some(close) = close {
                     close.await?;
                 }
-                finalize(input).await
+                port(|| finalize(input)).await
             }
             .await;
             if result.is_ok() {
@@ -440,7 +458,19 @@ impl ReplacementCoordinator {
             };
             // This timer has fired; never abort its own rollback continuation.
             pending.timer.take();
-            if self.0.session.has_active_turn(&key) {
+            let active = match port_call(|| self.0.session.has_active_turn(&key)) {
+                Ok(active) => active,
+                Err(error) => {
+                    self.schedule_locked(&mut state, &key);
+                    drop(state);
+                    (self.0.warn)(
+                        "[pilotdeck] failed to roll back expired replacement transaction:",
+                        &error,
+                    );
+                    return;
+                }
+            };
+            if active {
                 self.schedule_locked(&mut state, &key);
                 return;
             }
@@ -451,11 +481,11 @@ impl ReplacementCoordinator {
             )
         };
         let this = self.clone();
-        let close = self.0.session.close_session(&key);
+        let close = port(|| self.0.session.close_session(&key));
         tokio::spawn(async move {
             let result = async {
                 close.await?;
-                finalize(input).await
+                port(|| finalize(input)).await
             }
             .await;
             match result {
@@ -481,11 +511,41 @@ fn cancel_timer(pending: &mut Pending) {
 fn failed(error: ReplacementError) -> BoxFuture<ReplacementResult> {
     Box::pin(async { Err(error) })
 }
-fn running<T: Send + 'static>(
-    future: impl std::future::Future<Output = T> + Send + 'static,
-) -> BoxFuture<T> {
+// Catch both the synchronous port prefix and every poll, so the unwind never
+// escapes through a coordinator lock guard or skips the error continuation.
+// Treat a Rust port panic like a TS thrown/rejected Error: preserve string
+// payloads and run the ordinary error cleanup below.
+fn port_call<T>(call: impl FnOnce() -> T) -> Result<T, ReplacementError> {
+    catch_unwind(AssertUnwindSafe(call)).map_err(|payload| {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .unwrap_or_else(|| "replacement port panicked".to_owned());
+        ReplacementError::new(message)
+    })
+}
+fn port<T: Send + 'static>(
+    call: impl FnOnce() -> BoxFuture<Result<T, ReplacementError>>,
+) -> BoxFuture<Result<T, ReplacementError>> {
+    match port_call(call) {
+        Ok(mut future) => Box::pin(std::future::poll_fn(move |cx| {
+            match port_call(|| future.as_mut().poll(cx)) {
+                Ok(poll) => poll,
+                Err(error) => Poll::Ready(Err(error)),
+            }
+        })),
+        Err(error) => Box::pin(async move { Err(error) }),
+    }
+}
+fn running(
+    future: impl std::future::Future<Output = ReplacementResult> + Send + 'static,
+) -> BoxFuture<ReplacementResult> {
     let task = tokio::spawn(future);
-    Box::pin(async move { task.await.expect("replacement operation panicked") })
+    Box::pin(async move {
+        task.await
+            .unwrap_or_else(|error| Err(ReplacementError::new(error.to_string())))
+    })
 }
 fn string(value: &JsValue, field: &str) -> JsString {
     value

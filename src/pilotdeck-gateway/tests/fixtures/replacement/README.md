@@ -11,12 +11,22 @@ prototype 上的 fork/replace/finalize 方法调用。仅注入假的 session/st
 `SessionRouter.compact`，不调用 provider 或用户的 session。
 
 `cases[].steps` 是输入脚本，`events` 和 `values` 全部由 TS 执行生成；没有手写期望。
-28 个场景覆盖写预约、并发替换、不同会话独立、替换中 dispose、active run 冲突、
+54 个场景覆盖写预约、并发替换、不同会话独立、替换中 dispose、active run 冲突、
 abort/close/storage 失败清理、claim/release/accepted commit、显式 finalize 互斥及重试、
 超时回滚（active 推迟、失败重试）、dispose 清理、provider 缺失和 fork 原样转发。
 `dispose` 按 TS 清空当下状态；正在等待 storage 的 replace 随后仍可发布新 pending。
 另覆盖 dispose 后旧 finalize/timeout 失败不得重置新 submit claim。
-Rust 另用两项内部并发不变量检查已撤销的旧定时器和丢弃等待者后的任务排空。
+#518 新增场景覆盖同步抛错与异步拒绝（Rust 分别注入端口调用/轮询 panic）、
+放弃 submit claim、dispose 后旧 replace 覆盖/清除新 pending，以及旧 finalize、accepted
+commit、timeout 成功按 key 清除新 pending。原有 28 场景的输入、事件与结果保持不变。
+生成器还运行真实 `InProcessGateway.submitTurn`：在已 claim 的 preflight 端口等待时调用
+iterator.return()，验证 return 不会打断 await；端口拒绝后才释放 claim。该实测记录在
+`submitAbandonment`。单独 claim 而不 release/commit 与 TS 一样会一直停在 submitting；
+后续 gateway 装配必须持有放弃调用方后的清理责任。
+Rust 另检查旧定时器、丢弃等待者后的任务排空、panic 后再 dispose、同步 getter 不污染
+协调器锁，以及意外任务 panic 不在等待者中触发二次 panic。
+超时 hasActiveTurn getter 在 TS 的 try 外；Rust 将其 panic 告警并重新约时，避免锁污染。
+这是本轮 panic 清理要求下的防护，正常 getter 行为与既有金样不变。
 定时器使用受控单轮触发，Promise 用有界 microtask 排空；Rust 用 Tokio 暂停时钟回放。
 不等待墙钟、不监听网络、不产生随机 ID。完整输入与返回值保留额外字段及可选 project。
 
@@ -41,6 +51,7 @@ Rust 测试先调用共享 `crate::test_baseline::oracle`；设置 `PDRS_BASELIN
 cd src
 cargo test --offline -p pilotdeck-gateway --lib runtime::replacement::
 cargo test --offline -p pilotdeck-gateway --lib runtime::session::
+cargo test --offline -p pilotdeck-gateway --lib replacement_fixture_regenerates_identically -- --ignored
 ```
 
 本包交付可注入的运行时协调器与 SessionOwner 适配，不把 A8 的 WS 装配或
@@ -55,4 +66,14 @@ A7.5 后续持久化事务实现混入本 PR。`fork_session` 按 TS 直接委�
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/replacement/negative.py \
   _tmp/20261023-a75-pr1-replacement/negative-final
+```
+
+#518 的新增行为负控另用下列脚本。七组编译后变异分别移除 panic 边界、恢复等待者
+二次 panic、漏掉成功清理、漏掉旧 replace 覆盖/失败清理、破坏 claim 相位，以及篡改
+真实 submit 观察值。每个新增 panic 路径必须独立报告 FAILED，且 finally 恢复原始字节。
+不要与任何编辑或 cargo 运行并发；设置 PDRS_BASELINE 后执行：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/replacement/negative-518.py \
+  _tmp/20261023-issue-518-replacement/negative
 ```
