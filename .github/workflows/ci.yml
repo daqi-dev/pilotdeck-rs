@@ -39,6 +39,13 @@ jobs:
         run: cargo fmt --all --check
       - name: lint
         run: cargo clippy --all-targets -- -D warnings
+      # grep 金样对拍要真实 rg；从源码编译（不下载预编译二进制，人定 2026-10-22），按版本缓存
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/rg
+          key: ripgrep-14.1.1-${{ runner.os }}
+      - name: ripgrep（cargo install 源码编译）
+        run: command -v rg || cargo install ripgrep --locked --version 14.1.1
       - name: 测试
         run: cargo test --all
       - name: B2 冻结与批准依据（干净检出）
