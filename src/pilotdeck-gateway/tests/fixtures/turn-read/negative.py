@@ -20,7 +20,8 @@ repo = rust.parent
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/turn/read.rs'
-originals = {source: source.read_bytes()}
+registry_source = rust / 'pilotdeck-gateway/src/storage/run_registry.rs'
+originals = {source: source.read_bytes(), registry_source: registry_source.read_bytes()}
 lock = repo / '_tmp/turn-read-mutation.lock'
 lock.mkdir(parents=True)
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
@@ -64,25 +65,34 @@ mutants = [
      '        && false',
      'run_events_validation_and_not_found'),
     ('limit-validation-removed', source,
-     '    if let Some(value) = limit && !is_valid_limit(value) {',
-     '    if let Some(value) = limit && false {',
+     '    if let Some(value) = limit\n        && !is_valid_limit(value)\n    {',
+     '    if let Some(value) = limit\n        && false\n    {',
      'run_events_validation_and_not_found'),
     ('limit-bound-501', source,
      '(1.0..=500.0).contains(&n)', '(1.0..=501.0).contains(&n)',
      'run_events_validation_and_not_found'),
     ('run-not-found-message', source,
-     '"Run {} is not registered.",', '"Run {} is missing from the registry.",',
+     'units.extend(" is not registered.".encode_utf16());',
+     'units.extend(" is not in the registry.".encode_utf16());',
      'run_events_validation_and_not_found'),
     ('gap-off-by-one', source,
      'after.as_number().is_some_and(|a| a > last)', 'after.as_number().is_some_and(|a| a > last + 1.0)',
      'run_events_paging'),
+    ('gap-number-only', source,
+     'js_value::to_number(last)',
+     'js_value::to_number(&JsValue::Number(last.as_number().unwrap_or(f64::NAN)))',
+     'run_events_non_numeric_last_seq'),
     ('nextseq-dropped', source,
      '    if let Some(last) = events.last() {\n        result.insert("nextSeq".into(), field(last, "seq").clone());\n    }',
      '    let _ = events.last();',
      'run_events_paging'),
+    ('runid-surrogate-dropped', source,
+     'units.extend_from_slice(run_id.units());',
+     'units.extend(run_id.to_utf8().unwrap_or_default().encode_utf16());',
+     'run_not_found_lone_surrogate_runid'),
     ('record-drops-projectkey', source,
-     'if let Some(project) = record.get("projectKey").filter(|value| !value.is_undefined()) {',
-     'if let Some(project) = record.get("projectKey_").filter(|value| !value.is_undefined()) {',
+     '    if let Some(project) = record\n        .get("projectKey")\n        .filter(|value| !value.is_undefined())\n    {',
+     '    if let Some(project) = record\n        .get("projectKey_")\n        .filter(|value| !value.is_undefined())\n    {',
      'run_get_maps_durable_records'),
     ('record-drops-result', source,
      'if let Some(result) = record.get("result").filter(|value| !value.is_undefined()) {',
@@ -104,10 +114,11 @@ mutants = [
      'let record = registry.get(run).await.unwrap_or(None);',
      'run_registry_failure_propagates'),
     ('registry-error-name-plain', source,
-     '        name: if code.is_some() {\n            "RunRegistryError".to_string()\n        } else {\n'
-     '            "Error".to_string()\n        },',
-     '        name: "Error".to_string(),',
+     'name: error.name().to_string(),', 'name: "Error".to_string(),',
      'run_registry_failure_propagates'),
+    ('corrupt-snapshot-name-flattened', registry_source,
+     'Self::Named(name, _) => name,', 'Self::Named(_, _) => "Error",',
+     'run_corrupt_snapshot_errors'),
 ]
 summary = []
 try:

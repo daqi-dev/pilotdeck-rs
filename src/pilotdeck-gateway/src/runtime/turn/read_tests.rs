@@ -46,10 +46,7 @@ fn error_value(error: &TurnReadError) -> JsValue {
     if let Some(code) = &error.code {
         object.insert("code".into(), JsValue::String(code.clone().into()));
     }
-    object.insert(
-        "message".into(),
-        JsValue::String(error.message.clone().into()),
-    );
+    object.insert("message".into(), JsValue::String(error.message.clone()));
     JsValue::Object(object)
 }
 fn array<'a>(value: &'a JsValue, key: &str) -> &'a [JsValue] {
@@ -186,7 +183,7 @@ impl SessionHistoryReader for ScriptedHistory {
                 return Err(TurnReadError {
                     code: None,
                     name: text(error, "name").unwrap().to_utf8().unwrap(),
-                    message: text(error, "message").unwrap().to_utf8().unwrap(),
+                    message: text(error, "message").unwrap().clone(),
                 });
             }
             Ok(entry.get("history").cloned().unwrap_or(JsValue::Undefined))
@@ -325,10 +322,48 @@ impl TurnRunReader for FailingReader {
     }
 }
 
+/// The generator's per-call snapshot surgery, applied before the method runs:
+/// `snapshot` writes raw file bytes (a corrupt registry), `recordPatch`
+/// assigns fields onto a parsed record in place (a non-numeric `lastSeq`).
+/// Both registries reload from disk on every read, so the next call observes
+/// exactly what the TS generator left.
+fn apply_call_snapshot_surgery(path: &std::path::Path, call: &JsValue) {
+    if let Some(JsValue::String(text)) = call.get("snapshot") {
+        std::fs::write(path, text.to_utf8().unwrap()).unwrap();
+    }
+    if let Some(patch) = call.get("recordPatch") {
+        let index = patch
+            .get("record")
+            .and_then(JsValue::as_number)
+            .unwrap_or_default() as usize;
+        let snapshot = parse_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut records = snapshot.get("records").cloned().unwrap();
+        let record = match &mut records {
+            JsValue::Array(items) => match &mut items[index] {
+                JsValue::Object(record) => record,
+                _ => panic!("recordPatch needs an object record"),
+            },
+            _ => panic!("recordPatch needs a records array"),
+        };
+        for (key, value) in patch
+            .get("set")
+            .and_then(JsValue::as_object)
+            .unwrap()
+            .entries()
+        {
+            record.insert(key.clone(), value.clone());
+        }
+        let mut object = snapshot.as_object().cloned().unwrap();
+        object.insert("records".into(), records);
+        std::fs::write(path, render(&JsValue::Object(object))).unwrap();
+    }
+}
+
 async fn replay_run_case(case: &JsValue) -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("pdrs-turn-read-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
-    let file = FileRunRegistry::open(root.join("registry.json")).unwrap();
+    let registry_path = root.join("registry.json");
+    let file = FileRunRegistry::open(&registry_path).unwrap();
     for seed in array(sub(case, "setup"), "seed") {
         let run = run_ref(seed);
         file.accept(&RunAcceptInput {
@@ -355,6 +390,7 @@ async fn replay_run_case(case: &JsValue) -> Result<(), String> {
     };
     let mut outcomes = Vec::new();
     for call in array(case, "calls") {
+        apply_call_snapshot_surgery(&registry_path, call);
         let input = sub(call, "input");
         let outcome = match text(call, "method").unwrap().equals_str("runEvents") {
             false => {
@@ -497,6 +533,21 @@ scenario!(
     run_registry_failure_propagates,
     "runCases",
     "run-registry-failure-propagates"
+);
+scenario!(
+    run_events_non_numeric_last_seq,
+    "runCases",
+    "run-events-non-numeric-last-seq"
+);
+scenario!(
+    run_corrupt_snapshot_errors,
+    "runCases",
+    "run-corrupt-snapshot-errors"
+);
+scenario!(
+    run_not_found_lone_surrogate_runid,
+    "runCases",
+    "run-not-found-lone-surrogate-runid"
 );
 #[test]
 #[ignore = "requires fixed TS baseline and its existing tsx installation"]

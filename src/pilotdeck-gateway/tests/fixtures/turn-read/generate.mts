@@ -185,6 +185,17 @@ async function runCase(name: string, setup: any, calls: any[]) {
   gateway.options = setup.noRegistry ? {} : { runRegistry: port };
   const outcomes: any[] = [];
   for (const call of calls) {
+    // Per-call snapshot surgery: `snapshot` writes raw file bytes (a corrupt
+    // registry), `recordPatch` assigns fields onto a parsed record in place
+    // (a non-numeric `lastSeq`). Both registries reload from disk on every
+    // read, so the call observes exactly this file state.
+    if (call.snapshot !== undefined) await writeFile(join(root, 'registry.json'), call.snapshot, 'utf8');
+    if (call.recordPatch !== undefined) {
+      const path = join(root, 'registry.json');
+      const snapshot = JSON.parse(await readFile(path, 'utf8'));
+      Object.assign(snapshot.records[call.recordPatch.record], call.recordPatch.set);
+      await writeFile(path, JSON.stringify(snapshot), 'utf8');
+    }
     try {
       let result: any;
       if (call.method === 'runGet') result = await gateway.runGet(call.input);
@@ -263,6 +274,41 @@ await runCase('run-registry-failure-propagates',
     { method: 'runGet', input: ref('r1') },
     { method: 'runEvents', input: ref('r1') },
   ]);
+// The stored `lastSeq` survives as any JSON value; the gateway's gap check is
+// the JS relational `>`, so ToNumber applies to it (null→0, true→1, "5"→5,
+// [2]→"2"→2) and `nextSeq` echoes the raw stored value.
+await runCase('run-events-non-numeric-last-seq', { seed: [
+  { sessionKey: 's', projectKey: 'p', runId: 'r1', material: 'm',
+    events: [status(1), status(2), status(3)] },
+] }, [
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: '5' } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: null } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: true } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: [2] } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: '10' } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 2 }, recordPatch: { record: 0, set: { lastSeq: '3' } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 0 }, recordPatch: { record: 0, set: { lastSeq: null } } },
+]);
+// A corrupt snapshot throws inside the registry read and crosses the gateway
+// with its builtin JS name: SyntaxError from JSON.parse, TypeError from
+// property reads on null, plain Error for a wrong shape.
+await runCase('run-corrupt-snapshot-errors', { seed: [
+  { sessionKey: 's', projectKey: 'p', runId: 'r1', material: 'm', events: [status(1)] },
+] }, [
+  { method: 'runGet', input: ref('r1'), snapshot: '{' },
+  { method: 'runEvents', input: ref('r1'), snapshot: 'null' },
+  { method: 'runGet', input: ref('r1'), snapshot: '{"schemaVersion":2,"records":[],"events":{}}' },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 0 }, snapshot: '{"schemaVersion":1,"records":[null],"events":{}}' },
+]);
+// A run id may carry an unpaired surrogate; the RUN_NOT_FOUND template
+// literal keeps it in the message verbatim.
+await runCase('run-not-found-lone-surrogate-runid', { seed: [
+  { sessionKey: 's', projectKey: 'p', runId: 'r1', material: 'm', events: [] },
+] }, [
+  { method: 'runEvents', input: { sessionKey: 's', projectKey: 'p', runId: 'x\ud800y', afterSeq: 2 } },
+  { method: 'runGet', input: { sessionKey: 's', projectKey: 'p', runId: 'x\ud800y' } },
+  { method: 'runReattach', input: { sessionKey: 's', projectKey: 'p', runId: 'x\ud800y' } },
+]);
 
 assertBaseline(baseline);
 assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);

@@ -25,11 +25,12 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
-use pilotdeck_protocol::{JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::coordinator::{TurnEventCoordinator, same_turn_epoch};
 use super::publish::{FileRegistry, RegistryFuture};
 use super::replay::{ActiveTurnSnapshot, ActiveTurnSnapshotInput};
+use crate::js_value;
 use crate::storage::{RunRecord, RunRef, RunRegistryError};
 
 /// `Number.MAX_SAFE_INTEGER`: the ceiling of `Number.isSafeInteger`, which the
@@ -38,21 +39,25 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// The error shapes the read face can surface. `DialogGatewayError` carries a
 /// wire code; the two `readSessionMessages` throws are plain `Error`s; a
-/// registry rejection crosses with its own `RunRegistryError` name and code.
+/// registry rejection crosses with its own `RunRegistryError` name and code,
+/// or with the builtin JS name (`SyntaxError`, `TypeError`) of a corrupt
+/// snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnReadError {
     /// `DialogGatewayError.code`, or the TS registry code (`conflict`,
     /// `not_found`, `terminal`) when the error crossed from the registry.
     /// Absent for plain `Error` throws.
     pub code: Option<String>,
-    /// The JS error name: "DialogGatewayError", "Error" or "RunRegistryError".
+    /// The JS error name: "DialogGatewayError", "Error", "RunRegistryError",
+    /// or a builtin name like "SyntaxError" / "TypeError".
     pub name: String,
-    /// The baseline's exact message text.
-    pub message: String,
+    /// The baseline's exact message text as UTF-16 units: a run id may carry
+    /// an unpaired surrogate, which no Rust `String` can hold.
+    pub message: JsString,
 }
 impl TurnReadError {
     /// A `DialogGatewayError` (InProcessGateway.ts:172) with its stable code.
-    fn dialog(code: &str, message: impl Into<String>) -> Self {
+    fn dialog(code: &str, message: impl Into<JsString>) -> Self {
         Self {
             code: Some(code.to_string()),
             name: "DialogGatewayError".to_string(),
@@ -61,7 +66,7 @@ impl TurnReadError {
     }
     /// A plain `Error` throw, exactly as the TS `readSessionMessages` guards
     /// raise them (InProcessGateway.ts:2842-2846,2860): no code.
-    fn plain(message: impl Into<String>) -> Self {
+    fn plain(message: impl Into<JsString>) -> Self {
         Self {
             code: None,
             name: "Error".to_string(),
@@ -71,24 +76,23 @@ impl TurnReadError {
 }
 impl fmt::Display for TurnReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        // Rust-side rendering only: an unpaired surrogate becomes U+FFFD
+        // here, while the wire message keeps the exact units.
+        f.write_str(&String::from_utf16_lossy(self.message.units()))
     }
 }
 impl std::error::Error for TurnReadError {}
 
 /// A registry rejection crosses the read face unchanged: TS propagates the
-/// thrown error object with its `name` and `code` (`RunRegistryError`) or as a
-/// plain `Error` for storage failures without a code.
+/// thrown error object (InProcessGateway.ts:2525-2528,2551-2552) with its
+/// `name` and `code` — `RunRegistryError` for business codes, the builtin JS
+/// name (`SyntaxError` / `TypeError`) for a corrupt snapshot, plain `Error`
+/// for storage failures without a code.
 fn registry_error(error: RunRegistryError) -> TurnReadError {
-    let code = error.code();
     TurnReadError {
-        code: code.map(str::to_string),
-        name: if code.is_some() {
-            "RunRegistryError".to_string()
-        } else {
-            "Error".to_string()
-        },
-        message: error.to_string(),
+        code: error.code().map(str::to_string),
+        name: error.name().to_string(),
+        message: error.to_string().into(),
     }
 }
 
@@ -243,6 +247,16 @@ pub async fn run_get(
     Ok(record.map(|record| to_gateway_run_record(&record)))
 }
 
+/// `` `Run ${runId} is not registered.` `` (InProcessGateway.ts:2540) as
+/// UTF-16 units: a run id may carry an unpaired surrogate, and the TS template
+/// literal keeps it in the message verbatim.
+fn run_not_found_message(run_id: &JsString) -> JsString {
+    let mut units = "Run ".encode_utf16().collect::<Vec<u16>>();
+    units.extend_from_slice(run_id.units());
+    units.extend(" is not registered.".encode_utf16());
+    JsString::from_utf16(units)
+}
+
 /// InProcessGateway.ts:2531-2549.
 pub async fn run_events(
     registry: Option<&dyn TurnRunReader>,
@@ -278,18 +292,27 @@ pub async fn run_events(
     let Some(record) = registry.get(&input.run).await.map_err(registry_error)? else {
         return Err(TurnReadError::dialog(
             "RUN_NOT_FOUND",
-            format!(
-                "Run {} is not registered.",
-                input.run.run_id.to_utf8().unwrap_or_default()
-            ),
+            run_not_found_message(&input.run.run_id),
         ));
     };
     if let Some(after) = after_seq {
-        // TS compares against the stored record's `lastSeq`; a missing or
-        // non-number field makes the JS relational comparison NaN → false.
-        if let Some(last) = record.last_seq()
-            && after.as_number().is_some_and(|a| a > last)
-        {
+        // TS compares against the stored record's `lastSeq` with the JS
+        // relational `>` (InProcessGateway.ts:2541-2542): the stored value may
+        // be a string / null / boolean / array, and ToNumber applies before
+        // the comparison (NaN → false), while a too-deep array throws V8's
+        // RangeError instead.
+        let last = field(record.as_json(), "lastSeq");
+        let gap = match js_value::to_number(last) {
+            Ok(last) => after.as_number().is_some_and(|a| a > last),
+            Err(_) => {
+                return Err(TurnReadError {
+                    code: None,
+                    name: "RangeError".to_string(),
+                    message: js_value::StackOverflow::MESSAGE.into(),
+                });
+            }
+        };
+        if gap {
             let mut gap = JsObject::new();
             gap.insert("events".into(), JsValue::Array(vec![]));
             gap.insert("nextSeq".into(), field(record.as_json(), "lastSeq").clone());
