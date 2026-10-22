@@ -7,3 +7,10 @@
 把两者放进同一个目录，是抄袭的温床。
 
 本目录默认不入库（仅本 README 入库）。
+
+## 登记（放入即登记：来源、钉住的提交、许可、用途；目录本身不入库）
+
+| 目录 | 来源 | 提交 / 日期 | 许可 | 用途 | 索引 |
+|---|---|---|---|---|---|
+| `grok-build/` | https://github.com/xai-org/grok-build（浅克隆） | 2bdd1d6 / 2026-09-29 | Apache-2.0 | Rust agent 运行时参考：工具层、会话、MCP、sqlite、HTML→Markdown 等 | `_tmp/20261022-grok-build-index/index.md` |
+
