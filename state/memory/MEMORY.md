@@ -46,3 +46,4 @@
 - [macOS exec SIGKILL](20261022-macos-exec-sigkill.md) — 测试二进制 `--list` 也 137 是系统拒启动非测试失败；复制新 inode + ad-hoc 重签取真实结果，不记通过
 - [zsh 等号展开](20261022-zsh-equals-echo.md) — 未加引号的 `===` 在 zsh 报 == not found 并截断命令，分隔线用 '---'
 - [worker 证据移回](20261022-worker-evidence-pullback.md) — 沙箱 worker 证据落树内 _tmp；移回只用 pull-evidence.sh，RESULT.md 按节追加，永不覆盖
+- [只按 pid 停进程](20261022-kill-by-pid.md) — 禁 pkill -n / 宽模式 pkill -f；实验与正式任务输出目录不同名（10-22 两次误杀）
