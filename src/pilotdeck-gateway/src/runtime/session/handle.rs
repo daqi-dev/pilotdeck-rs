@@ -107,10 +107,11 @@ impl LiveSessionHandle {
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
         {
             let mut progress = self.0.progress.lock().unwrap();
-            if progress.state != HandleState::Active {
-                // In Draining the drain task owns session teardown; a concurrent
-                // abort must not race the watcher loop or the lease release.
-                // In Disposed abort is a no-op.
+            // In Draining the drain task owns session teardown; a concurrent
+            // abort must not race the watcher loop or the lease release.
+            // In Disposed abort is a no-op. Neither state reaches session.abort.
+            let is_active = progress.state == HandleState::Active;
+            if !is_active {
                 return Ok(());
             }
             progress.cancelled.get_or_insert_with(|| reason.clone());
