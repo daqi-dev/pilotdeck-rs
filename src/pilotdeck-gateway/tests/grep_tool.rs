@@ -9,6 +9,10 @@
 //! feeds it through that override. Without either it prints a loud skip;
 //! `PDRS_REQUIRE_RG=1` or a CI environment (`CI=true`) turns that into a
 //! failure for parity runs. See `tests/fixtures/grep-tool/README.md`.
+#[path = "common/oracle_replay.rs"]
+mod oracle_replay;
+use oracle_replay::*;
+
 #[path = "common/baseline.rs"]
 mod baseline;
 #[path = "common/child_signals.rs"]
@@ -16,187 +20,22 @@ mod child_signals;
 #[path = "common/scratch.rs"]
 mod scratch;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pilotdeck_gateway::{
     host::modules::{
         capability::ToolDefinition,
         tool_context::{HostToolCheckpoint, ToolRuntimeContext},
     },
-    runtime::tools::{ExecutableTool, ToolOutput, ToolRunContext, builtin::grep::GrepTool},
+    runtime::tools::{ExecutableTool, ToolRunContext, builtin::grep::GrepTool},
 };
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, UNIX_EPOCH},
+    sync::Arc,
 };
 
 const ORACLE: &str = include_str!("fixtures/grep-tool/oracle.json");
-
-static SCRATCH_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-struct Scratch {
-    root: PathBuf,
-    outside: PathBuf,
-}
-impl Scratch {
-    fn new() -> Self {
-        let base = fs::canonicalize(std::env::temp_dir()).expect("canonical temp");
-        let unique = format!(
-            "pdrs-grep-tool-{}-{}",
-            std::process::id(),
-            SCRATCH_COUNTER.fetch_add(1, Ordering::SeqCst)
-        );
-        let root = base.join(&unique);
-        let outside = base.join(format!("{unique}-outside"));
-        for path in [&root, &outside] {
-            match fs::create_dir(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    panic!("scratch path already exists: {}", path.display())
-                }
-                Err(error) => panic!("create {}: {error}", path.display()),
-            }
-        }
-        Self { root, outside }
-    }
-    fn text(&self, path: &Path) -> String {
-        path.to_string_lossy().into_owned()
-    }
-}
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let base = fs::canonicalize(std::env::temp_dir()).expect("canonical temp");
-        for path in [&self.outside, &self.root] {
-            let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            assert!(
-                canonical.starts_with(&base),
-                "refusing to remove {} outside {}",
-                canonical.display(),
-                base.display()
-            );
-            let _ = fs::remove_dir_all(canonical);
-        }
-    }
-}
-
-fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
-    static UNDEFINED: JsValue = JsValue::Undefined;
-    value.get(key).unwrap_or(&UNDEFINED)
-}
-fn text(value: &JsValue) -> String {
-    value
-        .as_string()
-        .expect("fixture string")
-        .to_utf8()
-        .expect("fixture UTF-8 text")
-}
-fn number(value: &JsValue) -> Option<f64> {
-    value.as_number()
-}
-fn array(value: &JsValue) -> &[JsValue] {
-    match value {
-        JsValue::Array(values) => values,
-        _ => panic!("fixture array"),
-    }
-}
-fn optional_array(value: &JsValue) -> &[JsValue] {
-    match value {
-        JsValue::Array(values) => values,
-        _ => &[],
-    }
-}
-fn object(entries: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsObject {
-    let mut object = JsObject::new();
-    for (key, value) in entries {
-        object.insert(key.into(), value);
-    }
-    object
-}
-fn wire(value: &JsValue) -> String {
-    stringify_json(value).unwrap().unwrap_or_default()
-}
-
-fn substitute(value: &JsValue, scratch: &Scratch) -> JsValue {
-    match value {
-        JsValue::String(value) => {
-            let value = value
-                .to_utf8()
-                .unwrap()
-                .replace("<outside>", &scratch.text(&scratch.outside))
-                .replace("<root>", &scratch.text(&scratch.root));
-            JsValue::from(value.as_str())
-        }
-        JsValue::Array(values) => JsValue::Array(
-            values
-                .iter()
-                .map(|value| substitute(value, scratch))
-                .collect(),
-        ),
-        JsValue::Object(object) => {
-            let mut result = JsObject::new();
-            for (key, value) in object.entries() {
-                result.insert(key.clone(), substitute(value, scratch));
-            }
-            JsValue::Object(result)
-        }
-        other => other.clone(),
-    }
-}
-
-fn apply_step(step: &JsValue, scratch: &Scratch) -> Result<(), String> {
-    let op = text(field(step, "op"));
-    let path = field(step, "path")
-        .as_string()
-        .map(|value| value.to_utf8().unwrap())
-        .unwrap_or_default();
-    let absolute = scratch.root.join(&path);
-    match op.as_str() {
-        "file" => {
-            if let Some(parent) = absolute.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let content = if let Some(encoded) = field(step, "base64").as_string() {
-                BASE64
-                    .decode(encoded.to_utf8().unwrap())
-                    .map_err(|e| e.to_string())?
-            } else if let Some(repeat) = field(step, "repeat").as_object() {
-                let repeat = JsValue::Object(repeat.clone());
-                let unit = field(&repeat, "unit")
-                    .as_string()
-                    .ok_or("repeat.unit")?
-                    .to_utf8()
-                    .unwrap();
-                let count = field(&repeat, "count").as_number().ok_or("repeat.count")? as usize;
-                unit.repeat(count).into_bytes()
-            } else {
-                text(field(step, "content")).into_bytes()
-            };
-            fs::write(&absolute, content).map_err(|e| e.to_string())?;
-            if let Some(mtime) = number(field(step, "mtime")) {
-                let taken = UNIX_EPOCH + Duration::from_secs_f64(mtime / 1_000.0);
-                fs::OpenOptions::new()
-                    .write(true)
-                    .open(&absolute)
-                    .and_then(|file| file.set_modified(taken))
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        "dir" => fs::create_dir_all(&absolute).map_err(|e| e.to_string())?,
-        "chmod" => {
-            let mode = number(field(step, "mode")).ok_or("chmod mode")? as u32;
-            fs::set_permissions(&absolute, fs::Permissions::from_mode(mode))
-                .map_err(|e| e.to_string())?;
-        }
-        other => return Err(format!("unknown setup step {other}")),
-    }
-    Ok(())
-}
 
 fn replay_context(scratch: &Scratch, cwd: &Path, ripgrep: Option<&Path>) -> ToolRunContext {
     let checkpoint = HostToolCheckpoint::default();
@@ -280,41 +119,6 @@ fn env_context(env: &[(&str, &str)], cwd: &Path) -> ToolRunContext {
     ToolRunContext::new(Arc::new(host))
 }
 
-fn futures_block<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
-
-fn error_value(error: &pilotdeck_gateway::runtime::tools::ToolError) -> JsValue {
-    JsValue::Object(object([(
-        "error",
-        JsValue::Object(object([
-            ("code", JsValue::from(error.code.as_str())),
-            ("message", JsValue::String(error.message.clone())),
-        ])),
-    )]))
-}
-
-fn output_value(output: ToolOutput) -> JsValue {
-    let mut value = object([("content", JsValue::Array(output.content))]);
-    if let Some(data) = output.data {
-        value.insert("data".into(), data);
-    }
-    if let Some(metadata) = output.metadata {
-        value.insert("metadata".into(), JsValue::Object(metadata));
-    }
-    JsValue::Object(value)
-}
-
-fn normalize(value: &JsValue, scratch: &Scratch) -> String {
-    wire(value)
-        .replace(&scratch.text(&scratch.outside), "<outside>")
-        .replace(&scratch.text(&scratch.root), "<root>")
-}
-
 /// Whether a missing engine must fail instead of skip. CI sets `CI=true` on
 /// every runner, so the guard cannot depend on a workflow-file edit landing in
 /// the same commit as this test.
@@ -360,7 +164,7 @@ fn parity_ripgrep_override() -> Option<PathBuf> {
 fn grep_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 61, "scenario count");
+    assert_eq!(scenarios.len(), 63, "scenario count");
     let ripgrep = parity_ripgrep_override();
     if ripgrep.is_none() && !pilotdeck_gateway::runtime::tools::builtin::grep::ripgrep_available() {
         let message = "grep fixture replay skipped: no ripgrep binary \
@@ -399,12 +203,9 @@ fn grep_outputs_match_real_ts() {
             let call = &calls_value[index];
             calls += 1;
             let input = substitute(field(call, "input"), &scratch);
-            let expected = field(call, "execute");
-            if matches!(expected, JsValue::Null) {
-                // An oracle record without an expected result must not count as
-                // a compared call; otherwise all-null corpora look green.
+            let Some(expected) = expected_execute(call) else {
                 continue;
-            }
+            };
             compared += 1;
             let actual = match futures_block(GrepTool::new().execute(input, context.clone())) {
                 Ok(output) => output_value(output),
@@ -417,8 +218,8 @@ fn grep_outputs_match_real_ts() {
             );
         }
     }
-    assert_eq!(calls, 61, "call count");
-    assert_eq!(compared, 61, "compared call count");
+    assert_eq!(calls, 63, "call count");
+    assert_eq!(compared, 63, "compared call count");
 }
 
 #[test]

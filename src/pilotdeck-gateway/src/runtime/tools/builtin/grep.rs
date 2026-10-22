@@ -502,6 +502,74 @@ const KILL_GRACE: Duration = Duration::from_millis(1_000);
 /// case; a tool call must stay bounded.
 const FORCE_RESOLVE: Duration = Duration::from_secs(3);
 
+/// Owns the leader across every await point, including scheduler cancellation
+/// by Drop. As in bash, a group guard protects the deferred KILL task itself.
+struct RipgrepProcess {
+    child: Option<tokio::process::Child>,
+    group: Option<rustix::process::Pid>,
+    kill_deadline: Option<Instant>,
+    kill_sent: bool,
+}
+
+impl RipgrepProcess {
+    fn child(&mut self) -> &mut tokio::process::Child {
+        self.child.as_mut().expect("owned child")
+    }
+
+    fn signal(&mut self, signal: rustix::process::Signal) {
+        signal_group(self.group, self.child(), signal);
+        if signal == rustix::process::Signal::TERM {
+            self.kill_deadline
+                .get_or_insert(Instant::now() + KILL_GRACE);
+        } else if signal == rustix::process::Signal::KILL {
+            self.kill_sent = true;
+        }
+    }
+
+    fn defer_cleanup(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let group = self.group;
+        let mut guard = crate::process_group::GroupGuard(group);
+        let deadline = if self.kill_sent {
+            Instant::now()
+        } else {
+            self.kill_deadline.expect("TERM precedes deferred KILL")
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                sleep_until(deadline).await;
+                signal_group(group, &mut child, rustix::process::Signal::KILL);
+                // Keep the leader unreaped until the last group signal, so
+                // its PGID cannot be reused during the grace period.
+                if matches!(
+                    timeout(Duration::from_secs(5), child.wait()).await,
+                    Ok(Ok(_))
+                ) {
+                    guard.disarm();
+                }
+                crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
+            });
+        } else {
+            // No runtime can drive the timer/reap: preserve bash's immediate
+            // Drop fallback. Child's kill_on_drop queues the leader for reap.
+            signal_group(group, &mut child, rustix::process::Signal::KILL);
+        }
+    }
+}
+
+impl Drop for RipgrepProcess {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            if self.kill_deadline.is_none() && !self.kill_sent {
+                self.signal(rustix::process::Signal::TERM);
+            }
+            self.defer_cleanup();
+        }
+    }
+}
+
 async fn run_ripgrep_with_timeout(
     args: &[String],
     cwd: &JsString,
@@ -538,7 +606,7 @@ async fn run_ripgrep_with_timeout(
             }
         }
     }
-    let mut child = command.spawn().map_err(|error| {
+    let child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             // Node's async spawn error text: `spawn <path> ENOENT`.
             ripgrep_unavailable(&format!("spawn {} ENOENT", executable.display()))
@@ -564,33 +632,34 @@ async fn run_ripgrep_with_timeout(
     #[cfg(not(unix))]
     let group: Option<rustix::process::Pid> = None;
 
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
-    let mut out_task = tokio::spawn(read_all(stdout));
-    let mut err_task = tokio::spawn(read_all(stderr));
+    let mut process = RipgrepProcess {
+        child: Some(child),
+        group,
+        kill_deadline: None,
+        kill_sent: false,
+    };
+    // Inline futures are destroyed with this run; no detached pipe readers or
+    // leader observer remain when the scheduler drops an unfinished sibling.
+    let stdout = process.child().stdout.take().expect("piped stdout");
+    let stderr = process.child().stderr.take().expect("piped stderr");
+    let out_read = read_all(stdout);
+    let err_read = read_all(stderr);
+    let leader = async {
+        match group {
+            Some(group) => crate::process_group::wait_exit_unreaped(group).await,
+            None => Ok(None),
+        }
+    };
+    tokio::pin!(out_read, err_read, leader);
     let mut out_bytes = Vec::new();
     let mut err_bytes = Vec::new();
     let mut out_done = false;
     let mut err_done = false;
-
-    // Observe the leader without reaping it (`WNOWAIT`), so its PGID stays
-    // reserved until the final timeout/abort group signal has been sent.
-    let (leader_tx, mut leader_rx) = tokio::sync::oneshot::channel();
-    if let Some(group) = group {
-        tokio::spawn(async move {
-            let _ = leader_tx.send(crate::process_group::wait_exit_unreaped(group).await);
-        });
-    } else {
-        let _ = leader_tx.send(Ok(None));
-    }
     let mut leader_done = group.is_none();
     let mut leader_exit: Option<crate::process_group::LeaderExit> = None;
 
     let mut timed_out = false;
     let mut aborted = false;
-    let mut forced = false;
-    let mut kill_sent = false;
-    let mut kill_deadline: Option<Instant> = None;
     let mut timeout_sleep = Box::pin(sleep_until(Instant::now() + limit));
     let mut kill_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
     let mut force_sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
@@ -600,31 +669,29 @@ async fn run_ripgrep_with_timeout(
             break;
         }
         tokio::select! {
-            result = &mut leader_rx, if !leader_done => {
+            result = &mut leader, if !leader_done => {
                 leader_done = true;
-                if let Ok(Ok(Some(exit))) = result {
+                if let Ok(Some(exit)) = result {
                     leader_exit = Some(exit);
                 }
             }
-            result = &mut out_task, if !out_done => {
-                out_bytes = result.unwrap_or_default();
+            result = &mut out_read, if !out_done => {
+                out_bytes = result;
                 out_done = true;
             }
-            result = &mut err_task, if !err_done => {
-                err_bytes = result.unwrap_or_default();
+            result = &mut err_read, if !err_done => {
+                err_bytes = result;
                 err_done = true;
             }
             _ = &mut timeout_sleep, if !timed_out && !aborted => {
                 timed_out = true;
-                signal_group(group, &mut child, rustix::process::Signal::TERM);
-                kill_deadline = Some(Instant::now() + KILL_GRACE);
+                process.signal(rustix::process::Signal::TERM);
                 kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
             }
             _ = context.cancelled(), if !timed_out && !aborted => {
                 aborted = true;
-                signal_group(group, &mut child, rustix::process::Signal::TERM);
-                kill_deadline = Some(Instant::now() + KILL_GRACE);
+                process.signal(rustix::process::Signal::TERM);
                 kill_sleep = Some(Box::pin(sleep_until(Instant::now() + KILL_GRACE)));
                 force_sleep = Some(Box::pin(sleep_until(Instant::now() + FORCE_RESOLVE)));
             }
@@ -636,9 +703,7 @@ async fn run_ripgrep_with_timeout(
                 }
             }, if kill_sleep.is_some() => {
                 kill_sleep = None;
-                kill_deadline = None;
-                kill_sent = true;
-                signal_group(group, &mut child, rustix::process::Signal::KILL);
+                process.signal(rustix::process::Signal::KILL);
             }
             _ = async {
                 if let Some(sleep) = force_sleep.as_mut() {
@@ -647,18 +712,11 @@ async fn run_ripgrep_with_timeout(
                     std::future::pending::<()>().await;
                 }
             }, if force_sleep.is_some() => {
-                forced = true;
                 break;
             }
         }
     }
 
-    if forced {
-        out_task.abort();
-        err_task.abort();
-        let _ = out_task.await;
-        let _ = err_task.await;
-    }
     // On timeout/abort TS sends TERM immediately, resolves at `close`, and lets
     // its 1 s KILL timer run on (`SubprocessPort.ts:83-92`). The loop can break
     // at pipe EOF long before that timer fires (a leader whose stdio is closed
@@ -667,21 +725,22 @@ async fn run_ripgrep_with_timeout(
     // background task so the leader stays an unreaped zombie and the PGID
     // cannot be reused before the final group signal.
     if timed_out || aborted {
-        let deferred =
-            !kill_sent && kill_deadline.is_some_and(|deadline| Instant::now() < deadline);
+        let deferred = !process.kill_sent
+            && process
+                .kill_deadline
+                .is_some_and(|deadline| Instant::now() < deadline);
         if deferred {
-            let deadline = kill_deadline.expect("deferred kill has a deadline");
-            tokio::spawn(async move {
-                sleep_until(deadline).await;
-                signal_group(group, &mut child, rustix::process::Signal::KILL);
-                let _ = timeout(Duration::from_secs(5), child.wait()).await;
-                crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
-            });
+            process.defer_cleanup();
         } else {
-            if !kill_sent {
-                signal_group(group, &mut child, rustix::process::Signal::KILL);
+            if !process.kill_sent {
+                process.signal(rustix::process::Signal::KILL);
             }
-            let _ = timeout(Duration::from_secs(5), child.wait()).await;
+            if matches!(
+                timeout(Duration::from_secs(5), process.child().wait()).await,
+                Ok(Ok(_))
+            ) {
+                process.child.take();
+            }
         }
         if aborted || context.is_aborted() {
             return Err(tool_aborted());
@@ -691,8 +750,11 @@ async fn run_ripgrep_with_timeout(
             format!("grep search timed out after {RIPGREP_TIMEOUT_MS}ms."),
         ));
     }
-    let status = match timeout(Duration::from_secs(5), child.wait()).await {
-        Ok(Ok(status)) => Some(status),
+    let status = match timeout(Duration::from_secs(5), process.child().wait()).await {
+        Ok(Ok(status)) => {
+            process.child.take();
+            Some(status)
+        }
         Ok(Err(error)) => {
             return Err(tool_error(
                 "tool_execution_failed",
@@ -700,7 +762,7 @@ async fn run_ripgrep_with_timeout(
             ));
         }
         Err(_) => {
-            signal_group(group, &mut child, rustix::process::Signal::KILL);
+            process.signal(rustix::process::Signal::KILL);
             None
         }
     };
@@ -1477,7 +1539,7 @@ mod tests {
 
     fn kill_descendant_if_alive(pid: rustix::process::Pid) {
         // Keep a failing negative control from leaving `sleep 30` behind.
-        crate::process_group::kill(Some(pid), rustix::process::Signal::KILL);
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
     }
 
     fn cwd_string(root: &Path) -> JsString {
@@ -1687,6 +1749,112 @@ mod tests {
             .map(text)
             .expect("cause");
         assert_eq!(cause, "Cannot find module '@vscode/ripgrep'");
+    }
+
+    #[test]
+    fn dropping_the_run_terminates_the_group_and_reaps_the_leader() {
+        let scratch = Scratch::new("drop");
+        let leader_file = scratch.root.join("leader.pid");
+        let descendant_file = scratch.root.join("descendant.pid");
+        let ready = scratch.root.join("ready");
+        let term = scratch.root.join("term");
+        let script = scratch.script(
+            "rg-drop",
+            &format!(
+                "#!/bin/sh\ntrap 'printf term > \"{}\"' TERM\n( trap '' TERM; printf ready > '{}' ; exec /bin/sleep 30 ) &\necho $! > '{}'\necho $$ > '{}'\nwhile :; do wait; done\n",
+                term.display(), ready.display(), descendant_file.display(), leader_file.display()
+            ),
+        );
+        let context = context(
+            &[
+                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let cwd = cwd_string(&scratch.root);
+        futures_block(async {
+            let mut run = Box::pin(run_ripgrep_with_timeout(
+                &[],
+                &cwd,
+                &context,
+                Duration::from_secs(30),
+            ));
+            // Poll the actual tool future until both processes have installed
+            // their TERM handlers. Dropping a JoinHandle would only detach it.
+            tokio::select! {
+                result = &mut run => panic!("run ended before Drop: {result:?}"),
+                _ = async {
+                    timeout(Duration::from_secs(8), async {
+                        while !ready.exists() || !leader_file.exists() || !descendant_file.exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }).await.expect("wrapper ready");
+                } => {}
+            }
+            let group = read_pid(&leader_file);
+            let descendant = read_pid(&descendant_file);
+            let mut cleanup = crate::process_group::GroupGuard(Some(group));
+            drop(run);
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let term_sent = term.exists();
+            let alive_during_grace = rustix::process::test_kill_process(descendant).is_ok();
+            crate::process_group::wait_for_group_empty(Some(group), Duration::from_secs(4)).await;
+            let group_gone = !crate::process_group::group_exists(group);
+            let reaped = matches!(
+                crate::process_group::leader_exited_unreaped(group),
+                Err(rustix::io::Errno::CHILD)
+            );
+            // Clean even a negative-control failure before asserting.
+            if !group_gone {
+                cleanup.signal(rustix::process::Signal::KILL);
+                let _ = wait_process_gone(descendant, Duration::from_secs(2)).await;
+            }
+            cleanup.disarm();
+            assert!(
+                group_gone,
+                "process group survived Drop past the KILL grace"
+            );
+            assert!(term_sent, "Drop did not send TERM to the group");
+            assert!(alive_during_grace, "Drop cut short the TERM grace");
+            assert!(reaped, "Drop left the leader unreaped");
+        });
+    }
+
+    #[test]
+    fn failure_cleanup_kills_a_member_pid_without_signalling_its_group() {
+        let scratch = Scratch::new("cleanup-pid");
+        let script = scratch.script(
+            "member",
+            "#!/bin/sh\ntrap '' TERM\nprintf ready\nexec /bin/sleep 30\n",
+        );
+        futures_block(async {
+            // No process_group(0): this child is a member, not a group leader.
+            let mut child = Command::new(script)
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("member");
+            let pid = rustix::process::Pid::from_raw(child.id().expect("pid") as i32).expect("pid");
+            let mut ready = [0; 5];
+            child
+                .stdout
+                .take()
+                .expect("stdout")
+                .read_exact(&mut ready)
+                .await
+                .expect("ready");
+            kill_descendant_if_alive(pid);
+            let exited = timeout(Duration::from_secs(2), child.wait()).await;
+            if exited.is_err() {
+                let _ = child.kill().await;
+            }
+            assert!(
+                exited.is_ok(),
+                "failure cleanup did not kill the member PID"
+            );
+        });
     }
 
     #[test]

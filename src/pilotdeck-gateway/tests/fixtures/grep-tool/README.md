@@ -11,7 +11,7 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次输出字节一致才更新
-正本。场景 61 个、调用 61 次。`sourceSha256` 由 `sourceClosureSha256` 覆盖
+正本。场景 63 个、调用 63 次。`sourceSha256` 由 `sourceClosureSha256` 覆盖
 `src/tool/builtin/grep.ts` 的相对 import 闭包（含 `filesystem/ripgrep.ts`、
 `pathSafety.ts`、`NodeFsPort`、`SubprocessPort`、`bash/commandRunner` 等 650 个
 文件），`generatedFrom` 绑定基线工作树。
@@ -57,7 +57,8 @@ ripgrep 二进制。
 - files_with_matches（默认）：mtime 倒序、glob（`*.ts`、`*.{ts,js}`、逗号、
   空白/JS `\s` 分隔——含 BOM、不含 NEL、无匹配）、`type`（ts/js/py）、隐藏文
   件、ignored 目录、目录/尾斜杠路径、二进制目标、head_limit/offset；另覆盖亚
-  毫秒 `mtimeMs` 排序及其与 `head_limit` 的组合。
+  毫秒 `mtimeMs` 排序及其与 `head_limit` 的组合。默认 250 上限另用 251 个文件
+  和单文件 251 行钉住。
 - count：全树计数、glob 过滤、head_limit、二进制、无匹配。
 - 路径与错误：不存在路径、工作区外绝对路径、工作区内绝对路径、非法正则。
 

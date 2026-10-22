@@ -19,7 +19,10 @@
 //!   the baseline's schedule, then reaps. Without WNOWAIT the group is killed
 //!   at settle time instead.
 use super::super::{join, os_path};
-use crate::runtime::tools::{ToolError, ToolFuture, ToolRunContext};
+use crate::{
+    process_group::GroupGuard,
+    runtime::tools::{ToolError, ToolFuture, ToolRunContext},
+};
 use pilotdeck_protocol::JsString;
 use std::{
     io,
@@ -460,26 +463,6 @@ pub(crate) fn classify_spawn_error(error: &io::Error, shell: &CommandShell) -> S
 /// `process.env` as Node's spawn defaults read it.
 pub(crate) fn inherited_env() -> Vec<(JsString, JsString)> {
     process_env()
-}
-
-/// Kills the process group on Drop unless disarmed after the leader is reaped.
-struct GroupGuard(Option<rustix::process::Pid>);
-
-impl GroupGuard {
-    fn signal(&self, signal: rustix::process::Signal) {
-        if let Some(group) = self.0 {
-            let _ = rustix::process::kill_process_group(group, signal);
-        }
-    }
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for GroupGuard {
-    fn drop(&mut self) {
-        self.signal(rustix::process::Signal::KILL);
-    }
 }
 
 /// Resolves once the leader has exited, without reaping it. `Some(code)` is
