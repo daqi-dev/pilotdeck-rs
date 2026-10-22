@@ -620,6 +620,15 @@ impl EdgeClawFileStores {
         ))
     }
 }
+impl RepositoryContext {
+    /// Clock shared by this repository's stores. Staged import stores reuse it
+    /// (`sqlite.ts:1554-1563` materializes `FileMemoryStore`s whose manifest
+    /// timestamps come from the ambient `nowIso`), so a replayed import writes
+    /// the same `MEMORY.md` bytes as TS.
+    pub(crate) fn clock(&self) -> &FileMemoryClock {
+        &self.clock
+    }
+}
 fn read_workspace(db: &Path) -> Option<PathBuf> {
     // Match TS: open without initializing/migrating and swallow all read errors.
     // node:sqlite's `DatabaseSync` defaults to timeout 0 (measured: a locked
