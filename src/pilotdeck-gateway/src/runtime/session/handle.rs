@@ -107,12 +107,13 @@ impl LiveSessionHandle {
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
         // Set cancelled inside the lock; call session.abort() outside so that
         // a panic does not poison the progress mutex.
-        // Contract: callers must tolerate abort() being called after dispose()
-        // completes (Draining/Disposed state); those calls are benign no-ops.
+        // TS AgentHandle.ts:176-179 forwards every abort until Disposed,
+        // including during disposal and the stop_new -> dispose window.
+        // Disposal independently aborts an active turn; these are two requests,
+        // not an exactly-once dispatch for the lifetime of the handle.
         {
             let mut progress = self.0.progress.lock().unwrap();
-            let is_active = progress.state == HandleState::Active;
-            if !is_active {
+            if progress.state == HandleState::Disposed {
                 return Ok(());
             }
             progress.cancelled.get_or_insert_with(|| reason.clone());
@@ -283,32 +284,103 @@ mod tests {
         }
     }
 
-    /// dispose() with an active turn calls session.abort() exactly once (inside
-    /// the spawned drain task, outside the progress lock, before the drain
-    /// wait loop). A concurrent external abort after dispose() has set
-    /// state=Draining must not call session.abort()
-    /// a second time.
+    /// TS forwards external aborts during disposal as well as the drain's own
+    /// abort. The drain calls session.abort() outside the progress lock.
     #[tokio::test]
-    async fn abort_during_draining_sets_reason_without_session_abort() {
+    async fn abort_during_disposal_reaches_session_matches_ts() {
         let session = MemSession::new();
         let handle = LiveSessionHandle::new(session.clone(), None);
         // Start a turn so dispose() path marks active=true
-        let _activity = handle.begin_activity().unwrap();
-        // dispose() calls session.abort() once (inside lock, active=true)
+        let activity = handle.begin_activity().unwrap();
+        // dispose() schedules its abort in the spawned drain task.
         let dispose_fut = handle.dispose("dispose-reason".into());
         assert_eq!(handle.state(), HandleState::Draining);
-        // Concurrent external abort while Draining — must NOT call session.abort() again
         handle.abort(&"concurrent-abort".into()).unwrap();
-        drop(_activity);
+        assert_eq!(
+            activity.cancellation_reason(),
+            Some("dispose-reason".into())
+        );
+        drop(activity);
         dispose_fut.await.unwrap();
         assert_eq!(handle.state(), HandleState::Disposed);
-        // session.abort() was called exactly once by dispose(), never by the external abort
-        let aborts = session.aborted.lock().unwrap().clone();
+        // No ordering is imposed on the external call and the drain task.
+        let mut aborts = session.aborted.lock().unwrap().clone();
+        aborts.sort();
+        assert_eq!(aborts, vec!["concurrent-abort", "dispose-reason"]);
+    }
+
+    #[tokio::test]
+    async fn abort_between_stop_new_and_dispose_reaches_session() {
+        let session = MemSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let activity = handle.begin_activity().unwrap();
+        handle.stop_new();
+        assert_eq!(handle.state(), HandleState::Draining);
+        assert!(handle.begin_activity().is_err());
+        assert!(handle.0.progress.lock().unwrap().disposal.is_none());
+
+        handle.abort(&"stop-new-window".into()).unwrap();
         assert_eq!(
-            aborts,
-            vec!["dispose-reason"],
-            "session.abort() must be called exactly once by dispose(): {aborts:?}"
+            activity.cancellation_reason(),
+            Some("stop-new-window".into())
         );
+        assert_eq!(*session.aborted.lock().unwrap(), vec!["stop-new-window"]);
+
+        let disposal = handle.dispose("dispose".into());
+        drop(activity);
+        disposal.await.unwrap();
+        assert_eq!(
+            *session.aborted.lock().unwrap(),
+            vec!["stop-new-window", "dispose"]
+        );
+    }
+
+    /// Both operations race on four workers while the turn stays in flight.
+    /// Each must dispatch once: TS permits two calls, in either order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_abort_and_dispose_dispatch_both_requests_matches_ts() {
+        for iteration in 0..256 {
+            let session = MemSession::new();
+            let handle = LiveSessionHandle::new(session.clone(), None);
+            let activity = handle.begin_activity().unwrap();
+            let start = Arc::new(tokio::sync::Barrier::new(3));
+            let (dispose_started, cutoff) = tokio::sync::oneshot::channel();
+            let aborter = {
+                let handle = handle.clone();
+                let start = start.clone();
+                tokio::spawn(async move {
+                    start.wait().await;
+                    handle.abort(&"external".into()).unwrap();
+                })
+            };
+            let disposer = {
+                let handle = handle.clone();
+                let start = start.clone();
+                tokio::spawn(async move {
+                    start.wait().await;
+                    let disposal = handle.dispose("dispose".into());
+                    dispose_started.send(()).unwrap();
+                    disposal.await.unwrap();
+                })
+            };
+            start.wait().await;
+            aborter.await.unwrap();
+            cutoff.await.unwrap();
+            // Keep disposal from completing before both requests have arrived.
+            drop(activity);
+            tokio::time::timeout(std::time::Duration::from_secs(3), disposer)
+                .await
+                .expect("drain did not finish")
+                .unwrap();
+            let mut aborts = session.aborted.lock().unwrap().clone();
+            aborts.sort();
+            assert_eq!(
+                aborts,
+                vec!["dispose", "external"],
+                "iteration {iteration}: both requests must reach session.abort"
+            );
+            assert_eq!(handle.state(), HandleState::Disposed);
+        }
     }
 
     /// Calling abort() after Disposed is a no-op with no session call.
@@ -377,6 +449,33 @@ mod tests {
 
     /// Negative control: a panic inside the drain task still delivers a
     /// result via DisposeGuard, so wait_result never hangs.
+    #[tokio::test]
+    async fn dispose_guard_sends_result_on_abort_panic() {
+        struct AbortPanicSession;
+        impl LiveSession for AbortPanicSession {
+            fn snapshot(&self) -> JsValue {
+                parse_json("{}").unwrap()
+            }
+            fn abort(&self, _reason: &JsString) -> RuntimeResult {
+                panic!("simulated session.abort() panic");
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let handle = LiveSessionHandle::new(Arc::new(AbortPanicSession), None);
+        let activity = handle.begin_activity().unwrap();
+        let disposal = handle.dispose("boom".into());
+        drop(activity);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(3), disposal)
+            .await
+            .expect("abort panic must still deliver the disposal result")
+            .unwrap_err();
+        assert_eq!(error.message, "Agent session dispose task panicked.");
+        assert_eq!(handle.state(), HandleState::Disposed);
+    }
+
+    /// A panic from session.dispose() must also deliver the guarded result.
     #[tokio::test]
     async fn dispose_guard_sends_result_on_panic() {
         struct PanicSession;
