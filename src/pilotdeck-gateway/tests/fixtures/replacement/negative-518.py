@@ -4,17 +4,15 @@ All anchors are checked before writes; compile errors/timeouts are not kills.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[5]
-EVIDENCE = Path(sys.argv[1]).resolve()
-EVIDENCE.mkdir(parents=True, exist_ok=True)
 PRODUCT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
 ORACLE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/replacement/oracle.json'
-ORIGINAL = {p: p.read_bytes() for p in (PRODUCT, ORACLE)}
 PREFIX = 'runtime::replacement::tests::'
 PANICS = [f'panic_{path}_{mode}' for mode in ('sync', 'poll') for path in (
     'replace_abort', 'replace_close', 'replace_replace', 'rollback_close',
@@ -50,42 +48,101 @@ MUTATIONS = [
      '"timerCount": 0', '"timerCount": 1', 1,
      'replacement_fixture_regenerates_identically', ['replacement_fixture_regenerates_identically'], True),
 ]
-for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
-    assert ORIGINAL[path].count(before.encode()) == count, name
-summary = []
-for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
-    while True:
-        slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
-        if slots.returncode == 0:
-            break
-        if slots.returncode != 1:
-            raise RuntimeError(slots.stdout + slots.stderr)
-        time.sleep(5)
-    assert all(p.read_bytes() == data for p, data in ORIGINAL.items()), 'concurrent source edit'
-    mutated = ORIGINAL[path].replace(before.encode(), after.encode())
-    log = EVIDENCE / f'{name}.log'
-    print(f'RUN {name}', flush=True)
-    try:
-        path.write_bytes(mutated)
-        command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', PREFIX + pattern, '--']
-        if ignored:
-            command.append('--ignored')
-        with log.open('w') as output:
-            output.write(slots.stdout + slots.stderr)
-            output.flush()
-            proc = subprocess.run(command, cwd=ROOT / 'src', stdout=output,
-                                  stderr=subprocess.STDOUT, timeout=300)
-        output = log.read_text(errors='replace')
-        assert proc.returncode == 101 and 'could not compile' not in output, (name, str(log))
-        for test in tests:
-            assert f'test {PREFIX}{test} ... FAILED' in output, (name, test, str(log))
-        summary.append({'mutation': name, 'testsFailed': tests, 'exit': proc.returncode,
-                        'before': before, 'after': after, 'anchorCount': count,
-                        'originalSha256': hashlib.sha256(ORIGINAL[path]).hexdigest()})
-        print(f'RED {name}: {len(tests)} targeted failures', flush=True)
-    finally:
-        assert path.read_bytes() == mutated, f'concurrent edit: {path}'
-        path.write_bytes(ORIGINAL[path])
-        assert path.read_bytes() == ORIGINAL[path]
-        (EVIDENCE / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-print(f'CONFIRMED {len(summary)} compiled mutations; all original bytes restored', flush=True)
+MUTATIONS += [
+    ('remove_warning_boundary', PRODUCT,
+     'let _ = port_call(|| (self.0.warn)(message, error));',
+     '(self.0.warn)(message, error);', 1,
+     'warning_panic_', ['warning_panic_commit_cleanup', 'warning_panic_timeout_cleanup', 'warning_panic_getter_cleanup'], False),
+    ('omit_getter_panic_rearm', PRODUCT,
+     'Err(error) => {\n                    self.schedule_locked(&mut state, &key);',
+     'Err(error) => {', 1,
+     'panic_timeout_getter_rearms_without_poisoning_state',
+     ['panic_timeout_getter_rearms_without_poisoning_state'], False),
+]
+# A failed test alone is insufficient: dependency/host failures are INVALID.
+FAILURE_TEXT = {
+    'remove_panic_boundary': ['results differ from TS'],
+    'secondary_waiter_panic': ['replacement operation panicked: JoinError::Panic'],
+    'omit_success_clear_by_key': [f'stale_{kind}_success_clears_new_pending: results differ from TS'
+                                 for kind in ('finalize', 'commit', 'timeout')],
+    'omit_stale_replace_overwrite': ['stale_replace_success_overwrites_new_pending: results differ from TS'],
+    'omit_stale_replace_failure_clear': ['stale_replace_failure_clears_new_pending: results differ from TS'],
+    'abandoned_claim_not_submitting': ['abandoned_submit_claim: results differ from TS'],
+    'corrupt_regenerated_observation': ['replacement/oracle.json differs from the regenerated'],
+    'remove_warning_boundary': ['warning panic skipped commit cleanup', 'warning panic stranded timeout phase'],
+    'omit_getter_panic_rearm': ['getter panic retry did not finish rollback'],
+}
+
+
+def invalid_reason(name, tests, returncode, output):
+    if returncode != 101 or 'could not compile' in output:
+        return 'test did not compile and fail with exit 101'
+    missing = [f'test {PREFIX}{test} ... FAILED' for test in tests
+               if f'test {PREFIX}{test} ... FAILED' not in output]
+    missing += [text for text in FAILURE_TEXT[name] if text not in output]
+    return 'missing expected failure: ' + '; '.join(missing) if missing else None
+
+
+def main():
+    # Reject before any mutation, cargo invocation or evidence-directory creation.
+    if not os.environ.get('PDRS_BASELINE'):
+        print('INVALID: set PDRS_BASELINE before running #518 mutations', file=sys.stderr)
+        return 2
+    evidence = Path(sys.argv[1]).resolve()
+    evidence.mkdir(parents=True, exist_ok=True)
+    original = {p: p.read_bytes() for p in (PRODUCT, ORACLE)}
+    for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
+        assert original[path].count(before.encode()) == count, name
+        assert FAILURE_TEXT[name], name
+    summary = []
+    for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
+        while True:
+            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+            if slots.returncode == 0:
+                break
+            if slots.returncode != 1:
+                raise RuntimeError(slots.stdout + slots.stderr)
+            time.sleep(5)
+        assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
+        mutated = original[path].replace(before.encode(), after.encode())
+        log = evidence / f'{name}.log'
+        print(f'RUN {name}', flush=True)
+        record = {'mutation': name, 'status': 'INVALID', 'before': before, 'after': after,
+                  'anchorCount': count, 'expectedFailureText': FAILURE_TEXT[name],
+                  'originalSha256': hashlib.sha256(original[path]).hexdigest()}
+        try:
+            path.write_bytes(mutated)
+            command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', PREFIX + pattern, '--']
+            if ignored:
+                command.append('--ignored')
+            with log.open('w') as output:
+                output.write(slots.stdout + slots.stderr)
+                output.flush()
+                proc = subprocess.run(command, cwd=ROOT / 'src', stdout=output,
+                                      stderr=subprocess.STDOUT, timeout=300)
+            output = log.read_text(errors='replace')
+            reason = invalid_reason(name, tests, proc.returncode, output)
+            record['exit'] = proc.returncode
+            if reason:
+                record['reason'] = reason
+                print(f'INVALID {name}: {reason}; {log}', flush=True)
+            else:
+                record.update(status='CONFIRMED', testsFailed=tests)
+                print(f'RED {name}: {len(tests)} targeted failures with expected diagnostics', flush=True)
+        except subprocess.TimeoutExpired:
+            record['reason'] = 'test timed out'
+            print(f'INVALID {name}: test timed out; {log}', flush=True)
+        finally:
+            assert path.read_bytes() == mutated, f'concurrent edit: {path}'
+            path.write_bytes(original[path])
+            assert path.read_bytes() == original[path]
+            summary.append(record)
+            (evidence / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        if record['status'] != 'CONFIRMED':
+            return 1
+    print(f'CONFIRMED {len(summary)} compiled mutations; all original bytes restored', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

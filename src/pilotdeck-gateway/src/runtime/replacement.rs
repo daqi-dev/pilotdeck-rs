@@ -318,7 +318,7 @@ impl ReplacementCoordinator {
         let operation = port(|| finalize(input));
         let commit = running(async move {
             if let Err(error) = operation.await {
-                (this.0.warn)(
+                this.warn(
                     "[pilotdeck] failed to remove accepted replacement backup:",
                     &error,
                 );
@@ -441,6 +441,10 @@ impl ReplacementCoordinator {
             .abort_handle(),
         ));
     }
+    // Diagnostics must not unwind past transaction cleanup or retry scheduling.
+    fn warn(&self, message: &str, error: &ReplacementError) {
+        let _ = port_call(|| (self.0.warn)(message, error));
+    }
     fn rollback_expired(&self, key: JsString, transaction: JsString, timer_token: Arc<()>) {
         let Some(finalize) = self.0.storage.finalize_last_turn_replacement.clone() else {
             return;
@@ -463,7 +467,7 @@ impl ReplacementCoordinator {
                 Err(error) => {
                     self.schedule_locked(&mut state, &key);
                     drop(state);
-                    (self.0.warn)(
+                    self.warn(
                         "[pilotdeck] failed to roll back expired replacement transaction:",
                         &error,
                     );
@@ -493,7 +497,7 @@ impl ReplacementCoordinator {
                     this.0.state.lock().unwrap().pending.remove(&key);
                 }
                 Err(error) => {
-                    (this.0.warn)(
+                    this.warn(
                         "[pilotdeck] failed to roll back expired replacement transaction:",
                         &error,
                     );

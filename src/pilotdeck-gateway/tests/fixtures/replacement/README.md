@@ -25,6 +25,8 @@ iterator.return()，验证 return 不会打断 await；端口拒绝后才释放 
 后续 gateway 装配必须持有放弃调用方后的清理责任。
 Rust 另检查旧定时器、丢弃等待者后的任务排空、panic 后再 dispose、同步 getter 不污染
 协调器锁，以及意外任务 panic 不在等待者中触发二次 panic。
+警告回调 panic 也不得跳过 accepted commit 清理或 timeout 重试；getter panic 后
+不经 claim/release 仍须由恢复路径自己的定时器完成回滚。
 超时 hasActiveTurn getter 在 TS 的 try 外；Rust 将其 panic 告警并重新约时，避免锁污染。
 这是本轮 panic 清理要求下的防护，正常 getter 行为与既有金样不变。
 定时器使用受控单轮触发，Promise 用有界 microtask 排空；Rust 用 Tokio 暂停时钟回放。
@@ -68,12 +70,21 @@ python3 src/pilotdeck-gateway/tests/fixtures/replacement/negative.py \
   _tmp/20261023-a75-pr1-replacement/negative-final
 ```
 
-#518 的新增行为负控另用下列脚本。七组编译后变异分别移除 panic 边界、恢复等待者
+#518 的新增行为负控另用下列脚本。九组编译后变异分别移除 panic 边界、恢复等待者
 二次 panic、漏掉成功清理、漏掉旧 replace 覆盖/失败清理、破坏 claim 相位，以及篡改
-真实 submit 观察值。每个新增 panic 路径必须独立报告 FAILED，且 finally 恢复原始字节。
+真实 submit 观察值；另移除警告 panic 边界、漏掉 getter panic 重约时。
+每个目标测试必须独立报告 FAILED，同时命中该变异对应的特征失败文本；
+缺少基线、编译错误、无关 panic、超时或缺少特征文本均为 INVALID，退出非零，
+不得计为 CONFIRMED。finally 恢复原始字节；缺 PDRS_BASELINE 则在写文件前拒跑。
 不要与任何编辑或 cargo 运行并发；设置 PDRS_BASELINE 后执行：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/replacement/negative-518.py \
   _tmp/20261023-issue-518-replacement/negative
+```
+
+负控脚本的依赖误报回归（无需基线或 cargo）：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/replacement/test-negative-518.py
 ```

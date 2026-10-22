@@ -440,13 +440,14 @@ async fn panic_timeout_getter_rearms_without_poisoning_state() {
     tokio::time::advance(Duration::from_millis(10)).await;
     settle().await;
     *probe.panic.lock().unwrap() = None;
-    assert_eq!(
-        coordinator.claim_for_submit(&key, &"new".into()),
-        SubmitClaim::Claimed
-    );
-    coordinator.release_submit_claim(&key, &"new".into());
+    // No claim/release here: that would install a fresh timer and mask a
+    // missing rearm in the getter-panic continuation itself.
     tokio::time::advance(Duration::from_millis(10)).await;
     settle().await;
+    assert!(
+        coordinator.0.state.lock().unwrap().pending.is_empty(),
+        "getter panic retry did not finish rollback"
+    );
     coordinator.reserve_transcript_write(&key, "edit").unwrap();
     coordinator.release_transcript_write(&key);
     assert!(
@@ -469,4 +470,86 @@ async fn unexpected_task_panic_returns_error_to_waiter() {
     .await
     .unwrap_err();
     assert!(error.message.contains("unexpected task panic"));
+}
+
+// Rust warning callbacks may unwind; diagnostics must not strand a transaction.
+async fn warning_panic_does_not_skip_cleanup(kind: &str) {
+    let probe = Arc::new(Probe::default());
+    let mut coordinator = probe.coordinator("all");
+    Arc::get_mut(&mut coordinator.0).unwrap().warn = Arc::new(|_, _| panic!("warning sink failed"));
+    let key = JsString::from("s");
+    coordinator
+        .replace_last_turn(js(json!({"sessionKey":"s", "replacementTurnId":"new"})))
+        .await
+        .unwrap();
+    if kind == "getter" {
+        *probe.panic.lock().unwrap() = Some(("hasActive".into(), true));
+    } else {
+        *probe.failure.lock().unwrap() = Some("finalize".into());
+    }
+    if kind == "commit" {
+        assert_eq!(
+            coordinator.claim_for_submit(&key, &"new".into()),
+            SubmitClaim::Claimed
+        );
+        coordinator.commit_accepted_input(&key, &"new".into()).await;
+        assert!(
+            coordinator.0.state.lock().unwrap().pending.is_empty(),
+            "warning panic skipped commit cleanup"
+        );
+    } else {
+        if kind == "getter" {
+            // Invoke the fired continuation directly so an escaping warning
+            // panic fails this test instead of disappearing in a detached timer.
+            let token = {
+                let state = coordinator.0.state.lock().unwrap();
+                let timer = state.pending[&key].timer.as_ref().unwrap();
+                timer.1.abort();
+                timer.0.clone()
+            };
+            coordinator.rollback_expired(key.clone(), "tx-s".into(), token);
+        } else {
+            tokio::time::advance(Duration::from_millis(10)).await;
+        }
+        settle().await;
+        {
+            let state = coordinator.0.state.lock().unwrap();
+            let pending = &state.pending[&key];
+            assert!(
+                pending.phase == Phase::Prepared,
+                "warning panic stranded timeout phase"
+            );
+            assert!(
+                pending.timer.is_some(),
+                "warning panic skipped timeout rearm"
+            );
+        }
+        *probe.failure.lock().unwrap() = None;
+        *probe.panic.lock().unwrap() = None;
+        tokio::time::advance(Duration::from_millis(10)).await;
+        settle().await;
+        assert!(
+            coordinator.0.state.lock().unwrap().pending.is_empty(),
+            "warning panic retry did not finish rollback"
+        );
+    }
+    coordinator.reserve_transcript_write(&key, "edit").unwrap();
+    coordinator.release_transcript_write(&key);
+    coordinator
+        .replace_last_turn(js(json!({"sessionKey":"s", "replacementTurnId":"again"})))
+        .await
+        .unwrap();
+    coordinator.dispose();
+}
+#[tokio::test(start_paused = true)]
+async fn warning_panic_commit_cleanup() {
+    warning_panic_does_not_skip_cleanup("commit").await;
+}
+#[tokio::test(start_paused = true)]
+async fn warning_panic_timeout_cleanup() {
+    warning_panic_does_not_skip_cleanup("timeout").await;
+}
+#[tokio::test(start_paused = true)]
+async fn warning_panic_getter_cleanup() {
+    warning_panic_does_not_skip_cleanup("getter").await;
 }
