@@ -103,156 +103,214 @@ async function until(what: string, check: () => boolean, ms = 8000): Promise<voi
   }
 }
 
+// A replay that fails before a sequence's `touch go` / `dispose` step must not
+// leave its detached shells behind: the provider unrefs them, so dropping the
+// runtime does not stop them and the gate file that ends `until [ -f go ]`
+// never appears. Track every runtime and process group and clean up in the
+// `finally` below, before the scratch tree (whose `go` files they still see) is
+// deleted.
+const trackedGroups = new Set<number>();
+let active: { runtime: any; subagents: any; disposable: boolean; disposed: boolean } | undefined;
+async function killTrackedGroups(): Promise<void> {
+  for (const pid of trackedGroups) {
+    if (!groupExists(pid)) continue;
+    try { process.kill(-pid, 'SIGKILL'); } catch (error: any) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  }
+  const deadline = Date.now() + 5000;
+  for (const pid of trackedGroups) {
+    while (groupExists(pid) && Date.now() < deadline) await sleep(10);
+    assert.ok(!groupExists(pid), `leftover process group ${pid} (orphaned detached shell)`);
+  }
+}
+async function stopActiveSequence(): Promise<void> {
+  if (active) {
+    if (active.disposable && !active.disposed) {
+      try {
+        await active.runtime.dispose();
+      } catch (error) {
+        // The group KILL below is the fallback; report so the failure stays visible.
+        console.error(`dispose failed during cleanup: ${String(error)}`);
+      }
+    }
+    active.subagents.shutdown();
+  }
+  await killTrackedGroups();
+}
+
 // The detached-shell provider unrefs its children (T11); a live gateway keeps
 // the event loop alive, so does this generator. Without it `stop` on a task
 // that ignored SIGTERM ends with an empty loop before the exit event lands.
 const keepAlive = setInterval(() => undefined, 60_000);
 const recorded: any[] = [];
-for (const sequence of sequences) {
-  const root = join(scratch, sequence.name);
-  await mkdir(root);
-  await writeFile(join(root, 'file'), 'not a directory\n');
-  await chmod(join(root, 'file'), 0o644);
-  const completions: any[] = [];
-  const runtime = new BackgroundTaskRuntime({
-    now: () => new Date(fixed),
-    onCompletion: (event: any) => completions.push(clean(event)),
-    ...(sequence.options ?? {}),
-  });
-  const subagents = new BackgroundSubagentRuntime();
-  const registry = Object.create(ProjectRuntimeRegistry.prototype);
-  registry.resolve = () => ({ backgroundSubagents: subagents, executionWorld: { backgroundTasks: runtime } });
-  const tools = Object.fromEntries((Object.values(createTaskTools({ runtime })) as any[]).map((tool) => [tool.name, tool]));
-  const taskIds: string[] = [];
-  const subIds: string[] = [];
-  const pids = new Set<number>();
-  const releases: Array<() => void> = [];
-  const placeholders = (value: any): any => {
-    if (typeof value === 'string') {
-      let out = value.split(root).join('<root>');
-      taskIds.forEach((id, index) => { out = out.split(id).join(`<task:${index}>`); });
-      subIds.forEach((id, index) => { out = out.split(id).join(`<sub:${index}>`); });
-      return out.replace(/waitedMs=\d+/g, 'waitedMs=<ms>').replace(/pid=\d+/g, 'pid=<pid>');
-    }
-    if (Array.isArray(value)) return value.map(placeholders);
-    if (value && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
-        key === 'waitedMs' ? '<ms>' : key === 'pid' && typeof item === 'number' ? '<pid>' : placeholders(item)]));
-    }
-    return value;
-  };
-  const substitute = (value: any): any => {
-    if (typeof value === 'string') {
-      const task = /^<task:(\d+)>$/.exec(value);
-      if (task) return taskIds[Number(task[1])];
-      const sub = /^<sub:(\d+)>$/.exec(value);
-      if (sub) return subIds[Number(sub[1])];
-      return value.split('<root>').join(root);
-    }
-    if (Array.isArray(value)) return value.map(substitute);
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, substitute(item)]));
-    return value;
-  };
-  const steps: any[] = [];
-  for (const step of sequence.steps) {
-    const entry: any = { ...step };
-    if (step.op === 'tool') {
-      const controller = new AbortController();
-      if (step.abort === 'pre') controller.abort();
-      const timer = typeof step.abort === 'number' ? setTimeout(() => controller.abort(), step.abort) : undefined;
-      const context = {
-        cwd: substitute(step.cwd ?? '<root>'),
-        env: substitute({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', HOME: '<root>', ...(step.env ?? {}) }),
-        sessionId: step.session ?? 's1',
-        ...(step.abort !== undefined ? { abortSignal: controller.signal } : {}),
-      };
-      try {
-        const output = await tools[step.tool].execute(substitute(step.input), context);
-        if (step.tool === 'task_create') {
-          taskIds.push(output.data.taskId);
-          if (typeof output.data.pid === 'number') pids.add(output.data.pid);
+let failure: unknown;
+try {
+  for (const sequence of sequences) {
+    const root = join(scratch, sequence.name);
+    await mkdir(root);
+    await writeFile(join(root, 'file'), 'not a directory\n');
+    await chmod(join(root, 'file'), 0o644);
+    const completions: any[] = [];
+    const runtime = new BackgroundTaskRuntime({
+      now: () => new Date(fixed),
+      onCompletion: (event: any) => completions.push(clean(event)),
+      ...(sequence.options ?? {}),
+    });
+    const subagents = new BackgroundSubagentRuntime();
+    // `async-spawn-error` deliberately never disposes (the baseline hangs); it
+    // also has no child, so skip only its dispose and still clean any groups.
+    active = { runtime, subagents, disposable: sequence.noDispose !== true, disposed: false };
+    const registry = Object.create(ProjectRuntimeRegistry.prototype);
+    registry.resolve = () => ({ backgroundSubagents: subagents, executionWorld: { backgroundTasks: runtime } });
+    const tools = Object.fromEntries((Object.values(createTaskTools({ runtime })) as any[]).map((tool) => [tool.name, tool]));
+    const taskIds: string[] = [];
+    const subIds: string[] = [];
+    const pids = new Set<number>();
+    const releases: Array<() => void> = [];
+    const placeholders = (value: any): any => {
+      if (typeof value === 'string') {
+        let out = value.split(root).join('<root>');
+        taskIds.forEach((id, index) => { out = out.split(id).join(`<task:${index}>`); });
+        subIds.forEach((id, index) => { out = out.split(id).join(`<sub:${index}>`); });
+        return out.replace(/waitedMs=\d+/g, 'waitedMs=<ms>').replace(/pid=\d+/g, 'pid=<pid>');
+      }
+      if (Array.isArray(value)) return value.map(placeholders);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+          key === 'waitedMs' ? '<ms>' : key === 'pid' && typeof item === 'number' ? '<pid>' : placeholders(item)]));
+      }
+      return value;
+    };
+    const substitute = (value: any): any => {
+      if (typeof value === 'string') {
+        const task = /^<task:(\d+)>$/.exec(value);
+        if (task) return taskIds[Number(task[1])];
+        const sub = /^<sub:(\d+)>$/.exec(value);
+        if (sub) return subIds[Number(sub[1])];
+        return value.split('<root>').join(root);
+      }
+      if (Array.isArray(value)) return value.map(substitute);
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, substitute(item)]));
+      return value;
+    };
+    const steps: any[] = [];
+    for (const step of sequence.steps) {
+      const entry: any = { ...step };
+      if (step.op === 'tool') {
+        const controller = new AbortController();
+        if (step.abort === 'pre') controller.abort();
+        const timer = typeof step.abort === 'number' ? setTimeout(() => controller.abort(), step.abort) : undefined;
+        const context = {
+          cwd: substitute(step.cwd ?? '<root>'),
+          env: substitute({ PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', HOME: '<root>', ...(step.env ?? {}) }),
+          sessionId: step.session ?? 's1',
+          ...(step.abort !== undefined ? { abortSignal: controller.signal } : {}),
+        };
+        try {
+          const output = await tools[step.tool].execute(substitute(step.input), context);
+          if (step.tool === 'task_create') {
+            taskIds.push(output.data.taskId);
+            if (typeof output.data.pid === 'number') { pids.add(output.data.pid); trackedGroups.add(output.data.pid); }
+          }
+          entry.result = placeholders(clean({ content: output.content, data: output.data }));
+        } catch (error: any) {
+          entry.result = { error: { code: error?.name === 'PilotDeckToolRuntimeError' ? error.code : 'tool_execution_failed', message: placeholders(error.message) } };
         }
-        entry.result = placeholders(clean({ content: output.content, data: output.data }));
-      } catch (error: any) {
-        entry.result = { error: { code: error?.name === 'PilotDeckToolRuntimeError' ? error.code : 'tool_execution_failed', message: placeholders(error.message) } };
+        if (timer) clearTimeout(timer);
+      } else if (step.op === 'validate') {
+        entry.result = clean(await tools[step.tool].validateInput(step.input));
+      } else if (step.op === 'awaitBytes') {
+        await until(`${sequence.name} bytes`, () => runtime.getOutput(taskIds[step.task], 0).totalBytes >= step.bytes);
+        assert.equal(runtime.getOutput(taskIds[step.task], 0).totalBytes, step.bytes, `${sequence.name}: exact byte count`);
+      } else if (step.op === 'awaitStatus') {
+        await until(`${sequence.name} status`, () => runtime.get(taskIds[step.task])?.status === step.status);
+      } else if (step.op === 'touch') {
+        await writeFile(join(root, step.path), '');
+      } else if (step.op === 'groupGone') {
+        const pid = runtime.get(taskIds[step.task])?.pid;
+        assert.ok(typeof pid === 'number', `${sequence.name}: task ${step.task} has no pid`);
+        await until(`${sequence.name} group ${pid}`, () => !groupExists(pid));
+        entry.result = true;
+      } else if (step.op === 'dispose') {
+        await runtime.dispose();
+        subagents.shutdown();
+        if (active) active.disposed = true;
+        entry.result = true;
+      } else if (step.op === 'sdkStop' || step.op === 'sdkList') {
+        const input: any = { sessionKey: step.sessionKey, ...('task' in step ? { taskId: substitute(step.task) } : {}) };
+        try {
+          const result = step.op === 'sdkStop'
+            ? await registry.stopBackgroundTaskForSdk(input)
+            : await registry.backgroundTasksForSdk(input);
+          entry.result = placeholders(clean(result));
+        } catch (error: any) {
+          entry.result = placeholders(errorOf(error));
+        }
+      } else if (step.op === 'subStart') {
+        const index = subIds.length;
+        const task = subagents.start({
+          kind: step.kind,
+          sessionId: step.sessionId,
+          parentTurnId: `turn-${index}`,
+          subagentId: `sa-${index}`,
+          subagentType: 'general',
+          ...(step.observedSubagentId ? { observedSubagentId: step.observedSubagentId } : {}),
+          run: (signal: AbortSignal) => new Promise<void>((done, fail) => {
+            if (step.behavior === 'fail') return fail(new Error('boom'));
+            if (step.behavior === 'release') { releases[index] = done; return; }
+            if (step.behavior === 'ignore-abort') { setTimeout(done, 50); return; }
+            signal.addEventListener('abort', () => fail(new Error('stopped')), { once: true });
+          }),
+        });
+        subIds.push(task.taskId);
+        entry.result = placeholders(clean({ ...task, startedAt: undefined }));
+      } else if (step.op === 'subRelease') {
+        releases[step.sub]!();
+      } else if (step.op === 'subTick') {
+        await sleep(20);
+        entry.result = placeholders(clean(subagents.list().map((task: any) => ({
+          taskId: task.taskId, kind: task.kind, status: task.status, error: task.error, ended: task.endedAt !== undefined,
+        }))));
+      } else {
+        throw new Error(`unknown step ${JSON.stringify(step)}`);
       }
-      if (timer) clearTimeout(timer);
-    } else if (step.op === 'validate') {
-      entry.result = clean(await tools[step.tool].validateInput(step.input));
-    } else if (step.op === 'awaitBytes') {
-      await until(`${sequence.name} bytes`, () => runtime.getOutput(taskIds[step.task], 0).totalBytes >= step.bytes);
-      assert.equal(runtime.getOutput(taskIds[step.task], 0).totalBytes, step.bytes, `${sequence.name}: exact byte count`);
-    } else if (step.op === 'awaitStatus') {
-      await until(`${sequence.name} status`, () => runtime.get(taskIds[step.task])?.status === step.status);
-    } else if (step.op === 'touch') {
-      await writeFile(join(root, step.path), '');
-    } else if (step.op === 'groupGone') {
-      const pid = runtime.get(taskIds[step.task])?.pid;
-      assert.ok(typeof pid === 'number', `${sequence.name}: task ${step.task} has no pid`);
-      await until(`${sequence.name} group ${pid}`, () => !groupExists(pid));
-      entry.result = true;
-    } else if (step.op === 'dispose') {
-      await runtime.dispose();
-      subagents.shutdown();
-      entry.result = true;
-    } else if (step.op === 'sdkStop' || step.op === 'sdkList') {
-      const input: any = { sessionKey: step.sessionKey, ...('task' in step ? { taskId: substitute(step.task) } : {}) };
-      try {
-        const result = step.op === 'sdkStop'
-          ? await registry.stopBackgroundTaskForSdk(input)
-          : await registry.backgroundTasksForSdk(input);
-        entry.result = placeholders(clean(result));
-      } catch (error: any) {
-        entry.result = placeholders(errorOf(error));
-      }
-    } else if (step.op === 'subStart') {
-      const index = subIds.length;
-      const task = subagents.start({
-        kind: step.kind,
-        sessionId: step.sessionId,
-        parentTurnId: `turn-${index}`,
-        subagentId: `sa-${index}`,
-        subagentType: 'general',
-        ...(step.observedSubagentId ? { observedSubagentId: step.observedSubagentId } : {}),
-        run: (signal: AbortSignal) => new Promise<void>((done, fail) => {
-          if (step.behavior === 'fail') return fail(new Error('boom'));
-          if (step.behavior === 'release') { releases[index] = done; return; }
-          if (step.behavior === 'ignore-abort') { setTimeout(done, 50); return; }
-          signal.addEventListener('abort', () => fail(new Error('stopped')), { once: true });
-        }),
-      });
-      subIds.push(task.taskId);
-      entry.result = placeholders(clean({ ...task, startedAt: undefined }));
-    } else if (step.op === 'subRelease') {
-      releases[step.sub]!();
-    } else if (step.op === 'subTick') {
-      await sleep(20);
-      entry.result = placeholders(clean(subagents.list().map((task: any) => ({
-        taskId: task.taskId, kind: task.kind, status: task.status, error: task.error, ended: task.endedAt !== undefined,
-      }))));
-    } else {
-      throw new Error(`unknown step ${JSON.stringify(step)}`);
+      steps.push(entry);
     }
-    steps.push(entry);
+    if (!sequence.noDispose) {
+      for (const pid of pids) await until(`${sequence.name} leftover group ${pid}`, () => !groupExists(pid));
+    }
+    recorded.push({
+      name: sequence.name,
+      ...(sequence.options ? { options: sequence.options } : {}),
+      ...(sequence.noDispose ? { noDispose: true } : {}),
+      ...(sequence.darwinOnly ? { darwinOnly: sequence.darwinOnly } : {}),
+      tasks: taskIds.length,
+      steps,
+      // Tasks released together settle in a racy order (also in TS); compare
+      // completion events as a set ordered by task placeholder.
+      completions: placeholders(completions).sort((a: any, b: any) =>
+        Number(/\d+/.exec(a.taskId)![0]) - Number(/\d+/.exec(b.taskId)![0])),
+    });
+    active = undefined;
+    // Groups are gone (or this sequence deliberately has no child); forget the
+    // PIDs so a later cleanup can never signal a reused one.
+    trackedGroups.clear();
   }
-  if (!sequence.noDispose) {
-    for (const pid of pids) await until(`${sequence.name} leftover group ${pid}`, () => !groupExists(pid));
+} catch (error) {
+  failure = error;
+} finally {
+  clearInterval(keepAlive);
+  try {
+    await stopActiveSequence();
+  } catch (cleanupError) {
+    if (failure === undefined) throw cleanupError;
+    throw new AggregateError([failure, cleanupError], 'replay failed and cleanup found leftovers');
+  } finally {
+    await removeScratch();
   }
-  recorded.push({
-    name: sequence.name,
-    ...(sequence.options ? { options: sequence.options } : {}),
-    ...(sequence.noDispose ? { noDispose: true } : {}),
-    ...(sequence.darwinOnly ? { darwinOnly: sequence.darwinOnly } : {}),
-    tasks: taskIds.length,
-    steps,
-    // Tasks released together settle in a racy order (also in TS); compare
-    // completion events as a set ordered by task placeholder.
-    completions: placeholders(completions).sort((a: any, b: any) =>
-      Number(/\d+/.exec(a.taskId)![0]) - Number(/\d+/.exec(b.taskId)![0])),
-  });
 }
-clearInterval(keepAlive);
-await removeScratch();
+if (failure !== undefined) throw failure;
 
 const oracle = {
   sourceCommit: commit,
