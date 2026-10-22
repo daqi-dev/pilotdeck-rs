@@ -1,6 +1,6 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
-> **2026-10-23 重登记（PR #531，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A6.6 EdgeClaw export / import」一节，登记 A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001（import 换目录失败一律恢复备份，向安全偏离），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+> **2026-10-23 重登记（PR #531，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A6.6 EdgeClaw export / import」一节，登记 A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001（import 换目录失败后一律恢复备份，向安全偏离；含并发与单线程 copy 回退失败两种情形，按 codex r2 实测更正范围），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-23 重登记（#554 PR 修复轮 3–4）**：accepted-diffs.md 末尾只追加 A7-HOST-POST-CANCEL-EXIT-001-R1（收敛说明与判据更正），首版保留；不改判分语义；只重登记 accepted-diffs.md 哈希。
 
@@ -103,7 +103,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-2c1716b63c746be46666a9b3b8d3ca78cb2ccbc621c86e62eaddc291a03c9453  accepted-diffs.md
+6bf0c6b3f7187a8e23761643dad8ea7b421898bdd46121ef9f253b7378e3dbeb  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
