@@ -24,11 +24,6 @@ pub(crate) fn js_lower(value: &str) -> String {
     value.to_lowercase()
 }
 
-/// `value.length` in UTF-16 units.
-pub(crate) fn js_length(value: &str) -> usize {
-    value.encode_utf16().count()
-}
-
 /// `{ type: "ask", reason, request }` shared by both tools.
 pub(crate) fn ask_permission(
     tool: &str,

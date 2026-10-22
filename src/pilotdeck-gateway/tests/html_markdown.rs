@@ -5,10 +5,215 @@ mod scratch;
 
 use pilotdeck_gateway::runtime::tools::builtin::web::{
     HtmlToMarkdown, UrlFetcher,
-    html_markdown::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, Turndown},
+    fetcher::{MAX_MARKDOWN_LENGTH, truncate_markdown},
+    html_markdown::{DOM_LIMIT_ERROR, MAX_DOM_DEPTH, STRING_LIMIT_ERROR, Turndown},
 };
 
 const ORACLE: &str = include_str!("fixtures/html-markdown/oracle.json");
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn sha256_utf16(text: &str) -> String {
+    sha256_hex(
+        &text
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn sha256_units(units: &[u16]) -> String {
+    sha256_hex(
+        &units
+            .iter()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[test]
+fn bounded_prefix_and_truncation_match_real_ts() {
+    let raw = include_str!("fixtures/html-markdown/truncate-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let cases = oracle["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 18);
+    let mut failures = Vec::new();
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let mut html = String::new();
+        for part in case["parts"].as_array().unwrap() {
+            let text = part["text"].as_str().unwrap();
+            let repeat = part["repeat"].as_u64().unwrap() as usize;
+            html.push_str(&text.repeat(repeat));
+        }
+        if sha256_hex(html.as_bytes()) != case["htmlSha256"].as_str().unwrap() {
+            failures.push(format!("{name}: expanded HTML hash"));
+            continue;
+        }
+        let output = Turndown
+            .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+            .unwrap();
+        let full_units = case["full"]["utf16Length"].as_u64().unwrap() as usize;
+        if output.utf16_length != full_units {
+            failures.push(format!(
+                "{name}: full length {} != {full_units}",
+                output.utf16_length
+            ));
+            continue;
+        }
+        if output.complete && sha256_utf16(&output.text) != case["full"]["sha256"].as_str().unwrap()
+        {
+            failures.push(format!("{name}: complete Markdown"));
+        }
+        if output.complete != (full_units <= MAX_MARKDOWN_LENGTH + 1) {
+            failures.push(format!("{name}: completeness {full_units}"));
+        }
+        // The bounded prefix must match the real TS slice of the full text
+        // (one extra unit is allowed when the cut splits a surrogate pair).
+        let prefix_units = case["prefix"]["utf16Length"].as_u64().unwrap() as usize;
+        let actual_units: Vec<u16> = output.text.encode_utf16().collect();
+        let actual_len = actual_units.len();
+        let expected_sha = case["prefix"]["sha256"].as_str().unwrap();
+        let actual_sha = if actual_len >= prefix_units {
+            sha256_units(&actual_units[..prefix_units])
+        } else {
+            String::from("<short>")
+        };
+        if actual_len < prefix_units
+            || actual_len > prefix_units.saturating_add(1)
+            || actual_sha != expected_sha
+        {
+            failures.push(format!(
+                "{name}: bounded prefix mismatch: got {actual_len} units / sha {actual_sha}, \
+                 want {prefix_units} units / sha {expected_sha}"
+            ));
+        }
+        let truncated = truncate_markdown(&output.text);
+        for (index, result) in case["tool"].as_array().unwrap().iter().enumerate() {
+            if result["rawLength"].as_u64().unwrap() as usize != full_units {
+                failures.push(format!("{name}: tool[{index}] rawLength"));
+            }
+            if result["truncated"].as_bool().unwrap() != (full_units > MAX_MARKDOWN_LENGTH) {
+                failures.push(format!("{name}: tool[{index}] truncated"));
+            }
+            if result["returnedLength"].as_u64().unwrap() as usize != truncated.units().len() {
+                failures.push(format!("{name}: tool[{index}] returnedLength"));
+            }
+            if result["textSha256"].as_str().unwrap() != sha256_units(truncated.units()) {
+                failures.push(format!("{name}: tool[{index}] text"));
+            }
+            if index == 1 && result["fromCache"].as_bool() != Some(true) {
+                failures.push(format!("{name}: tool[1] cache hit"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Reproduce real TS content at cut points far below the production limit.
+/// Each `k` asks the bounded path for exactly `k` units; the generated
+/// expectations are `content.slice(0, k)` of the real web_fetch output.
+#[test]
+fn bounded_code_windows_match_real_ts() {
+    let raw = include_str!("fixtures/html-markdown/truncate-oracle.json");
+    baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let windows = oracle["windows"].as_array().unwrap();
+    assert_eq!(windows.len(), 9);
+    let mut failures = Vec::new();
+    let mut points = 0usize;
+    for case in windows {
+        let name = case["name"].as_str().unwrap();
+        let mut html = String::new();
+        for part in case["parts"].as_array().unwrap() {
+            let text = part["text"].as_str().unwrap();
+            let repeat = part["repeat"].as_u64().unwrap() as usize;
+            html.push_str(&text.repeat(repeat));
+        }
+        if sha256_hex(html.as_bytes()) != case["htmlSha256"].as_str().unwrap() {
+            failures.push(format!("{name}: expanded HTML hash"));
+            continue;
+        }
+        let full_units = case["full"]["utf16Length"].as_u64().unwrap() as usize;
+        for expected in case["expected"].as_array().unwrap() {
+            points += 1;
+            let k = expected["k"].as_u64().unwrap() as usize;
+            let output = Turndown.convert_bounded(&html, k).unwrap();
+            if output.utf16_length != full_units {
+                failures.push(format!(
+                    "{name}@k{k}: full length {} != {full_units}",
+                    output.utf16_length
+                ));
+                continue;
+            }
+            if output.complete {
+                failures.push(format!("{name}@k{k}: unexpectedly complete"));
+            }
+            let want_units = expected["utf16Length"].as_u64().unwrap() as usize;
+            let expected_sha = expected["sha256"].as_str().unwrap();
+            let got: Vec<u16> = output.text.encode_utf16().collect();
+            let actual_sha = if got.len() >= want_units {
+                sha256_units(&got[..want_units])
+            } else {
+                String::from("<short>")
+            };
+            if got.len() < want_units
+                || got.len() > want_units.saturating_add(1)
+                || actual_sha != expected_sha
+            {
+                failures.push(format!(
+                    "{name}@k{k}: prefix mismatch: got {} units / sha {actual_sha}, \
+                     want {want_units} units / sha {expected_sha}",
+                    got.len()
+                ));
+            }
+        }
+    }
+    assert_eq!(points, 22);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Grok r4 P1: a trimmed inline-code prefix ending on a CR must be grown so
+/// its folded length covers the requested take; otherwise the bounded walk
+/// runs past the materialized prefix and skips the unmaterialized tail. The
+/// full Rust conversion matches the real TS baseline for this input (Grok
+/// verified it), so matching the full output at every k is the same promise
+/// the golden windows check.
+#[test]
+fn bounded_code_matches_full_past_a_short_trimmed_crlf_prefix() {
+    let mut html = String::from("<pre>x<code>&#10;`&#13;\r```");
+    for _ in 0..8 {
+        html.push_str("&#13;&#10;");
+    }
+    html.push_str("&#13;\n```</code></pre>");
+    let full = Turndown.convert(&html).unwrap();
+    let full_units = full.encode_utf16().count();
+    assert_eq!(full_units, 25);
+    let want: Vec<u16> = full.encode_utf16().collect();
+    let mut failures = Vec::new();
+    for k in 0..=full_units {
+        let out = Turndown.convert_bounded(&html, k).unwrap();
+        if out.utf16_length != full_units {
+            failures.push(format!("k={k}: full length {}", out.utf16_length));
+            continue;
+        }
+        let got: Vec<u16> = out.text.encode_utf16().collect();
+        let take = k.min(full_units);
+        if got.len() < take || got.len() > take + 1 || !want.starts_with(&got) {
+            failures.push(format!(
+                "k={k}: {:?} is not a prefix of {:?}",
+                out.text, full
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
 
 #[test]
 fn default_turndown_matches_real_ts_in_order() {
@@ -101,6 +306,11 @@ fn regenerates_twice_identically() {
             include_str!("fixtures/html-markdown/large-oracle.json"),
             "large-oracle.json",
         ),
+        (
+            "generate-truncate.mts",
+            include_str!("fixtures/html-markdown/truncate-oracle.json"),
+            "truncate-oracle.json",
+        ),
     ] {
         for _ in 0..2 {
             let scratch = scratch::Scratch::new("html-markdown");
@@ -183,32 +393,37 @@ fn depth_budget_rejects_deep_non_list_shapes() {
 }
 
 #[test]
-fn bounded_html_conversion_performance() {
-    let started = std::time::Instant::now();
+fn bounded_html_conversion_emits_only_the_truncation_prefix() {
     let depth = (MAX_DOM_DEPTH - 3) / 2;
     // A large leaf with many line breaks makes the old ancestor replace scan
-    // and recopy the expanded indentation at every level (not just small x).
+    // recopy the expanded indentation at every level. Assert the output work
+    // instead of wall-clock time: the logical length is tens of MiB while the
+    // materialized text stops at the truncation prefix. That contract is
+    // machine-speed independent (a slow CI runner cannot turn it red).
     let payload = format!("{}x", "<br>".repeat(90_000));
     for (open, close) in [
         ("<ul><li>", "</li></ul>"),
         ("<ol start=9007199254740991><li>", "</li></ol>"),
     ] {
         let html = format!("{}{payload}{}", open.repeat(depth), close.repeat(depth));
-        let output = Turndown.convert(&html).unwrap();
-        assert!(output.len() > 40_000_000);
+        let output = Turndown
+            .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+            .unwrap();
+        assert!(output.utf16_length > 40_000_000);
+        assert!(!output.complete);
+        assert!(
+            output.text.encode_utf16().count() <= MAX_MARKDOWN_LENGTH + 1,
+            "materialized {} units",
+            output.text.encode_utf16().count()
+        );
     }
     let flat = format!("<div>{}</div>", "x".repeat(10 * 1024 * 1024 - 11));
-    assert_eq!(
-        Turndown.convert(&flat).unwrap().len(),
-        10 * 1024 * 1024 - 11
-    );
-    let budget = if cfg!(debug_assertions) { 20.0 } else { 1.0 };
-    assert!(
-        started.elapsed().as_secs_f64() < budget,
-        "conversion took {:?}, budget {budget}s",
-        started.elapsed()
-    );
-    eprintln!("bounded list + 10 MiB flat HTML: {:?}", started.elapsed());
+    let output = Turndown
+        .convert_bounded(&flat, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    assert_eq!(output.utf16_length, 10 * 1024 * 1024 - 11);
+    assert!(!output.complete);
+    assert_eq!(output.text.encode_utf16().count(), MAX_MARKDOWN_LENGTH + 1);
 }
 
 // Recipes keep multi-MiB HTML and Markdown out of the repository. The generator
@@ -367,6 +582,105 @@ fn nested_headings_match_real_ts_string_limit() {
             );
         }
     }
+}
+
+#[test]
+fn bounded_prefix_covers_a_surrogate_pair_at_the_truncation_cut() {
+    let suffix = "\n\n[Content truncated due to length...]";
+    // Pair starts at unit 100000: the 100000-unit cut keeps only the a's, but
+    // the prefix still has to carry one extra unit so the suffix is emitted.
+    let html = format!("<p>{}😀tail</p>", "a".repeat(MAX_MARKDOWN_LENGTH));
+    let output = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    assert_eq!(output.utf16_length, MAX_MARKDOWN_LENGTH + 6);
+    let text = truncate_markdown(&output.text);
+    assert_eq!(text.units().len(), MAX_MARKDOWN_LENGTH + suffix.len());
+    assert_eq!(text.units()[MAX_MARKDOWN_LENGTH - 1], b'a' as u16);
+
+    // Pair starts at unit 99999: the cut splits it, exactly like slice.
+    let html = format!("<p>{}😀tail</p>", "a".repeat(MAX_MARKDOWN_LENGTH - 1));
+    let output = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    assert_eq!(output.utf16_length, MAX_MARKDOWN_LENGTH + 5);
+    let text = truncate_markdown(&output.text);
+    assert_eq!(text.units().len(), MAX_MARKDOWN_LENGTH + suffix.len());
+    assert_eq!(text.units()[MAX_MARKDOWN_LENGTH - 1], 0xD83D);
+}
+
+fn issue_html(bytes: usize, unit: &str) -> String {
+    assert_eq!(bytes % unit.len(), 0, "unit must tile the payload");
+    let lines = bytes / unit.len();
+    let mut html = "<blockquote>".repeat(250);
+    for _ in 0..lines {
+        html.push_str(unit);
+    }
+    html.push_str(&"</blockquote>".repeat(250));
+    html
+}
+
+#[test]
+#[ignore = "heavy (2.5 MiB HTML, ~1 GB RSS in debug): run manually; see fixtures/html-markdown/README.md"]
+fn deep_blockquote_250_2_5mib_bounded_is_prefix_only() {
+    let html = issue_html(2_621_440, "a<br>");
+    let started = std::time::Instant::now();
+    let output = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(!output.complete);
+    // The old full conversion is ~220 MB for this shape (#409).
+    assert!(
+        output.utf16_length > 200_000_000,
+        "full length {}",
+        output.utf16_length
+    );
+    assert_eq!(output.text.encode_utf16().count(), MAX_MARKDOWN_LENGTH + 1);
+    assert!(
+        elapsed < std::time::Duration::from_secs(120),
+        "bounded conversion took {elapsed:?}"
+    );
+}
+
+#[test]
+#[ignore = "heavy: full conversion is ~220 MB; run in release for #409 evidence"]
+fn deep_blockquote_250_2_5mib_bounded_equals_full() {
+    let html = issue_html(2_621_440, "a<br>");
+    let full = Turndown.convert(&html).unwrap();
+    let bounded = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    assert_eq!(bounded.utf16_length, full.encode_utf16().count());
+    assert_eq!(
+        truncate_markdown(&bounded.text).units(),
+        truncate_markdown(&full).units()
+    );
+}
+
+#[test]
+#[ignore = "heavy: ~3.4 GB RSS before the V8 string limit; run in release for #409 evidence"]
+fn deep_blockquote_250_10mib_stops_at_the_ts_string_limit() {
+    let html = issue_html(10 * 1024 * 1024, "a<br>");
+    let started = std::time::Instant::now();
+    let error = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap_err();
+    assert_eq!(error, STRING_LIMIT_ERROR);
+    assert!(started.elapsed() < std::time::Duration::from_secs(120));
+}
+
+#[test]
+#[ignore = "heavy: ~4.0 GB RSS for 4.2 M DOM nodes; run in release for #409/#454 evidence"]
+fn ten_mib_flat_a_br_bounded_stays_within_the_prefix() {
+    let html = "a<br>".repeat(2_097_152);
+    assert_eq!(html.len(), 10 * 1024 * 1024);
+    let output = Turndown
+        .convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)
+        .unwrap();
+    assert_eq!(output.utf16_length, 8_388_605);
+    assert_eq!(output.text.encode_utf16().count(), MAX_MARKDOWN_LENGTH + 1);
+    assert!(!output.complete);
 }
 
 fn reparented_wide_html(bytes: usize) -> (String, usize) {

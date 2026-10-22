@@ -19,6 +19,9 @@ pub struct FetchedEntry {
     pub code_text: String,
     pub content: String,
     pub content_type: String,
+    /// Full trimmed Markdown length in UTF-16 units when `content` may be only
+    /// a bounded prefix (HTML). `None` means `content` is complete.
+    pub raw_markdown_length: Option<usize>,
 }
 
 struct Node {

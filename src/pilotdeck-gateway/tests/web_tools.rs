@@ -26,7 +26,7 @@ use pilotdeck_gateway::{
                     SecondaryNext, make_secondary_prompt, validate_web_fetch_input,
                     web_fetch_permission,
                 },
-                fetcher::shared_cache,
+                fetcher::{MAX_MARKDOWN_LENGTH, shared_cache, truncate_entry},
                 network::{
                     FetchOptions, HttpRequest, RetryOptions, network_fetch, node_timer_delay_ms,
                 },
@@ -45,7 +45,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -564,6 +564,7 @@ async fn replay_fetch(
             code_text: "OK".into(),
             content: content.clone(),
             content_type: "text/markdown".into(),
+            raw_markdown_length: None,
         };
         cache.set(&text(seed.get("url").unwrap()), entry, content.len());
     }
@@ -995,6 +996,7 @@ fn real_ts_pure_helpers_tools_and_cache() {
                     code_text: "OK".into(),
                     content: text(get(op, "content")),
                     content_type: "text/plain".into(),
+                    raw_markdown_length: None,
                 };
                 cache.set(
                     &text(get(op, "url")),
@@ -2535,6 +2537,16 @@ impl ModelHttpTransport for ConversionTransport {
             .unwrap()))
     }
 }
+struct CountingHtml {
+    html: String,
+    requests: Arc<AtomicUsize>,
+}
+impl ModelHttpTransport for CountingHtml {
+    fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        ConversionTransport(self.html.clone()).send(request)
+    }
+}
 fn conversion_tool(html: String, converter: Option<Arc<dyn HtmlToMarkdown>>) -> WebFetchTool {
     let mut fetcher = UrlFetcher::new(Arc::new(ConversionTransport(html)));
     fetcher.cache = Arc::new(UrlCache::new(None));
@@ -2802,17 +2814,6 @@ async fn html_conversion_outer_timeout_does_not_wait_for_blocking_worker() {
 
 #[tokio::test]
 async fn html_string_limit_has_exact_ts_error_and_is_not_cached() {
-    use std::sync::atomic::AtomicUsize;
-    struct CountingHtml {
-        html: String,
-        requests: Arc<AtomicUsize>,
-    }
-    impl ModelHttpTransport for CountingHtml {
-        fn send(&self, request: hyper::Request<Full<Bytes>>) -> TransportFuture {
-            self.requests.fetch_add(1, Ordering::SeqCst);
-            ConversionTransport(self.html.clone()).send(request)
-        }
-    }
     let oracle = baseline::oracle(include_str!(
         "fixtures/html-markdown/string-limit-oracle.json"
     ));
@@ -2939,4 +2940,168 @@ async fn final_network_error_rechecks_parent_like_real_ts() {
             "{mode}"
         );
     }
+}
+
+#[tokio::test]
+async fn bounded_html_conversion_is_end_to_end_and_cached_once() {
+    // Real TS: `<span> <code>` + 16 nested `<h1><div>` is 655,357 units; the
+    // tool returns the 100,000-unit truncation and caches the bounded prefix.
+    let nested = format!("{}x{}", "<h1><div>".repeat(16), "</div></h1>".repeat(16));
+    let html = format!("<span> <code>{nested}</code></span>");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut fetcher = UrlFetcher::new(Arc::new(CountingHtml {
+        html,
+        requests: requests.clone(),
+    }));
+    let cache = Arc::new(UrlCache::default());
+    fetcher.cache = cache.clone();
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    });
+    let oracle = baseline::oracle(include_str!("fixtures/html-markdown/truncate-oracle.json"));
+    let case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| {
+            get(case, "name")
+                .as_string()
+                .and_then(|name| name.to_utf8().ok())
+                == Some("span-space-code-nested-headings-n16".into())
+        })
+        .expect("truncate oracle case");
+    let expected_sha = get(&items(get(case, "tool"))[0], "textSha256")
+        .as_string()
+        .unwrap()
+        .to_utf8()
+        .unwrap();
+    let mut texts = Vec::new();
+    for index in 0..2 {
+        let result = run(&tool, conversion_input(), context(None, empty_env(), None)).await;
+        let ok = get(&result, "ok");
+        assert!(ok.as_object().is_some(), "{}", json(&result));
+        let data = get(ok, "data");
+        assert_eq!(get(data, "rawLength").as_number(), Some(655_357.0));
+        assert_eq!(get(data, "truncated").as_bool(), Some(true));
+        assert_eq!(get(data, "returnedLength").as_number(), Some(100_038.0));
+        assert_eq!(
+            get(data, "fromCache").as_bool(),
+            Some(index == 1),
+            "call {index}: {}",
+            json(data)
+        );
+        let text = get(&items(get(ok, "content"))[0], "text");
+        let hash = hash_units(text.as_string().unwrap());
+        assert_eq!(
+            get(&hash, "sha256").as_string().unwrap().to_utf8().unwrap(),
+            expected_sha,
+            "call {index}"
+        );
+        texts.push(text.as_string().unwrap().units().to_vec());
+    }
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert_eq!(texts[0], texts[1]);
+    assert!(cache.get("https://example.com/page").is_some());
+}
+
+#[tokio::test]
+async fn html_markdown_over_the_cache_budget_refetches_instead_of_caching() {
+    // Real TS n=25 nested headings: 335,544,309 units, larger than the 50 MiB
+    // cache budget, so the bounded prefix must not be stored (two requests).
+    let oracle = baseline::oracle(include_str!(
+        "fixtures/html-markdown/string-limit-oracle.json"
+    ));
+    let case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| get(case, "n").as_number() == Some(25.0))
+        .expect("n=25 case");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut fetcher = UrlFetcher::new(Arc::new(CountingHtml {
+        html: text(get(case, "html")),
+        requests: requests.clone(),
+    }));
+    let cache = Arc::new(UrlCache::default());
+    fetcher.cache = cache.clone();
+    let tool = WebFetchTool::new(WebFetchToolOptions {
+        model: None,
+        provider: None,
+        model_id: None,
+        max_output_tokens: None,
+        fetcher,
+    });
+    for expected in items(get(case, "results")) {
+        let result = run(&tool, conversion_input(), context(None, empty_env(), None)).await;
+        let data = get(get(&result, "ok"), "data");
+        assert_eq!(
+            get(data, "fromCache").as_bool(),
+            get(expected, "fromCache").as_bool()
+        );
+        assert_eq!(
+            get(data, "rawLength").as_number(),
+            get(expected, "rawLength").as_number()
+        );
+        assert_eq!(get(data, "truncated").as_bool(), Some(true));
+        assert_eq!(get(data, "returnedLength").as_number(), Some(100_038.0));
+    }
+    assert_eq!(
+        requests.load(Ordering::SeqCst) as f64,
+        get(case, "requests").as_number().unwrap()
+    );
+    assert!(cache.get("https://example.com/page").is_none());
+}
+
+#[test]
+fn raw_truncation_uses_the_full_markdown_length() {
+    let prefix = "a".repeat(MAX_MARKDOWN_LENGTH + 1);
+    let entry = FetchedEntry {
+        bytes: 1,
+        code: 200,
+        code_text: "OK".into(),
+        content: prefix.clone(),
+        content_type: "text/html".into(),
+        raw_markdown_length: Some(250_000),
+    };
+    let (text, raw_length, truncated) = truncate_entry(&entry);
+    assert_eq!(raw_length, 250_000);
+    assert!(truncated);
+    assert_eq!(
+        text.units().len(),
+        MAX_MARKDOWN_LENGTH + "\n\n[Content truncated due to length...]".len()
+    );
+    assert_eq!(
+        &text.units()[..MAX_MARKDOWN_LENGTH],
+        &prefix.encode_utf16().collect::<Vec<_>>()[..MAX_MARKDOWN_LENGTH]
+    );
+
+    // A truncated prefix can end between surrogate halves, exactly like
+    // String.prototype.slice, so the tool text may contain a lone surrogate.
+    let split = format!("{}😀b", "a".repeat(MAX_MARKDOWN_LENGTH - 1));
+    let entry = FetchedEntry {
+        bytes: 1,
+        code: 200,
+        code_text: "OK".into(),
+        content: split,
+        content_type: "text/html".into(),
+        raw_markdown_length: Some(MAX_MARKDOWN_LENGTH + 2),
+    };
+    let (text, raw_length, truncated) = truncate_entry(&entry);
+    assert_eq!(raw_length, MAX_MARKDOWN_LENGTH + 2);
+    assert!(truncated);
+    assert_eq!(text.units()[MAX_MARKDOWN_LENGTH - 1], 0xD83D);
+
+    // Non-HTML entries keep using their materialized UTF-16 length.
+    let entry = FetchedEntry {
+        bytes: 1,
+        code: 200,
+        code_text: "OK".into(),
+        content: "short".into(),
+        content_type: "text/plain".into(),
+        raw_markdown_length: None,
+    };
+    let (text, raw_length, truncated) = truncate_entry(&entry);
+    assert_eq!(raw_length, 5);
+    assert!(!truncated);
+    assert_eq!(text.units(), "short".encode_utf16().collect::<Vec<_>>());
 }

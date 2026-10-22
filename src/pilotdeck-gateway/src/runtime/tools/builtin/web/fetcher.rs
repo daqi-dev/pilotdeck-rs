@@ -38,9 +38,34 @@ pub const WEB_FETCH_USER_AGENT: &str = "PilotDeck/0.1 (+https://github.com/pilot
 pub const TURNDOWN_MISSING: &str =
     "Cannot find package 'turndown' imported from /pilotdeck/src/tool/builtin/web/urlFetcher.ts";
 
+/// `TurndownService.turndown(html)` result. `text` is the complete trimmed
+/// Markdown, or (when `complete` is false) a prefix of it with at least the
+/// caller's requested UTF-16 unit count. `utf16_length`/`byte_length` always
+/// describe the complete trimmed Markdown, which keeps `rawLength` and the
+/// 50 MiB cache budget identical to the baseline.
+#[derive(Clone, Debug)]
+pub struct MarkdownOutput {
+    pub text: String,
+    pub utf16_length: usize,
+    pub byte_length: usize,
+    pub complete: bool,
+}
+
 /// `new TurndownService().turndown(html)`; `Err` is the thrown message.
 pub trait HtmlToMarkdown: Send + Sync {
     fn convert(&self, html: &str) -> Result<String, String>;
+
+    /// Convert only enough of the result to cover `prefix_units` UTF-16 code
+    /// units. The default keeps custom converters exact by converting fully.
+    fn convert_bounded(&self, html: &str, _prefix_units: usize) -> Result<MarkdownOutput, String> {
+        let text = self.convert(html)?;
+        Ok(MarkdownOutput {
+            utf16_length: text.encode_utf16().count(),
+            byte_length: text.len(),
+            text,
+            complete: true,
+        })
+    }
 }
 
 /// The baseline with `turndown` unavailable: every conversion rejects.
@@ -228,6 +253,19 @@ pub fn truncate_markdown(markdown: &str) -> JsString {
     JsString::from_utf16(out)
 }
 
+/// Raw-mode `truncated`/`rawLength`/`returnedLength` for a fetched entry.
+/// HTML entries carry the full trimmed length because `content` is a prefix.
+pub fn truncate_entry(entry: &FetchedEntry) -> (JsString, usize, bool) {
+    let raw_length = entry
+        .raw_markdown_length
+        .unwrap_or_else(|| entry.content.encode_utf16().count());
+    (
+        truncate_markdown(&entry.content),
+        raw_length,
+        raw_length > MAX_MARKDOWN_LENGTH,
+    )
+}
+
 impl UrlFetcher {
     pub fn new(transport: Arc<dyn ModelHttpTransport>) -> Self {
         Self {
@@ -397,22 +435,27 @@ impl UrlFetcher {
                 content_type,
             }));
         }
-        let (content, content_bytes) = if content_type.contains("text/html") {
+        let (content, content_bytes, raw_markdown_length) = if content_type.contains("text/html") {
             let html = String::from_utf8_lossy(&raw.body).into_owned();
             let converter = self.html.clone();
             // TS runs turndown synchronously after the body and ignores an
             // abort delivered during conversion (including raw-mode success).
             // Preserve that result ordering, but keep CPU work off Tokio.
-            // Share the model CPU pool's four permits. The worker retains its
-            // permit even if a host deadline drops this future, so abandoned
-            // conversions cannot admit unbounded replacement workers. Stopping
-            // an already executing conversion remains tracked in #409.
-            let content = cpu::run(move || Ok(converter.convert(&html)))
-                .await
-                .map_err(|error| other(&error.message))?
-                .map_err(|message| other(&message))?;
-            let length = content.len();
-            (content, length)
+            // Share the model CPU pool's four permits. Replacements
+            // materialize at most the truncation prefix plus the escaped input
+            // text, so #409's depth×content amplification does not build the
+            // full Markdown or its UTF-16 copy. Parsing itself remains bounded
+            // by the 10 MiB body cap and the existing 256-level depth guard.
+            let markdown =
+                cpu::run(move || Ok(converter.convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)))
+                    .await
+                    .map_err(|error| other(&error.message))?
+                    .map_err(|message| other(&message))?;
+            (
+                markdown.text,
+                markdown.byte_length,
+                Some(markdown.utf16_length),
+            )
         } else if is_binary_content_type(&content_type) {
             let shown = if content_type.is_empty() {
                 "application/octet-stream"
@@ -421,9 +464,9 @@ impl UrlFetcher {
             };
             let content = format!("[Binary {shown} content ({bytes} bytes) — not displayed]");
             let length = content.len();
-            (content, length)
+            (content, length, None)
         } else {
-            (String::from_utf8_lossy(&raw.body).into_owned(), bytes)
+            (String::from_utf8_lossy(&raw.body).into_owned(), bytes, None)
         };
         let entry = FetchedEntry {
             bytes,
@@ -431,6 +474,7 @@ impl UrlFetcher {
             code_text: raw.status_text,
             content,
             content_type,
+            raw_markdown_length,
         };
         self.cache.set(url, entry.clone(), content_bytes);
         Ok(FetchResult::Fetched {
