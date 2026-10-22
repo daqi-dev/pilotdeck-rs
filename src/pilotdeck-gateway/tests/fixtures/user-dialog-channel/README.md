@@ -38,7 +38,8 @@ step records:
 - exact callback order for journal/store/owner/take/emit/bus/uuid.
 
 `journalCases` cover record/replace/remove/recover/clear, invalid records,
-missing files, a directory at the journal path, and byte-exact write output.
+missing files, a directory at the journal path, a journal replaced by a
+directory mid-case, and byte-exact write output.
 `creationCases` cover undefined/empty/relative/absolute/trailing-dot transcript
 paths.
 
@@ -75,5 +76,8 @@ python3 src/pilotdeck-gateway/tests/fixtures/user-dialog-channel/negative.py OUT
 Each mutant is applied to an isolated `/tmp` crate. A control passes only when
 the replay fails an oracle assertion for the intended branch (never a compile
 error). The suite covers recover fields, empty-journal removal, owner release,
-claim false, renew failure, abort-before-registration, cross-gateway invalid
-values, emit failure, store-put failure, settle order and a tampered source hash.
+claim false, renew failure, abort before/during registration, shared abort
+signals, journal record/remove serialization, cross-gateway invalid values and
+empty cancellation reasons, directory reads, emit failure, store-put failure,
+settle order and a tampered source hash. The two journal lock controls run the
+deterministic concurrency test instead of the single-threaded replay.

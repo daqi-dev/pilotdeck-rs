@@ -29,7 +29,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -1761,7 +1762,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -2176,7 +2178,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -3675,7 +3678,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -4725,7 +4729,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -6134,7 +6139,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -7083,7 +7089,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": true
+        "abortOnPut": true,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -7340,6 +7347,4519 @@
       ]
     },
     {
+      "name": "abort-during-register",
+      "config": {
+        "journal": true,
+        "store": true,
+        "owner": true,
+        "take": true,
+        "ownerTtlMs": 5000,
+        "journalRecordFail": false,
+        "journalRemoveFail": false,
+        "storePutFail": false,
+        "storeRemoveFail": false,
+        "emitFail": false,
+        "busObserverFail": false,
+        "claim": "ok",
+        "renew": "ok",
+        "release": "ok",
+        "takeMode": "ok",
+        "abortOnPut": false,
+        "abortOnRegister": true
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "begin",
+            "kind": "input",
+            "request": {
+              "prompt": "abort inside register"
+            },
+            "signal": true
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "abort inside register"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "abort inside register"
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "abort inside register"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "abort inside register"
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "tick",
+            "ms": 500
+          },
+          "result": 1792281600500,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "abort inside register"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "abort inside register"
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "abort inside register"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "abort inside register"
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "abort inside register"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-signal-two-requests",
+      "config": {
+        "journal": true,
+        "store": true,
+        "owner": true,
+        "take": true,
+        "ownerTtlMs": 5000,
+        "journalRecordFail": false,
+        "journalRemoveFail": false,
+        "storePutFail": false,
+        "storeRemoveFail": false,
+        "emitFail": false,
+        "busObserverFail": false,
+        "claim": "ok",
+        "renew": "ok",
+        "release": "ok",
+        "takeMode": "ok",
+        "abortOnPut": false,
+        "abortOnRegister": false
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "begin",
+            "kind": "input",
+            "request": {},
+            "signal": true,
+            "signalName": "host",
+            "slot": "first"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "begin",
+            "kind": "select",
+            "request": {
+              "choices": [
+                {
+                  "value": "alpha"
+                },
+                {
+                  "value": "beta",
+                  "label": "B"
+                }
+              ]
+            },
+            "signal": true,
+            "signalName": "host",
+            "slot": "second"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": null,
+              "second": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              },
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-3",
+                "dialogKind": "select",
+                "toolCallId": "tool-1",
+                "toolName": "request_select",
+                "prompt": "继续？\ud800",
+                "choices": [
+                  {
+                    "value": "alpha"
+                  },
+                  {
+                    "value": "beta",
+                    "label": "B"
+                  }
+                ]
+              }
+            ],
+            "pendingCount": 2,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"},{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-3\",\"dialogKind\":\"select\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_select\",\"prompt\":\"继续？\\ud800\",\"choices\":[{\"value\":\"alpha\"},{\"value\":\"beta\",\"label\":\"B\"}]}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ],
+              [
+                "uuid-3",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              },
+              {
+                "id": "uuid-3",
+                "ownerId": "uuid-4",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": null,
+              "second": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              },
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-3",
+                "dialogKind": "select",
+                "toolCallId": "tool-1",
+                "toolName": "request_select",
+                "prompt": "继续？\ud800",
+                "choices": [
+                  {
+                    "value": "alpha"
+                  },
+                  {
+                    "value": "beta",
+                    "label": "B"
+                  }
+                ]
+              }
+            ],
+            "pendingCount": 2,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"},{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-3\",\"dialogKind\":\"select\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_select\",\"prompt\":\"继续？\\ud800\",\"choices\":[{\"value\":\"alpha\"},{\"value\":\"beta\",\"label\":\"B\"}]}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ],
+              [
+                "uuid-3",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              },
+              {
+                "id": "uuid-3",
+                "ownerId": "uuid-4",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "claim",
+            "slot": "first",
+            "ttl": 1000
+          },
+          "result": {
+            "claimed": true,
+            "lease": {
+              "leaseId": "bus-lease",
+              "expiresAt": "2026-10-18T00:00:01.000Z"
+            }
+          },
+          "observation": {
+            "outcomes": {
+              "first": null,
+              "second": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800",
+                "lease": {
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                }
+              },
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-3",
+                "dialogKind": "select",
+                "toolCallId": "tool-1",
+                "toolName": "request_select",
+                "prompt": "继续？\ud800",
+                "choices": [
+                  {
+                    "value": "alpha"
+                  },
+                  {
+                    "value": "beta",
+                    "label": "B"
+                  }
+                ]
+              }
+            ],
+            "pendingCount": 2,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"},{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-3\",\"dialogKind\":\"select\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_select\",\"prompt\":\"继续？\\ud800\",\"choices\":[{\"value\":\"alpha\"},{\"value\":\"beta\",\"label\":\"B\"}]}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ],
+              [
+                "uuid-3",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              },
+              {
+                "id": "uuid-3",
+                "ownerId": "uuid-4",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "respond",
+            "slot": "first",
+            "lease": "bus-lease",
+            "value": "first-answer"
+          },
+          "result": {
+            "consumed": true,
+            "answered": true
+          },
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-3",
+                "dialogKind": "select",
+                "toolCallId": "tool-1",
+                "toolName": "request_select",
+                "prompt": "继续？\ud800",
+                "choices": [
+                  {
+                    "value": "alpha"
+                  },
+                  {
+                    "value": "beta",
+                    "label": "B"
+                  }
+                ]
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-3\",\"dialogKind\":\"select\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_select\",\"prompt\":\"继续？\\ud800\",\"choices\":[{\"value\":\"alpha\"},{\"value\":\"beta\",\"label\":\"B\"}]}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-3",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-3",
+                "ownerId": "uuid-4",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-3",
+                "dialogKind": "select",
+                "toolCallId": "tool-1",
+                "toolName": "request_select",
+                "prompt": "继续？\ud800",
+                "choices": [
+                  {
+                    "value": "alpha"
+                  },
+                  {
+                    "value": "beta",
+                    "label": "B"
+                  }
+                ]
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-3\",\"dialogKind\":\"select\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_select\",\"prompt\":\"继续？\\ud800\",\"choices\":[{\"value\":\"alpha\"},{\"value\":\"beta\",\"label\":\"B\"}]}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-3",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-3",
+                "ownerId": "uuid-4",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "abort",
+            "signalName": "host"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-3",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-3",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "tick",
+            "ms": 500
+          },
+          "result": 1792281600500,
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-3",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "first": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "first-answer"
+                }
+              },
+              "second": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": "aborted"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-3",
+                      "dialogKind": "select",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_select",
+                      "prompt": "继续？\ud800",
+                      "choices": [
+                        {
+                          "value": "alpha"
+                        },
+                        {
+                          "value": "beta",
+                          "label": "B"
+                        }
+                      ]
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ],
+                [
+                  "remove",
+                  "uuid-3"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "claim",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "renew",
+                  "uuid-3",
+                  "uuid-4"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-3",
+                  "uuid-4"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-3"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                },
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_select",
+                  "prompt": "继续？\ud800",
+                  "choices": [
+                    {
+                      "value": "alpha"
+                    },
+                    {
+                      "value": "beta",
+                      "label": "B"
+                    }
+                  ]
+                },
+                {
+                  "type": "user_dialog_cancelled",
+                  "requestId": "uuid-3",
+                  "dialogKind": "select",
+                  "reason": "aborted"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-3",
+                    "dialogKind": "select",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_select",
+                    "prompt": "继续？\ud800",
+                    "choices": [
+                      {
+                        "value": "alpha"
+                      },
+                      {
+                        "value": "beta",
+                        "label": "B"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "lease_changed",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "action": "claimed",
+                  "expiresAt": "2026-10-18T00:00:01.000Z"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-3",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2",
+                "uuid-3",
+                "uuid-4"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "input-empty-optional",
+      "config": {
+        "journal": true,
+        "store": true,
+        "owner": true,
+        "take": true,
+        "ownerTtlMs": 5000,
+        "journalRecordFail": false,
+        "journalRemoveFail": false,
+        "storePutFail": false,
+        "storeRemoveFail": false,
+        "emitFail": false,
+        "busObserverFail": false,
+        "claim": "ok",
+        "renew": "ok",
+        "release": "ok",
+        "takeMode": "ok",
+        "abortOnPut": false,
+        "abortOnRegister": false
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "begin",
+            "kind": "input",
+            "request": {
+              "placeholder": "",
+              "allowEmpty": false
+            }
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "respond",
+            "value": "ok"
+          },
+          "result": {
+            "consumed": true,
+            "answered": true
+          },
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "ok"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "answered",
+                  "value": "ok"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "answered"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "respond-cancel-empty-reason",
+      "config": {
+        "journal": true,
+        "store": true,
+        "owner": true,
+        "take": true,
+        "ownerTtlMs": 5000,
+        "journalRecordFail": false,
+        "journalRemoveFail": false,
+        "storePutFail": false,
+        "storeRemoveFail": false,
+        "emitFail": false,
+        "busObserverFail": false,
+        "claim": "ok",
+        "renew": "ok",
+        "release": "ok",
+        "takeMode": "ok",
+        "abortOnPut": false,
+        "abortOnRegister": false
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "begin",
+            "kind": "input",
+            "request": {}
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "respond",
+            "cancel": true,
+            "reason": ""
+          },
+          "result": {
+            "consumed": true,
+            "cancelled": true
+          },
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": ""
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled",
+                  "reason": ""
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cancelled"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cross-gateway-cancelled-empty-reason",
+      "config": {
+        "journal": true,
+        "store": true,
+        "owner": true,
+        "take": true,
+        "ownerTtlMs": 5000,
+        "journalRecordFail": false,
+        "journalRemoveFail": false,
+        "storePutFail": false,
+        "storeRemoveFail": false,
+        "emitFail": false,
+        "busObserverFail": false,
+        "claim": "ok",
+        "renew": "ok",
+        "release": "ok",
+        "takeMode": "ok",
+        "abortOnPut": false,
+        "abortOnRegister": false
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "begin",
+            "kind": "input",
+            "request": {}
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "submitAnswer",
+            "result": {
+              "behavior": "cancelled",
+              "reason": ""
+            }
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": null
+            },
+            "pending": [
+              {
+                "type": "user_dialog_request",
+                "requestId": "uuid-1",
+                "dialogKind": "input",
+                "toolCallId": "tool-1",
+                "toolName": "request_input",
+                "prompt": "继续？\ud800"
+              }
+            ],
+            "pendingCount": 1,
+            "journalBytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"uuid-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_input\",\"prompt\":\"继续？\\ud800\"}]}",
+            "journalExists": true,
+            "store": [
+              [
+                "uuid-1",
+                {
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  },
+                  "createdAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "owners": [
+              {
+                "id": "uuid-1",
+                "ownerId": "uuid-2",
+                "expiresAt": 1792281605000,
+                "active": true
+              }
+            ],
+            "answers": [
+              [
+                "uuid-1",
+                {
+                  "requestId": "uuid-1",
+                  "result": {
+                    "behavior": "cancelled",
+                    "reason": ""
+                  },
+                  "submittedAt": "2026-10-18T00:00:00.000Z"
+                }
+              ]
+            ],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "tick",
+            "ms": 100
+          },
+          "result": 1792281600100,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cross_gateway_answer"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "outcomes": {
+              "default": {
+                "ok": true,
+                "value": {
+                  "type": "cancelled"
+                }
+              }
+            },
+            "pending": [],
+            "pendingCount": 0,
+            "journalBytes": null,
+            "journalExists": false,
+            "store": [],
+            "owners": [],
+            "answers": [],
+            "logs": {
+              "journal": [
+                [
+                  "record",
+                  {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "store": [
+                [
+                  "put",
+                  {
+                    "request": {
+                      "type": "user_dialog_request",
+                      "requestId": "uuid-1",
+                      "dialogKind": "input",
+                      "toolCallId": "tool-1",
+                      "toolName": "request_input",
+                      "prompt": "继续？\ud800"
+                    },
+                    "createdAt": "2026-10-18T00:00:00.000Z"
+                  }
+                ],
+                [
+                  "remove",
+                  "uuid-1"
+                ]
+              ],
+              "owner": [
+                [
+                  "claim",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "renew",
+                  "uuid-1",
+                  "uuid-2"
+                ],
+                [
+                  "release",
+                  "uuid-1",
+                  "uuid-2"
+                ]
+              ],
+              "take": [
+                [
+                  "uuid-1"
+                ],
+                [
+                  "uuid-1"
+                ]
+              ],
+              "emit": [
+                {
+                  "type": "user_dialog_request",
+                  "requestId": "uuid-1",
+                  "dialogKind": "input",
+                  "toolCallId": "tool-1",
+                  "toolName": "request_input",
+                  "prompt": "继续？\ud800"
+                }
+              ],
+              "bus": [
+                {
+                  "type": "requested",
+                  "sessionKey": "session",
+                  "request": {
+                    "type": "user_dialog_request",
+                    "requestId": "uuid-1",
+                    "dialogKind": "input",
+                    "toolCallId": "tool-1",
+                    "toolName": "request_input",
+                    "prompt": "继续？\ud800"
+                  }
+                },
+                {
+                  "type": "settled",
+                  "sessionKey": "session",
+                  "requestId": "uuid-1",
+                  "reason": "cross_gateway_answer"
+                }
+              ],
+              "uuid": [
+                "uuid-1",
+                "uuid-2"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "claim-false",
       "config": {
         "journal": true,
@@ -7357,7 +11877,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -7544,7 +12065,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -7731,7 +12253,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -7846,7 +12369,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -8066,7 +12590,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -8698,7 +13223,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -9385,7 +13911,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -10069,7 +14596,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -10765,7 +15293,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -11934,7 +16463,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -12608,7 +17138,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -13148,7 +17679,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -13694,7 +18226,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -14777,7 +19310,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -15878,7 +20412,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -17124,7 +21659,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -18135,7 +22671,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -18518,7 +23055,8 @@
         "renew": "ok",
         "release": "ok",
         "takeMode": "ok",
-        "abortOnPut": false
+        "abortOnPut": false,
+        "abortOnRegister": false
       },
       "steps": [
         {
@@ -19427,6 +23965,171 @@
             "bytes": null,
             "exists": false,
             "directory": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "directory-at-path",
+      "initial": {
+        "directory": true
+      },
+      "steps": [
+        {
+          "action": {
+            "op": "recover"
+          },
+          "result": {
+            "error": "journal-read"
+          },
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "record",
+            "event": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "placeholder": "说点什么",
+              "allowEmpty": true,
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            }
+          },
+          "result": {
+            "error": "journal-read"
+          },
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "remove",
+            "id": "dialog-1"
+          },
+          "result": {
+            "error": "journal-read"
+          },
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "corrupt-journal-to-directory",
+      "initial": null,
+      "steps": [
+        {
+          "action": {
+            "op": "record",
+            "event": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "placeholder": "说点什么",
+              "allowEmpty": true,
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            }
+          },
+          "result": null,
+          "observation": {
+            "bytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"placeholder\":\"说点什么\",\"allowEmpty\":true,\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}}]}",
+            "exists": true,
+            "directory": false
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "bytes": "{\"version\":1,\"dialogs\":[{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"placeholder\":\"说点什么\",\"allowEmpty\":true,\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}}]}",
+            "exists": true,
+            "directory": false
+          }
+        },
+        {
+          "action": {
+            "op": "corruptJournal"
+          },
+          "result": null,
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "recover"
+          },
+          "result": {
+            "error": "journal-read"
+          },
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
+          }
+        },
+        {
+          "action": {
+            "op": "snapshot"
+          },
+          "result": null,
+          "observation": {
+            "bytes": null,
+            "exists": true,
+            "directory": true
           }
         }
       ]

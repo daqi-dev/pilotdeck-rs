@@ -6,14 +6,15 @@
 //! driven by an atomic clock and never sleeps.
 
 use super::*;
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use pilotdeck_transport::system_clock::format_epoch_iso;
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Barrier, Mutex,
         atomic::{AtomicBool, AtomicI64, Ordering},
+        mpsc,
     },
 };
 
@@ -367,6 +368,7 @@ struct Config {
     release: Mutex<String>,
     take_mode: Mutex<String>,
     abort_on_put: AtomicBool,
+    abort_on_register: AtomicBool,
     owner_ttl_ms: AtomicI64,
 }
 impl Config {
@@ -396,6 +398,7 @@ impl Config {
             release: mode("release"),
             take_mode: mode("takeMode"),
             abort_on_put: AtomicBool::new(bool_field(value, "abortOnPut", false)),
+            abort_on_register: AtomicBool::new(bool_field(value, "abortOnRegister", false)),
             owner_ttl_ms: AtomicI64::new(number_field(value, "ownerTtlMs", 5000.0) as i64),
         }
     }
@@ -530,15 +533,24 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
     let bus_observer = {
         let logs = logs.clone();
         let config = config.clone();
+        let current_signal = current_signal.clone();
         Arc::new(Mutex::new(GatewayUserDialogBus::new(
             runtime(&clock, "bus-lease"),
             Some(Box::new(move |event| {
-                log(&logs.bus, event);
+                log(&logs.bus, event.clone());
                 if config.bus_observer_fail.load(Ordering::SeqCst) {
-                    Err(DialogError::Invalid("observer offline".into()))
-                } else {
-                    Ok(())
+                    return Err(DialogError::Invalid("observer offline".into()));
                 }
+                if config.abort_on_register.load(Ordering::SeqCst)
+                    && event
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value.equals_str("requested"))
+                    && let Some(signal) = current_signal.lock().unwrap().clone()
+                {
+                    signal.abort();
+                }
+                Ok(())
             })),
         )))
     };
@@ -610,6 +622,7 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
     let channel = GatewayUserDialogChannel::new(options);
     let mut slots: Vec<(String, Slot)> = Vec::new();
     let mut signal: Option<AbortSignal> = None;
+    let mut signals: Vec<(String, AbortSignal)> = Vec::new();
 
     for (index, step) in array(field(case, "steps")).iter().enumerate() {
         let action = field(step, "action");
@@ -620,7 +633,23 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                     let kind = text(kind);
                     let use_signal = bool_field(action, "signal", false);
                     if use_signal {
-                        let created = AbortSignal::new();
+                        let created = match action
+                            .get("signalName")
+                            .and_then(JsValue::as_string)
+                            .map(|value| value.to_utf8().unwrap())
+                        {
+                            Some(name) => {
+                                match signals.iter().find(|(candidate, _)| candidate == &name) {
+                                    Some((_, existing)) => existing.clone(),
+                                    None => {
+                                        let created = AbortSignal::new();
+                                        signals.push((name, created.clone()));
+                                        created
+                                    }
+                                }
+                            }
+                            None => AbortSignal::new(),
+                        };
                         *current_signal.lock().unwrap() = Some(created.clone());
                         signal = Some(created);
                     }
@@ -646,7 +675,19 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                     JsValue::Null
                 }
                 "abort" => {
-                    signal.as_ref().expect("abort signal").abort();
+                    let named = action
+                        .get("signalName")
+                        .and_then(JsValue::as_string)
+                        .map(|value| value.to_utf8().unwrap());
+                    let target = match named {
+                        Some(name) => signals
+                            .iter()
+                            .find(|(candidate, _)| candidate == &name)
+                            .map(|(_, signal)| signal.clone())
+                            .expect("named abort signal"),
+                        None => signal.clone().expect("abort signal"),
+                    };
+                    target.abort();
                     JsValue::Null
                 }
                 "tick" => {
@@ -926,7 +967,7 @@ fn channel_observation(
             .unwrap()
             .iter()
             .map(|(id, answer)| {
-                JsValue::Array(vec![JsValue::String(id.clone()), answer.to_value()])
+                JsValue::Array(vec![JsValue::String(id.clone()), raw_answer_value(answer)])
             })
             .collect(),
     );
@@ -965,6 +1006,303 @@ fn claim_value(claim: LeaseClaim) -> JsValue {
             ("reason", "not_pending".into()),
         ]),
     }
+}
+
+struct Probe {
+    _scratch: Scratch,
+    channel: GatewayUserDialogChannel,
+    signal: AbortSignal,
+    journal: Arc<GatewayUserDialogJournal>,
+    journal_path: PathBuf,
+    dialogs: Arc<Mutex<Vec<(JsString, StoredDialog)>>>,
+    owners: Arc<OwnerHarness>,
+    bus: Arc<Mutex<GatewayUserDialogBus>>,
+    logs: Arc<Logs>,
+}
+impl Probe {
+    fn begin_input(&self) -> ChannelRequest {
+        self.channel.request_input(&InputRequest {
+            tool_call_id: "tool-1".into(),
+            tool_name: "request_user_input".into(),
+            prompt: "abort".into(),
+            placeholder: None,
+            allow_empty: false,
+            abort: Some(self.signal.clone()),
+        })
+    }
+}
+
+/// Minimal channel harness that keeps the real journal/store/owner/bus so a
+/// deterministic interleaving can assert the complete durable cleanup.
+fn probe(signal: AbortSignal, hook: Box<dyn Fn(&JsValue) + Send + Sync>) -> Probe {
+    let scratch = Scratch::new();
+    let journal_path = scratch.0.join("sessions/transcript.jsonl.dialogs.json");
+    let clock = Arc::new(AtomicI64::new(0));
+    let logs = Arc::new(Logs::default());
+    let journal = Arc::new(GatewayUserDialogJournal::new(
+        journal_path.clone(),
+        JournalOptions {
+            runtime: runtime(&clock, "journal-tmp"),
+        },
+    ));
+    let dialogs = Arc::new(Mutex::new(Vec::new()));
+    let store = Arc::new(LoggingStore {
+        logs: logs.clone(),
+        dialogs: dialogs.clone(),
+        put_fail: AtomicBool::new(false),
+        remove_fail: AtomicBool::new(false),
+        abort_on_put: AtomicBool::new(false),
+        signal: Arc::new(Mutex::new(None)),
+    });
+    let owners = Arc::new(OwnerHarness {
+        logs: logs.clone(),
+        owners: Mutex::new(Vec::new()),
+        claim_mode: Mutex::new("ok".into()),
+        renew_mode: Mutex::new("ok".into()),
+        release_mode: Mutex::new("ok".into()),
+        ttl_ms: AtomicI64::new(5000),
+        clock: clock.clone(),
+    });
+    let hook = Arc::new(hook);
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::new(
+        runtime(&clock, "bus-lease"),
+        Some(Box::new({
+            let logs = logs.clone();
+            move |event| {
+                log(&logs.bus, event.clone());
+                hook(&event);
+                Ok(())
+            }
+        })),
+    )));
+    let session: JsString = "session".into();
+    let mut options = ChannelOptions::new(session.clone(), bus.clone(), {
+        let logs = logs.clone();
+        Arc::new(move |event| {
+            log(&logs.emit, event);
+            Ok(())
+        })
+    });
+    options.journal = Some(journal.clone() as Arc<dyn UserDialogJournal>);
+    options.store = Some(store as Arc<dyn UserDialogStore>);
+    options.store_key = Some(StoreKey {
+        project_root: "/fixture/project".into(),
+        pilot_home: "/fixture/home".into(),
+        session_id: "session".into(),
+    });
+    options.claim_stored_owner = Some({
+        let owners = owners.clone();
+        Arc::new(move |id: &JsString, owner: &JsString| owners.claim(id, owner))
+    });
+    options.release_stored_owner = Some({
+        let owners = owners.clone();
+        Arc::new(move |id: &JsString, owner: &JsString| owners.release(id, owner))
+    });
+    let uuid = Arc::new(AtomicI64::new(0));
+    options.uuid = Arc::new(move || format!("uuid-{}", uuid.fetch_add(1, Ordering::SeqCst) + 1));
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let channel = GatewayUserDialogChannel::new(options);
+    Probe {
+        _scratch: scratch,
+        channel,
+        signal,
+        journal,
+        journal_path,
+        dialogs,
+        owners,
+        bus,
+        logs,
+    }
+}
+
+fn assert_probe_settled(probe: &Probe, request: &mut ChannelRequest) {
+    match request.try_result().expect("request settled") {
+        Ok(DialogAnswer::Cancelled(Some(reason))) => {
+            assert!(reason.equals_str("aborted"), "reason {reason:?}")
+        }
+        other => panic!("unexpected outcome {other:?}"),
+    }
+    assert_eq!(
+        probe.bus.lock().unwrap().pending_count(&"session".into()),
+        0,
+        "bus entry leaked"
+    );
+    assert!(!probe.journal_path.exists(), "journal record leaked");
+    assert!(probe.dialogs.lock().unwrap().is_empty(), "store leaked");
+    assert!(
+        probe.owners.owners.lock().unwrap().is_empty(),
+        "owner lease leaked"
+    );
+    assert!(probe.journal.recover().unwrap().is_empty());
+    assert!(
+        probe.logs.emit.lock().unwrap().iter().any(|event| event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|value| value.equals_str("user_dialog_cancelled"))),
+        "missing cancellation event"
+    );
+}
+
+#[test]
+fn abort_during_registration_settles_bus_journal_store_and_lease() {
+    let signal = AbortSignal::new();
+    let abort_signal = signal.clone();
+    let probe = probe(
+        signal,
+        Box::new(move |event| {
+            if event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("requested"))
+            {
+                abort_signal.abort();
+            }
+        }),
+    );
+    let mut request = probe.begin_input();
+    assert_probe_settled(&probe, &mut request);
+}
+
+#[test]
+fn abort_from_another_thread_during_registration_settles_everything() {
+    let (started, started_rx) = mpsc::channel::<()>();
+    let (finished, finished_rx) = mpsc::channel::<()>();
+    let finished_rx = Arc::new(Mutex::new(finished_rx));
+    let probe = probe(
+        AbortSignal::new(),
+        Box::new(move |event| {
+            if event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("requested"))
+            {
+                started.send(()).unwrap();
+                finished_rx.lock().unwrap().recv().unwrap();
+            }
+        }),
+    );
+    let channel = probe.channel.clone();
+    let aborter = std::thread::spawn(move || {
+        started_rx.recv().unwrap();
+        channel.abort(&"uuid-1".into());
+        finished.send(()).unwrap();
+    });
+    let mut request = probe.begin_input();
+    aborter.join().unwrap();
+    assert_probe_settled(&probe, &mut request);
+}
+
+#[test]
+fn abort_signal_removes_only_its_own_registration() {
+    let signal = AbortSignal::new();
+    let hits = Arc::new(Mutex::new(Vec::new()));
+    let first = signal
+        .on_abort(Arc::new({
+            let hits = hits.clone();
+            move || hits.lock().unwrap().push(1)
+        }))
+        .unwrap();
+    signal
+        .on_abort(Arc::new({
+            let hits = hits.clone();
+            move || hits.lock().unwrap().push(2)
+        }))
+        .unwrap();
+    signal.remove_abort(first);
+    signal.abort();
+    assert_eq!(*hits.lock().unwrap(), vec![2]);
+    // Removing after abort (or an unknown token) is a no-op.
+    signal.remove_abort(first);
+}
+
+#[test]
+fn journal_concurrent_record_and_remove_are_serialized() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("journal.json");
+    let journal = Arc::new(GatewayUserDialogJournal::new(
+        path.clone(),
+        JournalOptions {
+            runtime: DialogRuntime::default(),
+        },
+    ));
+    let barrier = Arc::new(Barrier::new(8));
+    let mut workers = Vec::new();
+    for worker in 0..8 {
+        let journal = journal.clone();
+        let barrier = barrier.clone();
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            for index in 0..25 {
+                let mut event = JsObject::new();
+                event.insert("type".into(), "user_dialog_request".into());
+                event.insert(
+                    "requestId".into(),
+                    JsValue::String(format!("w{worker}-{index}").into()),
+                );
+                event.insert("dialogKind".into(), "input".into());
+                event.insert("prompt".into(), "并发".into());
+                journal.record(&JsValue::Object(event)).unwrap();
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let read = || -> Vec<JsValue> {
+        let parsed = parse_json(&fs::read_to_string(&path).unwrap()).unwrap();
+        array(field(&parsed, "dialogs")).to_vec()
+    };
+    let recorded = read();
+    assert_eq!(recorded.len(), 200, "concurrent record lost entries");
+    let ids: std::collections::HashSet<_> = recorded
+        .iter()
+        .map(|dialog| text_field(dialog, "requestId"))
+        .collect();
+    assert_eq!(ids.len(), 200, "concurrent record duplicated entries");
+
+    let mut workers = Vec::new();
+    for worker in 0..8 {
+        let journal = journal.clone();
+        let barrier = barrier.clone();
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            for index in (0..25).step_by(2) {
+                journal
+                    .remove(&format!("w{worker}-{index}").into())
+                    .unwrap();
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    assert_eq!(read().len(), 96, "concurrent remove lost updates");
+}
+
+fn raw_answer_value(answer: &StoredAnswer) -> JsValue {
+    // The host answer map keeps an empty cancellation reason; the hosted-store
+    // writer (`DialogAnswer::to_value`) drops it. Observation mirrors the host
+    // map, not the store file.
+    let result = match &answer.result {
+        DialogAnswer::Answered(value) => {
+            object([("behavior", "answered".into()), ("value", value.clone())])
+        }
+        DialogAnswer::Cancelled(reason) => {
+            let mut value = object([("behavior", "cancelled".into())]);
+            if let Some(reason) = reason {
+                set(&mut value, "reason", JsValue::String(reason.clone()));
+            }
+            value
+        }
+    };
+    object([
+        ("requestId", JsValue::String(answer.request_id.clone())),
+        ("result", result),
+        ("submittedAt", JsValue::String(answer.submitted_at.clone())),
+    ])
 }
 
 fn replay_journal_case(case: &JsValue, initial_ms: f64) {

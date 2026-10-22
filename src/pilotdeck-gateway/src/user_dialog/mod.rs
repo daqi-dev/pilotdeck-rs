@@ -109,7 +109,9 @@ impl DialogAnswer {
             }
         }
     }
-    /// Native channel answer shape (`type`, not the store's `behavior`).
+    /// Native channel answer shape (`type`, not the store's `behavior`). The TS
+    /// channel keeps an empty cancellation reason here; the hosted-store writer
+    /// drops it, so the two serializers intentionally differ.
     pub fn to_channel_value(&self) -> JsValue {
         match self {
             Self::Answered(value) => {
@@ -117,7 +119,7 @@ impl DialogAnswer {
             }
             Self::Cancelled(reason) => {
                 let mut value = object([("type", "cancelled".into())]);
-                if let Some(reason) = reason.as_ref().filter(|reason| !reason.is_empty()) {
+                if let Some(reason) = reason {
                     set(&mut value, "reason", JsValue::String(reason.clone()));
                 }
                 value

@@ -16,6 +16,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 #[derive(Clone, Default)]
@@ -54,6 +55,9 @@ pub trait UserDialogJournal: Send + Sync {
 pub struct GatewayUserDialogJournal {
     path: PathBuf,
     runtime: DialogRuntime,
+    /// Serializes read-modify-write cycles. The channel calls `record`/`remove`
+    /// from independent tool threads; TS is single-threaded and needs no lock.
+    lock: Mutex<()>,
 }
 
 impl UserDialogJournal for GatewayUserDialogJournal {
@@ -70,6 +74,7 @@ impl GatewayUserDialogJournal {
         Self {
             path,
             runtime: options.runtime,
+            lock: Mutex::new(()),
         }
     }
 
@@ -79,6 +84,7 @@ impl GatewayUserDialogJournal {
 
     /// Inserts or replaces the request with the same `requestId`.
     pub fn record(&self, event: &JsValue) -> Result<()> {
+        let _guard = self.lock.lock().unwrap();
         let mut record = self.read()?;
         let id = event.get("requestId").and_then(JsValue::as_string);
         let index = id.and_then(|id| {
@@ -97,6 +103,7 @@ impl GatewayUserDialogJournal {
     /// Removes every record with this id. A missing id is a no-op, and removing
     /// the last record deletes the journal file rather than leaving `[]`.
     pub fn remove(&self, request_id: &JsString) -> Result<()> {
+        let _guard = self.lock.lock().unwrap();
         let record = self.read()?;
         let had_dialogs = record.dialogs.len();
         let dialogs: Vec<_> = record
@@ -119,6 +126,7 @@ impl GatewayUserDialogJournal {
     /// journal is deliberately not removed: a recovery answer still needs the
     /// request contract before the next turn is created.
     pub fn recover(&self) -> Result<Vec<JsValue>> {
+        let _guard = self.lock.lock().unwrap();
         let record = self.read()?;
         if record.dialogs.is_empty() {
             return Ok(Vec::new());
@@ -143,6 +151,7 @@ impl GatewayUserDialogJournal {
     }
 
     pub fn clear(&self) -> Result<()> {
+        let _guard = self.lock.lock().unwrap();
         remove_file(&self.path)
     }
 
