@@ -1,6 +1,8 @@
 //! Node v22 libuv diagnostics. Unknown errno (including non-OS Rust errors) is
 //! an explicit host boundary, never a Rust Display string on the wire.
 mod generated;
+mod mkdir;
+pub(crate) use mkdir::mkdir_recursive;
 mod path_error;
 pub(crate) use path_error::{invalid_arg_value_message, nul_message, nul_message_for};
 use std::io;
@@ -101,7 +103,14 @@ pub(crate) fn unmeasured_errnos(method: &str) -> Vec<i32> {
 }
 
 pub(crate) fn lookup(error: &io::Error) -> Option<(&'static str, &'static str)> {
-    let errno = stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())?;
+    let errno = if let Some(mkdir) = error
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<mkdir::MkdirError>())
+    {
+        mkdir.source.raw_os_error()
+    } else {
+        stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())
+    }?;
     generated::ERRORS
         .iter()
         .find(|(number, _, _)| *number == errno)
@@ -112,6 +121,12 @@ pub(crate) fn diagnostic(
     syscall: &str,
     path: Option<&str>,
 ) -> Option<(&'static str, String)> {
+    if let Some(mkdir) = error
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<mkdir::MkdirError>())
+    {
+        return diagnostic(&mkdir.source, "mkdir", Some(&mkdir.path.to_string_lossy()));
+    }
     let (code, description) = lookup(error)?;
     let (syscall, path) = stage(error).map_or((syscall, path), |e| (e.syscall, None));
     let suffix = path

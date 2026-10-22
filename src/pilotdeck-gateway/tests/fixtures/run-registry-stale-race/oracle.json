@@ -1,0 +1,26 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37"
+  },
+  "cases": [
+    {
+      "id": "two-process-stale-race",
+      "observed": {
+        "bothAcquired": true,
+        "distinctLockInodes": true,
+        "firstHeldOpen": true,
+        "firstMatchesPath": false,
+        "secondHeldOpen": true,
+        "secondMatchesPath": true
+      }
+    },
+    {
+      "id": "dead-stale-replaced",
+      "observed": {
+        "acquired": true,
+        "ownerIsSelf": true
+      }
+    }
+  ]
+}

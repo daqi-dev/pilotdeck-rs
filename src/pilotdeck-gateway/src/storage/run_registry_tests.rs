@@ -797,3 +797,67 @@ fn million_level_arrays_fail_locally_without_changing_registry_or_leaving_locks(
         no_temporaries(&scratch.0);
     }
 }
+
+#[test]
+fn registry_mkdir_failure_matches_real_ts_caller() {
+    let raw = include_str!("../../tests/fixtures/mkdir-boundary/oracle.json");
+    crate::test_baseline::oracle(raw);
+    let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let row = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "registry")
+        .unwrap();
+    let scratch = Scratch::new();
+    let root = fs::canonicalize(&scratch.0).unwrap();
+    let dir = root.join("registry");
+    fs::create_dir(&dir).unwrap();
+    let registry = FileRunRegistry::open(dir.join("block/child/registry.json")).unwrap();
+    fs::write(dir.join("block"), b"block").unwrap();
+    let error = registry
+        .accept(&accept_input(&project_run("r"), "m"))
+        .unwrap_err();
+    let RunRegistryError::Io(source) = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        crate::node_io::lookup(source).unwrap().0,
+        row["observed"]["code"]
+    );
+    assert_eq!(
+        error
+            .to_string()
+            .replace(&root.to_string_lossy().into_owned(), "<dir>"),
+        row["observed"]["message"]
+    );
+}
+
+// #216 retains the TS stale-lock policy; the two-process TS probe records the
+// known race separately. This replay pins ordinary dead-owner reclamation.
+#[test]
+fn registry_reclaims_dead_stale_lock_like_ts() {
+    let raw = include_str!("../../tests/fixtures/run-registry-stale-race/oracle.json");
+    crate::test_baseline::oracle(raw);
+    let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let expected = &fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "dead-stale-replaced")
+        .unwrap()["observed"];
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let registry = FileRunRegistry::open_for_test(&path, SHORT).unwrap();
+    let lock_path = lock_path(&path);
+    fs::write(&lock_path, format!(r#"{{"pid":{DEAD}}}"#)).unwrap();
+    set_age(&lock_path, Duration::from_secs(120));
+    let held = registry.acquire_file_lock().unwrap();
+    let owner: serde_json::Value = serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::json!({"acquired":true,"ownerIsSelf":owner["pid"] == std::process::id()}),
+        *expected
+    );
+    drop(held);
+    assert!(!lock_path.exists());
+}

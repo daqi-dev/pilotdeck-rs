@@ -1,0 +1,81 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "cases": [
+    {
+      "protocol": "anthropic",
+      "observed": {
+        "delivery": "throw",
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "events": [
+          {
+            "type": "request_started",
+            "provider": "p",
+            "model": "m",
+            "providerBaseUrl": "http://example.test",
+            "requestFingerprint": "08a941612dec41549054a456ab024df318353673d29f2f6af8b475cfe1d51ebe"
+          }
+        ],
+        "retries": 0
+      }
+    },
+    {
+      "protocol": "openai",
+      "observed": {
+        "delivery": "throw",
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "events": [
+          {
+            "type": "request_started",
+            "provider": "p",
+            "model": "m",
+            "providerBaseUrl": "http://example.test",
+            "requestFingerprint": "08a941612dec41549054a456ab024df318353673d29f2f6af8b475cfe1d51ebe"
+          }
+        ],
+        "retries": 0
+      }
+    },
+    {
+      "protocol": "openai-responses",
+      "observed": {
+        "delivery": "throw",
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "events": [
+          {
+            "type": "request_started",
+            "provider": "p",
+            "model": "m",
+            "providerBaseUrl": "http://example.test",
+            "requestFingerprint": "08a941612dec41549054a456ab024df318353673d29f2f6af8b475cfe1d51ebe"
+          }
+        ],
+        "retries": 0
+      }
+    },
+    {
+      "protocol": "google",
+      "observed": {
+        "delivery": "throw",
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "events": [
+          {
+            "type": "request_started",
+            "provider": "p",
+            "model": "m",
+            "providerBaseUrl": "http://example.test",
+            "requestFingerprint": "08a941612dec41549054a456ab024df318353673d29f2f6af8b475cfe1d51ebe"
+          }
+        ],
+        "retries": 0
+      }
+    }
+  ]
+}

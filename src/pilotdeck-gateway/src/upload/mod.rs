@@ -911,7 +911,8 @@ fn random_id() -> Result<String> {
     ))
 }
 fn make_dir(path: &Path) -> Result<()> {
-    fs::create_dir_all(path).map_err(|e| UploadError::io(e, "mkdir", Some(path)))
+    crate::node_io::mkdir_recursive(path)
+        .map_err(|error| UploadError::io(error.source, "mkdir", Some(&error.path)))
 }
 fn open_new(path: &Path) -> Result<File> {
     OpenOptions::new()
