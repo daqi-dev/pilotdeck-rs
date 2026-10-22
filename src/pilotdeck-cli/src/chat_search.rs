@@ -1,0 +1,405 @@
+//! Native JSONL search. Behavior follows cli/commands/chatSearch.ts and
+//! session/search/NodeSessionSearchPort.ts, including physical line numbers.
+use crate::{
+    Failure,
+    paths::{Env, js_trim, node_fs_message, pilot_home, resolve},
+    stdout_line,
+};
+use pilotdeck_gateway::{list_session_entries, read_session_bytes, session_chat_dir};
+use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+mod matcher;
+mod title;
+
+struct Snippet(JsString);
+impl Serialize for Snippet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let json = stringify_json(&JsValue::String(self.0.clone()))
+            .unwrap()
+            .unwrap();
+        serde_json::value::RawValue::from_string(json)
+            .unwrap()
+            .serialize(serializer)
+    }
+}
+impl std::fmt::Display for Snippet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&String::from_utf16_lossy(self.0.units()))
+    }
+}
+use matcher::Matcher;
+
+const USAGE: &str = "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Match {
+    session_id: String,
+    role: &'static str,
+    text: String,
+    snippet: Snippet,
+    created_at: String,
+    line_number: usize,
+    session_title: String,
+    project_key: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchResult {
+    query: String,
+    matches: Vec<Match>,
+    truncated: bool,
+    sessions_scanned: usize,
+}
+struct Target {
+    path: PathBuf,
+    project: String,
+}
+
+pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    if argv.first().map(String::as_str) != Some("search") {
+        return Err(Failure::Error(USAGE.into()));
+    }
+    let all = &argv[1..];
+    let query = all
+        .iter()
+        .enumerate()
+        .filter(|(index, token)| {
+            !token.starts_with("--")
+                && (*index == 0
+                    || !matches!(
+                        all[index - 1].as_str(),
+                        "--project" | "--limit" | "--role" | "--session"
+                    ))
+        })
+        .map(|(_, token)| token.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let query = js_trim(&query).to_owned();
+    if query.is_empty() {
+        return Err(Failure::Error("Error: search keyword is required.".into()));
+    }
+    let flag = |name: &str| {
+        argv.iter()
+            .position(|arg| arg == name)
+            .and_then(|i| argv.get(i + 1))
+            .map(String::as_str)
+    };
+    let has = |name: &str| argv.iter().any(|arg| arg == name);
+    let home = match flag("--pilot-home") {
+        Some(path) => resolve(cwd, Path::new(path)),
+        None => pilot_home(env, cwd)?,
+    };
+    let all_projects = has("--all-projects");
+    let project = flag("--project").unwrap_or_else(|| cwd.to_str().unwrap_or(""));
+    let limit = flag("--limit")
+        .filter(|value| !value.is_empty())
+        .and_then(number)
+        .filter(|n| n.is_finite())
+        .unwrap_or(20.0)
+        .clamp(1.0, 100.0);
+    let role = flag("--role")
+        .filter(|role| matches!(*role, "user" | "assistant"))
+        .unwrap_or("all");
+    let matcher = Matcher::new(&query, has("--regex"), has("--case-sensitive"))?;
+    let files = collect(
+        &home,
+        cwd,
+        (!all_projects).then_some(project),
+        flag("--session"),
+    );
+    let mut result = SearchResult {
+        query,
+        matches: vec![],
+        truncated: false,
+        sessions_scanned: files.len(),
+    };
+    for file in files {
+        let bytes = read_session_bytes(&file.path).map_err(|error| {
+            Failure::Error(
+                node_fs_message(&error, "open", &file.path).unwrap_or_else(|| error.to_string()),
+            )
+        })?;
+        let source = String::from_utf8_lossy(&bytes);
+        let id = file.path.file_stem().unwrap_or_default().to_string_lossy();
+        let title = title::read(&bytes).unwrap_or_else(|| id.into_owned());
+        let mut file_matches = vec![];
+        // Node readline treats CR, LF and CRLF as line boundaries.
+        for (index, line) in physical_lines(&source).enumerate() {
+            let Ok(entry) = parse_json(line) else {
+                continue;
+            };
+            if matches!(entry, JsValue::Null) {
+                return Err(Failure::Error(
+                    "Cannot read properties of null (reading 'sessionId')".into(),
+                ));
+            }
+            let Some((entry_role, text)) = searchable(&entry) else {
+                continue;
+            };
+            if role != "all" && entry_role != role {
+                continue;
+            }
+            if matcher.find(&text)?.is_none() {
+                continue;
+            }
+            let normalized = normalize(&text);
+            let center = matcher.find(&normalized)?.unwrap_or(0);
+            let units: Vec<_> = normalized.encode_utf16().collect();
+            let start = center.saturating_sub(60);
+            let end = (center + 60).min(units.len());
+            let mut snippet = Vec::new();
+            if start > 0 {
+                snippet.extend("...".encode_utf16());
+            }
+            snippet.extend_from_slice(&units[start..end]);
+            if end < units.len() {
+                snippet.extend("...".encode_utf16());
+            }
+            let snippet = Snippet(JsString::from_utf16(snippet));
+            file_matches.push(Match {
+                session_id: string(&entry, "sessionId")
+                    .unwrap_or_else(|| file.path.to_string_lossy().into_owned()),
+                role: entry_role,
+                text,
+                snippet,
+                created_at: string(&entry, "createdAt").unwrap_or_default(),
+                line_number: index + 1,
+                session_title: title.clone(),
+                project_key: file.project.clone(),
+            });
+        }
+        // TS finishes reading a whole file before applying the result limit.
+        for item in file_matches {
+            result.matches.push(item);
+            // The provider uses >= against the fractional limit, not Array.slice.
+            if result.matches.len() as f64 >= limit {
+                result.truncated = true;
+                break;
+            }
+        }
+        if result.truncated {
+            break;
+        }
+    }
+    if has("--json") {
+        stdout_line(
+            &serde_json::to_string_pretty(&result).map_err(|e| Failure::Error(e.to_string()))?,
+        );
+    } else {
+        stdout_line(&format_result(&result, all_projects, env));
+    }
+    Ok(0)
+}
+
+fn number(text: &str) -> Option<f64> {
+    let text = js_trim(text);
+    if text.is_empty() {
+        return Some(0.0);
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0b", 2),
+        ("0B", 2),
+        ("0o", 8),
+        ("0O", 8),
+    ] {
+        if let Some(digits) = text.strip_prefix(prefix) {
+            if digits.is_empty() {
+                return None;
+            }
+            return digits.chars().try_fold(0.0, |sum, c| {
+                c.to_digit(radix)
+                    .map(|n| sum * f64::from(radix) + f64::from(n))
+            });
+        }
+    }
+    text.parse().ok()
+}
+fn internal(id: &str) -> bool {
+    [
+        "always-on-discovery",
+        "always-on-workspace",
+        "always-on-report",
+    ]
+    .iter()
+    .any(|prefix| {
+        id.strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with([':', '-']))
+    })
+}
+fn collect(home: &Path, cwd: &Path, project: Option<&str>, session: Option<&str>) -> Vec<Target> {
+    if let Some(id) = session.filter(|id| !id.is_empty()) {
+        if internal(id) {
+            return vec![];
+        }
+        let project = project.unwrap_or_else(|| cwd.to_str().unwrap_or(""));
+        let id = pilotdeck_gateway::storage::sanitize_session_id(&id.into());
+        return vec![Target {
+            path: session_chat_dir(home, cwd, project).join(format!("{id}.jsonl")),
+            project: project.into(),
+        }];
+    }
+    if let Some(project) = project.filter(|p| !p.is_empty()) {
+        return list(&session_chat_dir(home, cwd, project), project);
+    }
+    list_session_entries(&home.join("projects"))
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|(id, _)| list(&home.join("projects").join(&id).join("chats"), &id))
+        .collect()
+}
+fn list(dir: &Path, project: &str) -> Vec<Target> {
+    list_session_entries(dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(name, _)| {
+            let id = name.strip_suffix(".jsonl")?;
+            (!internal(id)).then(|| Target {
+                path: dir.join(&name),
+                project: project.into(),
+            })
+        })
+        .collect()
+}
+fn string(entry: &JsValue, key: &str) -> Option<String> {
+    entry
+        .get(key)?
+        .as_string()
+        .map(|s| String::from_utf16_lossy(s.units()))
+}
+fn canonical(messages: &[JsValue]) -> Option<String> {
+    let mut parts = vec![];
+    for message in messages {
+        let Some(JsValue::Array(content)) = message.get("content") else {
+            continue;
+        };
+        for block in content {
+            if string(block, "type").as_deref() != Some("text") {
+                continue;
+            }
+            if let Some(text) = string(block, "text") {
+                let text = js_trim(&text);
+                if !text.is_empty() {
+                    parts.push(text.to_owned());
+                }
+            }
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+fn searchable(entry: &JsValue) -> Option<(&'static str, String)> {
+    match string(entry, "type").as_deref() {
+        Some("accepted_input") => {
+            let JsValue::Array(messages) = entry.get("messages")? else {
+                return None;
+            };
+            canonical(messages).map(|text| ("user", text))
+        }
+        Some("assistant_message" | "durable_message") => {
+            let message = entry.get("message")?;
+            message.as_object()?;
+            canonical(std::slice::from_ref(message)).map(|text| ("assistant", text))
+        }
+        _ => None,
+    }
+}
+fn physical_lines(source: &str) -> impl Iterator<Item = &str> {
+    // split_inclusive keeps adjacent empty lines while consuming CRLF once.
+    source.split_inclusive('\n').flat_map(|line| {
+        line.strip_suffix('\n')
+            .unwrap_or(line)
+            .strip_suffix('\r')
+            .unwrap_or(line.strip_suffix('\n').unwrap_or(line))
+            .split('\r')
+    })
+}
+fn normalize(text: &str) -> String {
+    text.split(|c: char| js_trim(&c.to_string()).is_empty())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_result(result: &SearchResult, projects: bool, env: &Env) -> String {
+    if result.matches.is_empty() {
+        return format!(
+            "No chat history matches for \"{}\".\nScanned {} session(s).",
+            result.query, result.sessions_scanned
+        );
+    }
+    let mut lines = vec![
+        format!(
+            "🔍 {} match(es) for \"{}\"{}",
+            result.matches.len(),
+            result.query,
+            if result.truncated {
+                " (truncated — try a higher --limit)"
+            } else {
+                ""
+            }
+        ),
+        String::new(),
+    ];
+    for (index, item) in result.matches.iter().enumerate() {
+        let units: Vec<_> = item.session_id.encode_utf16().collect();
+        let short = if units.len() > 12 {
+            format!("{}…", String::from_utf16_lossy(&units[..8]))
+        } else {
+            item.session_id.clone()
+        };
+        let project = if projects && !item.project_key.is_empty() {
+            format!(
+                " · {}",
+                item.project_key
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&item.project_key)
+            )
+        } else {
+            String::new()
+        };
+        lines.push(format!(
+            "{}. **{}** (`{short}`){project}\n   {} · {}\n   > {}",
+            index + 1,
+            item.session_title,
+            item.role,
+            when(&item.created_at, env),
+            item.snippet
+        ));
+        lines.push(String::new());
+    }
+    lines.push("Tip: open the session in the Web UI to jump to the matched message.".into());
+    lines.join("\n")
+}
+fn when(text: &str, _env: &Env) -> String {
+    if text.is_empty() {
+        return "unknown time".into();
+    }
+    use chrono::{Datelike, TimeZone, Timelike};
+    use pilotdeck_transport::system_clock::parse_node22_date;
+    let Ok(Some(ms)) = parse_node22_date(&text.into()) else {
+        return text.into();
+    };
+    let Some(parts) = chrono::Local.timestamp_millis_opt(ms as i64).single() else {
+        return text.into();
+    };
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!(
+        "{} {}, {:02}:{:02} {}",
+        months[parts.month() as usize - 1],
+        parts.day(),
+        if parts.hour() % 12 == 0 {
+            12
+        } else {
+            parts.hour() % 12
+        },
+        parts.minute(),
+        if parts.hour() < 12 { "AM" } else { "PM" }
+    )
+}

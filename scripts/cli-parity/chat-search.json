@@ -1,0 +1,778 @@
+[
+  {
+    "id": "chat-usage",
+    "argv": [
+      "chat",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]\n"
+  },
+  {
+    "id": "chat-unknown",
+    "argv": [
+      "chat",
+      "bogus",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Usage: pilotdeck chat search <keyword> [--project <path>] [--all-projects] [--limit N] [--json] [--regex] [--case-sensitive] [--role user|assistant|all] [--session <id>]\n"
+  },
+  {
+    "id": "chat-empty",
+    "argv": [
+      "chat",
+      "search",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: search keyword is required.\n"
+  },
+  {
+    "id": "chat-flags-only",
+    "argv": [
+      "chat",
+      "search",
+      "--json",
+      "--limit",
+      "3",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: search keyword is required.\n"
+  },
+  {
+    "id": "chat-text",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "🔍 5 match(es) for \"hello\"\n\n1. **Custom title** (`a-long-s…`)\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\n2. **Custom title** (`a-long-s…`)\n   assistant · Jan 2, 01:04 PM\n   > hello reply 42\n\n3. **Custom title** (`a-long-s…`)\n   assistant · Jan 2, 01:04 PM\n   > durable HELLO\n\n4. **Custom title** (`a-long-s…`)\n   user · unknown time\n   > emoji 😀 中文 İ Σ hello\n\n5. **Generated title** (`b`)\n   user · invalid date\n   > hello last prompt\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-json",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-case-sensitive",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--case-sensitive",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-role-user",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--role",
+      "user",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-role-assistant",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--role",
+      "assistant",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-role-invalid",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--role",
+      "tool",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-all",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--all-projects",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "🔍 6 match(es) for \"hello\"\n\n1. **Custom title** (`a-long-s…`) · fixture-chat-project\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\n2. **Custom title** (`a-long-s…`) · fixture-chat-project\n   assistant · Jan 2, 01:04 PM\n   > hello reply 42\n\n3. **Custom title** (`a-long-s…`) · fixture-chat-project\n   assistant · Jan 2, 01:04 PM\n   > durable HELLO\n\n4. **Custom title** (`a-long-s…`) · fixture-chat-project\n   user · unknown time\n   > emoji 😀 中文 İ Σ hello\n\n5. **Generated title** (`b`) · fixture-chat-project\n   user · invalid date\n   > hello last prompt\n\n6. **hello other project** (`c`) · other\n   user · Jan 2, 01:04 PM\n   > hello other project\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-all-json",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--all-projects",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"fixture-chat-project\"\n    },\n    {\n      \"sessionId\": \"c\",\n      \"role\": \"user\",\n      \"text\": \"hello other project\",\n      \"snippet\": \"hello other project\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"hello other project\",\n      \"projectKey\": \"other\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 4\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "1",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "🔍 1 match(es) for \"hello\" (truncated — try a higher --limit)\n\n1. **Custom title** (`a-long-s…`)\n   user · Jan 2, 01:04 PM\n   > Hello WORLD next line second block\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-fraction-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "1.5",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-zero-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "0",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-negative-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "-2",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-nan-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "NaN",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-hex-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "0x2",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-infinite-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "Infinity",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-session",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--session",
+      "b",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-internal-session",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--session",
+      "always-on-report-hidden",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 0\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-no-result",
+    "argv": [
+      "chat",
+      "search",
+      "absent",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "No chat history matches for \"absent\".\nScanned 3 session(s).\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-snippet",
+    "argv": [
+      "chat",
+      "search",
+      "needle",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"needle\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\",\n      \"snippet\": \"...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz...\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-multiword",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "WORLD",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello WORLD\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-unknown-flag",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--bogus",
+      "reply",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello reply\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-missing-role",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--role",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-repeat-limit",
+    "argv": [
+      "chat",
+      "search",
+      "hello",
+      "--limit",
+      "2",
+      "--limit",
+      "1",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-regex",
+    "argv": [
+      "chat",
+      "search",
+      "h.llo",
+      "--regex",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"h.llo\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"Hello   WORLD\\n next line\\nsecond block\",\n      \"snippet\": \"Hello WORLD next line second block\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"hello reply 42\",\n      \"snippet\": \"hello reply 42\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"assistant\",\n      \"text\": \"durable HELLO\",\n      \"snippet\": \"durable HELLO\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    },\n    {\n      \"sessionId\": \"b\",\n      \"role\": \"user\",\n      \"text\": \"hello last prompt\",\n      \"snippet\": \"hello last prompt\",\n      \"createdAt\": \"invalid date\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"Generated title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  },
+  {
+    "id": "chat-regex-invalid-class",
+    "argv": [
+      "chat",
+      "search",
+      "[",
+      "--regex",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Invalid regular expression: /[/i: Unterminated character class\n"
+  },
+  {
+    "id": "chat-unicode",
+    "argv": [
+      "chat",
+      "search",
+      "İ",
+      "--json",
+      "--project",
+      "/fixture/chat-project"
+    ],
+    "stdinHex": "",
+    "token": false,
+    "fixtureFiles": {
+      "pilot/projects/fixture-chat-project/.cwd": "/fixture/chat-project",
+      "pilot/projects/fixture-chat-project/chats/a-long-session-123456.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Custom title\",\"aiTitle\":\"AI title\"}}\r\n\r\nnot json\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"  Hello   WORLD\\n next line  \"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second block\"}]}]}\r\n{\"type\":\"assistant_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello reply 42\"}]}}\r\n{\"type\":\"durable_message\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"durable HELLO\"}]}}\r\n{\"type\":\"tool_result\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello ignored\"}]}}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}]}\r\n{\"type\":\"accepted_input\",\"sessionId\":\"a-long-session-123456\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"emoji 😀 中文 İ Σ hello\"}]}]}\r\n",
+      "pilot/projects/fixture-chat-project/chats/b.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"invalid date\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello last prompt\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"b\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"aiTitle\":\"Generated title\"}}",
+      "pilot/projects/fixture-chat-project/chats/always-on-report-hidden.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"always-on-report-hidden\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello hidden\"}]}]}",
+      "pilot/projects/fixture-chat-project/chats/empty.jsonl": "",
+      "pilot/projects/fixture-chat-project/chats/not-jsonl.txt": "hello",
+      "pilot/projects/other/chats/c.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"c\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello other project\"}]}]}"
+    },
+    "exit": 0,
+    "stdout": "{\n  \"query\": \"İ\",\n  \"matches\": [\n    {\n      \"sessionId\": \"a-long-session-123456\",\n      \"role\": \"user\",\n      \"text\": \"emoji 😀 中文 İ Σ hello\",\n      \"snippet\": \"emoji 😀 中文 İ Σ hello\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"Custom title\",\n      \"projectKey\": \"/fixture/chat-project\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 3\n}\n",
+    "stderr": ""
+  }
+]

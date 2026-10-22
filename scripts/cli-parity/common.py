@@ -20,7 +20,11 @@ DIRS = ('home', 'pilot', 'project', 'tmp', 'bin', 'xdg-config', 'xdg-cache', 'xd
 FILES = {'pilot/pilotdeck.yaml': b'schemaVersion: 1\n', 'project/keep.txt': b'D0 fixture\x00\xff\n',
          'openssl.cnf': b''}
 OPENSSL_CONFIG = {'path': 'openssl.cnf', 'sha256': hashlib.sha256(b'').hexdigest()}
-SCENARIOS = json.loads((SCRIPT / 'scenarios.json').read_text())
+# Registered suites keep each batch inside the existing 30-scenario lease.
+SUITE = os.environ.get('PDRS_CLI_PARITY_SUITE', 'default')
+if SUITE not in ('default', 'chat-search'):
+    raise ValueError(f'unknown CLI parity suite: {SUITE}')
+SCENARIOS = json.loads((SCRIPT / ('chat-search.json' if SUITE == 'chat-search' else 'scenarios.json')).read_text())
 
 
 class Blocked(RuntimeError):

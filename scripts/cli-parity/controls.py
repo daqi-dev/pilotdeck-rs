@@ -9,7 +9,19 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import output_path, read_plain, save, snapshot
-from compare import compare, plain
+from compare import compare, load_round, plain
+
+
+def select_case(cases, preferred, eligible):
+    """Keep calibrated choices when eligible, otherwise use recording order."""
+    if preferred in cases and eligible(cases[preferred]):
+        return preferred
+    return next((name for name, case in cases.items() if eligible(case)), None)
+
+
+def disk_file(case):
+    files = [name for name, row in case['disk'].items() if row['type'] == 'file']
+    return 'project/keep.txt' if 'project/keep.txt' in files else next(iter(sorted(files)), None)
 
 
 def run_controls(source, output):
@@ -21,19 +33,26 @@ def run_controls(source, output):
         return {'status': 'BLOCKED', 'error': 'controls require complete, valid TS evidence', 'validation': valid}
     output.mkdir(parents=True, exist_ok=False)
     results = []
-    specs = [('drop-stdout', 'help-long', 'stdout'),
-             ('change-stderr', 'flag-missing', 'stderr'),
-             ('change-exit', 'help-long', 'exit'),
-             ('drop-disk', 'help-long', 'disk'),
-             ('extra-file', 'help-long', 'disk')]
-    for name, scenario, surface in specs:
+    _, cases, errors = load_round(source)
+    if errors:
+        return {'status': 'BLOCKED', 'error': 'controls source changed after validation', 'validation': errors}
+    specs = [('drop-stdout', 'help-long', 'stdout', lambda case: bool(case['stdout'])),
+             ('change-stderr', 'flag-missing', 'stderr', lambda case: case['stderr'] != b'INJECTED STDERR\n'),
+             ('change-exit', 'help-long', 'exit', lambda case: True),
+             ('drop-disk', 'help-long', 'disk', lambda case: disk_file(case) is not None),
+             ('extra-file', 'help-long', 'disk', lambda case: disk_file(case) is not None)]
+    for name, preferred, surface, eligible in specs:
+        scenario = select_case(cases, preferred, eligible)
+        if scenario is None:
+            results.append({'name': name, 'status': 'NOT_APPLICABLE', 'scenario': None,
+                            'reason': f'current suite has no eligible case for {name} ({surface})'})
+            continue
         target = output / name
         shutil.copytree(source, target, symlinks=True)
         case = target / 'cases' / scenario
         # Defense in depth: copy validation precedes all mutation, including metadata.
         for filename in ('stdout.bin', 'stderr.bin', 'record.json', 'events.json', 'final.json'):
             plain(case / filename)
-        plain(case / 'tree/project/keep.txt')
         if surface in ('stdout', 'stderr'):
             data = b'' if name == 'drop-stdout' else b'INJECTED STDERR\n'
             (case / f'{surface}.bin').write_bytes(data)
@@ -45,13 +64,19 @@ def run_controls(source, output):
             save(case / 'events.json', events)
         elif surface == 'exit':
             record = json.loads(read_plain(case / 'record.json'))
-            record['exitCode'] = 73
+            record['exitCode'] = 73 if record['exitCode'] != 73 else 74
             save(case / 'record.json', record)
         else:
+            artifact = case / 'tree' / disk_file(cases[scenario])
+            plain(artifact)
             if name == 'drop-disk':
-                (case / 'tree/project/keep.txt').unlink()
+                artifact.unlink()
             else:
-                (case / 'tree/project/unexpected.bin').write_bytes(b'INJECTED\x00\xff')
+                extra = artifact.with_name('unexpected.bin')
+                while extra.exists() or extra.is_symlink():
+                    extra = extra.with_name(extra.name + '.extra')
+                with extra.open('xb') as stream:
+                    stream.write(b'INJECTED\x00\xff')
             save(case / 'final.json', snapshot(case / 'tree'))
         result = compare(source, target)
         rules = [row['rule'] for row in result['failures']]
@@ -59,10 +84,12 @@ def run_controls(source, output):
         pair_rule = f'{scenario}.{"exitCode" if surface == "exit" else surface}'
         passed = result['status'] == 'FAIL' and expected in rules and pair_rule in rules
         save(output / (name + '.comparison.json'), result)
-        results.append({'name': name, 'passed': passed, 'expectedRule': expected,
+        results.append({'name': name, 'status': 'PASS' if passed else 'FAIL',
+                        'scenario': scenario, 'passed': passed, 'expectedRule': expected,
                         'expectedPairRule': pair_rule, 'observedRules': rules})
-    report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
-              'source': str(source), 'controls': results}
+    report = {'status': 'FAIL' if any(row['status'] == 'FAIL' for row in results) else 'PASS',
+              'source': str(source), 'controls': results,
+              'notApplicable': [row['name'] for row in results if row['status'] == 'NOT_APPLICABLE']}
     save(output / 'controls.json', report)
     return report
 

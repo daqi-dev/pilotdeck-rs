@@ -848,11 +848,16 @@ dependencies = [
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "fancy-regex",
+ "icu_casemap",
  "icu_collator",
  "icu_locale_core",
  "libc",
  "pilotdeck-gateway",
  "pilotdeck-protocol",
+ "pilotdeck-transport",
+ "serde",
  "serde_json",
  "sha2",
 ]

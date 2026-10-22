@@ -14,6 +14,12 @@ path = "src/main.rs"
 pilotdeck-gateway = { path = "../pilotdeck-gateway" }
 pilotdeck-protocol.workspace = true
 sha2.workspace = true
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json.workspace = true
+fancy-regex = "=0.17.0"
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+icu_casemap = "=2.1.1"
+pilotdeck-transport = { path = "../pilotdeck-transport" }
 libc = "=0.2.190"
 icu_collator = "=2.1.1"
 icu_locale_core = "=2.3.0"
