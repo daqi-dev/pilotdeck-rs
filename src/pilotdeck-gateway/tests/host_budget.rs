@@ -1,3 +1,5 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::host::modules::{ModuleRouter, budget::*};
 use pilotdeck_gateway::host::{HostError, HostFuture, HostHandler, ModuleError};
 use pilotdeck_gateway::model_cost::{ModelPricing, PricingMap};
@@ -169,7 +171,7 @@ fn pricing(spec: &JsValue) -> Option<PricingMap> {
 
 #[tokio::test]
 async fn budget_dispatch_matches_real_ts_calls_responses_and_capabilities() {
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
     assert_eq!(cases.len(), 338);
     for case in cases {
@@ -257,11 +259,7 @@ async fn budget_dispatch_matches_real_ts_calls_responses_and_capabilities() {
 
 #[test]
 fn budget_oracle_is_pinned_to_clean_baseline_blobs() {
-    use sha2::{Digest, Sha256};
-    use std::process::Command;
-    let oracle = parse_json(ORACLE).unwrap();
-    let commit = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
-    assert_eq!(text(field(&oracle, "sourceCommit")), commit);
+    let oracle = baseline::oracle(ORACLE);
     let sources = field(&oracle, "sourceSha256").as_object().unwrap();
     assert_eq!(sources.len(), 12);
     assert!(
@@ -270,42 +268,6 @@ fn budget_oracle_is_pinned_to_clean_baseline_blobs() {
             .is_some()
     );
     assert!(sources.get("src/router/RouterRuntime.ts").is_some());
-    for (_, hash) in sources.entries().iter() {
-        assert_eq!(text(hash).len(), 64);
-    }
-    let Ok(baseline) = std::env::var("PDRS_BASELINE") else {
-        return;
-    };
-    let git = |args: &[&str]| {
-        let result = Command::new("git")
-            .arg("-C")
-            .arg(&baseline)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        result.stdout
-    };
-    assert_eq!(
-        String::from_utf8(git(&["rev-parse", "HEAD"]))
-            .unwrap()
-            .trim(),
-        commit
-    );
-    assert!(git(&["status", "--porcelain", "--untracked-files=no"]).is_empty());
-    for (path, hash) in sources.entries().iter() {
-        let path = path.to_utf8().unwrap();
-        let blob = git(&["show", &format!("{commit}:{path}")]);
-        assert_eq!(format!("{:x}", Sha256::digest(&blob)), text(hash));
-        assert_eq!(
-            std::fs::read(std::path::Path::new(&baseline).join(path)).unwrap(),
-            blob
-        );
-    }
 }
 
 #[test]
@@ -350,7 +312,7 @@ fn budget_fixtures_regenerate_twice_identically() {
     );
     println!(
         "HOST_BUDGET_REGEN_PASS cases={} runs=2 oracle_bytes={}",
-        array(field(&parse_json(ORACLE).unwrap(), "cases")).len(),
+        array(field(&baseline::oracle(ORACLE), "cases")).len(),
         first.len()
     );
 }

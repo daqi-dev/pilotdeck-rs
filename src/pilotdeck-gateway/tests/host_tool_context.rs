@@ -1,3 +1,5 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::host::{
     HostError, HostFuture,
     modules::{
@@ -396,11 +398,7 @@ async fn project_runtime(runtime: &ToolRuntimeContext) -> JsValue {
 
 #[tokio::test]
 async fn replay_real_ts_constructors() {
-    let fixture = parse_json(include_str!("fixtures/host-tool-context/oracle.json")).unwrap();
-    assert_eq!(
-        text(&field(&fixture, "commit")),
-        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
-    );
+    let fixture = baseline::oracle(include_str!("fixtures/host-tool-context/oracle.json"));
     assert_eq!(
         field(&fixture, "sourceSha256").as_object().unwrap().len(),
         5

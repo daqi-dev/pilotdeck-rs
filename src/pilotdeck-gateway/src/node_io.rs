@@ -208,10 +208,9 @@ mod tests {
                 .collect();
             assert_eq!(allowed, measured, "{method}");
         }
-        let snapshots: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/snapshot-projection/oracle.json"
-        ))
-        .unwrap();
+        let raw = include_str!("../tests/fixtures/snapshot-projection/oracle.json");
+        crate::test_baseline::oracle(raw);
+        let snapshots: serde_json::Value = serde_json::from_str(raw).unwrap();
         for (operation, method) in [
             ("snapshotList", "snapshot_list"),
             ("snapshotGet", "snapshot_get"),

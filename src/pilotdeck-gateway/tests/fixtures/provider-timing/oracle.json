@@ -1,22 +1,10 @@
 {
  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
- "sources": [
-  {
-   "source": "model/streaming/streamModel.ts",
-   "node": "v22.22.0",
-   "sha256": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26"
-  },
-  {
-   "source": "context/budget/TokenAccountingRuntime.ts",
-   "node": "v22.22.0",
-   "sha256": "ed0bf548742f52f8f309b405301b50b8b6ed735bd19ff87a29111d1cc8878a02"
-  },
-  {
-   "source": "network/fetch.ts",
-   "node": "v22.22.0",
-   "sha256": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
-  }
- ],
+ "sourceSha256": {
+  "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+  "src/context/budget/TokenAccountingRuntime.ts": "ed0bf548742f52f8f309b405301b50b8b6ed735bd19ff87a29111d1cc8878a02",
+  "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+ },
  "cases": [
   {
    "id": "anthropic/headers/fulfilled/continuation-first",

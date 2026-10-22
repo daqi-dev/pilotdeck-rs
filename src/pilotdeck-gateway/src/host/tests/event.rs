@@ -2,10 +2,8 @@ use super::*;
 use crate::host::execution::module_response;
 use crate::host::modules::ModuleRouter;
 use crate::host::modules::event::{EventSink, Handler, TurnIdentity};
-use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex, OnceLock};
 
-const BASELINE_COMMIT: &str = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
 const SOURCE_PATHS: [&str; 3] = [
     "src/agent/modules/transport/agentLoopSidecarClient.ts",
     "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts",
@@ -15,7 +13,7 @@ const ORACLE_JSON: &str = include_str!("../../../tests/fixtures/host-event/oracl
 
 fn oracle() -> &'static JsValue {
     static ORACLE: OnceLock<JsValue> = OnceLock::new();
-    ORACLE.get_or_init(|| parse_json(ORACLE_JSON).unwrap())
+    ORACLE.get_or_init(|| crate::test_baseline::oracle(ORACLE_JSON))
 }
 fn array<'a>(value: &'a JsValue, key: &str) -> &'a [JsValue] {
     let JsValue::Array(items) = value.get(key).unwrap() else {
@@ -298,61 +296,11 @@ fn event_call(event: JsValue) -> JsValue {
 #[test]
 fn oracle_comes_from_the_fixed_baseline() {
     let oracle = oracle();
-    assert_eq!(text(oracle.get("sourceCommit").unwrap()), BASELINE_COMMIT);
     let hashes = oracle.get("sourceSha256").unwrap();
     for source in SOURCE_PATHS {
-        let hash = text(hashes.get(source).unwrap());
-        assert_eq!(hash.len(), 64, "missing or malformed hash for {source}");
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(hashes.get(source).is_some(), "missing source {source}");
     }
     assert!(!ORACLE_JSON.contains(".generate-"));
-    checks_oracle_against_baseline_when_available(hashes);
-}
-
-/// With `PDRS_BASELINE` set, re-run the generator's provenance checks: the
-/// checkout must have no modifications to tracked files, and every recorded
-/// hash must equal the blob at the pinned commit (not just the working tree).
-fn checks_oracle_against_baseline_when_available(hashes: &JsValue) {
-    let Ok(baseline) = std::env::var("PDRS_BASELINE") else {
-        return;
-    };
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&baseline)
-            .args(args)
-            .output()
-            .expect("run git against PDRS_BASELINE");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output.stdout
-    };
-    let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]))
-        .trim()
-        .to_string();
-    assert_eq!(
-        head, BASELINE_COMMIT,
-        "PDRS_BASELINE must be checked out at the fixed commit"
-    );
-    let tracked = String::from_utf8_lossy(&git(&["status", "--porcelain", "--untracked-files=no"]))
-        .into_owned();
-    assert!(
-        tracked.is_empty(),
-        "PDRS_BASELINE has uncommitted changes to tracked files:\n{tracked}"
-    );
-    for source in SOURCE_PATHS {
-        let spec = format!("{BASELINE_COMMIT}:{source}");
-        let committed = git(&["show", &spec]);
-        let actual = format!("{:x}", Sha256::digest(&committed));
-        assert_eq!(
-            actual,
-            text(hashes.get(source).unwrap()),
-            "oracle hash for {source} does not match {BASELINE_COMMIT}"
-        );
-    }
 }
 
 /// Regenerates the oracle from the real TS dispatcher and compares bytes.
