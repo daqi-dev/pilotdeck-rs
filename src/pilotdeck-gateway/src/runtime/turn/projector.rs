@@ -62,21 +62,26 @@ impl std::error::Error for ProjectionError {}
 /// Projection result; `Err` mirrors a TS throw for structurally invalid events.
 pub type ProjectionResult<T> = Result<T, ProjectionError>;
 
-/// `GatewayToolResultArtifactInput`.
+/// `GatewayToolResultArtifactInput`. The path fields stay raw [`JsValue`]s:
+/// TS passes `event.sessionId`/`turnId`/`result.toolCallId` through unchanged,
+/// and only `safePathPart` (above the 4096-byte threshold) calls `.trim()` on
+/// them. Coercing here would both lose the wire type in the `persist` record
+/// and hide the store's throw for a non-string path part.
 #[derive(Clone, Debug)]
 pub struct GatewayToolResultArtifactInput {
-    pub session_id: JsString,
-    pub turn_id: JsString,
-    pub tool_call_id: JsString,
+    pub session_id: JsValue,
+    pub turn_id: JsValue,
+    pub tool_call_id: JsValue,
     pub text: JsString,
 }
 
 /// `GatewayToolResultArtifactStorePort`. Returns the artifact path when the
 /// preview is over the threshold (TS returns it before the advisory write
 /// finishes); `None` leaves `resultPath` undefined (below threshold, or no
-/// advisory writer could be started).
+/// advisory writer could be started). `Err` mirrors the TS `persist` throw
+/// when a path field is not a string and the text is over the threshold.
 pub trait GatewayToolResultArtifactStorePort: Send + Sync {
-    fn persist(&self, input: &GatewayToolResultArtifactInput) -> Option<String>;
+    fn persist(&self, input: &GatewayToolResultArtifactInput) -> ProjectionResult<Option<String>>;
 }
 
 type CreateDirectoryHook = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
@@ -208,21 +213,20 @@ impl Default for GatewayToolResultArtifactStore {
 }
 
 impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
-    fn persist(&self, input: &GatewayToolResultArtifactInput) -> Option<String> {
+    fn persist(&self, input: &GatewayToolResultArtifactInput) -> ProjectionResult<Option<String>> {
         if utf8_len(input.text.units()) <= self.threshold_bytes {
-            return None;
+            return Ok(None);
         }
+        // TS evaluates `safePathPart(sessionId)`, `safePathPart(turnId)` and
+        // `safePathPart(toolCallId)` in this order and throws on the first
+        // non-string part; a wire value can carry a number/boolean/array/object.
+        let session_id = safe_path_part_js(&input.session_id)?;
+        let turn_id = safe_path_part_js(&input.turn_id)?;
+        let tool_call_id = safe_path_part_js(&input.tool_call_id)?;
         // TS `resolve(rootDir, safePathPart(sessionId), safePathPart(turnId))`
         // normalizes `.`/`..` segments (safePathPart can emit both).
-        let directory = resolve_lexically(
-            self.root_dir
-                .join(safe_path_part(input.session_id.units()))
-                .join(safe_path_part(input.turn_id.units())),
-        );
-        let path = resolve_lexically(directory.join(format!(
-            "{}.txt",
-            safe_path_part(input.tool_call_id.units())
-        )));
+        let directory = resolve_lexically(self.root_dir.join(session_id).join(turn_id));
+        let path = resolve_lexically(directory.join(format!("{tool_call_id}.txt")));
         // `void this.write(...)`: return the path immediately; the advisory
         // write runs off-thread and failures are swallowed.
         let bytes = String::from_utf16_lossy(input.text.units()).into_bytes();
@@ -236,7 +240,7 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
             let _ = write_text(&job_path, &bytes);
         });
         // Never hand out a path whose write was not even queued.
-        accepted.then(|| path.to_string_lossy().into_owned())
+        Ok(accepted.then(|| path.to_string_lossy().into_owned()))
     }
 }
 
@@ -377,13 +381,24 @@ fn required<'a>(base: &'a JsValue, name: &str) -> ProjectionResult<&'a JsValue> 
     Ok(field(base, name))
 }
 
-/// `receiver.method(...)` where only a `null`/`undefined` *receiver* throws
-/// (`reading 'method'`); the method itself is modeled by the caller.
-fn required_receiver<'a>(receiver: &'a JsValue, name: &str) -> ProjectionResult<&'a JsValue> {
-    if is_null(receiver) || receiver.is_undefined() {
-        return Err(missing_property_error(receiver, name));
+/// `receiver.method(...)` for a `String.prototype` method such as
+/// `trim`/`split`/`toLowerCase`. Reading the method off `null`/`undefined`
+/// throws `Cannot read properties of … (reading 'method')`; on every other
+/// non-string receiver V8 reports `TypeError: <expression> is not a function`
+/// (wire JSON cannot carry a callable property, so the lookup is always
+/// `undefined`). `expression` is the source text V8 prints, e.g.
+/// `item.path.split`.
+fn string_method<'a>(receiver: &'a JsValue, expression: &str) -> ProjectionResult<&'a JsString> {
+    match receiver {
+        JsValue::String(value) => Ok(value),
+        JsValue::Undefined | JsValue::Null => {
+            let method = expression.rsplit('.').next().unwrap_or(expression);
+            Err(missing_property_error(receiver, method))
+        }
+        _ => Err(ProjectionError::type_error(format!(
+            "{expression} is not a function"
+        ))),
     }
-    Ok(receiver)
 }
 
 /// JS `value.map(...)` / `value.flatMap(...)`; only arrays expose the method.
@@ -482,12 +497,21 @@ fn checked_js_text(value: &JsValue) -> ProjectionResult<JsValue> {
     )?)))
 }
 
-/// `value.length` (UTF-16 units): reading it off null/undefined throws.
-fn js_length(value: &JsValue) -> ProjectionResult<usize> {
-    if is_null(value) || value.is_undefined() {
-        return Err(missing_property_error(value, "length"));
-    }
-    Ok(checked_string_units(value)?.len())
+/// JS `value.length`: a *property read*, not `String(value).length`. Reading it
+/// off `null`/`undefined` throws; strings report UTF-16 units, arrays their
+/// element count, and other primitives have no `length` (template
+/// interpolation then renders `undefined`). Objects expose their own
+/// `length` value, which the caller interpolates with `ToString`.
+fn js_length(value: &JsValue) -> ProjectionResult<JsValue> {
+    Ok(match value {
+        JsValue::Undefined | JsValue::Null => {
+            return Err(missing_property_error(value, "length"));
+        }
+        JsValue::String(value) => JsValue::Number(value.len_utf16() as f64),
+        JsValue::Array(items) => JsValue::Number(items.len() as f64),
+        JsValue::Object(object) => object.get("length").cloned().unwrap_or(JsValue::Undefined),
+        JsValue::Number(_) | JsValue::Bool(_) => JsValue::Undefined,
+    })
 }
 
 /// `JSON.stringify` with the repository's shared container-depth bound.
@@ -572,11 +596,10 @@ fn safe_path_part(units: &[u16]) -> String {
     }
 }
 
-/// `safeGatewayPathPart(value)`: `value.trim()` throws on null/undefined, and
-/// the template-literal call site evaluates it before the extension lookup.
+/// `safeGatewayPathPart(value)`: `value.trim()` accepts only strings; the
+/// template-literal call site evaluates it before the extension lookup.
 fn safe_path_part_js(value: &JsValue) -> ProjectionResult<String> {
-    let value = required_receiver(value, "trim")?;
-    Ok(safe_path_part(&checked_string_units(value)?))
+    Ok(safe_path_part(string_method(value, "value.trim")?.units()))
 }
 
 fn last_path_segment(units: &[u16]) -> JsString {
@@ -589,21 +612,22 @@ fn last_path_segment(units: &[u16]) -> JsString {
     JsString::from_utf16(units[start..].to_vec())
 }
 
-/// `path.split(/[\\/]/).pop()`: `split` throws on null/undefined.
-fn last_path_segment_js(value: &JsValue) -> ProjectionResult<JsString> {
-    let value = required_receiver(value, "split")?;
-    Ok(last_path_segment(&checked_string_units(value)?))
+/// `path.split(/[\\/]/).pop()`: `split` accepts only strings, and V8 prints
+/// the caller's property expression (e.g. `item.path.split`).
+fn last_path_segment_js(value: &JsValue, expression: &str) -> ProjectionResult<JsString> {
+    let value = string_method(value, expression)?;
+    Ok(last_path_segment(value.units()))
 }
 
 /// TS uses Unicode `toLowerCase()`; ASCII lowering is equivalent for the four
 /// known mime types because no non-ASCII case fold lands on one of them.
 fn extension_for_mime(mime_type: &JsValue) -> ProjectionResult<&'static str> {
-    let mime_type = required_receiver(mime_type, "toLowerCase")?;
-    let lowered: Vec<u16> = checked_string_units(mime_type)?
-        .into_iter()
+    let lowered: Vec<u16> = string_method(mime_type, "mimeType.toLowerCase")?
+        .units()
+        .iter()
         .map(|unit| match unit {
             0x41..=0x5a => unit + 0x20,
-            _ => unit,
+            _ => *unit,
         })
         .collect();
     let lowered = String::from_utf16_lossy(&lowered);
@@ -1114,11 +1138,11 @@ fn tool_result_frames(
     let result_line_count = line_count(&full_text);
     let result_bytes = utf8_len(&full_text);
     let result_path = store.persist(&GatewayToolResultArtifactInput {
-        session_id: string_as_js(field(event, "sessionId"))?,
-        turn_id: string_as_js(field(event, "turnId"))?,
-        tool_call_id: string_as_js(field(result, "toolCallId"))?,
+        session_id: field(event, "sessionId").clone(),
+        turn_id: field(event, "turnId").clone(),
+        tool_call_id: field(result, "toolCallId").clone(),
         text: JsString::from_utf16(full_text.clone()),
-    });
+    })?;
     let tool_name = field(result, "toolName");
 
     let mut images = Vec::new();
@@ -1177,7 +1201,10 @@ fn tool_result_frames(
                         ("mimeType", field(item, "mimeType").clone()),
                         (
                             "name",
-                            JsValue::String(last_path_segment_js(field(item, "path"))?),
+                            JsValue::String(last_path_segment_js(
+                                field(item, "path"),
+                                "item.path.split",
+                            )?),
                         ),
                         ("source", text("tool_result")),
                         (
@@ -1236,13 +1263,6 @@ fn tool_result_frames(
     let mut frames = vec![JsValue::Object(finished)];
     frames.extend(attachments);
     Ok(frames)
-}
-
-fn string_as_js(value: &JsValue) -> ProjectionResult<JsString> {
-    match value {
-        JsValue::String(value) => Ok(value.clone()),
-        _ => Ok(JsString::from_utf16(checked_string_units(value)?)),
-    }
 }
 
 fn join_units(parts: &[Vec<u16>], separator: u16) -> Vec<u16> {
@@ -1341,13 +1361,13 @@ fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
         push_units(&mut out, field(item, "mimeType"))?;
         push_str(&mut out, ", ");
         // TS reads `content.data.length`; that throws when the field is absent.
-        push_str(&mut out, &js_length(field(item, "data"))?.to_string());
+        push_units(&mut out, &js_length(field(item, "data"))?)?;
         push_str(&mut out, " base64 characters]");
     } else if is_type(kind, "pdf") {
         push_str(&mut out, "[PDF: ");
         push_units(&mut out, field(item, "mimeType"))?;
         push_str(&mut out, ", ");
-        push_str(&mut out, &js_length(field(item, "data"))?.to_string());
+        push_units(&mut out, &js_length(field(item, "data"))?)?;
         push_str(&mut out, " base64 characters");
         if truthy(field(item, "pages")) {
             push_str(&mut out, ", ");
@@ -1384,7 +1404,7 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
         if is_type(field(block, "source"), "url") {
             push_units(&mut out, field(block, "data"))?;
         } else {
-            push_str(&mut out, &js_length(field(block, "data"))?.to_string());
+            push_units(&mut out, &js_length(field(block, "data"))?)?;
             push_str(&mut out, " base64 characters");
         }
         push_str(&mut out, "]");
@@ -1392,7 +1412,7 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
         push_str(&mut out, "[PDF: ");
         push_units(&mut out, field(block, "mimeType"))?;
         push_str(&mut out, ", ");
-        push_str(&mut out, &js_length(field(block, "data"))?.to_string());
+        push_units(&mut out, &js_length(field(block, "data"))?)?;
         push_str(&mut out, " base64 characters");
         if truthy(field(block, "pages")) {
             push_str(&mut out, ", ");
@@ -1618,7 +1638,10 @@ fn tool_results_projected_frames(message: &JsValue) -> ProjectionResult<Vec<JsVa
                         ("bytes", field(block, "originalBytes").clone()),
                         (
                             "name",
-                            JsValue::String(last_path_segment_js(field(block, "path"))?),
+                            JsValue::String(last_path_segment_js(
+                                field(block, "path"),
+                                "block.path.split",
+                            )?),
                         ),
                         ("source", text("media_reference")),
                         (

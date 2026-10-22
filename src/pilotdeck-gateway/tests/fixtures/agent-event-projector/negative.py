@@ -230,47 +230,55 @@ mutants = [
     (
         "silent-missing-image-mime",
         "projector.rs",
-        '    let mime_type = required_receiver(mime_type, "toLowerCase")?;',
-        '    let mime_type = if mime_type.is_undefined() { &UNDEFINED } else { mime_type };',
+        '''    let lowered: Vec<u16> = string_method(mime_type, "mimeType.toLowerCase")?
+        .units()
+        .iter()''',
+        '''    let lowered: Vec<u16> = checked_string_units(mime_type)?
+        .iter()''',
         "error-tool-result-image-missing-mime-type",
     ),
     (
         "silent-missing-image-tool-name",
         "projector.rs",
-        '    let value = required_receiver(value, "trim")?;',
-        '    let value = if value.is_undefined() { &UNDEFINED } else { value };',
+        '    Ok(safe_path_part(string_method(value, "value.trim")?.units()))',
+        '    Ok(safe_path_part(&checked_string_units(value)?))',
         "error-tool-result-image-missing-tool-name",
     ),
     (
         "silent-missing-file-path",
         "projector.rs",
-        '    let value = required_receiver(value, "split")?;',
-        '    let value = if value.is_undefined() { &UNDEFINED } else { value };',
+        '''    let value = string_method(value, expression)?;
+    Ok(last_path_segment(value.units()))''',
+        '''    let value = checked_string_units(value)?;
+    Ok(last_path_segment(&value))''',
         "error-tool-result-file-missing-path",
     ),
     (
         "silent-missing-media-path",
         "projector.rs",
-        'last_path_segment_js(field(block, "path"))?',
-        'last_path_segment(&checked_string_units(field(block, "path"))?)',
+        '''                            JsValue::String(last_path_segment_js(
+                                field(block, "path"),
+                                "block.path.split",
+                            )?),''',
+        '                            JsValue::String(last_path_segment(&checked_string_units(field(block, "path"))?)),',
         "error-tool-results-projected-media-reference-missing-path",
     ),
     (
         "silent-missing-image-data",
         "projector.rs",
         '''        // TS reads `content.data.length`; that throws when the field is absent.
-        push_str(&mut out, &js_length(field(item, "data"))?.to_string());''',
-        '        push_str(&mut out, &checked_string_units(field(item, "data"))?.len().to_string());',
+        push_units(&mut out, &js_length(field(item, "data"))?)?;''',
+        '        push_units(&mut out, &JsValue::Number(checked_string_units(field(item, "data"))?.len() as f64))?;',
         "error-tool-result-image-missing-data",
     ),
     (
         "silent-missing-canonical-image-data",
         "projector.rs",
         '''        } else {
-            push_str(&mut out, &js_length(field(block, "data"))?.to_string());
+            push_units(&mut out, &js_length(field(block, "data"))?)?;
             push_str(&mut out, " base64 characters");''',
         '''        } else {
-            push_str(&mut out, &checked_string_units(field(block, "data"))?.len().to_string());
+            push_units(&mut out, &JsValue::Number(checked_string_units(field(block, "data"))?.len() as f64))?;
             push_str(&mut out, " base64 characters");''',
         "error-tool-results-projected-tool-result-image-missing-data",
     ),
@@ -306,6 +314,47 @@ mutants = [
 
 impl ArtifactWrites {''',
         "dropping_the_store_does_not_join_a_blocked_artifact_write",
+    ),
+    # Fix round 3 (gate3 P1): present-but-non-string wire fields must follow
+    # the TS method/property call, not silent coercion.
+    (
+        "coerce-trim-non-string",
+        "projector.rs",
+        '    Ok(safe_path_part(string_method(value, "value.trim")?.units()))',
+        '''    let value = match value {
+        JsValue::String(value) => value,
+        JsValue::Undefined | JsValue::Null => {
+            return Err(missing_property_error(value, "trim"));
+        }
+        other => return Ok(safe_path_part(&checked_string_units(other)?)),
+    };
+    Ok(safe_path_part(value.units()))''',
+        "type-tool-result-image-tool-name-number",
+    ),
+    (
+        "length-from-string-coercion",
+        "projector.rs",
+        '''        JsValue::String(value) => JsValue::Number(value.len_utf16() as f64),
+        JsValue::Array(items) => JsValue::Number(items.len() as f64),
+        JsValue::Object(object) => object.get("length").cloned().unwrap_or(JsValue::Undefined),
+        JsValue::Number(_) | JsValue::Bool(_) => JsValue::Undefined,''',
+        '''        JsValue::String(value) => JsValue::Number(value.len_utf16() as f64),
+        other => JsValue::Number(checked_string_units(other)?.len() as f64),''',
+        "length-tool-result-image-data-number",
+    ),
+    (
+        "coerce-persist-session-id",
+        "projector.rs",
+        '        session_id: field(event, "sessionId").clone(),',
+        '        session_id: checked_js_text(field(event, "sessionId"))?,',
+        "persist-session-id-number",
+    ),
+    (
+        "swallow-default-store-path-error",
+        "projector.rs",
+        '        let session_id = safe_path_part_js(&input.session_id)?;',
+        '        let session_id = safe_path_part_js(&input.session_id).unwrap_or_else(|_| "value".to_string());',
+        "default_store_throws_on_non_string_path_part_like_ts",
     ),
     (
         "tampered-source-hash",

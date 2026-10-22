@@ -722,6 +722,133 @@ record('tool-result-deep-array-content-text', {
   result: successResult([{ type: 'text', text: nestedArray(600, 'leaf') }]),
 });
 
+// Fix round 3 (gate3 P1): fields that are present but not strings. TS calls a
+// String method on some (`.trim()`, `.split()`, `.toLowerCase()` → TypeError
+// for number/boolean/array/object) and only reads `.length` on others (number
+// and boolean render `undefined`, arrays their element count, objects their
+// own `length`). `persist` passes the three path fields through untouched
+// below its 4096-byte threshold, then `safePathPart(...).trim()` throws above.
+const WRONG_TYPES: [string, unknown][] = [
+  ['number', 123],
+  ['boolean', true],
+  ['array', [1, 2]],
+  ['object', { a: 1 }],
+];
+for (const [label, value] of WRONG_TYPES) {
+  record(`type-tool-result-image-tool-name-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'image', mimeType: 'image/png', data: 'QUJD' }],
+      { toolName: value }),
+  });
+  record(`type-tool-result-image-tool-call-id-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'image', mimeType: 'image/png', data: 'QUJD' }],
+      { toolName: 'screenshot', toolCallId: value }),
+  });
+  record(`type-tool-result-image-mime-type-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'image', mimeType: value, data: 'QUJD' }],
+      { toolName: 'screenshot' }),
+  });
+  record(`type-tool-result-file-path-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'file', path: value, mimeType: 'text/plain' }],
+      { toolName: 'write_file' }),
+  });
+  record(`type-media-reference-path-${label}`, {
+    type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+    message: message([{
+      type: 'media_reference', toolCallId: 'call-m', originalBytes: 5,
+      mimeType: 'image/png', mediaType: 'image', path: value, reason: 'ok',
+    }]),
+  });
+  // `contentToText` reads `content.data.length`; the canonical block text reads
+  // `block.data.length`. Neither expression calls a string method.
+  record(`length-tool-result-image-data-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'image', mimeType: 'image/png', data: value }],
+      { toolName: 'read_file' }),
+  });
+  record(`length-tool-result-pdf-data-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'pdf', mimeType: 'application/pdf', data: value }],
+      { toolName: 'read_file' }),
+  });
+  record(`length-tool-results-projected-image-data-${label}`, {
+    type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+    message: message([{
+      type: 'tool_result', toolCallId: 'call-t',
+      content: [{ type: 'image', mimeType: 'image/png', data: value }],
+    }]),
+  });
+  record(`length-tool-results-projected-pdf-data-${label}`, {
+    type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+    message: message([{
+      type: 'tool_result', toolCallId: 'call-t',
+      content: [{ type: 'pdf', mimeType: 'application/pdf', data: value }],
+    }]),
+  });
+  // Below the store threshold `persist` records the raw field values.
+  record(`persist-session-id-${label}`, {
+    type: 'tool_result', sessionId: value, turnId: TURN,
+    result: successResult([{ type: 'text', text: 'hello' }], { toolName: 'bash' }),
+  });
+  record(`persist-turn-id-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: value,
+    result: successResult([{ type: 'text', text: 'hello' }], { toolName: 'bash' }),
+  });
+  record(`persist-tool-call-id-${label}`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'text', text: 'hello' }],
+      { toolName: 'bash', toolCallId: value }),
+  });
+  const large = 'x'.repeat(5_000);
+  record(`error-persist-session-id-${label}-above-threshold`, {
+    type: 'tool_result', sessionId: value, turnId: TURN,
+    result: successResult([{ type: 'text', text: large }], { toolName: 'bash' }),
+  });
+  record(`error-persist-turn-id-${label}-above-threshold`, {
+    type: 'tool_result', sessionId: SESSION, turnId: value,
+    result: successResult([{ type: 'text', text: large }], { toolName: 'bash' }),
+  });
+  record(`error-persist-tool-call-id-${label}-above-threshold`, {
+    type: 'tool_result', sessionId: SESSION, turnId: TURN,
+    result: successResult([{ type: 'text', text: large }],
+      { toolName: 'bash', toolCallId: value }),
+  });
+}
+// Object `length` is the property read (not `String(object).length`).
+for (const [name, data] of [
+  ['tool-result-image', { length: 5 }],
+  ['tool-result-image-array', { length: [1, 2] }],
+  ['tool-result-pdf', { length: 5 }],
+  ['tool-results-projected-image', { length: 5 }],
+  ['tool-results-projected-pdf', { length: 5 }],
+] as [string, unknown][]) {
+  if (name.startsWith('tool-result-')) {
+    record(`length-${name}-object-length`, {
+      type: 'tool_result', sessionId: SESSION, turnId: TURN,
+      result: successResult([{
+        type: name.includes('pdf') ? 'pdf' : 'image',
+        mimeType: name.includes('pdf') ? 'application/pdf' : 'image/png',
+        data,
+      }], { toolName: 'read_file' }),
+    });
+  } else {
+    record(`length-${name}-object-length`, {
+      type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+      message: message([{
+        type: 'tool_result', toolCallId: 'call-t',
+        content: [{
+          type: name.includes('pdf') ? 'pdf' : 'image',
+          mimeType: name.includes('pdf') ? 'application/pdf' : 'image/png',
+          data,
+        }],
+      }]),
+    });
+  }
+}
+
 const output = { sourceCommit, sourceSha256, cases };
 await mkdir(resolve(process.argv[2]), { recursive: true });
 await writeFile(resolve(process.argv[2], 'oracle.json'), `${JSON.stringify(output, null, 2)}\n`);
