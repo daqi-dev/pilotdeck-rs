@@ -333,6 +333,17 @@ await scenario(
   { files: submillisecondFiles() },
 );
 
+// Default limit must exercise both the implicit-limit hint and full-count /
+// page-files split, beyond the 250-result boundary.
+await scenario('grep-default-limit-files', [files({ pattern: 'foo' })], {
+  files: Array.from({ length: 251 }, (_, index) => ({
+    path: `match-${String(index).padStart(3, '0')}.txt`, content: 'foo\n',
+  })),
+});
+await scenario('grep-default-limit-content', [content({ pattern: 'foo', path: 'many.txt' })], {
+  files: [{ path: 'many.txt', repeat: { unit: 'foo\n', count: 251 } }],
+});
+
 const oracle = {
   sourceCommit: commit,
   generatedFrom: bound.sha256,

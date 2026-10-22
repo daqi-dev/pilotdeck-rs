@@ -31,6 +31,26 @@ pub(crate) fn kill(group: Option<Pid>, signal: Signal) {
     let _ = (group, signal);
 }
 
+/// Kills the process group on Drop unless disarmed after the leader is reaped.
+pub(crate) struct GroupGuard(pub(crate) Option<Pid>);
+
+impl GroupGuard {
+    pub(crate) fn signal(&self, signal: Signal) {
+        if let Some(group) = self.0 {
+            kill(Some(group), signal);
+        }
+    }
+    pub(crate) fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        self.signal(Signal::KILL);
+    }
+}
+
 /// Whether the group still has at least one member (including zombies).
 pub(crate) fn group_exists(group: Pid) -> bool {
     rustix::process::test_kill_process_group(group).is_ok()

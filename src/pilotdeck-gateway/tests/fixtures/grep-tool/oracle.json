@@ -9692,6 +9692,1856 @@
           }
         }
       ]
+    },
+    {
+      "name": "grep-default-limit-files",
+      "cwd": "s/grep-default-limit-files",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-default-limit-files/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-000.txt",
+          "content": "foo\n",
+          "mtime": 1700000000000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-001.txt",
+          "content": "foo\n",
+          "mtime": 1700000001000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-002.txt",
+          "content": "foo\n",
+          "mtime": 1700000002000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-003.txt",
+          "content": "foo\n",
+          "mtime": 1700000003000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-004.txt",
+          "content": "foo\n",
+          "mtime": 1700000004000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-005.txt",
+          "content": "foo\n",
+          "mtime": 1700000005000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-006.txt",
+          "content": "foo\n",
+          "mtime": 1700000006000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-007.txt",
+          "content": "foo\n",
+          "mtime": 1700000007000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-008.txt",
+          "content": "foo\n",
+          "mtime": 1700000008000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-009.txt",
+          "content": "foo\n",
+          "mtime": 1700000009000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-010.txt",
+          "content": "foo\n",
+          "mtime": 1700000010000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-011.txt",
+          "content": "foo\n",
+          "mtime": 1700000011000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-012.txt",
+          "content": "foo\n",
+          "mtime": 1700000012000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-013.txt",
+          "content": "foo\n",
+          "mtime": 1700000013000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-014.txt",
+          "content": "foo\n",
+          "mtime": 1700000014000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-015.txt",
+          "content": "foo\n",
+          "mtime": 1700000015000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-016.txt",
+          "content": "foo\n",
+          "mtime": 1700000016000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-017.txt",
+          "content": "foo\n",
+          "mtime": 1700000017000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-018.txt",
+          "content": "foo\n",
+          "mtime": 1700000018000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-019.txt",
+          "content": "foo\n",
+          "mtime": 1700000019000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-020.txt",
+          "content": "foo\n",
+          "mtime": 1700000020000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-021.txt",
+          "content": "foo\n",
+          "mtime": 1700000021000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-022.txt",
+          "content": "foo\n",
+          "mtime": 1700000022000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-023.txt",
+          "content": "foo\n",
+          "mtime": 1700000023000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-024.txt",
+          "content": "foo\n",
+          "mtime": 1700000024000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-025.txt",
+          "content": "foo\n",
+          "mtime": 1700000025000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-026.txt",
+          "content": "foo\n",
+          "mtime": 1700000026000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-027.txt",
+          "content": "foo\n",
+          "mtime": 1700000027000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-028.txt",
+          "content": "foo\n",
+          "mtime": 1700000028000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-029.txt",
+          "content": "foo\n",
+          "mtime": 1700000029000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-030.txt",
+          "content": "foo\n",
+          "mtime": 1700000030000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-031.txt",
+          "content": "foo\n",
+          "mtime": 1700000031000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-032.txt",
+          "content": "foo\n",
+          "mtime": 1700000032000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-033.txt",
+          "content": "foo\n",
+          "mtime": 1700000033000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-034.txt",
+          "content": "foo\n",
+          "mtime": 1700000034000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-035.txt",
+          "content": "foo\n",
+          "mtime": 1700000035000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-036.txt",
+          "content": "foo\n",
+          "mtime": 1700000036000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-037.txt",
+          "content": "foo\n",
+          "mtime": 1700000037000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-038.txt",
+          "content": "foo\n",
+          "mtime": 1700000038000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-039.txt",
+          "content": "foo\n",
+          "mtime": 1700000039000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-040.txt",
+          "content": "foo\n",
+          "mtime": 1700000040000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-041.txt",
+          "content": "foo\n",
+          "mtime": 1700000041000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-042.txt",
+          "content": "foo\n",
+          "mtime": 1700000042000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-043.txt",
+          "content": "foo\n",
+          "mtime": 1700000043000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-044.txt",
+          "content": "foo\n",
+          "mtime": 1700000044000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-045.txt",
+          "content": "foo\n",
+          "mtime": 1700000045000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-046.txt",
+          "content": "foo\n",
+          "mtime": 1700000046000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-047.txt",
+          "content": "foo\n",
+          "mtime": 1700000047000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-048.txt",
+          "content": "foo\n",
+          "mtime": 1700000048000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-049.txt",
+          "content": "foo\n",
+          "mtime": 1700000049000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-050.txt",
+          "content": "foo\n",
+          "mtime": 1700000050000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-051.txt",
+          "content": "foo\n",
+          "mtime": 1700000051000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-052.txt",
+          "content": "foo\n",
+          "mtime": 1700000052000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-053.txt",
+          "content": "foo\n",
+          "mtime": 1700000053000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-054.txt",
+          "content": "foo\n",
+          "mtime": 1700000054000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-055.txt",
+          "content": "foo\n",
+          "mtime": 1700000055000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-056.txt",
+          "content": "foo\n",
+          "mtime": 1700000056000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-057.txt",
+          "content": "foo\n",
+          "mtime": 1700000057000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-058.txt",
+          "content": "foo\n",
+          "mtime": 1700000058000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-059.txt",
+          "content": "foo\n",
+          "mtime": 1700000059000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-060.txt",
+          "content": "foo\n",
+          "mtime": 1700000060000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-061.txt",
+          "content": "foo\n",
+          "mtime": 1700000061000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-062.txt",
+          "content": "foo\n",
+          "mtime": 1700000062000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-063.txt",
+          "content": "foo\n",
+          "mtime": 1700000063000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-064.txt",
+          "content": "foo\n",
+          "mtime": 1700000064000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-065.txt",
+          "content": "foo\n",
+          "mtime": 1700000065000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-066.txt",
+          "content": "foo\n",
+          "mtime": 1700000066000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-067.txt",
+          "content": "foo\n",
+          "mtime": 1700000067000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-068.txt",
+          "content": "foo\n",
+          "mtime": 1700000068000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-069.txt",
+          "content": "foo\n",
+          "mtime": 1700000069000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-070.txt",
+          "content": "foo\n",
+          "mtime": 1700000070000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-071.txt",
+          "content": "foo\n",
+          "mtime": 1700000071000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-072.txt",
+          "content": "foo\n",
+          "mtime": 1700000072000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-073.txt",
+          "content": "foo\n",
+          "mtime": 1700000073000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-074.txt",
+          "content": "foo\n",
+          "mtime": 1700000074000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-075.txt",
+          "content": "foo\n",
+          "mtime": 1700000075000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-076.txt",
+          "content": "foo\n",
+          "mtime": 1700000076000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-077.txt",
+          "content": "foo\n",
+          "mtime": 1700000077000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-078.txt",
+          "content": "foo\n",
+          "mtime": 1700000078000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-079.txt",
+          "content": "foo\n",
+          "mtime": 1700000079000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-080.txt",
+          "content": "foo\n",
+          "mtime": 1700000080000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-081.txt",
+          "content": "foo\n",
+          "mtime": 1700000081000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-082.txt",
+          "content": "foo\n",
+          "mtime": 1700000082000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-083.txt",
+          "content": "foo\n",
+          "mtime": 1700000083000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-084.txt",
+          "content": "foo\n",
+          "mtime": 1700000084000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-085.txt",
+          "content": "foo\n",
+          "mtime": 1700000085000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-086.txt",
+          "content": "foo\n",
+          "mtime": 1700000086000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-087.txt",
+          "content": "foo\n",
+          "mtime": 1700000087000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-088.txt",
+          "content": "foo\n",
+          "mtime": 1700000088000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-089.txt",
+          "content": "foo\n",
+          "mtime": 1700000089000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-090.txt",
+          "content": "foo\n",
+          "mtime": 1700000090000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-091.txt",
+          "content": "foo\n",
+          "mtime": 1700000091000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-092.txt",
+          "content": "foo\n",
+          "mtime": 1700000092000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-093.txt",
+          "content": "foo\n",
+          "mtime": 1700000093000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-094.txt",
+          "content": "foo\n",
+          "mtime": 1700000094000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-095.txt",
+          "content": "foo\n",
+          "mtime": 1700000095000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-096.txt",
+          "content": "foo\n",
+          "mtime": 1700000096000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-097.txt",
+          "content": "foo\n",
+          "mtime": 1700000097000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-098.txt",
+          "content": "foo\n",
+          "mtime": 1700000098000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-099.txt",
+          "content": "foo\n",
+          "mtime": 1700000099000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-100.txt",
+          "content": "foo\n",
+          "mtime": 1700000100000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-101.txt",
+          "content": "foo\n",
+          "mtime": 1700000101000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-102.txt",
+          "content": "foo\n",
+          "mtime": 1700000102000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-103.txt",
+          "content": "foo\n",
+          "mtime": 1700000103000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-104.txt",
+          "content": "foo\n",
+          "mtime": 1700000104000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-105.txt",
+          "content": "foo\n",
+          "mtime": 1700000105000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-106.txt",
+          "content": "foo\n",
+          "mtime": 1700000106000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-107.txt",
+          "content": "foo\n",
+          "mtime": 1700000107000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-108.txt",
+          "content": "foo\n",
+          "mtime": 1700000108000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-109.txt",
+          "content": "foo\n",
+          "mtime": 1700000109000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-110.txt",
+          "content": "foo\n",
+          "mtime": 1700000110000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-111.txt",
+          "content": "foo\n",
+          "mtime": 1700000111000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-112.txt",
+          "content": "foo\n",
+          "mtime": 1700000112000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-113.txt",
+          "content": "foo\n",
+          "mtime": 1700000113000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-114.txt",
+          "content": "foo\n",
+          "mtime": 1700000114000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-115.txt",
+          "content": "foo\n",
+          "mtime": 1700000115000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-116.txt",
+          "content": "foo\n",
+          "mtime": 1700000116000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-117.txt",
+          "content": "foo\n",
+          "mtime": 1700000117000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-118.txt",
+          "content": "foo\n",
+          "mtime": 1700000118000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-119.txt",
+          "content": "foo\n",
+          "mtime": 1700000119000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-120.txt",
+          "content": "foo\n",
+          "mtime": 1700000120000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-121.txt",
+          "content": "foo\n",
+          "mtime": 1700000121000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-122.txt",
+          "content": "foo\n",
+          "mtime": 1700000122000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-123.txt",
+          "content": "foo\n",
+          "mtime": 1700000123000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-124.txt",
+          "content": "foo\n",
+          "mtime": 1700000124000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-125.txt",
+          "content": "foo\n",
+          "mtime": 1700000125000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-126.txt",
+          "content": "foo\n",
+          "mtime": 1700000126000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-127.txt",
+          "content": "foo\n",
+          "mtime": 1700000127000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-128.txt",
+          "content": "foo\n",
+          "mtime": 1700000128000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-129.txt",
+          "content": "foo\n",
+          "mtime": 1700000129000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-130.txt",
+          "content": "foo\n",
+          "mtime": 1700000130000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-131.txt",
+          "content": "foo\n",
+          "mtime": 1700000131000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-132.txt",
+          "content": "foo\n",
+          "mtime": 1700000132000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-133.txt",
+          "content": "foo\n",
+          "mtime": 1700000133000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-134.txt",
+          "content": "foo\n",
+          "mtime": 1700000134000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-135.txt",
+          "content": "foo\n",
+          "mtime": 1700000135000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-136.txt",
+          "content": "foo\n",
+          "mtime": 1700000136000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-137.txt",
+          "content": "foo\n",
+          "mtime": 1700000137000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-138.txt",
+          "content": "foo\n",
+          "mtime": 1700000138000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-139.txt",
+          "content": "foo\n",
+          "mtime": 1700000139000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-140.txt",
+          "content": "foo\n",
+          "mtime": 1700000140000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-141.txt",
+          "content": "foo\n",
+          "mtime": 1700000141000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-142.txt",
+          "content": "foo\n",
+          "mtime": 1700000142000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-143.txt",
+          "content": "foo\n",
+          "mtime": 1700000143000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-144.txt",
+          "content": "foo\n",
+          "mtime": 1700000144000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-145.txt",
+          "content": "foo\n",
+          "mtime": 1700000145000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-146.txt",
+          "content": "foo\n",
+          "mtime": 1700000146000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-147.txt",
+          "content": "foo\n",
+          "mtime": 1700000147000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-148.txt",
+          "content": "foo\n",
+          "mtime": 1700000148000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-149.txt",
+          "content": "foo\n",
+          "mtime": 1700000149000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-150.txt",
+          "content": "foo\n",
+          "mtime": 1700000150000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-151.txt",
+          "content": "foo\n",
+          "mtime": 1700000151000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-152.txt",
+          "content": "foo\n",
+          "mtime": 1700000152000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-153.txt",
+          "content": "foo\n",
+          "mtime": 1700000153000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-154.txt",
+          "content": "foo\n",
+          "mtime": 1700000154000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-155.txt",
+          "content": "foo\n",
+          "mtime": 1700000155000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-156.txt",
+          "content": "foo\n",
+          "mtime": 1700000156000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-157.txt",
+          "content": "foo\n",
+          "mtime": 1700000157000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-158.txt",
+          "content": "foo\n",
+          "mtime": 1700000158000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-159.txt",
+          "content": "foo\n",
+          "mtime": 1700000159000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-160.txt",
+          "content": "foo\n",
+          "mtime": 1700000160000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-161.txt",
+          "content": "foo\n",
+          "mtime": 1700000161000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-162.txt",
+          "content": "foo\n",
+          "mtime": 1700000162000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-163.txt",
+          "content": "foo\n",
+          "mtime": 1700000163000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-164.txt",
+          "content": "foo\n",
+          "mtime": 1700000164000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-165.txt",
+          "content": "foo\n",
+          "mtime": 1700000165000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-166.txt",
+          "content": "foo\n",
+          "mtime": 1700000166000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-167.txt",
+          "content": "foo\n",
+          "mtime": 1700000167000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-168.txt",
+          "content": "foo\n",
+          "mtime": 1700000168000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-169.txt",
+          "content": "foo\n",
+          "mtime": 1700000169000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-170.txt",
+          "content": "foo\n",
+          "mtime": 1700000170000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-171.txt",
+          "content": "foo\n",
+          "mtime": 1700000171000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-172.txt",
+          "content": "foo\n",
+          "mtime": 1700000172000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-173.txt",
+          "content": "foo\n",
+          "mtime": 1700000173000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-174.txt",
+          "content": "foo\n",
+          "mtime": 1700000174000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-175.txt",
+          "content": "foo\n",
+          "mtime": 1700000175000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-176.txt",
+          "content": "foo\n",
+          "mtime": 1700000176000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-177.txt",
+          "content": "foo\n",
+          "mtime": 1700000177000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-178.txt",
+          "content": "foo\n",
+          "mtime": 1700000178000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-179.txt",
+          "content": "foo\n",
+          "mtime": 1700000179000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-180.txt",
+          "content": "foo\n",
+          "mtime": 1700000180000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-181.txt",
+          "content": "foo\n",
+          "mtime": 1700000181000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-182.txt",
+          "content": "foo\n",
+          "mtime": 1700000182000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-183.txt",
+          "content": "foo\n",
+          "mtime": 1700000183000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-184.txt",
+          "content": "foo\n",
+          "mtime": 1700000184000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-185.txt",
+          "content": "foo\n",
+          "mtime": 1700000185000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-186.txt",
+          "content": "foo\n",
+          "mtime": 1700000186000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-187.txt",
+          "content": "foo\n",
+          "mtime": 1700000187000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-188.txt",
+          "content": "foo\n",
+          "mtime": 1700000188000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-189.txt",
+          "content": "foo\n",
+          "mtime": 1700000189000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-190.txt",
+          "content": "foo\n",
+          "mtime": 1700000190000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-191.txt",
+          "content": "foo\n",
+          "mtime": 1700000191000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-192.txt",
+          "content": "foo\n",
+          "mtime": 1700000192000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-193.txt",
+          "content": "foo\n",
+          "mtime": 1700000193000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-194.txt",
+          "content": "foo\n",
+          "mtime": 1700000194000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-195.txt",
+          "content": "foo\n",
+          "mtime": 1700000195000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-196.txt",
+          "content": "foo\n",
+          "mtime": 1700000196000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-197.txt",
+          "content": "foo\n",
+          "mtime": 1700000197000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-198.txt",
+          "content": "foo\n",
+          "mtime": 1700000198000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-199.txt",
+          "content": "foo\n",
+          "mtime": 1700000199000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-200.txt",
+          "content": "foo\n",
+          "mtime": 1700000200000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-201.txt",
+          "content": "foo\n",
+          "mtime": 1700000201000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-202.txt",
+          "content": "foo\n",
+          "mtime": 1700000202000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-203.txt",
+          "content": "foo\n",
+          "mtime": 1700000203000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-204.txt",
+          "content": "foo\n",
+          "mtime": 1700000204000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-205.txt",
+          "content": "foo\n",
+          "mtime": 1700000205000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-206.txt",
+          "content": "foo\n",
+          "mtime": 1700000206000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-207.txt",
+          "content": "foo\n",
+          "mtime": 1700000207000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-208.txt",
+          "content": "foo\n",
+          "mtime": 1700000208000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-209.txt",
+          "content": "foo\n",
+          "mtime": 1700000209000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-210.txt",
+          "content": "foo\n",
+          "mtime": 1700000210000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-211.txt",
+          "content": "foo\n",
+          "mtime": 1700000211000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-212.txt",
+          "content": "foo\n",
+          "mtime": 1700000212000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-213.txt",
+          "content": "foo\n",
+          "mtime": 1700000213000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-214.txt",
+          "content": "foo\n",
+          "mtime": 1700000214000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-215.txt",
+          "content": "foo\n",
+          "mtime": 1700000215000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-216.txt",
+          "content": "foo\n",
+          "mtime": 1700000216000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-217.txt",
+          "content": "foo\n",
+          "mtime": 1700000217000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-218.txt",
+          "content": "foo\n",
+          "mtime": 1700000218000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-219.txt",
+          "content": "foo\n",
+          "mtime": 1700000219000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-220.txt",
+          "content": "foo\n",
+          "mtime": 1700000220000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-221.txt",
+          "content": "foo\n",
+          "mtime": 1700000221000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-222.txt",
+          "content": "foo\n",
+          "mtime": 1700000222000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-223.txt",
+          "content": "foo\n",
+          "mtime": 1700000223000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-224.txt",
+          "content": "foo\n",
+          "mtime": 1700000224000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-225.txt",
+          "content": "foo\n",
+          "mtime": 1700000225000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-226.txt",
+          "content": "foo\n",
+          "mtime": 1700000226000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-227.txt",
+          "content": "foo\n",
+          "mtime": 1700000227000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-228.txt",
+          "content": "foo\n",
+          "mtime": 1700000228000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-229.txt",
+          "content": "foo\n",
+          "mtime": 1700000229000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-230.txt",
+          "content": "foo\n",
+          "mtime": 1700000230000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-231.txt",
+          "content": "foo\n",
+          "mtime": 1700000231000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-232.txt",
+          "content": "foo\n",
+          "mtime": 1700000232000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-233.txt",
+          "content": "foo\n",
+          "mtime": 1700000233000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-234.txt",
+          "content": "foo\n",
+          "mtime": 1700000234000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-235.txt",
+          "content": "foo\n",
+          "mtime": 1700000235000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-236.txt",
+          "content": "foo\n",
+          "mtime": 1700000236000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-237.txt",
+          "content": "foo\n",
+          "mtime": 1700000237000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-238.txt",
+          "content": "foo\n",
+          "mtime": 1700000238000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-239.txt",
+          "content": "foo\n",
+          "mtime": 1700000239000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-240.txt",
+          "content": "foo\n",
+          "mtime": 1700000240000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-241.txt",
+          "content": "foo\n",
+          "mtime": 1700000241000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-242.txt",
+          "content": "foo\n",
+          "mtime": 1700000242000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-243.txt",
+          "content": "foo\n",
+          "mtime": 1700000243000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-244.txt",
+          "content": "foo\n",
+          "mtime": 1700000244000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-245.txt",
+          "content": "foo\n",
+          "mtime": 1700000245000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-246.txt",
+          "content": "foo\n",
+          "mtime": 1700000246000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-247.txt",
+          "content": "foo\n",
+          "mtime": 1700000247000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-248.txt",
+          "content": "foo\n",
+          "mtime": 1700000248000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-249.txt",
+          "content": "foo\n",
+          "mtime": 1700000249000
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-files/match-250.txt",
+          "content": "foo\n",
+          "mtime": 1700000250000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "pattern": "foo"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "match-250.txt\nmatch-249.txt\nmatch-248.txt\nmatch-247.txt\nmatch-246.txt\nmatch-245.txt\nmatch-244.txt\nmatch-243.txt\nmatch-242.txt\nmatch-241.txt\nmatch-240.txt\nmatch-239.txt\nmatch-238.txt\nmatch-237.txt\nmatch-236.txt\nmatch-235.txt\nmatch-234.txt\nmatch-233.txt\nmatch-232.txt\nmatch-231.txt\nmatch-230.txt\nmatch-229.txt\nmatch-228.txt\nmatch-227.txt\nmatch-226.txt\nmatch-225.txt\nmatch-224.txt\nmatch-223.txt\nmatch-222.txt\nmatch-221.txt\nmatch-220.txt\nmatch-219.txt\nmatch-218.txt\nmatch-217.txt\nmatch-216.txt\nmatch-215.txt\nmatch-214.txt\nmatch-213.txt\nmatch-212.txt\nmatch-211.txt\nmatch-210.txt\nmatch-209.txt\nmatch-208.txt\nmatch-207.txt\nmatch-206.txt\nmatch-205.txt\nmatch-204.txt\nmatch-203.txt\nmatch-202.txt\nmatch-201.txt\nmatch-200.txt\nmatch-199.txt\nmatch-198.txt\nmatch-197.txt\nmatch-196.txt\nmatch-195.txt\nmatch-194.txt\nmatch-193.txt\nmatch-192.txt\nmatch-191.txt\nmatch-190.txt\nmatch-189.txt\nmatch-188.txt\nmatch-187.txt\nmatch-186.txt\nmatch-185.txt\nmatch-184.txt\nmatch-183.txt\nmatch-182.txt\nmatch-181.txt\nmatch-180.txt\nmatch-179.txt\nmatch-178.txt\nmatch-177.txt\nmatch-176.txt\nmatch-175.txt\nmatch-174.txt\nmatch-173.txt\nmatch-172.txt\nmatch-171.txt\nmatch-170.txt\nmatch-169.txt\nmatch-168.txt\nmatch-167.txt\nmatch-166.txt\nmatch-165.txt\nmatch-164.txt\nmatch-163.txt\nmatch-162.txt\nmatch-161.txt\nmatch-160.txt\nmatch-159.txt\nmatch-158.txt\nmatch-157.txt\nmatch-156.txt\nmatch-155.txt\nmatch-154.txt\nmatch-153.txt\nmatch-152.txt\nmatch-151.txt\nmatch-150.txt\nmatch-149.txt\nmatch-148.txt\nmatch-147.txt\nmatch-146.txt\nmatch-145.txt\nmatch-144.txt\nmatch-143.txt\nmatch-142.txt\nmatch-141.txt\nmatch-140.txt\nmatch-139.txt\nmatch-138.txt\nmatch-137.txt\nmatch-136.txt\nmatch-135.txt\nmatch-134.txt\nmatch-133.txt\nmatch-132.txt\nmatch-131.txt\nmatch-130.txt\nmatch-129.txt\nmatch-128.txt\nmatch-127.txt\nmatch-126.txt\nmatch-125.txt\nmatch-124.txt\nmatch-123.txt\nmatch-122.txt\nmatch-121.txt\nmatch-120.txt\nmatch-119.txt\nmatch-118.txt\nmatch-117.txt\nmatch-116.txt\nmatch-115.txt\nmatch-114.txt\nmatch-113.txt\nmatch-112.txt\nmatch-111.txt\nmatch-110.txt\nmatch-109.txt\nmatch-108.txt\nmatch-107.txt\nmatch-106.txt\nmatch-105.txt\nmatch-104.txt\nmatch-103.txt\nmatch-102.txt\nmatch-101.txt\nmatch-100.txt\nmatch-099.txt\nmatch-098.txt\nmatch-097.txt\nmatch-096.txt\nmatch-095.txt\nmatch-094.txt\nmatch-093.txt\nmatch-092.txt\nmatch-091.txt\nmatch-090.txt\nmatch-089.txt\nmatch-088.txt\nmatch-087.txt\nmatch-086.txt\nmatch-085.txt\nmatch-084.txt\nmatch-083.txt\nmatch-082.txt\nmatch-081.txt\nmatch-080.txt\nmatch-079.txt\nmatch-078.txt\nmatch-077.txt\nmatch-076.txt\nmatch-075.txt\nmatch-074.txt\nmatch-073.txt\nmatch-072.txt\nmatch-071.txt\nmatch-070.txt\nmatch-069.txt\nmatch-068.txt\nmatch-067.txt\nmatch-066.txt\nmatch-065.txt\nmatch-064.txt\nmatch-063.txt\nmatch-062.txt\nmatch-061.txt\nmatch-060.txt\nmatch-059.txt\nmatch-058.txt\nmatch-057.txt\nmatch-056.txt\nmatch-055.txt\nmatch-054.txt\nmatch-053.txt\nmatch-052.txt\nmatch-051.txt\nmatch-050.txt\nmatch-049.txt\nmatch-048.txt\nmatch-047.txt\nmatch-046.txt\nmatch-045.txt\nmatch-044.txt\nmatch-043.txt\nmatch-042.txt\nmatch-041.txt\nmatch-040.txt\nmatch-039.txt\nmatch-038.txt\nmatch-037.txt\nmatch-036.txt\nmatch-035.txt\nmatch-034.txt\nmatch-033.txt\nmatch-032.txt\nmatch-031.txt\nmatch-030.txt\nmatch-029.txt\nmatch-028.txt\nmatch-027.txt\nmatch-026.txt\nmatch-025.txt\nmatch-024.txt\nmatch-023.txt\nmatch-022.txt\nmatch-021.txt\nmatch-020.txt\nmatch-019.txt\nmatch-018.txt\nmatch-017.txt\nmatch-016.txt\nmatch-015.txt\nmatch-014.txt\nmatch-013.txt\nmatch-012.txt\nmatch-011.txt\nmatch-010.txt\nmatch-009.txt\nmatch-008.txt\nmatch-007.txt\nmatch-006.txt\nmatch-005.txt\nmatch-004.txt\nmatch-003.txt\nmatch-002.txt\nmatch-001.txt\n\n[grep pagination] returned=250 total=251 offset=0 limit=250 truncated=true\nMore results are available. Call grep again with offset=250."
+              }
+            ],
+            "data": {
+              "mode": "files_with_matches",
+              "files": [
+                "match-250.txt",
+                "match-249.txt",
+                "match-248.txt",
+                "match-247.txt",
+                "match-246.txt",
+                "match-245.txt",
+                "match-244.txt",
+                "match-243.txt",
+                "match-242.txt",
+                "match-241.txt",
+                "match-240.txt",
+                "match-239.txt",
+                "match-238.txt",
+                "match-237.txt",
+                "match-236.txt",
+                "match-235.txt",
+                "match-234.txt",
+                "match-233.txt",
+                "match-232.txt",
+                "match-231.txt",
+                "match-230.txt",
+                "match-229.txt",
+                "match-228.txt",
+                "match-227.txt",
+                "match-226.txt",
+                "match-225.txt",
+                "match-224.txt",
+                "match-223.txt",
+                "match-222.txt",
+                "match-221.txt",
+                "match-220.txt",
+                "match-219.txt",
+                "match-218.txt",
+                "match-217.txt",
+                "match-216.txt",
+                "match-215.txt",
+                "match-214.txt",
+                "match-213.txt",
+                "match-212.txt",
+                "match-211.txt",
+                "match-210.txt",
+                "match-209.txt",
+                "match-208.txt",
+                "match-207.txt",
+                "match-206.txt",
+                "match-205.txt",
+                "match-204.txt",
+                "match-203.txt",
+                "match-202.txt",
+                "match-201.txt",
+                "match-200.txt",
+                "match-199.txt",
+                "match-198.txt",
+                "match-197.txt",
+                "match-196.txt",
+                "match-195.txt",
+                "match-194.txt",
+                "match-193.txt",
+                "match-192.txt",
+                "match-191.txt",
+                "match-190.txt",
+                "match-189.txt",
+                "match-188.txt",
+                "match-187.txt",
+                "match-186.txt",
+                "match-185.txt",
+                "match-184.txt",
+                "match-183.txt",
+                "match-182.txt",
+                "match-181.txt",
+                "match-180.txt",
+                "match-179.txt",
+                "match-178.txt",
+                "match-177.txt",
+                "match-176.txt",
+                "match-175.txt",
+                "match-174.txt",
+                "match-173.txt",
+                "match-172.txt",
+                "match-171.txt",
+                "match-170.txt",
+                "match-169.txt",
+                "match-168.txt",
+                "match-167.txt",
+                "match-166.txt",
+                "match-165.txt",
+                "match-164.txt",
+                "match-163.txt",
+                "match-162.txt",
+                "match-161.txt",
+                "match-160.txt",
+                "match-159.txt",
+                "match-158.txt",
+                "match-157.txt",
+                "match-156.txt",
+                "match-155.txt",
+                "match-154.txt",
+                "match-153.txt",
+                "match-152.txt",
+                "match-151.txt",
+                "match-150.txt",
+                "match-149.txt",
+                "match-148.txt",
+                "match-147.txt",
+                "match-146.txt",
+                "match-145.txt",
+                "match-144.txt",
+                "match-143.txt",
+                "match-142.txt",
+                "match-141.txt",
+                "match-140.txt",
+                "match-139.txt",
+                "match-138.txt",
+                "match-137.txt",
+                "match-136.txt",
+                "match-135.txt",
+                "match-134.txt",
+                "match-133.txt",
+                "match-132.txt",
+                "match-131.txt",
+                "match-130.txt",
+                "match-129.txt",
+                "match-128.txt",
+                "match-127.txt",
+                "match-126.txt",
+                "match-125.txt",
+                "match-124.txt",
+                "match-123.txt",
+                "match-122.txt",
+                "match-121.txt",
+                "match-120.txt",
+                "match-119.txt",
+                "match-118.txt",
+                "match-117.txt",
+                "match-116.txt",
+                "match-115.txt",
+                "match-114.txt",
+                "match-113.txt",
+                "match-112.txt",
+                "match-111.txt",
+                "match-110.txt",
+                "match-109.txt",
+                "match-108.txt",
+                "match-107.txt",
+                "match-106.txt",
+                "match-105.txt",
+                "match-104.txt",
+                "match-103.txt",
+                "match-102.txt",
+                "match-101.txt",
+                "match-100.txt",
+                "match-099.txt",
+                "match-098.txt",
+                "match-097.txt",
+                "match-096.txt",
+                "match-095.txt",
+                "match-094.txt",
+                "match-093.txt",
+                "match-092.txt",
+                "match-091.txt",
+                "match-090.txt",
+                "match-089.txt",
+                "match-088.txt",
+                "match-087.txt",
+                "match-086.txt",
+                "match-085.txt",
+                "match-084.txt",
+                "match-083.txt",
+                "match-082.txt",
+                "match-081.txt",
+                "match-080.txt",
+                "match-079.txt",
+                "match-078.txt",
+                "match-077.txt",
+                "match-076.txt",
+                "match-075.txt",
+                "match-074.txt",
+                "match-073.txt",
+                "match-072.txt",
+                "match-071.txt",
+                "match-070.txt",
+                "match-069.txt",
+                "match-068.txt",
+                "match-067.txt",
+                "match-066.txt",
+                "match-065.txt",
+                "match-064.txt",
+                "match-063.txt",
+                "match-062.txt",
+                "match-061.txt",
+                "match-060.txt",
+                "match-059.txt",
+                "match-058.txt",
+                "match-057.txt",
+                "match-056.txt",
+                "match-055.txt",
+                "match-054.txt",
+                "match-053.txt",
+                "match-052.txt",
+                "match-051.txt",
+                "match-050.txt",
+                "match-049.txt",
+                "match-048.txt",
+                "match-047.txt",
+                "match-046.txt",
+                "match-045.txt",
+                "match-044.txt",
+                "match-043.txt",
+                "match-042.txt",
+                "match-041.txt",
+                "match-040.txt",
+                "match-039.txt",
+                "match-038.txt",
+                "match-037.txt",
+                "match-036.txt",
+                "match-035.txt",
+                "match-034.txt",
+                "match-033.txt",
+                "match-032.txt",
+                "match-031.txt",
+                "match-030.txt",
+                "match-029.txt",
+                "match-028.txt",
+                "match-027.txt",
+                "match-026.txt",
+                "match-025.txt",
+                "match-024.txt",
+                "match-023.txt",
+                "match-022.txt",
+                "match-021.txt",
+                "match-020.txt",
+                "match-019.txt",
+                "match-018.txt",
+                "match-017.txt",
+                "match-016.txt",
+                "match-015.txt",
+                "match-014.txt",
+                "match-013.txt",
+                "match-012.txt",
+                "match-011.txt",
+                "match-010.txt",
+                "match-009.txt",
+                "match-008.txt",
+                "match-007.txt",
+                "match-006.txt",
+                "match-005.txt",
+                "match-004.txt",
+                "match-003.txt",
+                "match-002.txt",
+                "match-001.txt"
+              ],
+              "count": 251,
+              "truncated": true
+            },
+            "metadata": {
+              "truncated": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "grep-default-limit-content",
+      "cwd": "s/grep-default-limit-content",
+      "steps": [
+        {
+          "op": "dir",
+          "path": "s/grep-default-limit-content/.git"
+        },
+        {
+          "op": "file",
+          "path": "s/grep-default-limit-content/many.txt",
+          "repeat": {
+            "unit": "foo\n",
+            "count": 251
+          },
+          "mtime": 1700000000000
+        },
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "grep",
+          "now": 1767225600000,
+          "input": {
+            "output_mode": "content",
+            "pattern": "foo",
+            "path": "many.txt"
+          },
+          "execute": {
+            "content": [
+              {
+                "type": "text",
+                "text": "many.txt:1:foo\nmany.txt:2:foo\nmany.txt:3:foo\nmany.txt:4:foo\nmany.txt:5:foo\nmany.txt:6:foo\nmany.txt:7:foo\nmany.txt:8:foo\nmany.txt:9:foo\nmany.txt:10:foo\nmany.txt:11:foo\nmany.txt:12:foo\nmany.txt:13:foo\nmany.txt:14:foo\nmany.txt:15:foo\nmany.txt:16:foo\nmany.txt:17:foo\nmany.txt:18:foo\nmany.txt:19:foo\nmany.txt:20:foo\nmany.txt:21:foo\nmany.txt:22:foo\nmany.txt:23:foo\nmany.txt:24:foo\nmany.txt:25:foo\nmany.txt:26:foo\nmany.txt:27:foo\nmany.txt:28:foo\nmany.txt:29:foo\nmany.txt:30:foo\nmany.txt:31:foo\nmany.txt:32:foo\nmany.txt:33:foo\nmany.txt:34:foo\nmany.txt:35:foo\nmany.txt:36:foo\nmany.txt:37:foo\nmany.txt:38:foo\nmany.txt:39:foo\nmany.txt:40:foo\nmany.txt:41:foo\nmany.txt:42:foo\nmany.txt:43:foo\nmany.txt:44:foo\nmany.txt:45:foo\nmany.txt:46:foo\nmany.txt:47:foo\nmany.txt:48:foo\nmany.txt:49:foo\nmany.txt:50:foo\nmany.txt:51:foo\nmany.txt:52:foo\nmany.txt:53:foo\nmany.txt:54:foo\nmany.txt:55:foo\nmany.txt:56:foo\nmany.txt:57:foo\nmany.txt:58:foo\nmany.txt:59:foo\nmany.txt:60:foo\nmany.txt:61:foo\nmany.txt:62:foo\nmany.txt:63:foo\nmany.txt:64:foo\nmany.txt:65:foo\nmany.txt:66:foo\nmany.txt:67:foo\nmany.txt:68:foo\nmany.txt:69:foo\nmany.txt:70:foo\nmany.txt:71:foo\nmany.txt:72:foo\nmany.txt:73:foo\nmany.txt:74:foo\nmany.txt:75:foo\nmany.txt:76:foo\nmany.txt:77:foo\nmany.txt:78:foo\nmany.txt:79:foo\nmany.txt:80:foo\nmany.txt:81:foo\nmany.txt:82:foo\nmany.txt:83:foo\nmany.txt:84:foo\nmany.txt:85:foo\nmany.txt:86:foo\nmany.txt:87:foo\nmany.txt:88:foo\nmany.txt:89:foo\nmany.txt:90:foo\nmany.txt:91:foo\nmany.txt:92:foo\nmany.txt:93:foo\nmany.txt:94:foo\nmany.txt:95:foo\nmany.txt:96:foo\nmany.txt:97:foo\nmany.txt:98:foo\nmany.txt:99:foo\nmany.txt:100:foo\nmany.txt:101:foo\nmany.txt:102:foo\nmany.txt:103:foo\nmany.txt:104:foo\nmany.txt:105:foo\nmany.txt:106:foo\nmany.txt:107:foo\nmany.txt:108:foo\nmany.txt:109:foo\nmany.txt:110:foo\nmany.txt:111:foo\nmany.txt:112:foo\nmany.txt:113:foo\nmany.txt:114:foo\nmany.txt:115:foo\nmany.txt:116:foo\nmany.txt:117:foo\nmany.txt:118:foo\nmany.txt:119:foo\nmany.txt:120:foo\nmany.txt:121:foo\nmany.txt:122:foo\nmany.txt:123:foo\nmany.txt:124:foo\nmany.txt:125:foo\nmany.txt:126:foo\nmany.txt:127:foo\nmany.txt:128:foo\nmany.txt:129:foo\nmany.txt:130:foo\nmany.txt:131:foo\nmany.txt:132:foo\nmany.txt:133:foo\nmany.txt:134:foo\nmany.txt:135:foo\nmany.txt:136:foo\nmany.txt:137:foo\nmany.txt:138:foo\nmany.txt:139:foo\nmany.txt:140:foo\nmany.txt:141:foo\nmany.txt:142:foo\nmany.txt:143:foo\nmany.txt:144:foo\nmany.txt:145:foo\nmany.txt:146:foo\nmany.txt:147:foo\nmany.txt:148:foo\nmany.txt:149:foo\nmany.txt:150:foo\nmany.txt:151:foo\nmany.txt:152:foo\nmany.txt:153:foo\nmany.txt:154:foo\nmany.txt:155:foo\nmany.txt:156:foo\nmany.txt:157:foo\nmany.txt:158:foo\nmany.txt:159:foo\nmany.txt:160:foo\nmany.txt:161:foo\nmany.txt:162:foo\nmany.txt:163:foo\nmany.txt:164:foo\nmany.txt:165:foo\nmany.txt:166:foo\nmany.txt:167:foo\nmany.txt:168:foo\nmany.txt:169:foo\nmany.txt:170:foo\nmany.txt:171:foo\nmany.txt:172:foo\nmany.txt:173:foo\nmany.txt:174:foo\nmany.txt:175:foo\nmany.txt:176:foo\nmany.txt:177:foo\nmany.txt:178:foo\nmany.txt:179:foo\nmany.txt:180:foo\nmany.txt:181:foo\nmany.txt:182:foo\nmany.txt:183:foo\nmany.txt:184:foo\nmany.txt:185:foo\nmany.txt:186:foo\nmany.txt:187:foo\nmany.txt:188:foo\nmany.txt:189:foo\nmany.txt:190:foo\nmany.txt:191:foo\nmany.txt:192:foo\nmany.txt:193:foo\nmany.txt:194:foo\nmany.txt:195:foo\nmany.txt:196:foo\nmany.txt:197:foo\nmany.txt:198:foo\nmany.txt:199:foo\nmany.txt:200:foo\nmany.txt:201:foo\nmany.txt:202:foo\nmany.txt:203:foo\nmany.txt:204:foo\nmany.txt:205:foo\nmany.txt:206:foo\nmany.txt:207:foo\nmany.txt:208:foo\nmany.txt:209:foo\nmany.txt:210:foo\nmany.txt:211:foo\nmany.txt:212:foo\nmany.txt:213:foo\nmany.txt:214:foo\nmany.txt:215:foo\nmany.txt:216:foo\nmany.txt:217:foo\nmany.txt:218:foo\nmany.txt:219:foo\nmany.txt:220:foo\nmany.txt:221:foo\nmany.txt:222:foo\nmany.txt:223:foo\nmany.txt:224:foo\nmany.txt:225:foo\nmany.txt:226:foo\nmany.txt:227:foo\nmany.txt:228:foo\nmany.txt:229:foo\nmany.txt:230:foo\nmany.txt:231:foo\nmany.txt:232:foo\nmany.txt:233:foo\nmany.txt:234:foo\nmany.txt:235:foo\nmany.txt:236:foo\nmany.txt:237:foo\nmany.txt:238:foo\nmany.txt:239:foo\nmany.txt:240:foo\nmany.txt:241:foo\nmany.txt:242:foo\nmany.txt:243:foo\nmany.txt:244:foo\nmany.txt:245:foo\nmany.txt:246:foo\nmany.txt:247:foo\nmany.txt:248:foo\nmany.txt:249:foo\nmany.txt:250:foo\n\n[grep pagination] returned=250 total=251 offset=0 limit=250 truncated=true\nMore results are available. Call grep again with offset=250."
+              }
+            ],
+            "data": {
+              "mode": "content",
+              "files": [
+                "many.txt"
+              ],
+              "count": 251,
+              "truncated": true
+            },
+            "metadata": {
+              "truncated": true
+            }
+          }
+        }
+      ]
     }
   ]
 }
