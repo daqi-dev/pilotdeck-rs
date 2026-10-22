@@ -16,13 +16,18 @@ Node 22（基线根已含 `node_modules/tsx`）。
 并把每次 `persist` 入参和返回值记入金样。投影本身的排序、截断、附件、错误和
 budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报错的 Proxy 隔离。
 
-93 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
+119 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
 与未知/缺 type 的 default 分支）、`model_event`/`subagent_model_event` 的各子类型、
 `forwardSubagentText` 真假、timeline/streamBoundary 传播、tool_result 的 bytes/UTF-16
 截断边界、4 种 mime 扩展名与 `value` 回退、providerError 的 raw 截断
 （在代理对中间切开）、`??` 与 `!== undefined` 的 null/缺失差异，以及 persist 阈值。
+另有 21 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
+`TypeError: Cannot read properties of undefined (reading 'content')`）与 4 个
+`__proto__` 工具数据 case（TS 的属性赋值语义会丢弃该键）。深嵌套输入无法放进
+金样（`JSON.stringify` 自身会抛错），由 `projector_tests.rs` 按同构构造并用
+`_tmp/20261022-a72-pr2-projector/probe-fix1.mts` 的真实 TS 输出钉住。
 
-每个 case 的 `frames` 是 `mapAgentEvent` 返回对象的 `JSON.stringify` 语义快照：
+合法 case 的 `frames` 是 `mapAgentEvent` 返回对象的 `JSON.stringify` 语义快照：
 Rust 回放逐条比 `stringify_json` 的**文本**，因此键顺序、数字格式、lone surrogate
 转义和 undefined 键的省略都参与比对；`persist` 数组同样逐条比对。
 
