@@ -1478,6 +1478,113 @@ mod tests {
         }
     }
 
+    /// The fake rg scripts deliberately survive `TERM` so the product's
+    /// `TERM` -> one-second grace -> `KILL` path can be observed. They must
+    /// still stop when the *test* process dies: `SIGKILL` runs no Rust `Drop`
+    /// guard, so before #507 a killed test left these shells spinning (and
+    /// their short-sleep children) under PID 1 for hours.
+    ///
+    /// `$PPID` is captured once at shell startup. Bash keeps that value when
+    /// an orphan is reparented to launchd (PID 1), so `kill -0` keeps watching
+    /// the original test process rather than whichever process adopts it.
+    const WATCH_PARENT: &str = "parent=$PPID";
+
+    /// Short sleeps keep the trap responsive while replacing the busy
+    /// `while :; do :; done` spins that burned a core once orphaned.
+    fn stay_alive_loop() -> &'static str {
+        "while kill -0 \"$parent\" 2>/dev/null; do /bin/sleep 0.02; done"
+    }
+
+    /// Wait for a test-owned file, giving up as soon as the test process dies.
+    fn wait_for_file(path: &Path) -> String {
+        format!(
+            "while [ ! -f '{}' ]; do kill -0 \"$parent\" 2>/dev/null || exit 0; /bin/sleep 0.02; done",
+            path.display()
+        )
+    }
+
+    /// `rg-drop`: the leader stays alive across the `Drop` grace (recording
+    /// `TERM`) while its descendant ignores `TERM` and waits for the probe.
+    /// `exec 2>/dev/null` matters: when TERM kills the loop's foreground
+    /// `sleep`, bash reports `Terminated: 15` on stderr. `Drop` closes the
+    /// stderr pipe at the same moment, so that diagnostic would become
+    /// SIGPIPE and kill the leader before its trap records the TERM.
+    fn rg_drop_script(
+        term: &Path,
+        ready: &Path,
+        probe: &Path,
+        ack: &Path,
+        descendant: &Path,
+        leader: &Path,
+    ) -> String {
+        format!(
+            "#!/bin/sh\n{}\nexec 2>/dev/null\ntrap 'printf term > \"{}\"' TERM\n( trap '' TERM; printf ready > '{}'; {}; printf ack > '{}'; {} ) &\necho $! > '{}'\necho $$ > '{}'\n{}\n",
+            WATCH_PARENT,
+            term.display(),
+            ready.display(),
+            wait_for_file(probe),
+            ack.display(),
+            stay_alive_loop(),
+            descendant.display(),
+            leader.display(),
+            stay_alive_loop(),
+        )
+    }
+
+    /// `rg-hold`: the leader exits immediately after handing its stdio to a
+    /// descendant, which holds the pipe until the timeout/cancellation path
+    /// signals the group.
+    fn rg_hold_script(
+        term: &Path,
+        probe: &Path,
+        ack: &Path,
+        ready: &Path,
+        descendant: &Path,
+        leader: &Path,
+    ) -> String {
+        format!(
+            "#!/bin/sh\n{}\n(\n  trap 'trap \"\" TERM; printf term > \"{}\"; {}; printf ack > \"{}\"; {}' TERM\n  printf ready > '{}'\n  {}\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
+            WATCH_PARENT,
+            term.display(),
+            wait_for_file(probe),
+            ack.display(),
+            stay_alive_loop(),
+            ready.display(),
+            stay_alive_loop(),
+            descendant.display(),
+            leader.display(),
+        )
+    }
+
+    /// `rg-grace`: like `rg-hold`, but the trap also gates the second half of
+    /// the grace on test-owned `release`/`done` events.
+    #[allow(clippy::too_many_arguments)]
+    fn rg_grace_script(
+        term: &Path,
+        probe: &Path,
+        ack: &Path,
+        ready: &Path,
+        release: &Path,
+        done: &Path,
+        descendant: &Path,
+        leader: &Path,
+    ) -> String {
+        format!(
+            "#!/bin/sh\n{}\n(\n  trap 'trap \"\" TERM; exec 1>&- 2>&-; printf term > \"{}\"; {}; printf done > \"{}\"; {}; printf ack > \"{}\"; {}' TERM\n  printf ready > '{}'\n  {}\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
+            WATCH_PARENT,
+            term.display(),
+            wait_for_file(release),
+            done.display(),
+            wait_for_file(probe),
+            ack.display(),
+            stay_alive_loop(),
+            ready.display(),
+            stay_alive_loop(),
+            descendant.display(),
+            leader.display(),
+        )
+    }
+
     fn context(env: &[(&str, &str)], abort: Option<Cancellation>, cwd: &Path) -> ToolRunContext {
         let mut environment = JsObject::new();
         for (key, value) in env {
@@ -1845,10 +1952,7 @@ mod tests {
         let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-drop",
-            &format!(
-                "#!/bin/sh\ntrap 'printf term > \"{}\"' TERM\n( trap '' TERM; printf ready > '{}'; while [ ! -f '{}' ]; do /bin/sleep 0.01; done; printf ack > '{}'; exec /bin/sleep 120 ) &\necho $! > '{}'\necho $$ > '{}'\nwhile :; do wait; done\n",
-                term.display(), ready.display(), probe.display(), ack.display(), descendant_file.display(), leader_file.display()
-            ),
+            &rg_drop_script(&term, &ready, &probe, &ack, &descendant_file, &leader_file),
         );
         let context = context(
             &[
@@ -1951,10 +2055,7 @@ mod tests {
         let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-hold",
-            &format!(
-                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                term.display(), probe.display(), ack.display(), ready.display(), pid_file.display(), leader_file.display()
-            ),
+            &rg_hold_script(&term, &probe, &ack, &ready, &pid_file, &leader_file),
         );
         let context = context(
             &[
@@ -2048,10 +2149,15 @@ mod tests {
         // child survives cleanup so the deferred KILL must still remove it.
         let script = scratch.script(
             "rg-grace",
-            &format!(
-                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; exec 1>&- 2>&-; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf done > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                term.display(), release.display(), done.display(), probe.display(), ack.display(), ready.display(),
-                pid_file.display(), leader_file.display()
+            &rg_grace_script(
+                &term,
+                &probe,
+                &ack,
+                &ready,
+                &release,
+                &done,
+                &pid_file,
+                &leader_file,
             ),
         );
         let context = context(
@@ -2126,6 +2232,244 @@ mod tests {
         });
     }
 
+    const ORPHAN_ROOT_ENV: &str = "PDRS_GREP_ORPHAN_ROOT";
+
+    /// The fake-rg shapes that leaked in #507: a spinning descendant whose
+    /// leader exits (`spin`), that descendant already inside its `TERM` trap
+    /// (`grace`), and a leader plus descendant holding the `Drop` grace
+    /// (`drop`). The bool sends `TERM` to the group before the test is killed.
+    const ORPHAN_SHAPES: [(&str, bool); 3] = [("spin", false), ("grace", true), ("drop", true)];
+
+    fn orphan_script(shape: &str, dir: &Path) -> String {
+        let term = dir.join("term");
+        let ready = dir.join("ready");
+        let probe = dir.join("probe");
+        let ack = dir.join("ack");
+        let release = dir.join("release");
+        let done = dir.join("done");
+        let descendant = dir.join("descendant.pid");
+        let leader = dir.join("leader.pid");
+        match shape {
+            "spin" => rg_hold_script(&term, &probe, &ack, &ready, &descendant, &leader),
+            "grace" => rg_grace_script(
+                &term,
+                &probe,
+                &ack,
+                &ready,
+                &release,
+                &done,
+                &descendant,
+                &leader,
+            ),
+            "drop" => rg_drop_script(&term, &ready, &probe, &ack, &descendant, &leader),
+            other => panic!("unknown orphan fixture {other}"),
+        }
+    }
+
+    fn orphan_wait_for(label: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(15);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake rg {label} timed out"
+            );
+            std::thread::sleep(StdDuration::from_millis(10));
+        }
+    }
+
+    /// Child side of `sigkill_of_the_test_process_leaves_no_fake_rg_orphans`:
+    /// start every leaked script shape, then park until the parent SIGKILLs
+    /// this test process (no Rust `Drop` runs, exactly like the #507 incident).
+    #[test]
+    #[ignore = "spawned by sigkill_of_the_test_process_leaves_no_fake_rg_orphans"]
+    fn orphaned_fake_rg_helper() {
+        use std::os::unix::process::CommandExt as _;
+
+        let root = PathBuf::from(
+            std::env::var_os(ORPHAN_ROOT_ENV).expect("helper runs with the scratch root"),
+        );
+        let mut children = Vec::new();
+        for (shape, send_term) in ORPHAN_SHAPES {
+            let dir = root.join(shape);
+            std::fs::create_dir_all(&dir).expect("create fixture dir");
+            let script = dir.join("rg");
+            std::fs::write(&script, orphan_script(shape, &dir)).expect("write fake rg");
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake rg");
+            let mut command = std::process::Command::new(&script);
+            command
+                // Same detached group as `run_ripgrep`'s spawn (grep.rs:583-595):
+                // when this test dies, only the scripts themselves can clean up.
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            children.push(command.spawn().expect("spawn fake rg"));
+            orphan_wait_for("leader/descendant pids", || {
+                pid_file_ready(&dir.join("leader.pid"))
+                    && pid_file_ready(&dir.join("descendant.pid"))
+            });
+            // `ready` is written only after the trap is installed: sending
+            // TERM at pid-file time races a freshly forked subshell under load.
+            orphan_wait_for("ready", || dir.join("ready").exists());
+            if send_term {
+                crate::process_group::kill(
+                    Some(read_pid(&dir.join("leader.pid"))),
+                    rustix::process::Signal::TERM,
+                );
+                // `term` proves the descendant is inside its trap's wait loop,
+                // which is where several #507 orphans were stuck.
+                orphan_wait_for("term", || dir.join("term").exists());
+            }
+        }
+        std::fs::write(root.join("ready"), "ready").expect("ready");
+        loop {
+            std::thread::sleep(StdDuration::from_secs(1));
+        }
+    }
+
+    fn kill_fixture_groups(root: &Path) {
+        for (shape, _) in ORPHAN_SHAPES {
+            let path = root.join(shape).join("leader.pid");
+            if pid_file_ready(&path) {
+                crate::process_group::kill(Some(read_pid(&path)), rustix::process::Signal::KILL);
+            }
+        }
+    }
+
+    /// Regression for #507: `SIGKILL` skips every Rust `Drop`, so the fake rg
+    /// scripts must notice their test process is gone on their own. The test
+    /// kills a helper process (not a simulated parent) and requires every
+    /// leader/descendant PID to disappear within a few seconds.
+    #[test]
+    fn sigkill_of_the_test_process_leaves_no_fake_rg_orphans() {
+        let base = std::fs::canonicalize(std::env::temp_dir()).expect("temp dir");
+        let token = format!(
+            "orphan-{}-{}",
+            std::process::id(),
+            SCRATCH.fetch_add(1, Ordering::SeqCst)
+        );
+        let root = base.join(format!("pdrs-grep-unit-{token}"));
+        std::fs::create_dir(&root).expect("create scratch");
+        let _scratch = Scratch { root: root.clone() };
+        for (shape, _) in ORPHAN_SHAPES {
+            std::fs::create_dir(root.join(shape)).expect("fixture dir");
+        }
+        let mut helper =
+            std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "runtime::tools::builtin::grep::tests::orphaned_fake_rg_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(ORPHAN_ROOT_ENV, &root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn helper test");
+        let mut pids = Vec::new();
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(60);
+        loop {
+            if let Some(status) = helper.try_wait().expect("poll helper") {
+                use std::io::Read as _;
+                let mut err = String::new();
+                if let Some(mut stderr) = helper.stderr.take() {
+                    let _ = stderr.read_to_string(&mut err);
+                }
+                kill_fixture_groups(&root);
+                panic!(
+                    "helper exited before the fake rg handshake: {status}\nhelper stderr:\n{err}"
+                );
+            }
+            pids.clear();
+            for (shape, _) in ORPHAN_SHAPES {
+                let dir = root.join(shape);
+                for name in ["leader.pid", "descendant.pid"] {
+                    let path = dir.join(name);
+                    if pid_file_ready(&path) {
+                        pids.push(read_pid(&path));
+                    }
+                }
+            }
+            // Wait for `term` too: SIGKILLing the helper while it is still
+            // sending TERM would skip the trap state this regression targets.
+            let handshaken = ORPHAN_SHAPES.iter().all(|(shape, send_term)| {
+                let dir = root.join(shape);
+                pid_file_ready(&dir.join("leader.pid"))
+                    && pid_file_ready(&dir.join("descendant.pid"))
+                    && dir.join("ready").exists()
+                    && (!send_term || dir.join("term").exists())
+            });
+            if handshaken {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                use std::io::Read as _;
+                let mut err = String::new();
+                if let Some(mut stderr) = helper.stderr.take() {
+                    let _ = stderr.read_to_string(&mut err);
+                }
+                kill_fixture_groups(&root);
+                panic!("fake rg handshake timed out; pids={pids:?}\nhelper stderr:\n{err}");
+            }
+            std::thread::sleep(StdDuration::from_millis(10));
+        }
+        pids.sort_unstable_by_key(|pid| pid.as_raw_pid());
+        pids.dedup();
+        // Guards exist before any assertion can panic, so a bad handshake
+        // cannot leave the fixtures behind.
+        let mut guards: Vec<_> = ORPHAN_SHAPES
+            .iter()
+            .map(|(shape, _)| {
+                crate::process_group::GroupGuard(Some(read_pid(
+                    &root.join(shape).join("leader.pid"),
+                )))
+            })
+            .collect();
+        assert_eq!(
+            pids.len(),
+            ORPHAN_SHAPES.len() * 2,
+            "fake rg pid files must name six distinct processes"
+        );
+        // Kill only the helper process, never its group: this test itself is in
+        // that group. SIGKILL is the incident's trigger (no Drop guard runs).
+        rustix::process::kill_process(
+            rustix::process::Pid::from_raw(helper.id() as i32).expect("helper pid"),
+            rustix::process::Signal::KILL,
+        )
+        .expect("SIGKILL helper");
+        let status = helper.wait().expect("reap helper");
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(
+            status.signal(),
+            Some(rustix::process::Signal::KILL.as_raw()),
+            "helper must die from SIGKILL, not a cleanup path"
+        );
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(10);
+        loop {
+            let alive: Vec<i32> = pids
+                .iter()
+                .filter(|pid| rustix::process::test_kill_process(**pid).is_ok())
+                .map(|pid| pid.as_raw_pid())
+                .collect();
+            if alive.is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake rg processes survived a SIGKILLed test helper: {alive:?}"
+            );
+            std::thread::sleep(StdDuration::from_millis(20));
+        }
+        for guard in &mut guards {
+            guard.disarm();
+        }
+    }
+
     #[test]
     fn cancellation_during_drain_after_leader_exit_aborts_the_run() {
         let scratch = Scratch::new("cancel");
@@ -2137,10 +2481,7 @@ mod tests {
         let ack = scratch.root.join("ack");
         let script = scratch.script(
             "rg-hold",
-            &format!(
-                "#!/bin/sh\n(\n  trap 'trap \"\" TERM; printf term > \"{}\"; while [ ! -f \"{}\" ]; do /bin/sleep 0.01; done; printf ack > \"{}\"; exec /bin/sleep 120' TERM\n  printf ready > '{}'\n  while :; do :; done\n) &\necho $! > '{}'\necho $$ > '{}'\nprintf 'partial\\n'\nexit 0\n",
-                term.display(), probe.display(), ack.display(), ready.display(), pid_file.display(), leader_file.display()
-            ),
+            &rg_hold_script(&term, &probe, &ack, &ready, &pid_file, &leader_file),
         );
         let signal = Cancellation::new();
         let context = context(
