@@ -98,6 +98,9 @@ pub trait RefreshRegistry: Send + Sync {
 pub trait RefreshRouter: Send + Sync {
     fn mark_all_dirty(&self, reason: &str) -> usize;
     fn mark_project_dirty(&self, project_key: &JsString, reason: &str) -> usize;
+    /// `SessionRouter.markSessionDirty`: unlike the bulk marks, a missing
+    /// session is a no-op and reports `false`.
+    fn mark_session_dirty(&self, session_key: &JsString, reason: &str) -> bool;
     fn cached_session_count(&self) -> usize;
     /// `snapshotSession(sessionKey)?.messages`.
     fn snapshot_session(&self, session_key: &JsString) -> Option<JsValue>;

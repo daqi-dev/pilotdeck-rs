@@ -257,6 +257,17 @@ impl RefreshRouter for Fake {
         );
         1
     }
+    fn mark_session_dirty(&self, session_key: &JsString, reason: &str) -> bool {
+        record(
+            &self.0,
+            "router.markSessionDirty",
+            vec![
+                ("sessionKey", string(session_key)),
+                ("reason", reason.into()),
+            ],
+        );
+        !session_key.equals_str("missing")
+    }
     fn cached_session_count(&self) -> usize {
         record(&self.0, "router.cachedSessionCount", vec![]);
         3
