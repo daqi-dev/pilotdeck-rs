@@ -47,9 +47,9 @@
 
 ## 五、本项目特有的硬约束
 
-### 资源上限（2026-10-14 人定，10-17、10-18 放宽；依据 `state/decisions-20261017.md:107`）
+### 资源上限（2026-10-14 人定，10-17、10-18、10-22 放宽；依据 `state/decisions-20261017.md:107`、`state/decisions-20261022.md`「资源上限再放宽」）
 - worktree ≤ **12**（上限不是目标，READY 有互相独立的产品单才并行）；名额以 `scripts/wt-status.sh` 为准，不抄 board，退出 1（有已合入/已关且无改动的树）先归档 `_tmp/` 再回收，然后派单；同时编译/测试的 cargo 进程 ≤ **4**，开跑前 `scripts/cargo-slots.sh`，退出 1 即满、稍后再跑；全量对拍（53 场景）同一时刻只跑 **1** 个。
-- `_build/` + `_tmp/` ≤ **100 GiB**（`du -sk _build _tmp` 求和 ÷ 1,048,576），开新树前先看；超限停止新增写入。例外：冻结装置 `scripts/ui-server-parity/calibrate.py` 的 `CAP_BYTES` 仍 80 GiB（超 80 GiB 时 B2 定标自行拒跑），走冻结程序另改。
+- `_build/` + `_tmp/` ≤ **160 GiB**（`du -sk _build _tmp` 求和 ÷ 1,048,576），开新树前先看；超限停止新增写入。例外：冻结装置 `scripts/ui-server-parity/calibrate.py` 的 `CAP_BYTES` 仍 80 GiB（超 80 GiB 时 B2 定标自行拒跑），走冻结程序另改。
 - 调度会话 ≤ **2 小时**：到点把现场、证据、持有人、资源与下一就绪任务写进 board 并落实接续，然后继续（交接点不是停工，2026-10-16 人定）。
 
 ### 红线
@@ -96,7 +96,7 @@
 `.claude/skills/*` 是厂商缓存的 symlink，不在里面写项目模版；冲突以本表与本文件为准，表外停点按决策分级。
 - **dev-launch**：§2.5 产物写 `_tmp/<YYYYMMDD>-issue-<N>/triage.md`（`check-naming.py`） · §3/§4「停等拍板 / 值不值得」→ 写卡，暂不执行则 READY 条目改 `human` 取下一条（`next-task.sh` 跳过） · §3 >3 天 → 拆小 PR，READY 列 `<码>-pr1`… · §6.6「无 P2 才收敛」→ 按问题分级 · §8 人工合并 → 第 14 条入队 · §8 关单 → PR 写 `Closes #N` 或 `Refs #N`，关前先回复 · §7.0 只剩一家 → READY 改 `blocked` 写缺哪家，不降单评审。
 - **dev-req** Phase0 复述确认 → 写进 triage，按决策分级自决；深度思考 MCP 不可用则跳过。
-- **pr-ready**：Step0 项目模板不建，invariant 以 MEMORY.md 为触发表 · Step3/Step4 → `python3 scripts/run-review-roles.py`（加 `--serial` 在同一进程逐个跑四角色、产出单个结果块——本机并行全跑会挂起；不要分次单角色跑再拼块；每角色 600 s，默认 `--runner zai` 即 GLM（`glm-5.3-mb`），`--runner anthropic` 跑 Claude（需 `.env.local` 有 `ANTHROPIC_API_KEY`，现缺；模型通道与已知坑见 memory「model-runners」），任务书 `.claude/workflows/review-*.md`）· Step6 → P0/P1 先修再重跑相关角色，P2 三分，开 PR 贴 `summary.md`。
+- **pr-ready**：Step0 项目模板不建，invariant 以 MEMORY.md 为触发表 · Step3/Step4 → `python3 scripts/run-review-roles.py`（默认四角色并行（10-22 实测：两闸门 8 路、三闸门 12 路 GLM 并发均正常出块）；`--serial` 只在排查时用；不要分次单角色跑再拼块；每角色 600 s，默认 `--runner zai` 即 GLM（`glm-5.3-mb`），`--runner anthropic` 跑 Claude（需 `.env.local` 有 `ANTHROPIC_API_KEY`，现缺；模型通道与已知坑见 memory「model-runners」），任务书 `.claude/workflows/review-*.md`）· Step6 → P0/P1 先修再重跑相关角色，P2 三分，开 PR 贴 `summary.md`。
 - **aias-meta-*** 拍板归人：不进连续推进队列，只在人发起时用。`pdrs-review.js` 仅 Claude Code 通道可用。
 
 ## 六、约定

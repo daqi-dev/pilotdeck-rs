@@ -25,7 +25,7 @@ RUNNER=opencode
 MAX_ITER=50
 ITER_TIMEOUT=7200
 DRY=0
-DISK_CAP_KIB=104857600  # 100 GiB，正本见 CLAUDE.md「资源上限」
+DISK_CAP_KIB=167772160  # 160 GiB，正本见 CLAUDE.md「资源上限」
 
 while [ $# -gt 0 ]; do
   case "$1" in
