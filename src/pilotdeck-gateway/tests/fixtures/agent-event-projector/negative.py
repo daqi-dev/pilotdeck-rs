@@ -75,8 +75,15 @@ fn unused_iterative_sanitize_tool_data_value(value: &JsValue) -> ProjectionResul
 # Reintroduce the pre-fix bounded `String()` conversion: nested arrays at
 # depth 512+ degraded to `[object Object]` instead of joining like TS.
 DEEP_CLAMP_BEFORE = """fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
-    crate::js_value::to_string_units(value)
-        .map_err(|_| ProjectionError::range_error(crate::js_value::StackOverflow::MESSAGE))
+    match crate::js_value::to_string_units_checked(value) {
+        Ok(units) => Ok(units),
+        Err(crate::js_value::ToStringError::StackOverflow) => Err(ProjectionError::range_error(
+            crate::js_value::StackOverflow::MESSAGE,
+        )),
+        Err(crate::js_value::ToStringError::NotPrimitive) => Err(ProjectionError::type_error(
+            crate::js_value::ToStringError::NOT_PRIMITIVE,
+        )),
+    }
 }"""
 DEEP_CLAMP_AFTER = """fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
     fn join(value: &JsValue, out: &mut Vec<u16>, depth: usize) {
@@ -340,7 +347,10 @@ impl ArtifactWrites {''',
         JsValue::Number(_) | JsValue::Bool(_) => JsValue::Undefined,''',
         '''        JsValue::String(value) => JsValue::Number(value.len_utf16() as f64),
         other => JsValue::Number(checked_string_units(other)?.len() as f64),''',
-        "length-tool-result-image-data-number",
+        # Round 4 added an earlier case that the coercion breaks first (an
+        # object `data.length` whose value has an own `toString`); the round-3
+        # number case fails the same way right after it.
+        "error-tool-result-image-data-length-to-string-throws",
     ),
     (
         "coerce-persist-session-id",
@@ -355,6 +365,114 @@ impl ArtifactWrites {''',
         '        let session_id = safe_path_part_js(&input.session_id)?;',
         '        let session_id = safe_path_part_js(&input.session_id).unwrap_or_else(|_| "value".to_string());',
         "default_store_throws_on_non_string_path_part_like_ts",
+    ),
+    # Fix round 4: join renders nullish elements as "", nullish array
+    # elements throw on the first property read, `String()` throws for an own
+    # `toString`, `+` converts via ToPrimitive, and V8 prints the full
+    # property-access expression for a non-array method receiver.
+    (
+        "join-nullish-literal",
+        "projector.rs",
+        '''        let value = field(item, "text");
+        if !nullish(value) {
+            out.extend(checked_string_units(value)?);
+        }''',
+        '''        let value = field(item, "text");
+        out.extend(checked_string_units(value)?);''',
+        "tool-result-text-nullish-values",
+    ),
+    (
+        "join-nullish-literal-canonical",
+        "projector.rs",
+        '''        let value = field(block, "text");
+        if !nullish(value) {
+            out.extend(checked_string_units(value)?);
+        }''',
+        '''        let value = field(block, "text");
+        out.extend(checked_string_units(value)?);''',
+        "tool-results-projected-fulltext-text-nullish",
+    ),
+    (
+        "silent-null-call-timeline",
+        "projector.rs",
+        '                let timeline = required(call, "timeline")?;',
+        '                let timeline = field(call, "timeline");',
+        "error-tool-calls-null-call",
+    ),
+    (
+        "silent-null-steer-block",
+        "projector.rs",
+        '''        let timeline = required(block, "timeline")?;
+        if truthy(timeline) {''',
+        '''        let timeline = field(block, "timeline");
+        if truthy(timeline) {''',
+        "error-steer-content-null-block",
+    ),
+    (
+        "silent-null-assistant-block",
+        "projector.rs",
+        '        let block_type = required(block, "type")?;',
+        '        let block_type = field(block, "type");',
+        "error-assistant-content-null-block",
+    ),
+    (
+        "silent-null-subagent-call",
+        "projector.rs",
+        '                let id = required(call, "id")?;',
+        '                let id = field(call, "id");',
+        "error-subagent-tool-calls-null-call",
+    ),
+    (
+        "unchecked-to-string",
+        "projector.rs",
+        '''    match crate::js_value::to_string_units_checked(value) {
+        Ok(units) => Ok(units),
+        Err(crate::js_value::ToStringError::StackOverflow) => Err(ProjectionError::range_error(
+            crate::js_value::StackOverflow::MESSAGE,
+        )),
+        Err(crate::js_value::ToStringError::NotPrimitive) => Err(ProjectionError::type_error(
+            crate::js_value::ToStringError::NOT_PRIMITIVE,
+        )),
+    }''',
+        '''    crate::js_value::to_string_units(value)
+        .map_err(|_| ProjectionError::range_error(crate::js_value::StackOverflow::MESSAGE))''',
+        "error-tool-result-text-to-string-throws",
+    ),
+    (
+        "js-add-skip-to-primitive",
+        "projector.rs",
+        '''    let left = js_to_primitive(left)?;
+    let right = js_to_primitive(right)?;''',
+        '''    let left = left.clone();
+    let right = right.clone();''',
+        "context-budget-array-and-string-addition",
+    ),
+    (
+        "bare-method-expression-flat-map",
+        "projector.rs",
+        '"event.message.content.flatMap",',
+        '"flatMap",',
+        "error-assistant-content-flat-map-number",
+    ),
+    (
+        "bare-method-expression-map",
+        "projector.rs",
+        '''    store: &dyn GatewayToolResultArtifactStorePort,
+) -> ProjectionResult<Vec<JsValue>> {
+    let result = field(event, "result");
+    let content = required_array(required(result, "content")?, "event.result.content.map")?;''',
+        '''    store: &dyn GatewayToolResultArtifactStorePort,
+) -> ProjectionResult<Vec<JsValue>> {
+    let result = field(event, "result");
+    let content = required_array(required(result, "content")?, "map")?;''',
+        "error-tool-result-content-map-number",
+    ),
+    (
+        "bare-method-expression-flatten",
+        "projector.rs",
+        'required_array(required(block, "content")?, "content.map")?',
+        'required_array(required(block, "content")?, "map")?',
+        "error-flatten-content-map-number",
     ),
     (
         "tampered-source-hash",
