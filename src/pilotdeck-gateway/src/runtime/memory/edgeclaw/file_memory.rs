@@ -9,10 +9,11 @@
 use super::{EdgeClawStorage, StorageError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{
-    collections::{BTreeMap, HashMap},
+    cell::RefCell,
+    collections::{BTreeMap, HashMap, HashSet},
     fmt, fs,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 mod helpers;
@@ -103,6 +104,39 @@ pub struct FileMemoryStore {
     core: Core,
     operation: Arc<Mutex<()>>,
 }
+thread_local! {
+    static HELD_OPERATIONS: RefCell<HashSet<usize>> = RefCell::default();
+}
+// TS providers run synchronously inside the calling operation. A provider may
+// read another store with the same root, so only the outer call takes the mutex.
+// Keeping that guard alive still excludes every other thread until it returns.
+struct OperationGuard<'a> {
+    outer: Option<MutexGuard<'a, ()>>,
+    key: usize,
+}
+impl<'a> OperationGuard<'a> {
+    fn enter(operation: &'a Mutex<()>) -> Result<Self> {
+        let key = std::ptr::from_ref(operation) as usize;
+        if HELD_OPERATIONS.with(|held| held.borrow().contains(&key)) {
+            return Ok(Self { outer: None, key });
+        }
+        let outer = operation
+            .lock()
+            .map_err(|_| FileMemoryError::Invalid("file memory operation mutex poisoned".into()))?;
+        HELD_OPERATIONS.with(|held| held.borrow_mut().insert(key));
+        Ok(Self {
+            outer: Some(outer),
+            key,
+        })
+    }
+}
+impl Drop for OperationGuard<'_> {
+    fn drop(&mut self) {
+        if self.outer.is_some() {
+            HELD_OPERATIONS.with(|held| held.borrow_mut().remove(&self.key));
+        }
+    }
+}
 fn operation_lock(root: &Path) -> Result<Arc<Mutex<()>>> {
     type Locks = HashMap<PathBuf, Weak<Mutex<()>>>;
     static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
@@ -147,9 +181,7 @@ impl FileMemoryStore {
         };
         let operation = operation_lock(&core.root)?;
         {
-            let _guard = operation.lock().map_err(|_| {
-                FileMemoryError::Invalid("file memory operation mutex poisoned".into())
-            })?;
+            let _guard = OperationGuard::enter(&operation)?;
             core.ensure_layout()?;
         }
         Ok(Self {
@@ -173,10 +205,7 @@ impl FileMemoryStore {
     /// Execute one synchronous TS-shaped operation. Positional TS arguments are
     /// named (`ids`, `maxLines`, `relativePaths`, `lastDreamAt`) in this adapter.
     pub fn execute(&self, method: &str, input: &JsObject) -> Result<JsValue> {
-        let _guard = self
-            .operation
-            .lock()
-            .map_err(|_| FileMemoryError::Invalid("file memory operation mutex poisoned".into()))?;
+        let _guard = OperationGuard::enter(&self.operation)?;
         self.core.execute(method, input)
     }
     object_methods! {
@@ -1266,8 +1295,12 @@ impl Core {
                             "dreamUpdatedAt",
                         ],
                     );
-                } else if !id.is_empty() && id != CURRENT_PROJECT_ID {
-                    return Err(input_error("Unknown projectId: ", input, "projectId"));
+                } else {
+                    if !id.is_empty() && id != CURRENT_PROJECT_ID {
+                        return Err(input_error("Unknown projectId: ", input, "projectId"));
+                    }
+                    next = JsObject::new();
+                    copy(&mut next, input, &["projectName", "description", "status"]);
                 }
                 JsValue::Object(self.upsert_meta(&next, self.general())?)
             }

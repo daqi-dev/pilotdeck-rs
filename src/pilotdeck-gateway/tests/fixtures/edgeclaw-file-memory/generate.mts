@@ -105,6 +105,12 @@ run('number-render',{manageProjectMeta:false},[
   op('writeRaw',{relativePath:'Project/number.md',content:raw('project','project','Number','body','dream_attempts: 1000000000000000000000tail\n')}),
   op('markEntriesDeprecated',{relativePaths:['Project/number.md']}),op('exportSnapshotFiles'),
 ]);
+run('edit-meta-whitelist',{},[
+  op('editProjectMeta',{projectName:'Initial',description:'first edit',status:'open',dreamUpdatedAt:'must-not-be-created'}),
+  op('upsertProjectMeta',{projectName:'Seeded',dreamUpdatedAt:'existing-dream'}),
+  op('editProjectMeta',{projectName:'Edited',description:'second edit',status:'done',dreamUpdatedAt:'must-not-replace-existing'}),
+  op('getProjectMeta'),op('exportSnapshotFiles'),
+]);
 run('general-utf16',{workspaceMode:'general'},[
   op('upsertGeneralProjectMeta',{projectId:'id\ud800',projectName:'Lone ID',status:'open'},'m'),
   op('getMemoryRecordsByIds',{ids:['@m.relativePath']}),op('getProjectMeta',{projectId:'id\ud800'}),
@@ -127,7 +133,16 @@ repo.getGlobalUserStore().upsertCandidate(wiringCandidate);
 repo.getFileMemoryStore().repairManifests();
 const wiring = {candidate:wiringCandidate,global:clean(readBack(repo.getGlobalUserStore()),wiringRoot),workspace:clean(readBack(repo.getFileMemoryStore()),wiringRoot),files:tree(wiringRoot)};
 repo.close();
-const oracle = {wiring,sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,scenarios};
+// Both repository stores keep their distinct options even when roots resolve
+// to the same directory. The workspace write synchronously calls its provider.
+const sameRoot = join(scratch,'same-root');
+const sameRepo = new MemoryRepository(join(scratch,'same-root.sqlite'),{memoryDir:join(sameRoot,'.'),globalRootDir:sameRoot,workspaceDir:join(scratch,'same-workspace')});
+sameRepo.getGlobalUserStore().upsertCandidate(wiringCandidate);
+sameRepo.getFileMemoryStore().upsertCandidate(project);
+sameRepo.getFileMemoryStore().repairManifests();
+const sameRootWiring = {candidate:project,global:clean(readBack(sameRepo.getGlobalUserStore()),sameRoot),workspace:clean(readBack(sameRepo.getFileMemoryStore()),sameRoot),files:tree(sameRoot)};
+sameRepo.close();
+const oracle = {wiring,sameRootWiring,sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,scenarios};
 mkdirSync(output,{recursive:true}); const text = `${JSON.stringify(oracle,null,2)}\n`; writeFileSync(join(output,'oracle.json'),text);
 console.log(`oracle sha256 ${createHash('sha256').update(text).digest('hex')}; ${scenarios.length} scenarios`);
 rmSync(scratch,{recursive:true,force:true});

@@ -575,6 +575,57 @@ fn sqlite_and_global_file_stores_share_the_ts_layout_and_links() {
     );
 }
 #[test]
+fn same_root_provider_reentry_finishes_like_synchronous_ts() {
+    // Keep all disk ownership in the worker: a deadlock must fail this test
+    // within five seconds, without joining the stuck thread or deleting its files.
+    let (finished, completion) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("memory");
+        let oracle = baseline::oracle(ORACLE);
+        let expected = field(&oracle, "sameRootWiring");
+        let repo = EdgeClawFileStores::with_clock(
+            scratch.0.join("db.sqlite"),
+            &root,
+            &root,
+            "single",
+            Arc::new(|| NOW.into()),
+        )
+        .unwrap();
+        repo.global_user_memory
+            .upsert_candidate(
+                field(field(&oracle, "wiring"), "candidate")
+                    .as_object()
+                    .unwrap(),
+            )
+            .unwrap();
+        repo.workspace_memory
+            .upsert_candidate(field(expected, "candidate").as_object().unwrap())
+            .unwrap();
+        repo.workspace_memory.repair_manifests().unwrap();
+        assert_json(
+            &clean(readback(&repo.global_user_memory), &root),
+            field(expected, "global"),
+            "TS same-root global readback",
+        );
+        assert_json(
+            &clean(readback(&repo.workspace_memory), &root),
+            field(expected, "workspace"),
+            "TS same-root workspace readback",
+        );
+        assert_json(
+            &JsValue::Array(tree(&root, Path::new(""))),
+            field(expected, "files"),
+            "TS same-root file bytes",
+        );
+        finished.send(()).unwrap();
+    });
+    completion
+        .recv_timeout(Duration::from_secs(5))
+        .expect("same-root provider operation must finish within 5s");
+    worker.join().unwrap();
+}
+#[test]
 #[ignore = "requires fixed TS baseline / Node 22; real TS reopens Rust files"]
 fn real_ts_reads_rust_written_files() {
     let oracle = baseline::oracle(ORACLE);
