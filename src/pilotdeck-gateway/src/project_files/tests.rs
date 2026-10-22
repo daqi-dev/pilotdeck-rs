@@ -3,6 +3,7 @@ use crate::{
     dispatch::{Route, parse, route_with_metadata},
     metadata::{NativeFiles, Stat},
 };
+use pilotdeck_protocol::JsString;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -487,6 +488,53 @@ fn node_locale_precedence_collation_and_case_mapping() {
         assert_eq!(serde_json::to_value(lower).unwrap(), case["lower"]);
     }
 }
+#[test]
+fn node_compare_utf16_keeps_unpaired_surrogate_weights() {
+    // Node v22.22.0 measurement (RESULT「修复轮 2」surrogate-probe.mjs):
+    // `['zzz','\ud800a','\ud800b','\ud801','\udfff','\ufffd']
+    //   .sort((a,b)=>a.localeCompare(b))`
+    // yields this ascending order: unpaired surrogates are distinct, in
+    // code-unit order, above "zzz" and below U+FFFD.
+    let collator = node_collator(&"en-US".parse().unwrap()).unwrap();
+    let units = |units: &[u16]| JsString::from_utf16(units.to_vec());
+    let mut mixed = [
+        units(&[u16::from(b'z'); 3]),
+        units(&[0xD800, u16::from(b'a')]),
+        units(&[0xD800, u16::from(b'b')]),
+        units(&[0xD801]),
+        units(&[0xDFFF]),
+        units(&[0xFFFD]),
+    ];
+    mixed.sort_by(|left, right| node_compare_utf16(&collator, left, right));
+    let order: Vec<Vec<u16>> = mixed.iter().map(|value| value.units().to_vec()).collect();
+    assert_eq!(
+        order,
+        vec![
+            vec![u16::from(b'z'); 3],
+            vec![0xD800, u16::from(b'a')],
+            vec![0xD800, u16::from(b'b')],
+            vec![0xD801],
+            vec![0xDFFF],
+            vec![0xFFFD],
+        ]
+    );
+    // All 2048 unpaired surrogates are distinct and strictly increasing under
+    // the shared comparator, not folded onto one U+FFFD weight.
+    let mut surrogates: Vec<JsString> = (0xD800..=0xDFFF).map(|unit| units(&[unit])).collect();
+    surrogates.sort_by(|left, right| node_compare_utf16(&collator, left, right));
+    for (index, value) in surrogates.iter().enumerate() {
+        assert_eq!(value.units().to_vec(), vec![0xD800 + index as u16]);
+    }
+    for pair in surrogates.windows(2) {
+        assert!(node_compare_utf16(&collator, &pair[0], &pair[1]).is_lt());
+    }
+    // Valid UTF-16, including surrogate pairs, is borrowed unchanged.
+    for text in ["", "z", "\u{1f600}", "你好", "\u{fffd}"] {
+        let value = JsString::from(text);
+        assert_eq!(node_collation_units(&value).as_ref(), value.units());
+    }
+}
+
 #[test]
 fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
     let (mut metadata, fixture) = fixture();

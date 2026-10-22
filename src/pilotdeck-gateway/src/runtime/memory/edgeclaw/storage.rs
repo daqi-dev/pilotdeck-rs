@@ -12,7 +12,7 @@
 
 use crate::{
     metadata::js_trim,
-    project_files::{node_collator, node_locale},
+    project_files::{node_collator, node_compare_utf16, node_locale},
     runtime::memory::{js_is_space_unit, js_trim_units},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -86,8 +86,9 @@ pub enum StorageError {
     NotIterable(String),
     /// ICU collation data could not be loaded, so `localeCompare`-based trace
     /// ordering cannot be reproduced. (Unpaired surrogates are no longer a
-    /// host boundary: `trace_collation_units` maps them onto the unassigned
-    /// U+E000..U+E7FF band the way Node/ICU4C weights them.)
+    /// host boundary: the shared `project_files::node_compare_utf16` maps them
+    /// onto the unassigned U+E000..U+E7FF band the way Node/ICU4C weights
+    /// them.)
     HostRequired(String),
 }
 impl fmt::Display for StorageError {
@@ -684,24 +685,29 @@ fn sanitize_trace_array(
     let JsValue::Array(items) = value else {
         return Ok(Vec::new());
     };
-    let mut filtered: Vec<(&JsValue, Vec<u16>)> = items
+    let mut filtered: Vec<&JsValue> = items
         .iter()
         .filter(|item| {
             item.get(id_key).and_then(JsValue::as_string).is_some()
                 && item.get(sort_key).and_then(JsValue::as_string).is_some()
         })
-        .map(|item| (item, trace_collation_units(trace_sort_key(item, sort_key))))
         .collect();
     // `Array#sort` is stable and never invokes the comparator for zero or one
     // element, so the collator (and its ICU data) is only loaded when a
     // comparison is actually needed.
     if filtered.len() >= 2 {
         let collator = trace_collator()?;
-        filtered.sort_by(|(_, left), (_, right)| collator.compare_utf16(right, left));
+        filtered.sort_by(|left, right| {
+            node_compare_utf16(
+                collator,
+                trace_sort_key(right, sort_key),
+                trace_sort_key(left, sort_key),
+            )
+        });
     }
     let mut seen = HashSet::new();
     let mut records = Vec::new();
-    for (item, _) in filtered {
+    for item in filtered {
         let id = item
             .get(id_key)
             .and_then(JsValue::as_string)
@@ -718,38 +724,6 @@ fn trace_sort_key<'a>(item: &'a JsValue, sort_key: &str) -> &'a JsString {
     item.get(sort_key)
         .and_then(JsValue::as_string)
         .expect("filtered trace has a sort key")
-}
-
-/// UTF-16 units whose `localeCompare` order matches Node's for every unpaired
-/// surrogate.
-///
-/// V8/ICU4C collates an unpaired surrogate with the UCA implicit weight of the
-/// code point it names, so `\ud800 < \ud801 < ... < \udfff`, all of them sort
-/// just above U+D7FF, and each is distinct. ICU4X (`Collator::compare_utf16`)
-/// folds every unpaired surrogate to U+FFFD, which loses both the order and the
-/// distinction. Re-encode each unpaired surrogate `u` as the private-use scalar
-/// `U+E000 + (u - 0xD800)`: those 2048 code points are collation-unassigned, so
-/// ICU4X gives them implicit weights in the same band, and the mapping is
-/// strictly increasing, preserving order and adjacency. Valid UTF-16 passes
-/// through unchanged.
-///
-/// The residual divergence is a real U+E000..U+E7FF character compared against
-/// a surrogate at the deciding position: the mapped surrogate lands on that
-/// character instead of just below U+E000. Private-use characters are not
-/// timestamp input (no baseline fixture or production path stores them); the
-/// Node probe and this trade-off are recorded in RESULT「修复轮 2」.
-fn trace_collation_units(value: &JsString) -> Vec<u16> {
-    let mut units = Vec::with_capacity(value.units().len());
-    for decoded in char::decode_utf16(value.units().iter().copied()) {
-        match decoded {
-            Ok(character) => {
-                let mut buffer = [0; 2];
-                units.extend_from_slice(character.encode_utf16(&mut buffer));
-            }
-            Err(error) => units.push(0xE000 + (error.unpaired_surrogate() - 0xD800)),
-        }
-    }
-    units
 }
 
 fn normalize_traces(records: Vec<JsValue>, kind: TraceKind) -> Result<Vec<JsValue>, StorageError> {
