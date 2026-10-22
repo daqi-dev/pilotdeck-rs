@@ -536,7 +536,7 @@ fn node_compare_utf16_keeps_unpaired_surrogate_weights() {
 }
 
 #[test]
-fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
+fn resource_counter_counts_disappearing_entries() {
     let (mut metadata, fixture) = fixture();
     let root = PathBuf::from(fixture["root"].as_str().unwrap());
     let entries: Vec<_> = (0..100_000)
@@ -545,7 +545,7 @@ fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
     metadata.files.files.get_mut(&root).unwrap()["entries"] = Value::Array(entries);
     // The success half is about the counter, not the wall clock: an unbounded
     // deadline keeps 100k stat calls deterministic under parallel cargo load.
-    // The 5 s deadline is pinned by the explicitly expired Scan below.
+    // The production deadline is checked independently below (#271).
     let value = list_with_deadline(
         &metadata,
         &object([]),
@@ -560,11 +560,25 @@ fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
         .unwrap()
         .push(serde_json::json!(["gone-extra", false]));
     assert_eq!(
-        list(&metadata, &object([]), root.to_str().unwrap(), "")
-            .unwrap_err()
-            .0,
+        list_with_deadline(
+            &metadata,
+            &object([]),
+            root.to_str().unwrap(),
+            "",
+            Duration::MAX,
+        )
+        .unwrap_err()
+        .0,
         "FILE_INDEX_LIMIT"
     );
+}
+
+#[test]
+fn resource_deadline_fails_closed() {
+    let (metadata, fixture) = fixture();
+    let root = PathBuf::from(fixture["root"].as_str().unwrap());
+    // Test expiry itself with an already-expired clock, without sleeping or
+    // making 100k entries fit inside a machine-dependent five-second window.
     let mut scan = Scan {
         metadata: &metadata,
         root: &root,

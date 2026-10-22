@@ -699,30 +699,66 @@ async fn explicit_close_reaps_child() {
 }
 #[tokio::test]
 async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
-    // Real time on purpose: the fixture is an external Python process, so a
-    // paused Tokio clock leaves only a few scheduler ticks between SIGTERM and
-    // SIGKILL, and one coarse `advance` can be consumed by the writer join
-    // before the EOF timer is armed (#346). A full second per grace period is
-    // still bounded by the ten-second `wait_for_event` watchdog.
+    // Test the grace deadlines themselves, while letting the external process
+    // finish each observation before advancing virtual time. Python does not
+    // share Tokio's clock; real 50 ms grace periods race its scheduling (#308).
     let mut bounded = protocol_limits();
-    bounded.close_timeout = Duration::from_secs(1);
+    bounded.close_timeout = Duration::from_millis(50);
     let (mut command, receipt) = peer("close-hang");
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
     let pid = client.child_id().unwrap();
+    let writer = client.connection.writer_task();
+    let term_sent = client.connection.term_sent();
+    let clock = ManualClock::start();
     let close = client.close();
     tokio::pin!(close);
     tokio::select! {
         biased;
         result = &mut close => panic!("close skipped EOF grace period: {result:?}"),
-        _ = wait_for_event("stdin EOF", || receipt.0.with_extension("eof").exists()) => {}
+        _ = wait_for_event("stdin EOF and writer joined", || {
+            std::fs::read_to_string(receipt.0.with_extension("eof")).ok().as_deref() == Some("EOF\n")
+                && writer.is_finished()
+        }) => {}
     }
+    // Now the writer join is ready, so this poll arms the EOF grace timer.
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(close.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    // Advancing once does not guarantee the timer driver has dispatched the
+    // deadline. Drive bounded millisecond ticks until the actual TERM attempt;
+    // then freeze again so Python gets its full event-observation window.
+    for _ in 0..100 {
+        tokio::time::advance(Duration::from_millis(1)).await;
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(close.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        if term_sent.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        term_sent.load(Ordering::SeqCst),
+        1,
+        "TERM deadline did not fire"
+    );
     tokio::select! {
         biased;
         result = &mut close => panic!("close skipped TERM grace period: {result:?}"),
-        _ = wait_for_event("SIGTERM", || receipt.0.with_extension("term").exists()) => {}
+        _ = wait_for_event("SIGTERM", || {
+            std::fs::read_to_string(receipt.0.with_extension("term")).ok().as_deref() == Some("TERM\n")
+        }) => {}
     }
+    // The TERM timer is armed by the poll which sent the signal. Keep it
+    // frozen until the fixture has persisted the TERM event, then allow KILL.
+    tokio::time::advance(bounded.close_timeout + Duration::from_millis(1)).await;
+    drop(clock);
     let result = timeout(Duration::from_secs(15), &mut close)
         .await
         .expect("close did not finish after SIGKILL");
