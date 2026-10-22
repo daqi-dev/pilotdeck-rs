@@ -242,7 +242,7 @@ pub(super) async fn wait_result<T: Clone>(mut receiver: watch::Receiver<Option<T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::project::{DisposeFuture, RuntimeError, RuntimeResult};
+    use crate::runtime::project::{DisposeFuture, RuntimeResult};
     use pilotdeck_protocol::{JsValue, parse_json};
     use std::sync::{
         Arc,
@@ -340,16 +340,42 @@ mod tests {
         assert_eq!(handle.state(), HandleState::Disposed);
     }
 
-    /// Repeated dispose() calls must share the same result channel.
+    /// Repeated dispose() calls must share the same result channel; only one
+    /// drain task must run and session.dispose() must be called exactly once.
     #[tokio::test]
     async fn dispose_repeated_shares_result() {
-        let session = MemSession::new();
-        let handle = LiveSessionHandle::new(session.clone(), None);
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct CountingSession {
+            dispose_count: Arc<AtomicUsize>,
+        }
+        impl LiveSession for CountingSession {
+            fn snapshot(&self) -> JsValue {
+                parse_json("{}").unwrap()
+            }
+            fn abort(&self, _reason: &JsString) -> RuntimeResult {
+                Ok(())
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                self.dispose_count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let dispose_count = Arc::new(AtomicUsize::new(0));
+        let session = Arc::new(CountingSession {
+            dispose_count: dispose_count.clone(),
+        });
+        let handle = LiveSessionHandle::new(session, None);
         let f1 = handle.dispose("first".into());
         let f2 = handle.dispose("second".into());
         f1.await.unwrap();
         f2.await.unwrap();
         assert_eq!(handle.state(), HandleState::Disposed);
+        // Only one drain task must have run — shared channel, not two separate drains
+        assert_eq!(
+            dispose_count.load(Ordering::SeqCst),
+            1,
+            "session.dispose() must be called exactly once even with repeated dispose() calls"
+        );
     }
 
     /// Negative control: a panic inside the drain task still delivers a
