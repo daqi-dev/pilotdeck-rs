@@ -106,8 +106,9 @@ impl LiveSessionHandle {
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
         // Set cancelled inside the lock; call session.abort() outside so that
-        // a panic in session.abort() does not poison the progress mutex.
-        // Callers in Draining/Disposed are no-ops: the drain task owns teardown.
+        // a panic does not poison the progress mutex.
+        // Contract: callers must tolerate abort() being called after dispose()
+        // completes (Draining/Disposed state); those calls are benign no-ops.
         {
             let mut progress = self.0.progress.lock().unwrap();
             let is_active = progress.state == HandleState::Active;
@@ -117,10 +118,6 @@ impl LiveSessionHandle {
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
         self.0.changed.send_modify(|version| *version += 1);
-        // session.abort() called after lock release; at this point state is
-        // Active and dispose() has not started (dispose() sets Draining under
-        // the same lock before calling session.abort, so only one of the two
-        // can win the Active→Draining transition).
         self.0.session.abort(reason)
     }
 
@@ -131,12 +128,6 @@ impl LiveSessionHandle {
         if let Some(completion) = &progress.disposal {
             return Box::pin(wait_result(completion.clone()));
         }
-        // Transition to Draining before releasing the lock; any concurrent
-        // abort() that reads state == Active must have already released its
-        // lock, meaning it will call session.abort() after this dispose() does.
-        // That concurrent call is therefore a benign duplicate, not a race with
-        // the drain task (which runs only after the lock is dropped and the
-        // spawn is queued).
         progress.state = HandleState::Draining;
         let active = progress.activity && !progress.maintenance;
         if active || progress.maintenance {
@@ -145,15 +136,10 @@ impl LiveSessionHandle {
         let (result, completion) = watch::channel(None);
         progress.disposal = Some(completion.clone());
         drop(progress);
-        // Call session.abort() outside the lock so a panic does not poison it.
-        let abort_error = active
-            .then(|| self.0.session.abort(&reason).err())
-            .flatten();
         let handle = self.clone();
         tokio::spawn(async move {
-            // Use a guard to guarantee result.send_replace is called even if
-            // session.dispose() panics, preventing wait_result from hanging
-            // forever and ensuring the lease is always released.
+            // DisposeGuard guarantees result.send_replace and lease release even
+            // if any step (including session.abort or session.dispose) panics.
             struct DisposeGuard<'a> {
                 result: &'a watch::Sender<Option<RuntimeResult>>,
                 lease: Option<RuntimeLease>,
@@ -169,6 +155,13 @@ impl LiveSessionHandle {
                     self.result.send_replace(Some(outcome));
                 }
             }
+            // Abort is called inside the spawn so it is covered by DisposeGuard.
+            // session.abort() is called outside the progress lock (no poison risk).
+            let abort_error = if active {
+                handle.0.session.abort(&reason).err()
+            } else {
+                None
+            };
             let mut failures: Vec<_> = abort_error.into_iter().collect();
             let mut changed = handle.0.changed.subscribe();
             loop {
