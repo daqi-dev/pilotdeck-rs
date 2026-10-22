@@ -87,7 +87,8 @@ def run_controls(source, output):
         results.append({'name': name, 'status': 'PASS' if passed else 'FAIL',
                         'scenario': scenario, 'passed': passed, 'expectedRule': expected,
                         'expectedPairRule': pair_rule, 'observedRules': rules})
-    report = {'status': 'FAIL' if any(row['status'] == 'FAIL' for row in results) else 'PASS',
+    report = {'status': ('FAIL' if any(row['status'] == 'FAIL' for row in results)
+                         else 'PASS' if any(row['status'] == 'PASS' for row in results) else 'BLOCKED'),
               'source': str(source), 'controls': results,
               'notApplicable': [row['name'] for row in results if row['status'] == 'NOT_APPLICABLE']}
     save(output / 'controls.json', report)

@@ -25,7 +25,17 @@
     "pilot/projects/edge/chats/unicode.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"unicode\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 中文 ١ K ſ\"}]}]}",
     "pilot/projects/edge/chats/linebreak.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"linebreak\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a b\"}]}]}",
     "pilot/projects/edge/chats/raw.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"raw\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"First title\"}}\r\rbroken\r{\"type\":\"accepted_input\",\"sessionId\":\"raw\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edge raw record\"}]}]}\r{\"type\":\"session_metadata\",\"sessionId\":\"raw\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"  Latest title  \"}}",
-    "pilot/projects/edge/chats/patch.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"First title\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"patch\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edge patch record\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"  Latest title  \"}}"
+    "pilot/projects/edge/chats/patch.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"First title\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"patch\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"edge patch record\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"patch\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"  Latest title  \"}}",
+    "pilot/projects/review/chats/expansion.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"expansion\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"İİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİx tail\"}]}]}",
+    "pilot/projects/review/chats/own-title.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"own-title\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Own title\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"OTHER-ID\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"title lookup\"}]}]}",
+    "pilot/projects/review/chats/OTHER-ID.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"OTHER-ID\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Other indexed title\"}}",
+    "pilot/projects/review/chats/missing-id.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"title lookup\"}]}]}",
+    "pilot/projects/review/chats/miss-title.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"unindexed-entry\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"title lookup\"}]}]}",
+    "pilot/projects/review/chats/lone.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"lone\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"metadata\":{\"title\":\"Title \\ud800\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"lone\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"date \\ud800\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"lone \\ud800 hello\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"id\\ud800\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"lone id hello\"}]}]}",
+    "pilot/projects/review/chats/boundary.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"boundary\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"éx\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"boundary\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"ax\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"boundary\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}",
+    "pilot/projects/review/chats/date.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"date\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"clock pm\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"date\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T00:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"clock midnight\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"date\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-01T16:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"clock local midnight\"}]}]}",
+    "pilot/projects/review/chats/numbers.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 0\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 1\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 2\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 3\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 4\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 5\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 6\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 7\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 8\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 9\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 10\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 11\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 12\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 13\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 14\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 15\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 16\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 17\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 18\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 19\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 20\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 21\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 22\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 23\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 24\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 25\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 26\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 27\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 28\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"numbers\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"numeric 29\"}]}]}",
+    "pilot/projects/review/chats/patterns.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Z\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"&\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"b\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x{,3}\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"\\u0001\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"\\u0000\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"k\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xy\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"aaa\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"3\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"-\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"xzz\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"zz\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"u{41}\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"éx\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"ax\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"\\ud800\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"é\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"h\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"patterns\",\"turnId\":\"turn\",\"sequence\":1,\"createdAt\":\"2026-01-02T13:04:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"_\"}]}]}"
   },
   "cases": [
     {
@@ -275,6 +285,1123 @@
       "exit": 1,
       "stdout": "",
       "stderr": "ENOENT: no such file or directory, open '{runtime}/pilot/projects/edge/chats/missing.jsonl'\n"
+    },
+    {
+      "id": "lower-expansion",
+      "argv": [
+        "search",
+        "x",
+        "--session",
+        "expansion",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"x\",\n  \"matches\": [\n    {\n      \"sessionId\": \"expansion\",\n      \"role\": \"user\",\n      \"text\": \"İİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİx tail\",\n      \"snippet\": \"...\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"İİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİİx tail\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "title-entry-key",
+      "argv": [
+        "search",
+        "title lookup",
+        "--all-projects",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"title lookup\",\n  \"matches\": [\n    {\n      \"sessionId\": \"unindexed-entry\",\n      \"role\": \"user\",\n      \"text\": \"title lookup\",\n      \"snippet\": \"title lookup\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"unindexed-entry\",\n      \"projectKey\": \"review\"\n    },\n    {\n      \"sessionId\": \"{runtime}/pilot/projects/review/chats/missing-id.jsonl\",\n      \"role\": \"user\",\n      \"text\": \"title lookup\",\n      \"snippet\": \"title lookup\",\n      \"createdAt\": \"\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"{runtime}/pilot/projects/review/chats/missing-id.jsonl\",\n      \"projectKey\": \"review\"\n    },\n    {\n      \"sessionId\": \"OTHER-ID\",\n      \"role\": \"user\",\n      \"text\": \"title lookup\",\n      \"snippet\": \"title lookup\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"Other indexed title\",\n      \"projectKey\": \"review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 19\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "lone-json",
+      "argv": [
+        "search",
+        "hello",
+        "--session",
+        "lone",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"hello\",\n  \"matches\": [\n    {\n      \"sessionId\": \"lone\",\n      \"role\": \"user\",\n      \"text\": \"lone \\ud800 hello\",\n      \"snippet\": \"lone \\ud800 hello\",\n      \"createdAt\": \"date \\ud800\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"Title \\ud800\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"id\\ud800\",\n      \"role\": \"user\",\n      \"text\": \"lone id hello\",\n      \"snippet\": \"lone id hello\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"id\\ud800\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "lone-text",
+      "argv": [
+        "search",
+        "hello",
+        "--session",
+        "lone",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "🔍 2 match(es) for \"hello\"\n\n1. **Title �** (`lone`)\n   user · date �\n   > lone � hello\n\n2. **id�** (`id�`)\n   user · Jan 2, 01:04 PM\n   > lone id hello\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "lone-regex",
+      "argv": [
+        "search",
+        "\\ud800",
+        "--regex",
+        "--session",
+        "lone",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\ud800\",\n  \"matches\": [\n    {\n      \"sessionId\": \"lone\",\n      \"role\": \"user\",\n      \"text\": \"lone \\ud800 hello\",\n      \"snippet\": \"lone \\ud800 hello\",\n      \"createdAt\": \"date \\ud800\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"Title \\ud800\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "lone-not-replacement",
+      "argv": [
+        "search",
+        "�",
+        "--session",
+        "lone",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"�\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "ascii-boundary",
+      "argv": [
+        "search",
+        "\\bx",
+        "--regex",
+        "--session",
+        "boundary",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\bx\",\n  \"matches\": [\n    {\n      \"sessionId\": \"boundary\",\n      \"role\": \"user\",\n      \"text\": \"éx\",\n      \"snippet\": \"éx\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"x\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"boundary\",\n      \"role\": \"user\",\n      \"text\": \"x\",\n      \"snippet\": \"x\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"x\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "clock-UTC",
+      "argv": [
+        "search",
+        "clock",
+        "--session",
+        "date",
+        "--project",
+        "/review"
+      ],
+      "tz": "UTC",
+      "exit": 0,
+      "stdout": "🔍 3 match(es) for \"clock\"\n\n1. **clock local midnight** (`date`)\n   user · Jan 2, 01:04 PM\n   > clock pm\n\n2. **clock local midnight** (`date`)\n   user · Jan 2, 12:04 AM\n   > clock midnight\n\n3. **clock local midnight** (`date`)\n   user · Jan 1, 04:04 PM\n   > clock local midnight\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "clock-Asia-Shanghai",
+      "argv": [
+        "search",
+        "clock",
+        "--session",
+        "date",
+        "--project",
+        "/review"
+      ],
+      "tz": "Asia/Shanghai",
+      "exit": 0,
+      "stdout": "🔍 3 match(es) for \"clock\"\n\n1. **clock local midnight** (`date`)\n   user · Jan 2, 09:04 PM\n   > clock pm\n\n2. **clock local midnight** (`date`)\n   user · Jan 2, 08:04 AM\n   > clock midnight\n\n3. **clock local midnight** (`date`)\n   user · Jan 2, 12:04 AM\n   > clock local midnight\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "clock-America-New_York",
+      "argv": [
+        "search",
+        "clock",
+        "--session",
+        "date",
+        "--project",
+        "/review"
+      ],
+      "tz": "America/New_York",
+      "exit": 0,
+      "stdout": "🔍 3 match(es) for \"clock\"\n\n1. **clock local midnight** (`date`)\n   user · Jan 2, 08:04 AM\n   > clock pm\n\n2. **clock local midnight** (`date`)\n   user · Jan 1, 07:04 PM\n   > clock midnight\n\n3. **clock local midnight** (`date`)\n   user · Jan 1, 11:04 AM\n   > clock local midnight\n\nTip: open the session in the Web UI to jump to the matched message.\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-0",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "1_000",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-1",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "0x1_0",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-2",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        " 12 ",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-3",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "1e3",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 20\",\n      \"snippet\": \"numeric 20\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 21,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 21\",\n      \"snippet\": \"numeric 21\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 22,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 22\",\n      \"snippet\": \"numeric 22\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 23,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 23\",\n      \"snippet\": \"numeric 23\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 24\",\n      \"snippet\": \"numeric 24\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 25,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 25\",\n      \"snippet\": \"numeric 25\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 26,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 26\",\n      \"snippet\": \"numeric 26\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 27,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 27\",\n      \"snippet\": \"numeric 27\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 28,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 28\",\n      \"snippet\": \"numeric 28\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 29,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 29\",\n      \"snippet\": \"numeric 29\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 30,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-4",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-5",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "0b11",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-6",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "Infinity",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-7",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "0o3",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "number-8",
+      "argv": [
+        "search",
+        "numeric",
+        "--limit",
+        "+0x3",
+        "--session",
+        "numbers",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"numeric\",\n  \"matches\": [\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 0\",\n      \"snippet\": \"numeric 0\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 1\",\n      \"snippet\": \"numeric 1\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 2\",\n      \"snippet\": \"numeric 2\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 3\",\n      \"snippet\": \"numeric 3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 4\",\n      \"snippet\": \"numeric 4\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 5\",\n      \"snippet\": \"numeric 5\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 6\",\n      \"snippet\": \"numeric 6\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 7\",\n      \"snippet\": \"numeric 7\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 8\",\n      \"snippet\": \"numeric 8\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 9\",\n      \"snippet\": \"numeric 9\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 10\",\n      \"snippet\": \"numeric 10\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 11\",\n      \"snippet\": \"numeric 11\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 12\",\n      \"snippet\": \"numeric 12\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 13\",\n      \"snippet\": \"numeric 13\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 14\",\n      \"snippet\": \"numeric 14\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 15\",\n      \"snippet\": \"numeric 15\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 16\",\n      \"snippet\": \"numeric 16\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 17\",\n      \"snippet\": \"numeric 17\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 18\",\n      \"snippet\": \"numeric 18\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"numbers\",\n      \"role\": \"user\",\n      \"text\": \"numeric 19\",\n      \"snippet\": \"numeric 19\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"numeric 29\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": true,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-0-false",
+      "argv": [
+        "search",
+        "[Z-a]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[Z-a]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"zz\",\n      \"snippet\": \"zz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-0-true",
+      "argv": [
+        "search",
+        "[Z-a]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[Z-a]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-1-false",
+      "argv": [
+        "search",
+        "[[]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[[]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-1-true",
+      "argv": [
+        "search",
+        "[[]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[[]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-2-false",
+      "argv": [
+        "search",
+        "[a&&b]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a&&b]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"&\",\n      \"snippet\": \"&\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-2-true",
+      "argv": [
+        "search",
+        "[a&&b]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a&&b]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"&\",\n      \"snippet\": \"&\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-3-false",
+      "argv": [
+        "search",
+        "[a--b]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /[a--b]/i: Range out of order in character class\n"
+    },
+    {
+      "id": "review-regex-3-true",
+      "argv": [
+        "search",
+        "[a--b]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /[a--b]/: Range out of order in character class\n"
+    },
+    {
+      "id": "review-regex-4-false",
+      "argv": [
+        "search",
+        "x{,3}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"x{,3}\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-4-true",
+      "argv": [
+        "search",
+        "x{,3}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"x{,3}\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-5-false",
+      "argv": [
+        "search",
+        "\\1",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\1\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-5-true",
+      "argv": [
+        "search",
+        "\\1",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\1\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-6-false",
+      "argv": [
+        "search",
+        "\\0",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\0\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0000\",\n      \"snippet\": \"\\u0000\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-6-true",
+      "argv": [
+        "search",
+        "\\0",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\0\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0000\",\n      \"snippet\": \"\\u0000\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-7-false",
+      "argv": [
+        "search",
+        "\\k",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\k\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-7-true",
+      "argv": [
+        "search",
+        "\\k",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\k\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-8-false",
+      "argv": [
+        "search",
+        "(?<a>x)(?<a>y)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?<a>x)(?<a>y)/i: Duplicate capture group name\n"
+    },
+    {
+      "id": "review-regex-8-true",
+      "argv": [
+        "search",
+        "(?<a>x)(?<a>y)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?<a>x)(?<a>y)/: Duplicate capture group name\n"
+    },
+    {
+      "id": "review-regex-9-false",
+      "argv": [
+        "search",
+        "a{1000}{1000}{1000}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /a{1000}{1000}{1000}/i: Nothing to repeat\n"
+    },
+    {
+      "id": "review-regex-9-true",
+      "argv": [
+        "search",
+        "a{1000}{1000}{1000}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /a{1000}{1000}{1000}/: Nothing to repeat\n"
+    },
+    {
+      "id": "review-regex-10-false",
+      "argv": [
+        "search",
+        "[\\d]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\d]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-10-true",
+      "argv": [
+        "search",
+        "[\\d]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\d]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-11-false",
+      "argv": [
+        "search",
+        "[\\w-]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\w-]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xy\",\n      \"snippet\": \"xy\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"zz\",\n      \"snippet\": \"zz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"éx\",\n      \"snippet\": \"éx\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x\",\n      \"snippet\": \"x\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"h\",\n      \"snippet\": \"h\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 23,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-11-true",
+      "argv": [
+        "search",
+        "[\\w-]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\w-]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xy\",\n      \"snippet\": \"xy\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"zz\",\n      \"snippet\": \"zz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"éx\",\n      \"snippet\": \"éx\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x\",\n      \"snippet\": \"x\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"h\",\n      \"snippet\": \"h\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 23,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-12-false",
+      "argv": [
+        "search",
+        "[\\s\\S]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\s\\\\S]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"&\",\n      \"snippet\": \"&\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0000\",\n      \"snippet\": \"\\u0000\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xy\",\n      \"snippet\": \"xy\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"zz\",\n      \"snippet\": \"zz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"éx\",\n      \"snippet\": \"éx\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x\",\n      \"snippet\": \"x\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\ud800\",\n      \"snippet\": \"\\ud800\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 21,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"é\",\n      \"snippet\": \"é\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 22,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"h\",\n      \"snippet\": \"h\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 23,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-12-true",
+      "argv": [
+        "search",
+        "[\\s\\S]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[\\\\s\\\\S]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"Z\",\n      \"snippet\": \"Z\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"[\",\n      \"snippet\": \"[\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 2,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"&\",\n      \"snippet\": \"&\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 3,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"b\",\n      \"snippet\": \"b\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 4,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0000\",\n      \"snippet\": \"\\u0000\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 7,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"k\",\n      \"snippet\": \"k\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 8,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xy\",\n      \"snippet\": \"xy\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 9,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"zz\",\n      \"snippet\": \"zz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 14,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"éx\",\n      \"snippet\": \"éx\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 18,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x\",\n      \"snippet\": \"x\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 20,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\ud800\",\n      \"snippet\": \"\\ud800\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 21,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"é\",\n      \"snippet\": \"é\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 22,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"h\",\n      \"snippet\": \"h\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 23,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"_\",\n      \"snippet\": \"_\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 24,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-13-false",
+      "argv": [
+        "search",
+        "\\xzz",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\xzz\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-13-true",
+      "argv": [
+        "search",
+        "\\xzz",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\xzz\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"xzz\",\n      \"snippet\": \"xzz\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 13,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-14-false",
+      "argv": [
+        "search",
+        "\\u{41}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\u{41}\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-14-true",
+      "argv": [
+        "search",
+        "\\u{41}",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\u{41}\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"snippet\": \"uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 15,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-15-false",
+      "argv": [
+        "search",
+        "[a-\\d]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a-\\\\d]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-15-true",
+      "argv": [
+        "search",
+        "[a-\\d]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a-\\\\d]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"x{,3}\",\n      \"snippet\": \"x{,3}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 5,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"3\",\n      \"snippet\": \"3\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 11,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"-\",\n      \"snippet\": \"-\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 12,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"u{41}\",\n      \"snippet\": \"u{41}\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 16,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-16-false",
+      "argv": [
+        "search",
+        "(?i)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?i)/i: Invalid group\n"
+    },
+    {
+      "id": "review-regex-16-true",
+      "argv": [
+        "search",
+        "(?i)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?i)/: Invalid group\n"
+    },
+    {
+      "id": "review-regex-17-false",
+      "argv": [
+        "search",
+        "(?i:a)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?i:a)/i: Invalid group\n"
+    },
+    {
+      "id": "review-regex-17-true",
+      "argv": [
+        "search",
+        "(?i:a)",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Invalid regular expression: /(?i:a)/: Invalid group\n"
+    },
+    {
+      "id": "review-regex-18-false",
+      "argv": [
+        "search",
+        "[a\\1]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a\\\\1]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-18-true",
+      "argv": [
+        "search",
+        "[a\\1]",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"[a\\\\1]\",\n  \"matches\": [\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"\\u0001\",\n      \"snippet\": \"\\u0001\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 6,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"aaa\",\n      \"snippet\": \"aaa\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 10,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"a\",\n      \"snippet\": \"a\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 17,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    },\n    {\n      \"sessionId\": \"patterns\",\n      \"role\": \"user\",\n      \"text\": \"ax\",\n      \"snippet\": \"ax\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 19,\n      \"sessionTitle\": \"_\",\n      \"projectKey\": \"/review\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-19-false",
+      "argv": [
+        "search",
+        "\\8",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\8\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-19-true",
+      "argv": [
+        "search",
+        "\\8",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"\\\\8\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-20-false",
+      "argv": [
+        "search",
+        "(x)\\1",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(x)\\\\1\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-20-true",
+      "argv": [
+        "search",
+        "(x)\\1",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(x)\\\\1\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-21-false",
+      "argv": [
+        "search",
+        "(?<name>x)\\k<name>",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(?<name>x)\\\\k<name>\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
+    },
+    {
+      "id": "review-regex-21-true",
+      "argv": [
+        "search",
+        "(?<name>x)\\k<name>",
+        "--regex",
+        "--session",
+        "patterns",
+        "--limit",
+        "100",
+        "--json",
+        "--case-sensitive",
+        "--project",
+        "/review"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"query\": \"(?<name>x)\\\\k<name>\",\n  \"matches\": [],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": ""
     }
   ]
 }

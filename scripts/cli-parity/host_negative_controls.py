@@ -15,7 +15,7 @@ from controls import select_case
 def check_exec_control(recording, summary, runner_exit):
     scenario = select_case({row['id']: row for row in SCENARIOS}, 'help-long', lambda case: True)
     if scenario is None:
-        return {'status': 'NOT_APPLICABLE', 'control': 'native-execv-node-as-rust',
+        return {'status': 'BLOCKED', 'control': 'native-execv-node-as-rust',
                 'scenario': None, 'reason': 'current suite has no case to execute'}
     case = recording / 'rust/cases' / scenario
     passed = (runner_exit == 1 and summary['status'] == 'FAIL'
@@ -56,7 +56,7 @@ def main():
               'compileArgv': compile_argv, 'runnerArgv': argv, 'summary': summary}
     save(output / 'control.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return {'PASS': 0, 'NOT_APPLICABLE': 0, 'FAIL': 1, 'BLOCKED': 2}[report['status']]
+    return {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2}[report['status']]
 
 
 if __name__ == '__main__':

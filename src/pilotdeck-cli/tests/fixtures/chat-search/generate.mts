@@ -61,7 +61,7 @@ if (edges) Object.assign(files, {
     entry('session_metadata', 'patch', { metadata: { title: '  Latest title  ' } }),
   ].join('\n'),
 });
-const cases: Array<{id:string, argv:string[]}> = (edges ? [
+const cases: Array<{id:string, argv:string[], tz?:string}> = (edges ? [
   ['unit-one', ['search','^.$','--regex','--session','unicode']],
   ['utf16-units', ['search','^.. ','--regex','--session','unicode']],
   ['surrogate-snippet', ['search','odd','--session','snippet']],
@@ -100,6 +100,37 @@ const cases: Array<{id:string, argv:string[]}> = (edges ? [
  ['pilot-home-token', ['search','--pilot-home','missing','--json']],
  ['empty-project', ['search','hello','--project','','--json']],
 ]).map(([id, argv]) => ({id: id as string, argv: [...argv as string[], '--project', '/fixture/chat-project']}));
+if (edges) {
+  const reviewFile = (id: string, rows: string[]) => {
+    files[`pilot/projects/review/chats/${id}.jsonl`] = rows.join('\n');
+  };
+  const row = (id: string, text: string, extra = {}) => entry('accepted_input', id, {messages:[content(text)], ...extra});
+  const add = (id: string, argv: string[], tz?: string) => cases.push({id, argv:['search',...argv,'--project','/review'], ...(tz ? {tz} : {})});
+  reviewFile('expansion', [row('expansion', 'İ'.repeat(70) + 'x tail')]);
+  add('lower-expansion', ['x','--session','expansion','--json']);
+  reviewFile('own-title', [entry('session_metadata','own-title',{metadata:{title:'Own title'}}),row('OTHER-ID','title lookup')]);
+  reviewFile('OTHER-ID', [entry('session_metadata','OTHER-ID',{metadata:{title:'Other indexed title'}})]);
+  reviewFile('missing-id', [JSON.stringify({type:'accepted_input',messages:[content('title lookup')]})]);
+  reviewFile('miss-title', [row('unindexed-entry','title lookup')]);
+  add('title-entry-key', ['title lookup','--all-projects','--json']);
+  reviewFile('lone', [entry('session_metadata','lone',{metadata:{title:'Title \ud800'}}),row('lone','lone \ud800 hello',{createdAt:'date \ud800'}),row('id\ud800','lone id hello')]);
+  for (const mode of ['json','text']) add(`lone-${mode}`, ['hello','--session','lone',...(mode === 'json' ? ['--json'] : [])]);
+  add('lone-regex', ['\\ud800','--regex','--session','lone','--json']);
+  add('lone-not-replacement', ['�','--session','lone','--json']);
+  reviewFile('boundary',[row('boundary','éx'),row('boundary','ax'),row('boundary','x')]);
+  add('ascii-boundary', ['\\bx','--regex','--session','boundary','--json']);
+  reviewFile('date', [row('date','clock pm',{createdAt:'2026-01-02T13:04:00.000Z'}),row('date','clock midnight',{createdAt:'2026-01-02T00:04:00.000Z'}),row('date','clock local midnight',{createdAt:'2026-01-01T16:04:00.000Z'})]);
+  for (const tz of ['UTC','Asia/Shanghai','America/New_York']) add(`clock-${tz.replaceAll('/','-')}`,['clock','--session','date'],tz);
+  reviewFile('numbers', Array.from({length:30}, (_,i)=>row('numbers',`numeric ${i}`)));
+  for (const [i, value] of ['1_000','0x1_0',' 12 ','1e3','','0b11','Infinity','0o3','+0x3'].entries())
+    add(`number-${i}`, ['numeric','--limit',value,'--session','numbers','--json']);
+  const subjects = ['Z','[','&','b','x{,3}','\x01','\0','k','xy','aaa','3','-','xzz','zz','u'.repeat(41),'u{41}','a','éx','ax','x','\ud800','é','h','_'];
+  reviewFile('patterns', subjects.map(text => row('patterns',text)));
+  const patterns = ['[Z-a]','[[]','[a&&b]','[a--b]','x{,3}','\\1','\\0','\\k','(?<a>x)(?<a>y)','a{1000}{1000}{1000}','[\\d]','[\\w-]','[\\s\\S]','\\xzz','\\u{41}','[a-\\d]','(?i)','(?i:a)','[a\\1]','\\8','(x)\\1','(?<name>x)\\k<name>'];
+  for (const [i, pattern] of patterns.entries()) for (const sensitive of [false,true])
+    add(`review-regex-${i}-${sensitive}`, [pattern,'--regex','--session','patterns','--limit','100','--json',...(sensitive ? ['--case-sensitive'] : [])]);
+}
+
 try {
   await mkdir(project, {recursive:true});
   for (const [relative, text] of Object.entries(files)) {
@@ -110,7 +141,7 @@ try {
   const results = cases.map(test => {
     const out = spawnSync(process.execPath, ['--import',join(baseline,'node_modules/tsx/dist/loader.mjs'),join(here,'driver.mts'),...test.argv],
       {cwd:project,env:{PATH:process.env.PATH,HOME:join(root,'home'),PILOT_HOME:pilot,PDRS_BASELINE:baseline,
-        TZ:'UTC',LANG:'C',LC_ALL:'C',NO_COLOR:'1'},timeout:30000});
+        TZ:test.tz ?? 'UTC',LANG:'C',LC_ALL:'C',NO_COLOR:'1'},timeout:30000});
     assert.ifError(out.error); assert.equal(out.signal,null);
     raw.push({id:test.id,stdout:out.stdout,stderr:out.stderr});
     // Exactly the D0 comparison_view prefix exception; all raw bytes retained.
