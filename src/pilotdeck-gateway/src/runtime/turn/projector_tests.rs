@@ -95,7 +95,7 @@ fn assert_range_error(result: ProjectionResult<Vec<JsValue>>, case: &str) {
 fn agent_event_projections_match_ts_oracle() {
     let oracle = crate::test_baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 119, "oracle case count");
+    assert_eq!(cases.len(), 127, "oracle case count");
 
     for case in cases {
         let name = field(case, "name")
@@ -387,6 +387,184 @@ fn default_store_only_persists_above_the_byte_threshold() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "abcde");
     assert!(std::path::Path::new(&path).starts_with(root.join("s").join("t")));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A `tool_result` whose joined text is over the 4096-byte advisory threshold,
+/// so `persist` starts a background write.
+fn persistable_tool_result_event() -> JsValue {
+    object([
+        ("type", text("tool_result")),
+        ("sessionId", text("s")),
+        ("turnId", text("t")),
+        (
+            "result",
+            object([
+                ("type", text("success")),
+                ("toolCallId", text("c")),
+                ("toolName", text("bash")),
+                (
+                    "content",
+                    JsValue::Array(vec![object([
+                        ("type", text("text")),
+                        ("text", JsValue::String(JsString::from("x".repeat(5_000)))),
+                    ])]),
+                ),
+            ]),
+        ),
+    ])
+}
+
+/// P1: `mapAgentEvent`'s facade builds a throwaway projector, so a `Drop` that
+/// joined in-flight advisory writes made the facade wait for disk (and hang on
+/// a stalled writer). TS's facade uses a process-level projector with
+/// `void this.write(...)`. The facade must return while the write is blocked.
+#[test]
+fn map_agent_event_returns_before_a_blocked_artifact_write() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    let store = GatewayToolResultArtifactStore::with_io(
+        std::env::temp_dir().join("pdrs-projector-facade-async"),
+        4,
+        Arc::new(|_path| Ok(())),
+        Arc::new(move |_path, _bytes| {
+            let _ = started_tx.send(());
+            // Blocks until the test releases it after the facade-return check;
+            // a synchronous-write mutant must not be able to hang the suite.
+            let _ = release_rx.lock().unwrap().recv();
+            Ok(())
+        }),
+    );
+    let options = GatewayAgentEventProjectorOptions {
+        tool_result_artifacts: Some(Arc::new(store)),
+        forward_subagent_text: false,
+    };
+    let event = persistable_tool_result_event();
+    let (done_tx, done_rx) = mpsc::channel::<bool>();
+    std::thread::spawn(move || {
+        let result = map_agent_event(&event, "run-1", options);
+        let _ = done_tx.send(result.is_ok());
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("advisory write started");
+    let returned = done_rx.recv_timeout(Duration::from_secs(5));
+    let _ = release_tx.send(());
+    assert_eq!(
+        returned.ok(),
+        Some(true),
+        "the facade must return before the advisory write completes"
+    );
+}
+
+/// P1 (same fix): dropping the store must not join a blocked advisory write.
+#[test]
+fn dropping_the_store_does_not_join_a_blocked_artifact_write() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    let store = GatewayToolResultArtifactStore::with_io(
+        std::env::temp_dir().join("pdrs-projector-drop-async"),
+        4,
+        Arc::new(|_path| Ok(())),
+        Arc::new(move |_path, _bytes| {
+            let _ = started_tx.send(());
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(30));
+            Ok(())
+        }),
+    );
+    let input = GatewayToolResultArtifactInput {
+        session_id: JsString::from("s"),
+        turn_id: JsString::from("t"),
+        tool_call_id: JsString::from("c"),
+        text: JsString::from("abcde"),
+    };
+    assert!(store.persist(&input).is_some(), "queued above threshold");
+    started_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("advisory write started");
+
+    let (dropped_tx, dropped_rx) = mpsc::channel::<()>();
+    let handle = std::thread::spawn(move || {
+        drop(store);
+        let _ = dropped_tx.send(());
+    });
+    let dropped = dropped_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+    let _ = release_tx.send(());
+    handle.join().ok();
+    assert!(dropped, "dropping the store must not wait for the writer");
+}
+
+/// P1: an advisory write beyond any in-flight count must still be queued. The
+/// old bounded-thread design dropped the 9th write while `persist` kept
+/// returning a path, so `resultPath` pointed at a file that would never exist.
+#[test]
+fn every_advisory_write_is_eventually_persisted() {
+    use std::sync::Condvar;
+
+    let written = Arc::new(Mutex::new(Vec::<String>::new()));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let write_hook = {
+        let written = written.clone();
+        let gate = gate.clone();
+        Arc::new(move |path: &std::path::Path, _bytes: &[u8]| {
+            let (lock, condvar) = &*gate;
+            let mut open = lock.lock().unwrap();
+            while !*open {
+                open = condvar.wait(open).unwrap();
+            }
+            drop(open);
+            written.lock().unwrap().push(path.display().to_string());
+            Ok(())
+        })
+    };
+    let store = GatewayToolResultArtifactStore::with_io(
+        std::env::temp_dir().join("pdrs-projector-many-writes"),
+        4,
+        Arc::new(|_path| Ok(())),
+        write_hook,
+    );
+    // A mutant that performs the write synchronously would otherwise block the
+    // persist loop (and this test) forever; force the gate open after a bound.
+    {
+        let gate = gate.clone();
+        let _ = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let (lock, condvar) = &*gate;
+            *lock.lock().unwrap() = true;
+            condvar.notify_all();
+        });
+    }
+    let mut paths = Vec::new();
+    for index in 0..12 {
+        let input = GatewayToolResultArtifactInput {
+            session_id: JsString::from("s"),
+            turn_id: JsString::from("t"),
+            tool_call_id: JsString::from(format!("c{index}")),
+            text: JsString::from("abcde"),
+        };
+        paths.push(store.persist(&input).expect("advisory write queued"));
+    }
+    {
+        let (lock, condvar) = &*gate;
+        *lock.lock().unwrap() = true;
+        condvar.notify_all();
+    }
+    store.wait_for_pending();
+    let written = written.lock().unwrap();
+    assert_eq!(written.len(), 12, "written: {written:?}");
+    for path in &paths {
+        assert!(written.contains(path), "missing advisory write: {path}");
+    }
 }
 
 #[test]

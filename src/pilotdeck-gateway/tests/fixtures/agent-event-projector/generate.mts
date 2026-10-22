@@ -667,6 +667,61 @@ record('error-tool-results-projected-tool-result-missing-content', {
   message: { role: 'assistant', content: [{ type: 'tool_result', toolCallId: 'c1' }] },
 });
 
+// Attachment/media path fields are dereferenced by TS (`trim`, `split`,
+// `toLowerCase`, `data.length`); a missing field throws before the
+// `tool_call_finished` object literal reads `errorCode`/`data`.
+record('error-tool-result-image-missing-mime-type', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'image', data: 'QUJD' }], { toolName: 'screenshot' }),
+});
+record('error-tool-result-image-missing-tool-name', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'image', mimeType: 'image/png', data: 'QUJD' }],
+    { toolName: undefined }),
+});
+record('error-tool-result-file-missing-path', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'file', mimeType: 'text/plain' }], { toolName: 'write_file' }),
+});
+record('error-tool-results-projected-media-reference-missing-path', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{
+    type: 'media_reference', toolCallId: 'call-m', originalBytes: 5,
+    mimeType: 'image/png', mediaType: 'image',
+  }]),
+});
+record('error-tool-result-image-missing-data', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'image', mimeType: 'image/png' }], { toolName: 'read_file' }),
+});
+record('error-tool-results-projected-tool-result-image-missing-data', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: message([{
+    type: 'tool_result', toolCallId: 'call-t',
+    content: [{ type: 'image', mimeType: 'image/png' }],
+  }]),
+});
+// Evaluation order: the attachment loop runs before the `tool_call_finished`
+// object literal reads `event.result.error.code`.
+record('error-tool-result-image-missing-mime-type-before-error-code', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: errorResult([{ type: 'image', data: 'QUJD' }],
+    { toolName: 'screenshot', error: { message: 'boom' } }),
+});
+
+// Template interpolation of a nested array must join like
+// `Array.prototype.join` (depth 600 is past the port's old 512 clamp and far
+// below V8's measured ~2516 throw threshold).
+const nestedArray = (depth: number, leaf: any): any => {
+  let value = leaf;
+  for (let index = 0; index < depth; index += 1) value = [value];
+  return value;
+};
+record('tool-result-deep-array-content-text', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([{ type: 'text', text: nestedArray(600, 'leaf') }]),
+});
+
 const output = { sourceCommit, sourceSha256, cases };
 await mkdir(resolve(process.argv[2]), { recursive: true });
 await writeFile(resolve(process.argv[2], 'oracle.json'), `${JSON.stringify(output, null, 2)}\n`);

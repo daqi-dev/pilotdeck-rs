@@ -16,14 +16,17 @@ Node 22（基线根已含 `node_modules/tsx`）。
 并把每次 `persist` 入参和返回值记入金样。投影本身的排序、截断、附件、错误和
 budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报错的 Proxy 隔离。
 
-119 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
+127 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
 与未知/缺 type 的 default 分支）、`model_event`/`subagent_model_event` 的各子类型、
 `forwardSubagentText` 真假、timeline/streamBoundary 传播、tool_result 的 bytes/UTF-16
 截断边界、4 种 mime 扩展名与 `value` 回退、providerError 的 raw 截断
 （在代理对中间切开）、`??` 与 `!== undefined` 的 null/缺失差异，以及 persist 阈值。
-另有 21 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
-`TypeError: Cannot read properties of undefined (reading 'content')`）与 4 个
-`__proto__` 工具数据 case（TS 的属性赋值语义会丢弃该键）。深嵌套输入无法放进
+另有 28 个结构不合法事件的 `error` case（记录真实 TS 的 `String(error)`，如
+`TypeError: Cannot read properties of undefined (reading 'content')`；其中 7 条钉住
+附件/media 路径缺字段时 `reading 'trim'/'split'/'toLowerCase'/'length'` 的抛错与
+「附件循环先于 errorCode」的求值顺序）与 4 个 `__proto__` 工具数据 case（TS 的属性
+赋值语义会丢弃该键）。深度 600 的嵌套数组作为 `text` 进了金样（`Array.prototype.join`
+在 512 以上仍正常拼接，离 V8 实测 ~2516 的抛错阈值很远）；更深的 30k 输入无法放进
 金样（`JSON.stringify` 自身会抛错），由 `projector_tests.rs` 按同构构造并用
 `_tmp/20261022-a72-pr2-projector/probe-fix1.mts` 的真实 TS 输出钉住。
 
