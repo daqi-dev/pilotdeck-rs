@@ -10,23 +10,18 @@
 //! the TS `GatewayToolResultArtifactStorePort` injection point.
 
 use crate::js_value::MAX_ARRAY_DEPTH;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, number::number_to_string};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::sync::{Arc, Mutex, mpsc};
 
 /// `MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS` (UTF-16 code units).
 pub const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS: usize = 20_000;
 /// `MAX_GATEWAY_TOOL_DATA_STRING_CHARS` (UTF-16 code units).
 pub const MAX_GATEWAY_TOOL_DATA_STRING_CHARS: usize = 4_000;
 const DEFAULT_ARTIFACT_THRESHOLD_BYTES: usize = 4_096;
-/// Advisory writes that may be in flight per store. TS's `void this.write(...)`
-/// has no bound; this keeps a storm of large results from exhausting threads
-/// while preserving "never block projection" (writes past the cap are dropped).
-const MAX_PENDING_ARTIFACT_WRITES: usize = 8;
 
 /// A projection failure that TS expresses as a thrown `TypeError`/`RangeError`.
 ///
@@ -78,61 +73,71 @@ pub struct GatewayToolResultArtifactInput {
 
 /// `GatewayToolResultArtifactStorePort`. Returns the artifact path when the
 /// preview is over the threshold (TS returns it before the advisory write
-/// finishes); `None` leaves `resultPath` undefined.
+/// finishes); `None` leaves `resultPath` undefined (below threshold, or no
+/// advisory writer could be started).
 pub trait GatewayToolResultArtifactStorePort: Send + Sync {
     fn persist(&self, input: &GatewayToolResultArtifactInput) -> Option<String>;
 }
 
 type CreateDirectoryHook = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
 type WriteTextHook = Arc<dyn Fn(&Path, &[u8]) -> io::Result<()> + Send + Sync>;
+type ArtifactWriteJob = Box<dyn FnOnce() + Send + 'static>;
 
-/// Background advisory writer: at most [`MAX_PENDING_ARTIFACT_WRITES`] live
-/// threads. `persist` never waits for disk; [`wait_for_pending`] is the
-/// explicit test/shutdown barrier.
+/// Background advisory writer.
+///
+/// TS's `void this.write(...)` (`GatewayToolResultArtifactStore.ts:48`) never
+/// waits for disk and never drops a write. This port keeps that contract: jobs
+/// go to one detached writer thread (bounded thread count, unbounded queue),
+/// `enqueue` never blocks, and dropping the store does not join in-flight
+/// writes. [`GatewayToolResultArtifactStore::wait_for_pending`] is the explicit
+/// test/shutdown barrier.
 #[derive(Default)]
 struct ArtifactWrites {
-    pending: Mutex<Vec<JoinHandle<()>>>,
+    sender: Mutex<Option<mpsc::Sender<ArtifactWriteJob>>>,
 }
 
 impl ArtifactWrites {
-    fn enqueue(&self, job: impl FnOnce() + Send + 'static) {
-        let mut pending = self.pending.lock().unwrap();
-        pending.retain(|handle| !handle.is_finished());
-        if pending.len() >= MAX_PENDING_ARTIFACT_WRITES {
-            return;
+    /// Returns whether the job was accepted. A rejected job must not be
+    /// reported to the caller as a persisted path.
+    fn enqueue(&self, job: impl FnOnce() + Send + 'static) -> bool {
+        let mut sender = self.sender.lock().unwrap();
+        if sender.is_none() {
+            *sender = spawn_artifact_writer();
         }
-        if let Ok(handle) = std::thread::Builder::new()
-            .name("gateway-tool-result-artifact".into())
-            .spawn(job)
-        {
-            pending.push(handle);
+        let failed = match sender.as_ref() {
+            Some(tx) => tx.send(Box::new(job)).is_err(),
+            None => return false,
+        };
+        if failed {
+            // The writer died (a hook panicked); start over next time.
+            *sender = None;
         }
+        !failed
     }
 
     fn wait(&self) {
-        loop {
-            let handle = {
-                let mut pending = self.pending.lock().unwrap();
-                pending.pop()
-            };
-            match handle {
-                Some(handle) => {
-                    let _ = handle.join();
-                }
-                None => return,
-            }
+        let (done_tx, done_rx) = mpsc::channel();
+        if self.enqueue(move || {
+            let _ = done_tx.send(());
+        }) {
+            let _ = done_rx.recv();
         }
     }
 }
 
-impl Drop for ArtifactWrites {
-    fn drop(&mut self) {
-        if let Ok(pending) = self.pending.get_mut() {
-            for handle in pending.drain(..) {
-                let _ = handle.join();
+fn spawn_artifact_writer() -> Option<mpsc::Sender<ArtifactWriteJob>> {
+    let (sender, receiver) = mpsc::channel::<ArtifactWriteJob>();
+    let spawned = std::thread::Builder::new()
+        .name("gateway-tool-result-artifact".into())
+        .spawn(move || {
+            // Ends once the store drops its sender and the queue drains, so
+            // queued writes still complete and Drop never waits.
+            for job in receiver {
+                job();
             }
-        }
-    }
+        });
+    // The handle is dropped on purpose: the writer is detached.
+    spawned.ok().map(|_| sender)
 }
 
 /// Default `GatewayToolResultArtifactStore`: best-effort files under the OS
@@ -224,13 +229,14 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
         let create_directory = Arc::clone(&self.create_directory);
         let write_text = Arc::clone(&self.write_text);
         let job_path = path.clone();
-        self.writes.enqueue(move || {
+        let accepted = self.writes.enqueue(move || {
             if create_directory(&directory).is_err() {
                 return;
             }
             let _ = write_text(&job_path, &bytes);
         });
-        Some(path.to_string_lossy().into_owned())
+        // Never hand out a path whose write was not even queued.
+        accepted.then(|| path.to_string_lossy().into_owned())
     }
 }
 
@@ -371,6 +377,15 @@ fn required<'a>(base: &'a JsValue, name: &str) -> ProjectionResult<&'a JsValue> 
     Ok(field(base, name))
 }
 
+/// `receiver.method(...)` where only a `null`/`undefined` *receiver* throws
+/// (`reading 'method'`); the method itself is modeled by the caller.
+fn required_receiver<'a>(receiver: &'a JsValue, name: &str) -> ProjectionResult<&'a JsValue> {
+    if is_null(receiver) || receiver.is_undefined() {
+        return Err(missing_property_error(receiver, name));
+    }
+    Ok(receiver)
+}
+
 /// JS `value.map(...)` / `value.flatMap(...)`; only arrays expose the method.
 fn required_array<'a>(value: &'a JsValue, method: &str) -> ProjectionResult<&'a [JsValue]> {
     match value {
@@ -450,75 +465,29 @@ fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
 
-/// ECMAScript `String(value)` as UTF-16 units. Only scalars and (nested)
-/// arrays are reachable from the projected fields; objects stringify as
-/// `[object Object]`, exactly like `String`.
-fn string_units(value: &JsValue) -> Vec<u16> {
-    fn join(value: &JsValue, out: &mut Vec<u16>, depth: usize) {
-        match value {
-            JsValue::Array(children) => {
-                if depth >= 512 {
-                    out.extend_from_slice(
-                        "[object Object]"
-                            .encode_utf16()
-                            .collect::<Vec<_>>()
-                            .as_slice(),
-                    );
-                    return;
-                }
-                for (index, child) in children.iter().enumerate() {
-                    if index > 0 {
-                        out.push(u16::from(b','));
-                    }
-                    if !matches!(child, JsValue::Undefined | JsValue::Null) {
-                        join(child, out, depth + 1);
-                    }
-                }
-            }
-            JsValue::String(value) => out.extend_from_slice(value.units()),
-            JsValue::Undefined => out.extend("undefined".encode_utf16()),
-            JsValue::Null => out.extend("null".encode_utf16()),
-            JsValue::Bool(value) => out.extend(value.to_string().encode_utf16()),
-            JsValue::Number(value) => out.extend(number_to_string(*value).encode_utf16()),
-            JsValue::Object(_) => out.extend("[object Object]".encode_utf16()),
-        }
-    }
-    let mut out = Vec::new();
-    join(value, &mut out, 0);
-    out
+/// ECMAScript `String(value)` as UTF-16 units, via the shared
+/// [`crate::js_value::to_string_units`] (same `Array.prototype.join` semantics
+/// and container-depth bound as the rest of the crate). Template-literal
+/// interpolation and `String()` must not degrade deep arrays to
+/// `[object Object]`: TS joins them, and throws `RangeError` past the bound.
+fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
+    crate::js_value::to_string_units(value)
+        .map_err(|_| ProjectionError::range_error(crate::js_value::StackOverflow::MESSAGE))
 }
 
-/// `String(value)` as used inside a `catch` block. V8's `Array.prototype.join`
-/// recurses, so a deep array makes the fallback throw `RangeError`; report
-/// that instead of letting the bounded `string_units` degrade silently.
+/// `String(value)` as used inside a `catch` block.
 fn checked_js_text(value: &JsValue) -> ProjectionResult<JsValue> {
     Ok(JsValue::String(JsString::from_utf16(checked_string_units(
         value,
     )?)))
 }
 
-fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
-    if array_nesting_exceeds(value, MAX_ARRAY_DEPTH) {
-        return Err(ProjectionError::range_error(
-            "Maximum call stack size exceeded",
-        ));
+/// `value.length` (UTF-16 units): reading it off null/undefined throws.
+fn js_length(value: &JsValue) -> ProjectionResult<usize> {
+    if is_null(value) || value.is_undefined() {
+        return Err(missing_property_error(value, "length"));
     }
-    Ok(string_units(value))
-}
-
-/// Whether `String(value)` would recurse past `max_depth` (arrays only:
-/// objects stringify as `[object Object]` without descending).
-fn array_nesting_exceeds(value: &JsValue, max_depth: usize) -> bool {
-    let mut pending = vec![(value, 0usize)];
-    while let Some((value, depth)) = pending.pop() {
-        if let JsValue::Array(items) = value {
-            if depth > max_depth {
-                return true;
-            }
-            pending.extend(items.iter().map(|item| (item, depth + 1)));
-        }
-    }
-    false
+    Ok(checked_string_units(value)?.len())
 }
 
 /// `JSON.stringify` with the repository's shared container-depth bound.
@@ -570,11 +539,15 @@ fn js_trim(units: &[u16]) -> &[u16] {
     &units[start..end]
 }
 
-/// `safePathPart` (used by both artifact stores).
+/// `safeGatewayPathPart` (`GatewayAgentEventProjector.ts:579`, identical to
+/// `GatewayToolResultArtifactStore.ts:62`): trim, collapse disallowed runs to
+/// `-`, trim edge dashes, then fall back to `"value"`.
 ///
-/// `runtime/context/tool_budget.rs` carries a separate `&str` port of the same
-/// TS helper without the `"value"` fallback; the two are kept apart because
-/// their inputs differ (UTF-16 wire units here, decoded budget values there).
+/// `runtime/context/tool_budget.rs` ports a *different* TS helper,
+/// `safePathPart` in `context/budget/ToolResultBudget.ts:477`, which has no
+/// `|| "value"` fallback (`scopedToolResultKey` adds `|| "tool-call"` at its
+/// call site, `:472`). The two Rust ports therefore intentionally differ; they
+/// are not the same helper and must not be unified.
 fn safe_path_part(units: &[u16]) -> String {
     let mut out = String::new();
     let mut pending_separator = false;
@@ -599,6 +572,13 @@ fn safe_path_part(units: &[u16]) -> String {
     }
 }
 
+/// `safeGatewayPathPart(value)`: `value.trim()` throws on null/undefined, and
+/// the template-literal call site evaluates it before the extension lookup.
+fn safe_path_part_js(value: &JsValue) -> ProjectionResult<String> {
+    let value = required_receiver(value, "trim")?;
+    Ok(safe_path_part(&checked_string_units(value)?))
+}
+
 fn last_path_segment(units: &[u16]) -> JsString {
     let mut start = 0usize;
     for (index, unit) in units.iter().enumerate() {
@@ -609,10 +589,17 @@ fn last_path_segment(units: &[u16]) -> JsString {
     JsString::from_utf16(units[start..].to_vec())
 }
 
+/// `path.split(/[\\/]/).pop()`: `split` throws on null/undefined.
+fn last_path_segment_js(value: &JsValue) -> ProjectionResult<JsString> {
+    let value = required_receiver(value, "split")?;
+    Ok(last_path_segment(&checked_string_units(value)?))
+}
+
 /// TS uses Unicode `toLowerCase()`; ASCII lowering is equivalent for the four
 /// known mime types because no non-ASCII case fold lands on one of them.
-fn extension_for_mime(mime_type: &JsValue) -> &'static str {
-    let lowered: Vec<u16> = string_units(mime_type)
+fn extension_for_mime(mime_type: &JsValue) -> ProjectionResult<&'static str> {
+    let mime_type = required_receiver(mime_type, "toLowerCase")?;
+    let lowered: Vec<u16> = checked_string_units(mime_type)?
         .into_iter()
         .map(|unit| match unit {
             0x41..=0x5a => unit + 0x20,
@@ -620,13 +607,13 @@ fn extension_for_mime(mime_type: &JsValue) -> &'static str {
         })
         .collect();
     let lowered = String::from_utf16_lossy(&lowered);
-    match lowered.as_str() {
+    Ok(match lowered.as_str() {
         "image/jpeg" => "jpg",
         "image/png" => "png",
         "image/gif" => "gif",
         "image/webp" => "webp",
         _ => "bin",
-    }
+    })
 }
 
 fn slice_utf16(units: &[u16], start: usize, end: usize) -> Vec<u16> {
@@ -1127,9 +1114,9 @@ fn tool_result_frames(
     let result_line_count = line_count(&full_text);
     let result_bytes = utf8_len(&full_text);
     let result_path = store.persist(&GatewayToolResultArtifactInput {
-        session_id: string_as_js(field(event, "sessionId")),
-        turn_id: string_as_js(field(event, "turnId")),
-        tool_call_id: string_as_js(field(result, "toolCallId")),
+        session_id: string_as_js(field(event, "sessionId"))?,
+        turn_id: string_as_js(field(event, "turnId"))?,
+        tool_call_id: string_as_js(field(result, "toolCallId"))?,
         text: JsString::from_utf16(full_text.clone()),
     });
     let tool_name = field(result, "toolName");
@@ -1162,11 +1149,9 @@ fn tool_result_frames(
                                 "name",
                                 text(format!(
                                     "{}-{}.{}",
-                                    safe_path_part(string_units(tool_name).as_slice()),
-                                    safe_path_part(
-                                        string_units(field(result, "toolCallId")).as_slice()
-                                    ),
-                                    extension_for_mime(field(item, "mimeType")),
+                                    safe_path_part_js(tool_name)?,
+                                    safe_path_part_js(field(result, "toolCallId"))?,
+                                    extension_for_mime(field(item, "mimeType"))?,
                                 )),
                             ),
                             ("source", text("tool_result")),
@@ -1192,7 +1177,7 @@ fn tool_result_frames(
                         ("mimeType", field(item, "mimeType").clone()),
                         (
                             "name",
-                            JsValue::String(last_path_segment(&string_units(field(item, "path")))),
+                            JsValue::String(last_path_segment_js(field(item, "path"))?),
                         ),
                         ("source", text("tool_result")),
                         (
@@ -1253,10 +1238,10 @@ fn tool_result_frames(
     Ok(frames)
 }
 
-fn string_as_js(value: &JsValue) -> JsString {
+fn string_as_js(value: &JsValue) -> ProjectionResult<JsString> {
     match value {
-        JsValue::String(value) => value.clone(),
-        _ => JsString::from_utf16(string_units(value)),
+        JsValue::String(value) => Ok(value.clone()),
+        _ => Ok(JsString::from_utf16(checked_string_units(value)?)),
     }
 }
 
@@ -1327,8 +1312,9 @@ fn push_str(out: &mut Vec<u16>, value: &str) {
     out.extend(value.encode_utf16());
 }
 
-fn push_units(out: &mut Vec<u16>, value: &JsValue) {
-    out.extend(string_units(value));
+fn push_units(out: &mut Vec<u16>, value: &JsValue) -> ProjectionResult<()> {
+    out.extend(checked_string_units(value)?);
+    Ok(())
 }
 
 /// `contentToText` (PilotDeckToolResultContent). Built from UTF-16 units so
@@ -1337,7 +1323,7 @@ fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
     let kind = required(item, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        out.extend(string_units(field(item, "text")));
+        out.extend(checked_string_units(field(item, "text"))?);
     } else if is_type(kind, "json") {
         // `JSON.stringify(undefined)` is undefined and `Array.prototype.join`
         // renders that element as the empty string; a deep value throws.
@@ -1352,38 +1338,33 @@ fn tool_result_content_text(item: &JsValue) -> ProjectionResult<Vec<u16>> {
         }
     } else if is_type(kind, "image") {
         push_str(&mut out, "[Image: ");
-        push_units(&mut out, field(item, "mimeType"));
+        push_units(&mut out, field(item, "mimeType"))?;
         push_str(&mut out, ", ");
-        push_str(
-            &mut out,
-            &string_units(field(item, "data")).len().to_string(),
-        );
+        // TS reads `content.data.length`; that throws when the field is absent.
+        push_str(&mut out, &js_length(field(item, "data"))?.to_string());
         push_str(&mut out, " base64 characters]");
     } else if is_type(kind, "pdf") {
         push_str(&mut out, "[PDF: ");
-        push_units(&mut out, field(item, "mimeType"));
+        push_units(&mut out, field(item, "mimeType"))?;
         push_str(&mut out, ", ");
-        push_str(
-            &mut out,
-            &string_units(field(item, "data")).len().to_string(),
-        );
+        push_str(&mut out, &js_length(field(item, "data"))?.to_string());
         push_str(&mut out, " base64 characters");
         if truthy(field(item, "pages")) {
             push_str(&mut out, ", ");
-            push_units(&mut out, field(item, "pages"));
+            push_units(&mut out, field(item, "pages"))?;
             push_str(&mut out, " pages");
         }
         push_str(&mut out, "]");
     } else if is_type(kind, "file") {
         push_str(&mut out, "[File: ");
-        push_units(&mut out, field(item, "path"));
+        push_units(&mut out, field(item, "path"))?;
         if truthy(field(item, "mimeType")) {
             push_str(&mut out, ", ");
-            push_units(&mut out, field(item, "mimeType"));
+            push_units(&mut out, field(item, "mimeType"))?;
         }
         if truthy(field(item, "description")) {
             push_str(&mut out, ", ");
-            push_units(&mut out, field(item, "description"));
+            push_units(&mut out, field(item, "description"))?;
         }
         push_str(&mut out, "]");
     }
@@ -1395,33 +1376,27 @@ fn canonical_content_text(block: &JsValue) -> ProjectionResult<Vec<u16>> {
     let kind = required(block, "type")?;
     let mut out = Vec::new();
     if is_type(kind, "text") {
-        out.extend(string_units(field(block, "text")));
+        out.extend(checked_string_units(field(block, "text"))?);
     } else if is_type(kind, "image") {
         push_str(&mut out, "[Image: ");
-        push_units(&mut out, field(block, "mimeType"));
+        push_units(&mut out, field(block, "mimeType"))?;
         push_str(&mut out, ", ");
         if is_type(field(block, "source"), "url") {
-            push_units(&mut out, field(block, "data"));
+            push_units(&mut out, field(block, "data"))?;
         } else {
-            push_str(
-                &mut out,
-                &string_units(field(block, "data")).len().to_string(),
-            );
+            push_str(&mut out, &js_length(field(block, "data"))?.to_string());
             push_str(&mut out, " base64 characters");
         }
         push_str(&mut out, "]");
     } else if is_type(kind, "pdf") {
         push_str(&mut out, "[PDF: ");
-        push_units(&mut out, field(block, "mimeType"));
+        push_units(&mut out, field(block, "mimeType"))?;
         push_str(&mut out, ", ");
-        push_str(
-            &mut out,
-            &string_units(field(block, "data")).len().to_string(),
-        );
+        push_str(&mut out, &js_length(field(block, "data"))?.to_string());
         push_str(&mut out, " base64 characters");
         if truthy(field(block, "pages")) {
             push_str(&mut out, ", ");
-            push_units(&mut out, field(block, "pages"));
+            push_units(&mut out, field(block, "pages"))?;
             push_str(&mut out, " pages");
         }
         push_str(&mut out, "]");
@@ -1643,7 +1618,7 @@ fn tool_results_projected_frames(message: &JsValue) -> ProjectionResult<Vec<JsVa
                         ("bytes", field(block, "originalBytes").clone()),
                         (
                             "name",
-                            JsValue::String(last_path_segment(&string_units(field(block, "path")))),
+                            JsValue::String(last_path_segment_js(field(block, "path"))?),
                         ),
                         ("source", text("media_reference")),
                         (
@@ -1757,7 +1732,7 @@ fn stringify_provider_raw(raw: &JsValue) -> ProjectionResult<JsValue> {
         return Ok(JsValue::Undefined);
     }
     let units = if raw.as_string().is_some() {
-        string_units(raw)
+        checked_string_units(raw)?
     } else {
         match json_stringify(raw) {
             Ok(Some(text)) => text.encode_utf16().collect::<Vec<_>>(),
@@ -1781,13 +1756,13 @@ fn nullish_or<'a>(value: &'a JsValue, fallback: &'a JsValue) -> &'a JsValue {
 }
 
 /// JS `+` for the numeric snapshot fields (string operands concatenate).
-fn js_add(left: &JsValue, right: &JsValue) -> JsValue {
+fn js_add(left: &JsValue, right: &JsValue) -> ProjectionResult<JsValue> {
     if left.as_string().is_some() || right.as_string().is_some() {
-        let mut units = string_units(left);
-        units.extend(string_units(right));
-        return JsValue::String(JsString::from_utf16(units));
+        let mut units = checked_string_units(left)?;
+        units.extend(checked_string_units(right)?);
+        return Ok(JsValue::String(JsString::from_utf16(units)));
     }
-    JsValue::Number(js_number(left) + js_number(right))
+    Ok(JsValue::Number(js_number(left) + js_number(right)))
 }
 
 fn js_number(value: &JsValue) -> f64 {
@@ -1814,12 +1789,12 @@ fn context_budget_frames(snapshot: &JsValue) -> ProjectionResult<Vec<JsValue>> {
     // `!== undefined` (not nullish) selects the effective-context branch.
     let total = if !field(snapshot, "effectiveContextTokens").is_undefined() {
         if nullish(explicit_total) {
-            js_add(field(snapshot, "effectiveContextTokens"), &reserved)
+            js_add(field(snapshot, "effectiveContextTokens"), &reserved)?
         } else {
             explicit_total.clone()
         }
     } else if nullish(explicit_total) {
-        js_add(field(snapshot, "maxContextTokens"), &reserved)
+        js_add(field(snapshot, "maxContextTokens"), &reserved)?
     } else {
         explicit_total.clone()
     };

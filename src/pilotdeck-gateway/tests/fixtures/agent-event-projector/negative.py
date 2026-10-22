@@ -32,18 +32,17 @@ assert env.get("CARGO_HOME") and env.get("PDRS_BASELINE")
 # Projector hash ledger entry; a single hex digit is flipped below.
 PROJECTOR_HASH = "8236f898bec8b263827b8c66f27ac190cdd497baa0ac27723637e34847832225"
 
-SYNC_WRITE_BEFORE = """        self.writes.enqueue(move || {
-            if create_directory(&directory).is_err() {
-                return;
+SYNC_WRITE_BEFORE = """        let failed = match sender.as_ref() {
+            Some(tx) => tx.send(Box::new(job)).is_err(),
+            None => return false,
+        };"""
+SYNC_WRITE_AFTER = """        let failed = match sender.as_ref() {
+            Some(_tx) => {
+                job();
+                false
             }
-            let _ = write_text(&job_path, &bytes);
-        });"""
-SYNC_WRITE_AFTER = """        (move || {
-            if create_directory(&directory).is_err() {
-                return;
-            }
-            let _ = write_text(&job_path, &bytes);
-        })();"""
+            None => return false,
+        };"""
 
 # Restore the pre-fix recursive traversal (HEAD 40628dc0). Renaming the
 # iterative body and routing calls through the old recursion is the actual P0
@@ -72,6 +71,44 @@ fn sanitize_tool_data_value(value: &JsValue) -> ProjectionResult<JsValue> {
     Ok(old_recursive_sanitize(value))
 }
 fn unused_iterative_sanitize_tool_data_value(value: &JsValue) -> ProjectionResult<JsValue> {"""
+
+# Reintroduce the pre-fix bounded `String()` conversion: nested arrays at
+# depth 512+ degraded to `[object Object]` instead of joining like TS.
+DEEP_CLAMP_BEFORE = """fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
+    crate::js_value::to_string_units(value)
+        .map_err(|_| ProjectionError::range_error(crate::js_value::StackOverflow::MESSAGE))
+}"""
+DEEP_CLAMP_AFTER = """fn checked_string_units(value: &JsValue) -> ProjectionResult<Vec<u16>> {
+    fn join(value: &JsValue, out: &mut Vec<u16>, depth: usize) {
+        match value {
+            JsValue::Array(children) => {
+                if depth >= 512 {
+                    out.extend("[object Object]".encode_utf16());
+                    return;
+                }
+                for (index, child) in children.iter().enumerate() {
+                    if index > 0 {
+                        out.push(u16::from(b','));
+                    }
+                    if !matches!(child, JsValue::Undefined | JsValue::Null) {
+                        join(child, out, depth + 1);
+                    }
+                }
+            }
+            JsValue::String(value) => out.extend_from_slice(value.units()),
+            JsValue::Undefined => out.extend("undefined".encode_utf16()),
+            JsValue::Null => out.extend("null".encode_utf16()),
+            JsValue::Bool(value) => out.extend(value.to_string().encode_utf16()),
+            JsValue::Number(value) => {
+                out.extend(pilotdeck_protocol::number::number_to_string(*value).encode_utf16())
+            }
+            JsValue::Object(_) => out.extend("[object Object]".encode_utf16()),
+        }
+    }
+    let mut out = Vec::new();
+    join(value, &mut out, 0);
+    Ok(out)
+}"""
 
 mutants = [
     # Existing round-0 controls.
@@ -187,6 +224,88 @@ mutants = [
         "            Component::ParentDir => {\n                normalized.pop();\n            }",
         "            Component::ParentDir => {\n                normalized.push(component.as_os_str());\n            }",
         "default_store_resolves_dot_segments_like_ts",
+    ),
+    # Fix round 2: one control per P1 (silent path fields, queue overflow,
+    # detached advisory writer, deep-array `String()` clamp).
+    (
+        "silent-missing-image-mime",
+        "projector.rs",
+        '    let mime_type = required_receiver(mime_type, "toLowerCase")?;',
+        '    let mime_type = if mime_type.is_undefined() { &UNDEFINED } else { mime_type };',
+        "error-tool-result-image-missing-mime-type",
+    ),
+    (
+        "silent-missing-image-tool-name",
+        "projector.rs",
+        '    let value = required_receiver(value, "trim")?;',
+        '    let value = if value.is_undefined() { &UNDEFINED } else { value };',
+        "error-tool-result-image-missing-tool-name",
+    ),
+    (
+        "silent-missing-file-path",
+        "projector.rs",
+        '    let value = required_receiver(value, "split")?;',
+        '    let value = if value.is_undefined() { &UNDEFINED } else { value };',
+        "error-tool-result-file-missing-path",
+    ),
+    (
+        "silent-missing-media-path",
+        "projector.rs",
+        'last_path_segment_js(field(block, "path"))?',
+        'last_path_segment(&checked_string_units(field(block, "path"))?)',
+        "error-tool-results-projected-media-reference-missing-path",
+    ),
+    (
+        "silent-missing-image-data",
+        "projector.rs",
+        '''        // TS reads `content.data.length`; that throws when the field is absent.
+        push_str(&mut out, &js_length(field(item, "data"))?.to_string());''',
+        '        push_str(&mut out, &checked_string_units(field(item, "data"))?.len().to_string());',
+        "error-tool-result-image-missing-data",
+    ),
+    (
+        "silent-missing-canonical-image-data",
+        "projector.rs",
+        '''        } else {
+            push_str(&mut out, &js_length(field(block, "data"))?.to_string());
+            push_str(&mut out, " base64 characters");''',
+        '''        } else {
+            push_str(&mut out, &checked_string_units(field(block, "data"))?.len().to_string());
+            push_str(&mut out, " base64 characters");''',
+        "error-tool-results-projected-tool-result-image-missing-data",
+    ),
+    (
+        "deep-array-512-clamp",
+        "projector.rs",
+        DEEP_CLAMP_BEFORE,
+        DEEP_CLAMP_AFTER,
+        "tool-result-deep-array-content-text",
+    ),
+    (
+        "drop-advisory-writes",
+        "projector.rs",
+        "            Some(tx) => tx.send(Box::new(job)).is_err(),",
+        "            Some(_tx) => false,",
+        "every_advisory_write_is_eventually_persisted",
+    ),
+    (
+        "drop-joins-writes",
+        "projector.rs",
+        "impl ArtifactWrites {",
+        '''impl Drop for ArtifactWrites {
+    fn drop(&mut self) {
+        let (done_tx, done_rx) = mpsc::channel();
+        if let Some(sender) = self.sender.lock().unwrap().as_ref() {
+            let _ = sender.send(Box::new(move || {
+                let _ = done_tx.send(());
+            }));
+            let _ = done_rx.recv();
+        }
+    }
+}
+
+impl ArtifactWrites {''',
+        "dropping_the_store_does_not_join_a_blocked_artifact_write",
     ),
     (
         "tampered-source-hash",
