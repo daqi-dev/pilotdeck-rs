@@ -351,6 +351,17 @@ impl SessionOwner {
         completion
     }
 
+    /// Check the gateway consumer's exact fence identity, independently of
+    /// admission/runId reuse. A stale pump must stop projecting native events.
+    pub fn is_current_completion(&self, key: &JsString, handle: &TurnCompletionHandle) -> bool {
+        let _state = self.0.state.lock().unwrap();
+        self.0.turns.completion.is_current(key, handle)
+    }
+
+    pub fn clear_turn_abort_reason(&self, key: &JsString, run: &JsString) {
+        self.0.turns.clear_aborted_reason(key, run);
+    }
+
     pub fn complete_turn(&self, key: &JsString, handle: &TurnCompletionHandle) {
         let mut state = self.0.state.lock().unwrap();
         let current = self.0.turns.completion.is_current(key, handle);
