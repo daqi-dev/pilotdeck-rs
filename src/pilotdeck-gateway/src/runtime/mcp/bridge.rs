@@ -180,10 +180,23 @@ impl McpBridgeTool {
         mcp.insert("wireName".into(), JsValue::String(spec.wire_name.clone()));
         let mut metadata = JsObject::new();
         metadata.insert("mcp".into(), JsValue::Object(mcp));
+        let raw = result.content;
+        let (content, raw) = if let Some(cwd) = cwd {
+            // Local links may name FIFOs or slow filesystems. Keep all file
+            // reads off the async executor; preserve the TS projection bytes.
+            tokio::task::spawn_blocking(move || {
+                let content = marshal_mcp_content(&raw, Some(&cwd));
+                (content, raw)
+            })
+            .await
+            .map_err(|error| ToolError::failed(format!("MCP content task failed: {error}")))?
+        } else {
+            (marshal_mcp_content(&raw, None), raw)
+        };
         Ok(ToolOutput {
-            content: marshal_mcp_content(&result.content, cwd.as_deref()),
+            content,
             supplemental_messages: None,
-            data: Some(result.content),
+            data: Some(raw),
             metadata: Some(metadata),
         })
     }

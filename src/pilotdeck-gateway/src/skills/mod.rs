@@ -711,52 +711,11 @@ fn base64url(value: &JsValue) -> String {
     )
 }
 
-/// fs.promises.mkdir(path, { recursive: true }) (node_file.cc MKDirpAsync);
-/// errors name the requested path, except the stat fallback below, which names
-/// the component being created. Any errno other than ENOENT and the
-/// four fatal ones is settled by stat-ing the same path: a directory is
-/// success (after EEXIST the pending children continue; after any other errno
-/// the whole call ends there), a missing path reports stat's errno, a
-/// non-directory is EEXIST, or ENOTDIR when the EEXIST hit an ancestor.
-/// Measured on a read-only image (Node 22.22): EROFS goes through this stat
-/// fallback and reports ENOENT/EEXIST/ENOTDIR as above. EDQUOT is not measured.
+/// Shared Node recursive mkdir, including its component-specific error path.
 fn mkdir_p(path: &str) -> Result<()> {
-    let fail = |e: &io::Error| SkillError::io(e, "mkdir", Some(path));
-    let errno = |n| io::Error::from_raw_os_error(n);
-    let mut pending = vec![path.to_owned()];
-    while let Some(next) = pending.pop() {
-        let Err(e) = fs::create_dir(&next) else {
-            continue;
-        };
-        match e.raw_os_error() {
-            Some(libc::EACCES | libc::ENOSPC | libc::ENOTDIR | libc::EPERM) => {
-                return Err(fail(&e));
-            }
-            Some(libc::ENOENT) => {
-                // std::string::substr(0, find_last_of('/')): "/a" → "".
-                let parent = next.rfind('/').map_or(next.as_str(), |i| &next[..i]);
-                if parent == next {
-                    return Err(fail(&e));
-                }
-                let parent = parent.to_owned();
-                pending.push(next);
-                pending.push(parent);
-            }
-            code => {
-                let ancestor = code == Some(libc::EEXIST) && !pending.is_empty();
-                match fs::metadata(&next) {
-                    Ok(m) if m.is_dir() && ancestor => {}
-                    Ok(m) if m.is_dir() => return Ok(()),
-                    _ if ancestor => return Err(fail(&errno(libc::ENOTDIR))),
-                    Ok(_) => return Err(fail(&errno(libc::EEXIST))),
-                    // Measured on a read-only volume (Node 22.22): the stat error names the
-                    // component being created, e.g. mkdir("ro/a/b") -> ENOENT path "ro/a".
-                    Err(stat) => return Err(SkillError::io(&stat, "mkdir", Some(&next))),
-                }
-            }
-        }
-    }
-    Ok(())
+    crate::node_io::mkdir_recursive(std::path::Path::new(path)).map_err(|error| {
+        SkillError::io(&error.source, "mkdir", Some(&error.path.to_string_lossy()))
+    })
 }
 
 /// fs.writeFile(path, string, "utf8"): lone surrogates encode as U+FFFD.

@@ -931,3 +931,29 @@ fn upload_ts_reads_rust_written_upload_and_lease() {
         node(&[project.as_os_str(), std::ffi::OsStr::new("--verify-rust")])
     );
 }
+
+#[test]
+fn upload_mkdir_failure_matches_real_ts_caller() {
+    let raw = include_str!("../../tests/fixtures/mkdir-boundary/oracle.json");
+    crate::test_baseline::oracle(raw);
+    let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let row = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "upload")
+        .unwrap();
+    let scratch = Scratch::new();
+    let project = scratch.dir("upload");
+    fs::write(project.join(".tmp"), b"block").unwrap();
+    let h = harness(&project, &project, &JsValue::Undefined);
+    let manifest = parse_json(r#"[{"clientFileId":"f","name":"a.txt","relativePath":"a.txt","size":1,"mimeType":"text/plain"}]"#).unwrap();
+    let error = h.store.create("p", &manifest, None).unwrap_err();
+    assert_eq!(error.code, row["observed"]["code"]);
+    assert_eq!(
+        error
+            .message
+            .replace(&scratch.0.to_string_lossy().into_owned(), "<dir>"),
+        row["observed"]["message"]
+    );
+}

@@ -1,0 +1,78 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37",
+    "src/gateway/dialog/UploadStore.ts": "05a515c69257e9bbaa15dbdcad86f49a3615053b60846161635f26072fbe399a"
+  },
+  "cases": [
+    {
+      "id": "ancestor",
+      "kind": "mkdir",
+      "suffix": "block/child/grand",
+      "observed": {
+        "code": "ENOTDIR",
+        "syscall": "mkdir",
+        "path": "<dir>/ancestor/block/child/grand",
+        "message": "ENOTDIR: not a directory, mkdir '<dir>/ancestor/block/child/grand'"
+      }
+    },
+    {
+      "id": "leaf",
+      "kind": "mkdir",
+      "suffix": "block",
+      "observed": {
+        "code": "EEXIST",
+        "syscall": "mkdir",
+        "path": "<dir>/leaf/block",
+        "message": "EEXIST: file already exists, mkdir '<dir>/leaf/block'"
+      }
+    },
+    {
+      "id": "long",
+      "kind": "mkdir",
+      "suffix": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/child",
+      "observed": {
+        "code": "ENAMETOOLONG",
+        "syscall": "mkdir",
+        "path": "<dir>/long/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/child",
+        "message": "ENAMETOOLONG: name too long, mkdir '<dir>/long/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/child'"
+      }
+    },
+    {
+      "id": "new",
+      "kind": "mkdir",
+      "suffix": "new/child",
+      "observed": {
+        "ok": true
+      }
+    },
+    {
+      "id": "existing",
+      "kind": "mkdir",
+      "suffix": "existing",
+      "observed": {
+        "ok": true
+      }
+    },
+    {
+      "id": "registry",
+      "kind": "registry",
+      "observed": {
+        "code": "ENOTDIR",
+        "syscall": "mkdir",
+        "path": "<dir>/registry/block/child",
+        "message": "ENOTDIR: not a directory, mkdir '<dir>/registry/block/child'"
+      }
+    },
+    {
+      "id": "upload",
+      "kind": "upload",
+      "observed": {
+        "code": "ENOTDIR",
+        "syscall": "mkdir",
+        "path": "<dir>/upload/.tmp/chat-uploads/upload-1/files",
+        "message": "ENOTDIR: not a directory, mkdir '<dir>/upload/.tmp/chat-uploads/upload-1/files'"
+      }
+    }
+  ]
+}

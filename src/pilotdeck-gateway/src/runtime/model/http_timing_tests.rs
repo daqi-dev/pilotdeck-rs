@@ -327,3 +327,58 @@ async fn provider_ts_timing_matrix() {
         mismatches.join("\n")
     );
 }
+
+// #415: a rejected Promise and same-stack abort reach the TS cancellation catch.
+#[tokio::test(start_paused = true)]
+async fn provider_rejected_promise_with_same_stack_abort_matches_ts() {
+    let raw = include_str!("../../../tests/fixtures/provider-sync-abort/oracle.json");
+    crate::test_baseline::oracle(raw);
+    let fixture: Value = serde_json::from_str(raw).unwrap();
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    for row in rows {
+        let protocol = row["protocol"].as_str().unwrap();
+        let (request, mut config) = stream_config();
+        let mut provider = field(field(&config, "providers"), "p").clone();
+        put(&mut provider, "protocol", protocol.into());
+        let mut providers = JsObject::new();
+        providers.insert("p".into(), provider);
+        put(&mut config, "providers", JsValue::Object(providers));
+        let signal = AbortFlag::new();
+        let transport = MatrixTransport {
+            protocol: protocol.into(),
+            phase: "headers".into(),
+            event: "rejected".into(),
+            synchronous: true,
+            signal: signal.clone(),
+            started: Arc::new(AtomicBool::new(false)),
+        };
+        let options = StreamOptions {
+            abort: Some(signal),
+            ..StreamOptions::default()
+        };
+        let mut events = Vec::new();
+        let error = stream_model(&transport, &request, &config, &options, &mut |e| {
+            events.push(e)
+        })
+        .await
+        .unwrap_err();
+        let expected = &row["observed"];
+        assert_eq!(expected["delivery"], "throw");
+        assert_eq!(
+            String::from_utf16_lossy(error.name().units()),
+            expected["name"],
+            "{protocol}"
+        );
+        assert_eq!(error.message_text(), expected["message"], "{protocol}");
+        let retry_count = events
+            .iter()
+            .filter(|e| matches!(e, StreamOutput::RetryProgress(_)))
+            .count();
+        assert_eq!(
+            retry_count,
+            expected["retries"].as_u64().unwrap() as usize,
+            "{protocol}"
+        );
+    }
+}

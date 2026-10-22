@@ -718,7 +718,7 @@ fn record_field<'a>(record: &'a JsObject, key: &str) -> &'a JsValue {
 /// `mkdir(dirname(path), { recursive: true })` with the default mode.
 fn create_parent(path: &Path) -> io::Result<()> {
     match path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        Some(parent) => fs::create_dir_all(parent),
+        Some(parent) => crate::node_io::mkdir_recursive(parent).map_err(|error| error.into_io()),
         None => Ok(()),
     }
 }

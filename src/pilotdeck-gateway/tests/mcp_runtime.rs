@@ -2047,3 +2047,155 @@ fn output_schema_generator_reproduces_the_committed_oracle_twice() {
         );
     }
 }
+
+// #394: Tokio accepts spawn on a shut-down Handle and cancels the task.
+// A dropped lease may arrive on a plain thread after its original executor dies.
+#[test]
+fn lease_dropped_after_origin_runtime_shutdown_is_safe() {
+    let scratch = Scratch::new("mcp-provider-shutdown-drop");
+    let factory: McpRuntimeFactory = Arc::new(|servers| Arc::new(ImmediateRuntime { servers }));
+    let (provider, _dir) = race_provider(&scratch, factory);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let lease = runtime
+        .block_on(provider.acquire_shared_runtime(&provider_plugins("shutdown")))
+        .unwrap();
+    assert_eq!(lease.tools().len(), 1);
+    drop(runtime);
+    std::thread::spawn(move || drop(lease))
+        .join()
+        .expect("Drop after runtime shutdown must not panic");
+    // A fresh executor can await the cancelled task: it must settle as an error,
+    // never report that an unexecuted stop succeeded, and never hang.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let error = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(1), provider.dispose())
+            .await
+            .unwrap()
+            .unwrap_err()
+    });
+    assert!(
+        error
+            .message
+            .contains("MCP lifecycle task ended unexpectedly"),
+        "{error:?}"
+    );
+}
+
+// Harmless scratch files verify the previously reported parent/symlink escape.
+// This test records parity only; authorization policy is outside #394's scope.
+#[tokio::test]
+async fn bridge_file_projection_matches_ts_including_outside_cwd() {
+    let oracle = baseline::oracle(include_str!("fixtures/mcp-worker-boundary/oracle.json"));
+    let scratch = Scratch::new("mcp-file-boundary");
+    let cwd = scratch.path().join("cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::write(scratch.path().join("outside.png"), b"fixture image").unwrap();
+    std::os::unix::fs::symlink("../outside.png", cwd.join("link.png")).unwrap();
+    for row in array(field(&oracle, "cases"), "cases") {
+        if field(row, "id") == &s("fifo") {
+            continue;
+        }
+        let port = Arc::new(FakePort {
+            specs: Vec::new(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            next: Mutex::new(object(vec![(
+                "result",
+                object(vec![("content", field(row, "raw").clone())]),
+            )])),
+            calls: Mutex::new(Vec::new()),
+        });
+        let spec = McpToolSpec {
+            server_id: "s".into(),
+            tool_name: "t".into(),
+            wire_name: "mcp__s__t".into(),
+            description: "".into(),
+            input_schema: object(vec![("type", s("object"))]),
+            annotations: None,
+            meta: None,
+        };
+        let tool = pilotdeck_gateway::runtime::mcp::bridge::McpBridgeTool::new(
+            spec,
+            port,
+            CreateToolDefinitionsOptions::default(),
+        );
+        let actual = object(execute(&tool, &object(vec![]), &JsValue::Undefined).await);
+        assert_eq!(
+            text(field(&actual, "ok")),
+            text(field(row, "observed")),
+            "{}",
+            text(field(row, "id"))
+        );
+    }
+}
+
+// Polling the call must return before a writer releases the FIFO. The native
+// writer's timeout only lets a broken implementation fail instead of hanging.
+#[tokio::test]
+async fn bridge_fifo_read_does_not_block_async_worker() {
+    use std::io::Write;
+    let oracle = baseline::oracle(include_str!("fixtures/mcp-worker-boundary/oracle.json"));
+    let row = array(field(&oracle, "cases"), "cases")
+        .iter()
+        .find(|r| field(r, "id") == &s("fifo"))
+        .unwrap();
+    let scratch = Scratch::new("mcp-fifo-worker");
+    let fifo = scratch.path().join("fifo.png");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (release, wait) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let released = wait.recv_timeout(Duration::from_secs(5)).is_ok();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(fifo)
+            .unwrap()
+            .write_all(b"fixture image")
+            .unwrap();
+        released
+    });
+    let port = Arc::new(FakePort {
+        specs: Vec::new(),
+        cwd: scratch.path().to_string_lossy().into_owned(),
+        next: Mutex::new(object(vec![(
+            "result",
+            object(vec![("content", field(row, "raw").clone())]),
+        )])),
+        calls: Mutex::new(Vec::new()),
+    });
+    let spec = McpToolSpec {
+        server_id: "s".into(),
+        tool_name: "t".into(),
+        wire_name: "mcp__s__t".into(),
+        description: "".into(),
+        input_schema: object(vec![("type", s("object"))]),
+        annotations: None,
+        meta: None,
+    };
+    let tool = pilotdeck_gateway::runtime::mcp::bridge::McpBridgeTool::new(
+        spec,
+        port,
+        CreateToolDefinitionsOptions::default(),
+    );
+    let input = object(vec![]);
+    let mut call = Box::pin(execute(&tool, &input, &UNDEFINED));
+    poll_pending(call.as_mut()).await;
+    // This point runs on the same single async worker that polled the call.
+    release.send(()).unwrap();
+    let actual = object(call.await);
+    assert!(
+        writer.join().unwrap(),
+        "worker must run before FIFO writer fallback"
+    );
+    assert_eq!(text(field(&actual, "ok")), text(field(row, "observed")));
+}

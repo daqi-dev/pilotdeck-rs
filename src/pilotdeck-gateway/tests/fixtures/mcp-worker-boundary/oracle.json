@@ -1,0 +1,116 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/runtime/PluginToToolBridge.ts": "9b3fe86dad3a433a5c1a911626f00e62f482f6ad8274e63ce0f2382afd221c8c"
+  },
+  "cases": [
+    {
+      "id": "parent",
+      "raw": [
+        {
+          "type": "text",
+          "text": "[fixture](../outside.png)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[fixture](../outside.png)"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "Zml4dHVyZSBpbWFnZQ=="
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "[fixture](../outside.png)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      },
+      "timerRanBeforeResult": false
+    },
+    {
+      "id": "symlink",
+      "raw": [
+        {
+          "type": "text",
+          "text": "[fixture](./link.png)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[fixture](./link.png)"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "Zml4dHVyZSBpbWFnZQ=="
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "[fixture](./link.png)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      },
+      "timerRanBeforeResult": false
+    },
+    {
+      "id": "fifo",
+      "raw": [
+        {
+          "type": "text",
+          "text": "[fixture](./fifo.png)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[fixture](./fifo.png)"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "Zml4dHVyZSBpbWFnZQ=="
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "[fixture](./fifo.png)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      },
+      "timerRanBeforeResult": false
+    }
+  ]
+}
