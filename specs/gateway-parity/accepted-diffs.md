@@ -887,3 +887,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：`src/pilotdeck-gateway/src/host/tests/cancel_exit.rs` 的 `cancellation_before_and_during_reconnect_uses_original_absolute_deadline` 等：三种静默 peer、6 种重连交错、6 种终态应用 / drain 场景，在时钟仍暂停于 +5.001 s 时观察到循环退出标志与 stdin EOF 的 closing，随后才放行关闭；+3 s 放行的两例按 Terminal 返回。负控：武装额外 +1 s、重连丢期限 / 丢观察 / 重算期限、终态后禁用期限、丢已知终态、伪造 applied cursor。协调者沙箱外并行压测重连用例 4×4 16/16。
 - **批准记录**：无人批；5 s 仍为协调者判断（AI 代批，待人复核），状态同首版。不新增豁免、不改判分语义。
 
+## 已知未对齐（未批准，待人批）· A6.6 EdgeClaw export / import
+
+### A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001 · import 换目录失败时一律恢复备份（向安全偏离）
+
+- **类别**：向安全偏离（基线依赖单线程假设的回滚条件 → 无条件回滚）。
+- **TS 依据**（cc7c4e6）：`src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts` 的 `replaceDirectoryWithStaged` 只在 `!existsSync(liveRoot)` 时恢复备份；TS 单线程宿主在两次 rename 之间观察不到 live root 被重建，该条件在 TS 中恒真。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/bundle.rs` 的 `replace_directory_with_staged` 在换目录失败时一律恢复备份并移除半装上的 live root；import、repair、重置全程持有 workspace 与 global store 的按根操作锁。避免并发写者重建 live root 时 rename 报 ENOTEMPTY、原记忆滞留在隐藏 `.memory.backup-*` 中（PR #531 codex r1 P0、Grok r1 #1，Grok 实测 50 次 import 失败 5 次、残留 5 个备份目录）。
+- **范围**：仅换目录失败后的恢复路径与并发写入交错；成功路径、导出内容与 import 校验错误的对拍不受影响。单线程下两侧可观察行为相同。
+- **机器判据**：`storage::bundle` 单测 `failed_swap_restores_live_root_even_when_recreated`；集成测试 `tests/edgeclaw_export.rs` 的 `import_locking::import_waits_for_workspace_store_writer` 与 `import_locking::import_waits_for_global_store_writer`（负控：移除 `import_memory_bundle` 的两处 `operation_scope()` 后两条均转红，见 `_tmp/20261023-a66-pr10f-export/RESULT.md`「修复轮 1」负控表 #2）。
+- **批准记录**：无；实现方在修复轮 1 自述，协调者改写为六字段登记（实现方误写入 `specs/parity/accepted-diffs.md`，已撤回，原文见 `_tmp/20261023-a66-pr10f-export/worker-wrong-ledger.diff`）；**已知未对齐（未批准，待人批）**。
