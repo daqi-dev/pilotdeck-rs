@@ -25,6 +25,14 @@ pub(crate) fn text(o: &JsObject, k: &str) -> String {
 pub(super) fn flag(o: &JsObject, k: &str) -> bool {
     matches!(o.get(k), Some(JsValue::Bool(true)))
 }
+/// JS truthiness for caller options such as `includeDeprecated`: TS uses
+/// `options.includeDeprecated || !entry.deprecated`, so `1`, `"yes"`, `[]` and
+/// `{}` all include deprecated entries. Entry frontmatter keeps [`flag`]'s
+/// boolean-only semantics.
+pub(super) fn truthy(o: &JsObject, k: &str) -> bool {
+    o.get(k)
+        .is_some_and(crate::runtime::memory::edgeclaw::storage::js_truthy)
+}
 pub(super) fn strings(v: &[String]) -> JsValue {
     JsValue::Array(v.iter().map(s).collect())
 }
@@ -94,20 +102,34 @@ pub(super) fn unique_array(o: &JsObject, k: &str) -> Vec<String> {
         _ => vec![],
     }
 }
-pub(super) fn query_matches(entry: &JsObject, query: &JsObject) -> bool {
-    let query = query
-        .get("query")
-        .and_then(JsValue::as_string)
-        .cloned()
-        .unwrap_or_default();
-    let query = crate::model_catalog::lower(
-        &norm_js(&query),
+/// `normalizeWhitespace(options.query).toLowerCase()`: TS evaluates this once,
+/// eagerly, before collecting entries. Nullish values normalize to no query;
+/// any other non-string reaches `String.prototype.replace` and throws the V8
+/// `TypeError` instead of matching every entry.
+pub(super) fn normalized_query(input: &JsObject) -> Result<Option<JsString>> {
+    let value = match input.get("query") {
+        None | Some(JsValue::Undefined | JsValue::Null) => return Ok(None),
+        Some(JsValue::String(value)) => value,
+        Some(_) => {
+            return Err(FileMemoryError::Type(
+                "(value ?? \"\").replace is not a function".into(),
+            ));
+        }
+    };
+    let normalized = norm_js(value);
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(crate::model_catalog::lower(
+        &normalized,
         &icu_locale_core::LanguageIdentifier::UNKNOWN,
         false,
-    );
-    if query.is_empty() {
+    )))
+}
+pub(super) fn query_matches(entry: &JsObject, query: Option<&JsString>) -> bool {
+    let Some(query) = query else {
         return true;
-    }
+    };
     let haystack = JsString::from(format!(
         "{} {} {}",
         text(entry, "name"),

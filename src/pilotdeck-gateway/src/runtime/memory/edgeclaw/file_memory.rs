@@ -1046,6 +1046,9 @@ impl Core {
         } else {
             vec!["user".into(), "feedback".into(), "project".into()]
         };
+        // TS normalizes the query eagerly, before `collectAllEntries`, so a
+        // truthy non-string throws even when no entry would have matched.
+        let query = normalized_query(input)?;
         let entries = self
             .all()?
             .into_iter()
@@ -1057,8 +1060,8 @@ impl Core {
                             && text(e, "scope") != "project")
                         || (norm_field(input, "projectId").to_utf8().is_ok()
                             && text(e, "projectId") == project))
-                    && (flag(input, "includeDeprecated") || !flag(e, "deprecated"))
-                    && query_matches(e, input)
+                    && (truthy(input, "includeDeprecated") || !flag(e, "deprecated"))
+                    && query_matches(e, query.as_ref())
             })
             .collect::<Vec<_>>();
         let offset = input
