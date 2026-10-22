@@ -81,10 +81,16 @@ function record(
   const persist: any[] = [];
   // mapAgentEvent treats an options object that itself has `persist` as the
   // artifact port; the extra forwardSubagentText flag is read by the facade.
-  const frames = mapAgentEvent(event, runId, Object.assign(fixtureStore(persist), {
-    forwardSubagentText,
-  }) as any);
-  cases.push({ name, event, runId, forwardSubagentText, frames, persist });
+  try {
+    const frames = mapAgentEvent(event, runId, Object.assign(fixtureStore(persist), {
+      forwardSubagentText,
+    }) as any);
+    cases.push({ name, event, runId, forwardSubagentText, frames, persist });
+  } catch (error) {
+    // Structurally invalid known events throw in TS; record `String(error)` so
+    // the Rust port's fallible API is replayed against the same message.
+    cases.push({ name, event, runId, forwardSubagentText, error: String(error), persist });
+  }
 }
 
 const SESSION = 'session-1';
@@ -567,6 +573,98 @@ record('context-budget-explicit-null-optionals', {
 record('token-cap-adjusted-previous-null', {
   type: 'token_cap_adjusted', sessionId: SESSION, turnId: TURN, provider: 'p', model: 'm',
   cap: 'output', previous: null, next: 200, reason: 'overflow',
+});
+
+// Structurally invalid known events: the real projector throws a TypeError.
+// These lock the Rust port's error text to `String(error)`.
+record('error-null-event', null);
+record('error-tool-result-missing-result', { type: 'tool_result', sessionId: SESSION, turnId: TURN });
+record('error-tool-result-content-null', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN, result: { content: null },
+});
+record('error-assistant-message-missing-content', {
+  type: 'assistant_message', sessionId: SESSION, turnId: TURN, message: { role: 'assistant' },
+});
+record('error-assistant-message-missing-message', {
+  type: 'assistant_message', sessionId: SESSION, turnId: TURN,
+});
+record('error-context-budget-missing-snapshot', {
+  type: 'context_budget', sessionId: SESSION, turnId: TURN,
+});
+record('error-turn-completed-missing-result', {
+  type: 'turn_completed', sessionId: SESSION, turnId: TURN,
+});
+record('error-steer-applied-missing-message', {
+  type: 'steer_applied', sessionId: SESSION, turnId: TURN, itemId: 'item-x',
+});
+record('error-retry-progress-missing-detail', {
+  type: 'retry_progress', sessionId: SESSION, turnId: TURN,
+});
+record('error-tool-calls-missing-calls', {
+  type: 'tool_calls_detected', sessionId: SESSION, turnId: TURN,
+});
+record('error-turn-failed-missing-error', {
+  type: 'turn_failed', sessionId: SESSION, turnId: TURN,
+});
+record('error-model-recovery-missing-error', {
+  type: 'model_recovery_failed', sessionId: SESSION, turnId: TURN,
+});
+record('error-model-event-missing-event', {
+  type: 'model_event', sessionId: SESSION, turnId: TURN,
+});
+record('error-subagent-model-event-missing-event', {
+  type: 'subagent_model_event', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore',
+});
+record('error-subagent-tool-result-missing-result', {
+  type: 'subagent_tool_result', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore',
+});
+record('error-tool-results-projected-missing-content', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant' },
+});
+record('error-subagent-tool-calls-missing-calls', {
+  type: 'subagent_tool_calls_detected', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore',
+});
+
+// TS builds the sanitized record with `output[key] = ...`, so a `__proto__`
+// own property from JSON.parse hits the setter and never reaches the output.
+record('tool-result-data-drops-proto-object-value', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([], { toolName: 'bash', data: JSON.parse('{"__proto__":{"foo":1},"keep":2}') }),
+});
+record('tool-result-data-drops-proto-primitive-value', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([], { toolName: 'bash', data: JSON.parse('{"__proto__":7,"keep":2}') }),
+});
+record('tool-result-data-drops-nested-proto', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([], { toolName: 'bash', data: JSON.parse('{"keep":{"__proto__":{"x":1},"k":2}}') }),
+});
+record('tool-result-data-only-proto-is-empty-record', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([], { toolName: 'bash', data: JSON.parse('{"__proto__":{"foo":1}}') }),
+});
+
+// Null/missing nested entries inside an array: `contentToText` reads `.type`
+// off each entry, and `flattenToolResultBlockText` reads `block.content`.
+record('error-tool-result-null-content-item', {
+  type: 'tool_result', sessionId: SESSION, turnId: TURN,
+  result: successResult([null]),
+});
+record('error-subagent-tool-result-null-content-item', {
+  type: 'subagent_tool_result', sessionId: SESSION, turnId: TURN, subagentId: 'sub-1',
+  subagentType: 'explore', result: successResult([null]),
+});
+record('error-tool-results-projected-null-block', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant', content: [null] },
+});
+record('error-tool-results-projected-tool-result-missing-content', {
+  type: 'tool_results_projected', sessionId: SESSION, turnId: TURN,
+  message: { role: 'assistant', content: [{ type: 'tool_result', toolCallId: 'c1' }] },
 });
 
 const output = { sourceCommit, sourceSha256, cases };
