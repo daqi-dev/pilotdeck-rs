@@ -2,6 +2,8 @@
 //! (parser edges, retry admission, TTL/LRU, materialization).
 use super::classify::{classify_and_route, extract_last_user_message, parse_tier};
 use super::*;
+use crate::runtime::model::fallback::RouterStreamFuture;
+use crate::runtime::model::http::{StreamOptions, StreamOutput};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::{HashMap, VecDeque},
@@ -1064,4 +1066,108 @@ fn sanitize_failure_message_matches_js_regex_semantics() {
     let output = classify::sanitize_failure_message(&JsString::from(emoji.as_str()));
     assert_eq!(output.units().len(), 300);
     assert_eq!(output.units()[299], 0xd83d);
+}
+
+/// A stream that reports no usage and ends in a terminal, non-retryable error
+/// after one text delta. With the V8 string limit shrunk, `final_usage` throws
+/// while appending the buffered delta.
+struct FailingStreamInvoker;
+impl RouterModelInvocation for FailingStreamInvoker {
+    fn get_capabilities(
+        &self,
+        _: &JsString,
+        _: &JsString,
+    ) -> Result<JsValue, crate::host::ModuleError> {
+        Ok(object(vec![("maxOutputTokens", JsValue::Number(64.0))]))
+    }
+    fn get_multimodal(
+        &self,
+        _: &JsString,
+        _: &JsString,
+    ) -> Result<JsValue, crate::host::ModuleError> {
+        Ok(object(vec![("input", JsValue::Array(vec![text("text")]))]))
+    }
+    fn get_provider_protocol(&self, _: &JsString) -> JsString {
+        "anthropic".into()
+    }
+    fn get_provider_generation(&self, _: &JsString) -> JsValue {
+        JsValue::Undefined
+    }
+    fn stream<'a>(
+        &'a self,
+        _: &'a JsValue,
+        _: &'a StreamOptions,
+        sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+    ) -> RouterStreamFuture<'a> {
+        Box::pin(async move {
+            sink(StreamOutput::Event(object(vec![
+                ("type", text("text_delta")),
+                ("text", text("abcdef")),
+            ])));
+            sink(StreamOutput::Event(object(vec![
+                ("type", text("error")),
+                (
+                    "error",
+                    object(vec![
+                        ("code", text("server_error")),
+                        ("message", text("boom")),
+                        ("retryable", JsValue::Bool(false)),
+                    ]),
+                ),
+            ])));
+            Ok(())
+        })
+    }
+}
+
+/// Gate P2 (concurrency #1): the terminal-failure branch used `?` on
+/// `final_usage`, so a Rust-side estimation failure skipped the buffered-event
+/// flush and the terminal `error` event. Negative control: restore `?` and the
+/// sink stays empty while `execute` returns Err.
+#[tokio::test(flavor = "current_thread")]
+async fn terminal_failure_still_flushes_events_when_usage_estimation_throws() {
+    let _limit = crate::runtime::model::http::LimitGuard::set(4);
+    let config = RouterConfig {
+        enabled: true,
+        ..RouterConfig::default()
+    };
+    let mut deps = RouterDeps::new(Arc::new(FailingStreamInvoker));
+    deps.clock = Arc::new(|| 1_700_000_000_000.0);
+    let router = RouterRuntime::with_deps(config, deps).expect("runtime");
+    let decision = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("scenarioType", text("default")),
+        ("isSubagent", JsValue::Bool(false)),
+        ("orchestrating", JsValue::Bool(false)),
+        ("resolvedFrom", text("scenario")),
+        ("mutations", object(vec![])),
+    ]);
+    let request = object(vec![
+        ("provider", text("p")),
+        ("model", text("s")),
+        ("messages", JsValue::Array(vec![user_message("hi")])),
+        ("maxOutputTokens", JsValue::Number(100.0)),
+    ]);
+    let ctx = RouterExecuteContext {
+        session_id: "s".into(),
+        turn_id: "t".into(),
+        ..Default::default()
+    };
+    let mut events = Vec::new();
+    router
+        .execute(&decision, &request, &ctx, &mut |output| events.push(output))
+        .await
+        .expect("execute must not abort the stream on a usage-estimation error");
+    let kinds = events
+        .iter()
+        .map(|event| {
+            field(event, "type")
+                .as_string()
+                .and_then(|value| value.to_utf8().ok())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    assert!(kinds.iter().any(|kind| kind == "text_delta"), "{kinds:?}");
+    assert_eq!(kinds.last().map(String::as_str), Some("error"), "{kinds:?}");
 }

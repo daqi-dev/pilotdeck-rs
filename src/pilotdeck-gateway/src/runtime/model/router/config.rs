@@ -415,7 +415,13 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
                 let Some(body) = body.as_object() else {
                     continue;
                 };
-                let rate = |field: &str| body.get(field).and_then(JsValue::as_number);
+                // `pricingNumber`: a non-finite or negative rate is dropped
+                // (the entry itself stays, matching TS's per-field omission).
+                let rate = |field: &str| {
+                    body.get(field)
+                        .and_then(JsValue::as_number)
+                        .filter(|value| value.is_finite() && *value >= 0.0)
+                };
                 map.insert(
                     String::from_utf16_lossy(key.units()),
                     crate::model_cost::ModelPricing {
@@ -427,13 +433,17 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
             }
             map
         });
-    let baseline_model = object
-        .get("baselineModel")
-        .and_then(RouterModelRef::from_value);
+    let baseline_model = parse_baseline_model(object.get("baselineModel"));
     let retention_ms = object
         .get("retentionMs")
         .and_then(JsValue::as_number)
-        .filter(|value| value.is_finite() && *value > 0.0 && value.fract() == 0.0);
+        // `Number.isSafeInteger(value) && value > 0`.
+        .filter(|value| {
+            value.is_finite()
+                && *value > 0.0
+                && value.fract() == 0.0
+                && *value <= 9_007_199_254_740_991.0
+        });
     StatsConfig {
         enabled,
         model_pricing,
@@ -441,6 +451,37 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
         retention_ms,
         baseline_model,
     }
+}
+
+/// `optionalBaselineModel`: an object whose trimmed `provider`/`model` are
+/// non-empty, or a `"provider/model"` string (`parseRouterConfig.ts:791-811`).
+/// TS additionally validates the ref against `modelConfig` and emits a fatal
+/// diagnostic when it is unknown; this projection has no `modelConfig` input,
+/// so that part stays a recorded divergence.
+fn parse_baseline_model(value: Option<&JsValue>) -> Option<RouterModelRef> {
+    match value? {
+        JsValue::String(value) => parse_model_ref_string(&value.to_utf8().ok()?),
+        value => {
+            let provider = field(value, "provider").as_string()?.to_utf8().ok()?;
+            let model = field(value, "model").as_string()?.to_utf8().ok()?;
+            let provider = crate::metadata::js_trim(&provider);
+            let model = crate::metadata::js_trim(&model);
+            if provider.is_empty() || model.is_empty() {
+                return None;
+            }
+            Some(RouterModelRef::new(provider.into(), model.into()))
+        }
+    }
+}
+
+/// `resolveProviderRef` for the string form: split on the first `/`, both
+/// halves non-empty. The string itself is not trimmed by TS.
+fn parse_model_ref_string(value: &str) -> Option<RouterModelRef> {
+    let (provider, model) = value.split_once('/')?;
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some(RouterModelRef::new(provider.into(), model.into()))
 }
 
 /// Runtime defaults used by `RouterRetryPolicy`; exported for replay tests.

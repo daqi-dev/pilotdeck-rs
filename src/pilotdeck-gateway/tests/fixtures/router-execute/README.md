@@ -45,4 +45,6 @@ env -u PDRS_BASELINE TMPDIR=/tmp PDRS_ROUTER_HTTP_ORACLE=/tmp/<owned-http-1>/htt
 - 全部序列以 JS JSON 字节保序比较，不排序事件。HTTP 只替换独占端口 origin，并去除两边统一登记的传输层头。默认健康状态、generation nullish 与数字/字符串同键，均保留 TS 行为。
 - `pilotdeck_router_fallback` 本身没有 `fallbackTier`；该字段属于 decide 的 `pilotdeck_router_decision_fallback`，继续由既有 `router-decision` 金样覆盖，本轮不造字段。
 
-统计聚合、请求日志及 SDK usage/model_usage 投影属于拆分后的 pr9b。`runtime::network` 尚不在本树，本轮复用 provider 原有竞争判定与退避，#396 接续统一。
+统计聚合、请求日志及 SDK usage/model_usage 投影已由 pr9b 落地，金样在
+`tests/fixtures/token-stats/`（`tests/token_stats.rs` 回放）。`runtime::network`
+尚不在本树，本轮复用 provider 原有竞争判定与退避，#396 接续统一。

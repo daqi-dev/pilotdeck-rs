@@ -159,6 +159,17 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
                     .unwrap_or(JsValue::Null);
                 check(&value, get(expected, "result"), &label)?;
             }
+            "estimateCost" => {
+                let usage = step
+                    .get("usage")
+                    .filter(|value| !matches!(value, JsValue::Undefined));
+                let actual = stats.estimate_cost(
+                    usage,
+                    &text(get(step, "provider")),
+                    &text(get(step, "model")),
+                );
+                check(&JsValue::Number(actual), get(expected, "result"), &label)?;
+            }
             "modelUsage" => {
                 let session_id = get(step, "sessionId").as_string();
                 check(
@@ -208,10 +219,102 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
 fn token_stats_replay_matches_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = items(get(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 6);
+    assert_eq!(scenarios.len(), 7);
     for scenario in scenarios {
         replay_scenario(scenario).unwrap();
     }
+}
+
+#[test]
+fn stats_config_projection_matches_real_ts() {
+    let oracle = baseline::oracle(ORACLE);
+    let cases = items(get(&oracle, "configCases"));
+    assert_eq!(cases.len(), 7);
+    for case in cases {
+        let name = text(get(case, "name"));
+        let raw = get(case, "raw");
+        let snapshot = obj(&[("config", obj(&[("router", raw.clone())]))]);
+        let config = RouterConfig::from_snapshot(&snapshot);
+        let expected = get(case, "stats");
+        assert!(!matches!(expected, JsValue::Null), "{name}: expected stats");
+        assert_eq!(
+            config.stats.enabled,
+            get(expected, "enabled").as_bool().unwrap_or(true),
+            "{name}: enabled"
+        );
+        let expected_baseline = get(expected, "baselineModel");
+        match &config.stats.baseline_model {
+            Some(model) => {
+                assert!(
+                    !matches!(expected_baseline, JsValue::Null),
+                    "{name}: unexpected baseline"
+                );
+                assert_eq!(
+                    text(get(expected_baseline, "provider")),
+                    text(&JsValue::String(model.provider.clone())),
+                    "{name}: provider"
+                );
+                assert_eq!(
+                    text(get(expected_baseline, "model")),
+                    text(&JsValue::String(model.model.clone())),
+                    "{name}: model"
+                );
+                assert_eq!(
+                    text(get(expected_baseline, "id")),
+                    text(&JsValue::String(model.id.clone())),
+                    "{name}: id"
+                );
+            }
+            None => assert!(
+                matches!(expected_baseline, JsValue::Undefined | JsValue::Null),
+                "{name}: baseline should be absent"
+            ),
+        }
+        let expected_pricing = get(expected, "modelPricing").as_object();
+        match (&config.stats.model_pricing, expected_pricing) {
+            (Some(actual), Some(expected_pricing)) => {
+                assert_eq!(
+                    name_pricing(actual).count(),
+                    expected_pricing.entries().len(),
+                    "{name}: pricing keys"
+                );
+                for (key, rate) in name_pricing(actual) {
+                    let expected_rate = expected_pricing.get(&key).unwrap_or(&UNDEFINED);
+                    assert!(
+                        !matches!(expected_rate, JsValue::Null | JsValue::Undefined),
+                        "{name}: missing {key}"
+                    );
+                    for (field, actual) in [
+                        ("input", rate.input),
+                        ("output", rate.output),
+                        ("cacheRead", rate.cache_read),
+                    ] {
+                        let expected = expected_rate.get(field).and_then(JsValue::as_number);
+                        assert_eq!(actual, expected, "{name}: {key}.{field}");
+                    }
+                }
+            }
+            (None, None) => {}
+            (actual, expected) => panic!("{name}: pricing shape {actual:?} vs {expected:?}"),
+        }
+        assert_eq!(
+            config.stats.retention_ms,
+            get(expected, "retentionMs").as_number(),
+            "{name}: retentionMs"
+        );
+    }
+}
+
+fn name_pricing(
+    pricing: &pilotdeck_gateway::model_cost::PricingMap,
+) -> impl Iterator<Item = (String, pilotdeck_gateway::model_cost::ModelPricing)> + '_ {
+    pricing.iter().map(|(key, rate)| (key.to_owned(), *rate))
+}
+
+#[test]
+#[ignore = "runs the real-TS generator; requires PDRS_BASELINE"]
+fn token_stats_fixture_regenerates_identically() {
+    baseline::regenerates_identically("token-stats");
 }
 
 #[test]
@@ -360,6 +463,102 @@ async fn execute_once(fail: bool, home: &Path, session: &str) -> RouterRuntime {
         .await
         .unwrap();
     router
+}
+
+/// `RouterRuntime.ts:204-212`: the default observer (no `deps.stats`) must use
+/// the derived `config.stats`, including the `scenarios.default` baseline.
+fn default_router_config(home: &Path) -> RouterConfig {
+    let mut config = RouterConfig::from_snapshot(&obj(&[(
+        "config",
+        obj(&[(
+            "router",
+            parsed(
+                r#"{"enabled":true,"scenarios":{"default":{"provider":"openai","model":"gpt-4o"}},"fallback":{"default":[]},"transientRetry":{"enabled":false},"zeroUsageRetry":{"enabled":false},"stats":{"enabled":true}}"#,
+            ),
+        )]),
+    )]));
+    config.stats.file_path = Some(home.join("stats.jsonl"));
+    assert!(config.stats.baseline_model.is_none());
+    config
+}
+
+#[tokio::test]
+async fn default_construction_observes_with_configured_stats() {
+    let scratch = Scratch::new("token-stats-default-wire");
+    let deps = RouterDeps::new(Arc::new(ScriptedInvoker { fail: false }));
+    let router = RouterRuntime::with_deps(default_router_config(scratch.path()), deps).unwrap();
+    let decision = parsed(
+        r#"{"provider":"anthropic","model":"claude-sonnet-4-5-20250929","scenarioType":"default","isSubagent":false,"orchestrating":false,"resolvedFrom":"scenario","mutations":{}}"#,
+    );
+    let request = parsed(
+        r#"{"provider":"anthropic","model":"claude-sonnet-4-5-20250929","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],"maxOutputTokens":100}"#,
+    );
+    let ctx = RouterExecuteContext {
+        session_id: "s1".into(),
+        turn_id: "t1".into(),
+        ..Default::default()
+    };
+    router
+        .execute(&decision, &request, &ctx, &mut |_| {})
+        .await
+        .unwrap();
+
+    let snapshot = router.usage_snapshot(None);
+    assert_eq!(
+        get(&snapshot, "aggregate")
+            .get("totalRequests")
+            .and_then(JsValue::as_number),
+        Some(1.0)
+    );
+    let line = fs::read_to_string(scratch.path().join("stats.jsonl")).unwrap();
+    let record = parsed(line.trim_end());
+    let cost = get(&record, "cost")
+        .get("total")
+        .and_then(JsValue::as_number)
+        .unwrap();
+    let baseline = get(&record, "baselineCost").as_number().unwrap();
+    assert_ne!(baseline, cost, "baseline must use scenarios.default");
+    let usage = pilotdeck_protocol::model::Usage {
+        input_tokens: Some(10.0),
+        output_tokens: Some(5.0),
+        total_tokens: Some(15.0),
+        ..Default::default()
+    };
+    assert_eq!(
+        baseline,
+        pilotdeck_gateway::model_cost::estimate_cost(Some(&usage), "openai", "gpt-4o", None)
+    );
+}
+
+#[tokio::test]
+async fn default_construction_stays_disabled_when_stats_disabled() {
+    let scratch = Scratch::new("token-stats-default-off");
+    let mut config = default_router_config(scratch.path());
+    config.stats.enabled = false;
+    let deps = RouterDeps::new(Arc::new(ScriptedInvoker { fail: false }));
+    let router = RouterRuntime::with_deps(config, deps).unwrap();
+    let decision = parsed(
+        r#"{"provider":"anthropic","model":"claude-sonnet-4-5-20250929","scenarioType":"default","isSubagent":false,"orchestrating":false,"resolvedFrom":"scenario","mutations":{}}"#,
+    );
+    let request = parsed(
+        r#"{"provider":"anthropic","model":"claude-sonnet-4-5-20250929","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],"maxOutputTokens":100}"#,
+    );
+    let ctx = RouterExecuteContext {
+        session_id: "s1".into(),
+        turn_id: "t1".into(),
+        ..Default::default()
+    };
+    router
+        .execute(&decision, &request, &ctx, &mut |_| {})
+        .await
+        .unwrap();
+    assert!(!scratch.path().join("stats.jsonl").exists());
+    assert_eq!(
+        get(&router.usage_snapshot(None), "aggregate")
+            .get("totalRequests")
+            .and_then(JsValue::as_number),
+        Some(0.0)
+    );
 }
 
 #[tokio::test]

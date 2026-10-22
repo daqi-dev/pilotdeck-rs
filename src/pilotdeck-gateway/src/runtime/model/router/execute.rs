@@ -427,7 +427,12 @@ impl RouterRuntime {
                 ],
             );
             let ended_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
-            let fail_usage = final_usage(request, &last_outcome).await?;
+            // Rust-specific failures (`cpu::run` JoinError at shutdown, or an
+            // over-limit buffered string) must not swallow the buffered events
+            // and terminal error event. Degrade to "no usage reported".
+            let fail_usage = final_usage(request, &last_outcome)
+                .await
+                .unwrap_or_else(|_| JsValue::Object(JsObject::new()));
             self.observe_request(
                 ctx,
                 decision,
