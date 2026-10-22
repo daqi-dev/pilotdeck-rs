@@ -333,6 +333,43 @@ fn group_alive(pid: u32) -> bool {
     rustix::process::test_kill_process_group(pid).is_ok()
 }
 
+/// A replay that panics must not leave the detached shells it started: the TS
+/// baseline unrefs them, so dropping `BackgroundTaskRuntime` does not stop
+/// them, and the `touch go` that ends a gated `until [ -f go ]` loop only
+/// happens for a healthy sequence. Every recorded group is SIGKILLed on
+/// unwind; the success path waits the groups out and disarms first, so a PID
+/// reused after that point is never signalled.
+struct ProcessGroups {
+    pids: Mutex<BTreeSet<u32>>,
+}
+impl ProcessGroups {
+    fn new() -> Self {
+        Self {
+            pids: Mutex::new(BTreeSet::new()),
+        }
+    }
+    fn track(&self, pid: u32) {
+        self.pids.lock().unwrap().insert(pid);
+    }
+    fn snapshot(&self) -> Vec<u32> {
+        self.pids.lock().unwrap().iter().copied().collect()
+    }
+    fn disarm(&self) {
+        self.pids.lock().unwrap().clear();
+    }
+}
+impl Drop for ProcessGroups {
+    fn drop(&mut self) {
+        for pid in self.pids.lock().unwrap().iter() {
+            if group_alive(*pid)
+                && let Some(pid) = rustix::process::Pid::from_raw(*pid as i32)
+            {
+                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+            }
+        }
+    }
+}
+
 async fn until(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(8);
     while !check() {
@@ -408,7 +445,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         tasks: Vec::new(),
         subs: Vec::new(),
     };
-    let mut pids = BTreeSet::new();
+    let groups = ProcessGroups::new();
     let mut releases: Vec<Option<oneshot::Sender<()>>> = Vec::new();
 
     for (index, step) in array(field(sequence, "steps")).iter().enumerate() {
@@ -463,7 +500,7 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                     let data = output.data.as_ref().unwrap();
                     placeholders.tasks.push(text(field(data, "taskId")));
                     if let Some(pid) = field(data, "pid").as_number() {
-                        pids.insert(pid as u32);
+                        groups.track(pid as u32);
                     }
                 }
                 Some(placeholders.apply(&tool_outcome(result)))
@@ -608,12 +645,15 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
         "{name}: task count"
     );
     if field(sequence, "noDispose").as_bool() != Some(true) {
-        for pid in &pids {
+        for pid in groups.snapshot() {
             until(&format!("{name}: leftover group {pid}"), || {
-                !group_alive(*pid)
+                !group_alive(pid)
             })
             .await;
         }
+        // Confirmed gone; never signal these PIDs again in case one is reused
+        // before the guard drops.
+        groups.disarm();
     }
     let task_index = |event: &JsValue| {
         let id = text(field(event, "taskId"));
