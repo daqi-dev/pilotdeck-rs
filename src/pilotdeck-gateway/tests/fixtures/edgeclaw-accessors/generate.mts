@@ -66,6 +66,15 @@ const ops:any[]=[{method:'state',input:'$ROOT/home/.pilotdeck'},{repo:'general',
 {method:'entries',input:{id:'mirror',options:{includeExternal:null}}},
 // listReadableProjectEntries hardcodes limit 5000/offset 0; caller values are ignored.
 {method:'entries',input:{id:'mirror',options:{limit:1,offset:1}}},{method:'entries',input:{id:'mirror',options:{query:'local',limit:1}}},
+// Project kinds is forwarded to the store's `new Set(...)`: arrays filter,
+// strings iterate to characters (no matches), null/undefined take the default,
+// and numbers/booleans/plain objects throw from the store call. An external-only
+// project with includeExternal:false never reaches a store, so it returns [].
+{method:'entries',input:{id:'mirror',options:{kinds:42}}},{method:'entries',input:{id:'mirror',options:{kinds:true}}},
+{method:'entries',input:{id:'mirror',options:{kinds:{}}}},{method:'entries',input:{id:'mirror',options:{kinds:null}}},
+{method:'entries',input:{id:'mirror',options:{kinds:'project'}}},{method:'entries',input:{id:'mirror',options:{kinds:''}}},
+{method:'entries',input:{id:'z',options:{kinds:42}}},
+{method:'entries',input:{id:extBeta,options:{kinds:42}}},{method:'entries',input:{id:extBeta,options:{kinds:42,includeExternal:false}}},
 ...[{}, {scope:'project'},{kinds:['project']},{kinds:[]},{kinds:['feedback','user']},{query:'Second'}, {limit:1,offset:1},{includeDeprecated:true}].map(input=>({method:'listGlobalMemoryEntries',input})),
 // Only whitelisted keys reach the global store; non-array kinds throws before scope.
 {method:'listGlobalMemoryEntries',input:{projectId:'x'}},{method:'listGlobalMemoryEntries',input:{kinds:'project'}},

@@ -140,6 +140,33 @@ fn include_external(options: &JsObject) -> bool {
         Some(value) => js_truthy(value),
     }
 }
+/// `options.kinds ?? ["project", "feedback"]` is forwarded verbatim to the
+/// project store, which evaluates `new Set(kinds)`: arrays are iterated for
+/// matching entry types and strings iterate into single characters (never a
+/// real type, so no matches). Numbers, booleans and plain objects are not
+/// iterable, so the store call itself throws `TypeError`; `null`/`undefined`
+/// select the default kinds.
+fn project_entry_kinds(options: &JsObject) -> Result<JsValue> {
+    match options.get("kinds") {
+        None | Some(JsValue::Undefined | JsValue::Null) => {
+            Ok(JsValue::Array(vec![s("project"), s("feedback")]))
+        }
+        Some(value @ (JsValue::Array(_) | JsValue::String(_))) => Ok(value.clone()),
+        Some(JsValue::Number(number)) => Err(not_iterable(format!(
+            "number {}",
+            crate::js_value::number_string(*number)
+        ))),
+        Some(JsValue::Bool(value)) => Err(not_iterable(format!("boolean {value}"))),
+        Some(JsValue::Object(_)) => Err(not_iterable("object".into())),
+    }
+}
+/// The V8 `TypeError` text from the store's `new Set(kinds)`; Rust raises it at
+/// the same point, immediately before the store call.
+fn not_iterable(value: String) -> FileMemoryError {
+    FileMemoryError::Type(format!(
+        "{value} is not iterable (cannot read property Symbol(Symbol.iterator))"
+    ))
+}
 /// `listReadableProjectEntries` builds a fresh store input: caller limit/offset
 /// are ignored (TS hardcodes 5000/0) and only the documented keys are forwarded.
 fn project_entry_input(options: &JsObject, kinds: JsValue, project_id: &str) -> JsObject {
@@ -487,19 +514,19 @@ impl EdgeClawFileStores {
         let Some(project) = project.as_object() else {
             return Ok(objects(vec![]));
         };
-        // `options.kinds ?? ["project", "feedback"]`; unlike the global accessor
-        // TS hands any other value to the store, which yields no matches.
-        let kinds = match options.get("kinds") {
-            None | Some(JsValue::Null | JsValue::Undefined) => {
-                JsValue::Array(vec![s("project"), s("feedback")])
-            }
-            Some(value) => value.clone(),
-        };
+        // TS forwards `options.kinds ?? ["project", "feedback"]` to the store,
+        // which builds `new Set(kinds)`; a non-iterable value therefore throws
+        // only when that store call is reached. An external-only project with
+        // `includeExternal: false` never reaches it.
         let include_external = include_external(options);
         let source = text(project, "sourceType");
         let mut entries = vec![];
         if source == "general_local" || source == "workspace_external_mirror" {
-            let input = project_entry_input(options, kinds.clone(), &text(project, "projectId"));
+            let input = project_entry_input(
+                options,
+                project_entry_kinds(options)?,
+                &text(project, "projectId"),
+            );
             entries.extend(extract_objects(
                 &self.workspace_memory.list_memory_entries(&input)?,
             ));
@@ -523,7 +550,8 @@ impl EdgeClawFileStores {
                 } else {
                     source_id
                 };
-                let input = project_entry_input(options, kinds.clone(), &project_id);
+                let input =
+                    project_entry_input(options, project_entry_kinds(options)?, &project_id);
                 entries.extend(
                     extract_objects(&snapshot.store.list_memory_entries(&input)?)
                         .into_iter()
