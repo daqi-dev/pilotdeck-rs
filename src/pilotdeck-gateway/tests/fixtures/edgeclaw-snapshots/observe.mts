@@ -61,6 +61,17 @@ export const scenarios:any[]=[
 {name:'permission-copy-retains-symlinks',ops:[capture,{method:'raw',path:'memory/unmanaged.txt',content:'retained'},{method:'symlink',path:'memory/retained-link',target:'unmanaged.txt'},{method:'stage',id:'dream'},{method:'closeStage',id:'dream'},{method:'swap',id:'dream',fallback:'before',faults:[fault('Rename','memory ->','EPERM'),fault('Rename','.memory.dream-TEMP ->')]},{method:'dispose',id:'dream'}]},
 {name:'snapshot-record-all-files',ops:[...base,{method:'raw',path:'last_dream/workspace/other.txt',content:'unmanaged snapshot record'},{method:'symlink',path:'last_dream/workspace/skip-link',target:'other.txt'},{method:'rollback'},{method:'capture'}]},
 {name:'cleanup-masks-write',ops:[capture,{method:'stage',id:'dream',faults:[fault('Write','.memory.dream-TEMP/MEMORY.md'),fault('Remove','.memory.dream-TEMP','ENOSPC')]}]},
+// Real chmod probes: preserve failure residue before repairing test permissions.
+{name:'remove-project-readonly-swap',ops:[capture,{method:'stage',id:'dream'},{method:'closeStage',id:'dream'},{method:'chmod',path:'memory/Project',mode:0o500},{method:'swap',id:'dream',fallback:'before'},{method:'dispose',id:'dream'}]},
+{name:'remove-memory-readonly-swap',ops:[capture,{method:'stage',id:'dream'},{method:'closeStage',id:'dream'},{method:'chmod',path:'memory',mode:0o500},{method:'swap',id:'dream',fallback:'before'},{method:'dispose',id:'dream'}]},
+{name:'remove-last-readonly-rollback',ops:[...base,{method:'chmod',path:'last_dream',mode:0o500},{method:'rollback'}]},
+{name:'remove-last-readonly-clear',ops:[...base,{method:'chmod',path:'last_dream',mode:0o500},{method:'clear'}]},
+{name:'remove-workspace-readonly-clear',ops:[...base,{method:'chmod',path:'last_dream/workspace',mode:0o500},{method:'clear'}]},
+{name:'copy-symlink-lexical-parent',ops:[capture,{method:'raw',path:'memory/unmanaged.txt',content:'retained'},{method:'symlink',path:'memory/retained-link',target:'unmanaged.txt'},{method:'symlink',path:'alias',target:'.'},{method:'second',rootAlias:'alias'},{method:'stage',id:'dream',second:true},{method:'closeStage',id:'dream'},{method:'swap',id:'dream',fallback:'before',second:true,faults:[fault('Rename','memory ->','EPERM'),fault('Rename','.memory.dream-TEMP ->')]},{method:'readlinkLexical',path:'memory/retained-link',target:'alias/memory/unmanaged.txt'},{method:'dispose',id:'dream'}]},
+{name:'restore-cleanup-double-failure',ops:[capture,{method:'stage',id:'dream'},{method:'closeStage',id:'dream'},{method:'swap',id:'dream',fallback:'before',faults:[fault('Rename','.global.dream-TEMP ->'),fault('Remove','.global.dream-TEMP','ENOSPC')]},{method:'dispose',id:'dream'}]},
+{name:'restore-stage-write-failure',ops:[capture,{method:'stage',id:'dream'},{method:'stageEdit',id:'dream',type:'project',name:'changed'},{method:'closeStage',id:'dream'},{method:'swap',id:'dream',fallback:'before',faults:[fault('Rename','.global.dream-TEMP ->'),fault('Write','.memory.restore-TEMP/MEMORY.md','ENOSPC')]},{method:'dispose',id:'dream'}]},
+{name:'restore-dispose-failure',ops:[capture,{method:'stage',id:'dream'},{method:'stageEdit',id:'dream',type:'project',name:'changed'},{method:'closeStage',id:'dream'},{method:'swap',id:'dream',fallback:'before',faults:[fault('Rename','.global.dream-TEMP ->'),fault('Remove','.memory.restore-TEMP','ENOSPC')]},{method:'dispose',id:'dream'}]},
+
 ];
 export function disk(root:string):any[] {
  const out:any[]=[];
@@ -98,8 +109,9 @@ export function observe(Repo:any,root:string,ops:any[]) {
     case 'mkdir':fs.mkdirSync(join(root,op.path),{recursive:true});break;
     case 'chmod':fs.chmodSync(join(root,op.path),op.mode);break;
     case 'symlink':fs.symlinkSync(op.target,join(root,op.path));break;
+    case 'readlinkLexical':result=fs.readlinkSync(join(root,op.path))===join(root,op.target);break;
     case 'sql':repo.db.exec(op.sql);break;
-    case 'second':second=open(Repo,root);break;
+    case 'second':second=open(Repo,op.rootAlias?join(root,op.rootAlias):root);break;
     default:throw Error('unknown method '+op.method);
   }}catch(e:any){result=e.code?{error:e.code}: {error:e.name,message:e.message};}
   finally {Object.assign(fs,original);syncBuiltinESMExports();}

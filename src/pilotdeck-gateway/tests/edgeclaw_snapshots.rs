@@ -27,8 +27,23 @@ impl Scratch {
         Self(p)
     }
 }
+fn make_writable(p: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(p, fs::Permissions::from_mode(0o700));
+    }
+    if let Ok(entries) = fs::read_dir(p) {
+        for e in entries.flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                make_writable(&e.path());
+            }
+        }
+    }
+}
 impl Drop for Scratch {
     fn drop(&mut self) {
+        make_writable(&self.0);
         let _ = fs::remove_dir_all(&self.0);
     }
 }
@@ -314,7 +329,12 @@ fn replay(root: &Path, case: &Value) -> Value {
             s.set_snapshot_io_hook(hook);
         }
         if op["method"] == "second" {
-            second = Some(open(root));
+            second = Some(open(
+                &op["rootAlias"]
+                    .as_str()
+                    .map(|p| root.join(p))
+                    .unwrap_or_else(|| root.to_path_buf()),
+            ));
         }
         let repo = if op["second"] == true {
             second.as_ref().unwrap()
@@ -421,6 +441,10 @@ fn replay(root: &Path, case: &Value) -> Value {
                 )?;
                 Ok(JsValue::Null)
             }
+            "readlinkLexical" => Ok(JsValue::Bool(
+                fs::read_link(root.join(op["path"].as_str().unwrap()))?
+                    == root.join(op["target"].as_str().unwrap()),
+            )),
             "sql" => {
                 Connection::open(root.join("control.sqlite"))
                     .unwrap()
@@ -464,8 +488,30 @@ fn seed_ts(root: &Path, case: &Value) {
     )
     .unwrap();
 }
+// Oracle collation is en-US. Re-exec avoids unsafe process-wide set_var in tests.
+fn in_oracle_locale(test: &str) -> bool {
+    if std::env::var("PDRS_SNAPSHOT_LOCALE_CHILD").as_deref() == Ok(test) {
+        return true;
+    }
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--include-ignored", "--nocapture"])
+        .env("PDRS_SNAPSHOT_LOCALE_CHILD", test)
+        .env("LANG", "en_US.UTF-8")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "locale-isolated snapshot test {test} failed: {status}"
+    );
+    false
+}
 #[test]
 fn ts_databases_and_trees_replay_snapshot_lifecycle() {
+    if !in_oracle_locale("ts_databases_and_trees_replay_snapshot_lifecycle") {
+        return;
+    }
     let o = oracle();
     for c in cases(&o) {
         let s = Scratch::new();
@@ -475,6 +521,9 @@ fn ts_databases_and_trees_replay_snapshot_lifecycle() {
 }
 #[test]
 fn rust_seed_and_snapshot_lifecycle_match_ts() {
+    if !in_oracle_locale("rust_seed_and_snapshot_lifecycle_match_ts") {
+        return;
+    }
     let o = oracle();
     for c in cases(&o) {
         let s = Scratch::new();
@@ -486,6 +535,9 @@ fn rust_seed_and_snapshot_lifecycle_match_ts() {
 fn node(script: &str, args: &[&Path]) {
     let base = std::env::var("PDRS_BASELINE").unwrap();
     let mut child = Command::new("node")
+        .env("LANG", "en_US.UTF-8")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
         .arg("--import")
         .arg(Path::new(&base).join("node_modules/tsx/dist/loader.mjs"))
         .arg(
@@ -520,6 +572,9 @@ fn node(script: &str, args: &[&Path]) {
 #[test]
 #[ignore = "requires real fixed TS, Node 22 and tsx"]
 fn real_ts_reopens_rust_seed_and_snapshot_artifacts() {
+    if !in_oracle_locale("real_ts_reopens_rust_seed_and_snapshot_artifacts") {
+        return;
+    }
     let o = oracle();
     let scratch = Scratch::new();
     for c in cases(&o) {
@@ -569,6 +624,9 @@ fn real_ts_reopens_rust_seed_and_snapshot_artifacts() {
 #[test]
 #[ignore = "regenerates all real TS failure scenarios"]
 fn real_ts_regenerates_identically() {
+    if !in_oracle_locale("real_ts_regenerates_identically") {
+        return;
+    }
     baseline::regenerates_identically("edgeclaw-snapshots");
 }
 
@@ -644,6 +702,9 @@ impl Drop for Children {
 }
 #[test]
 fn concurrent_stage_and_swap_matches_real_ts() {
+    if !in_oracle_locale("concurrent_stage_and_swap_matches_real_ts") {
+        return;
+    }
     if let Ok(root) = std::env::var("PDRS_SNAPSHOT_WORKER_ROOT") {
         process_worker(
             Path::new(&root),
@@ -717,6 +778,9 @@ fn concurrent_stage_and_swap_matches_real_ts() {
 }
 #[test]
 fn concurrent_instances_and_manifest_provider_finish_without_deadlock() {
+    if !in_oracle_locale("concurrent_instances_and_manifest_provider_finish_without_deadlock") {
+        return;
+    }
     let scratch = Scratch::new();
     seed(&scratch.0);
     let barrier = Arc::new(std::sync::Barrier::new(4));

@@ -12,7 +12,7 @@
 - :1352–1492：repository stage/dispose、两根替换与失败回补、install、rollback。
 - 直接辅助函数：:239–243、:422–477、:1494–1507、:1521–1532。
 
-34 个场景、281 次顺序观测；每次比较返回值、故障是否命中、含空目录与符号链接的文件树、
+43 个场景、338 次顺序观测；每次比较返回值、故障是否命中、含空目录与符号链接的文件树、
 文件内容、SQLite schema、全部 L0 行和 pipeline 行。种子 `.db` 是 TS 关闭真实数据库后读取的
 原始字节（base64）。包含 project/feedback/user、无关 pipeline 行与需保留的 L0 行。
 
@@ -38,13 +38,14 @@ L0 的显式时间、metadata 与 memory 文件内容中的注入时钟值保持
 再生（在仓库根执行，输出目录必须是新的目录）：
 
 ```sh
+env -u LC_ALL -u LC_MESSAGES LANG=en_US.UTF-8 \
 PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs \
   src/pilotdeck-gateway/tests/fixtures/edgeclaw-snapshots/generate.mts /tmp/pdrs-snapshot-golden
 ```
 
 当前两次真实生成 SHA-256：
-`4a4bf0e8d4cfe2fd91e04a12a2cfcd2ac11c19e76cb506efe25b53c7c7d3b0d0`。
+`631319746ea4e744fb028976931aeabe0d79422335d1f49d4f886d1d7f0e5333`。
 
 验证：先按项目规则检查 cargo slots；在 `src/` 内执行：
 
@@ -60,3 +61,16 @@ cargo test --locked --offline -p pilotdeck-gateway --test edgeclaw_snapshots -- 
 
 本单另执行 26 条临时实现变异负控，每条要求测试断言转红、随后恢复原始实现；
 其中锁顺序变异须被并发测试的有界等待识别。逐条补丁、原始输出、恢复校验和见本单 `_tmp/20261023-a66-pr10e-snapshot/RESULT.md`。
+
+
+修复轮 1 补充：五个真实 chmod 场景覆盖 Project/memory 只读时 swap、last_dream 只读时
+rollback/clear、last_dream/workspace 只读时 clear，其中 memory 根只读 swap 是两实现原本一致的对照；比较失败后的完整文件树。删除沿用 Node 22.22.0
+rimraf 默认参数（maxRetries=0），先 rmdir，再按原始文件名字节顺序递归，首错停止。
+新增 readlinkLexical 在显式 alias 父路径下直接比较链接目标与词法源路径，避免 `$ROOT`/realpath 归一掩盖差异。Node 目录复制的 C++ 快路径与原 Rust canonicalize 一致；不适用 JS onLink 的单链接复制语义。
+另覆盖清理 staged 失败阻断 backup 恢复、restore stage 写失败、restore dispose 掩盖错误。
+所有 Rust 金样回放用 en-US 子进程运行；不在多线程测试进程中调用 set_var。
+
+注错覆盖限制：SnapshotIoHook 仅覆盖快照层 mkdir/write/remove/rename/copy 操作边界。
+FileMemoryStore 写入及新 stage 内 repair_workspace_manifest 不走该 hook；TS 全局 fs 注错
+表达力更大。本语料不宣称覆盖这些写入故障。copy 递归中途真实 ENOSPC/EIO 造成的部分
+live 根亦尚未覆盖（Copy hook 是开始前注错）；留给跟进，不能以本次金样判为已验证。

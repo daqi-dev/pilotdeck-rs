@@ -175,23 +175,17 @@ fn write(h: &SnapshotIoHook, p: &Path, content: &str) -> Result<()> {
 }
 fn remove(h: &SnapshotIoHook, p: &Path) -> Result<()> {
     h(SnapshotIoOperation::Remove, p, None)?;
-    let meta = match fs::symlink_metadata(p) {
-        Ok(m) => m,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
-    if meta.is_dir() {
-        fs::remove_dir_all(p)?
-    } else {
-        fs::remove_file(p)?
-    };
+    super::super::node_fs::rm_sync(p)?;
     Ok(())
 }
+
 fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(src)?;
     if metadata.file_type().is_symlink() {
-        // cpSync's default verbatimSymlinks=false resolves relative targets
-        // against the source link's directory, without dereferencing the link.
+        // Node 22 cpSync(directory, {recursive:true}) uses its C++ fast path:
+        // it resolves the source parent before resolving relative link targets.
+        // The JS onLink lexical path applies to copying a link alone or with a
+        // filter, neither of which robustRenameSync uses (real-TS probe).
         let target = fs::read_link(src)?;
         let target = if target.is_absolute() {
             target
