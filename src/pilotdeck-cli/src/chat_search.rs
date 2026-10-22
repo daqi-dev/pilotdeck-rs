@@ -123,7 +123,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let mut titles = HashMap::new();
     for file in &files {
         let bytes = read_session_bytes(&file.path).unwrap_or_default();
-        if let Some(title) = title::read(&bytes) {
+        if let Some(title) = title::read(&bytes)? {
             let id = file.path.file_stem().unwrap_or_default().to_string_lossy();
             titles.insert((file.project.clone(), JsString::from(id.as_ref())), title);
         }

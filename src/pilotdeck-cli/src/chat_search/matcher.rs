@@ -358,6 +358,24 @@ fn quantifier(units: &[u16], start: usize) -> Option<usize> {
     }
     (units.get(at) == Some(&125)).then_some(at + 1)
 }
+// V8 saturates quantifier bounds at 2^31-1 before checking their order.
+fn quantifier_out_of_order(units: &[u16]) -> bool {
+    let Some(comma) = units.iter().position(|u| *u == 44) else {
+        return false;
+    };
+    let upper = &units[comma + 1..units.len() - 1];
+    if upper.is_empty() {
+        return false;
+    }
+    let bound = |digits: &[u16]| {
+        digits.iter().fold(0_u32, |n, digit| {
+            n.saturating_mul(10)
+                .saturating_add(u32::from(*digit - 48))
+                .min(i32::MAX as u32)
+        })
+    };
+    bound(&units[1..comma]) > bound(upper)
+}
 fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
     let units: Vec<_> = pattern.encode_utf16().collect();
     // Count captures before resolving decimal escapes, including forward refs.
@@ -395,11 +413,15 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
     }
     let mut out = String::new();
     let (mut index, mut repeated) = (0, false);
+    let mut assertion = None;
+    let mut groups = Vec::new();
     while index < units.len() {
         let c = units[index];
         index += 1;
         match c {
             92 => {
+                assertion =
+                    matches!(units.get(index), Some(98 | 66)).then_some("Nothing to repeat");
                 match escape(&units, &mut index, false, captures, !names.is_empty())? {
                     Atom::Unit(u) => out.push_str(&escaped_unit(u, sensitive)),
                     Atom::Dash => unreachable!(),
@@ -409,10 +431,23 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
                 repeated = false;
             }
             91 => {
+                assertion = None;
                 out.push_str(&character_class(&units, &mut index, sensitive)?);
                 repeated = false;
             }
             40 => {
+                // Annex B permits quantifying lookahead, but not lookbehind.
+                groups.push(
+                    units.get(index) == Some(&63)
+                        && units.get(index + 1) == Some(&60)
+                        && matches!(units.get(index + 2), Some(61 | 33)),
+                );
+                assertion = None;
+                // fancy-regex rejects repeating a bare lookaround (even through
+                // a noncapturing group). A successful empty lookahead makes a
+                // concat without consuming text or adding a capture, preserving
+                // JS's repeatable lookahead and groups containing assertions.
+                out.push_str("(?:(?=)");
                 out.push('(');
                 if units.get(index) == Some(&63) {
                     out.push('?');
@@ -446,7 +481,13 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
                 if repeated {
                     return Err("Nothing to repeat");
                 }
+                if let Some(detail) = assertion {
+                    return Err(detail);
+                }
                 let end = quantifier(&units, index - 1).unwrap();
+                if quantifier_out_of_order(&units[index - 1..end]) {
+                    return Err("numbers out of order in {} quantifier");
+                }
                 out.push_str(&String::from_utf16_lossy(&units[index - 1..end]));
                 index = end;
                 repeated = true;
@@ -455,30 +496,51 @@ fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
                 if repeated {
                     return Err("Nothing to repeat");
                 }
+                if let Some(detail) = assertion {
+                    return Err(detail);
+                }
                 out.push(char::from_u32(u32::from(c)).unwrap());
                 repeated = true;
             }
             63 => {
+                if let Some(detail) = assertion {
+                    return Err(detail);
+                }
                 out.push('?');
                 repeated = true;
             }
             41 | 124 => {
+                assertion = if c == 41 {
+                    groups
+                        .pop()
+                        .unwrap_or(false)
+                        .then_some("Invalid quantifier")
+                } else {
+                    None
+                };
                 out.push(char::from_u32(u32::from(c)).unwrap());
+                if c == 41 {
+                    out.push(')');
+                }
                 repeated = false;
             }
             46 => {
+                assertion = None;
                 out.push_str(r"[^\n\r\x{2028}\x{2029}]");
                 repeated = false;
             }
             94 => {
+                assertion = Some("Nothing to repeat");
                 out.push_str(r"\A");
                 repeated = false;
             }
             36 => {
+                assertion = Some("Nothing to repeat");
                 out.push_str(r"(?=\z)");
                 repeated = false;
             }
             _ => {
+                assertion = None;
                 out.push_str(&escaped_unit(c, sensitive));
                 repeated = false;
             }

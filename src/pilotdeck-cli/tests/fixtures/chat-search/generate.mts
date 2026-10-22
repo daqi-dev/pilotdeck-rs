@@ -124,6 +124,35 @@ if (edges) {
   reviewFile('numbers', Array.from({length:30}, (_,i)=>row('numbers',`numeric ${i}`)));
   for (const [i, value] of ['1_000','0x1_0',' 12 ','1e3','','0b11','Infinity','0o3','+0x3'].entries())
     add(`number-${i}`, ['numeric','--limit',value,'--session','numbers','--json']);
+  // Error transcripts live in another pilot home: existing --all-projects
+  // cases must retain their original input and expected bytes.
+  const errorCase = (id: string, rows: string[]) => {
+    files[`error-pilot/projects/errors/chats/${id}.jsonl`] = rows.join('\n');
+    cases.push({id, argv:['search','probe','--session',id,'--json',
+      '--pilot-home','../error-pilot','--project','/errors']});
+  };
+  const malformed = [['x',String.raw`\x`],['q',String.raw`\q`],
+    ['unicode',String.raw`\u12`],['tab','\t'],['nul','\0'],['utf16',String.raw`😀é\q`]];
+  for (const position of ['head','tail']) for (const type of ['session_metadata','ordinary'])
+    for (const field of ['title','createdAt']) for (const [kind, value] of malformed) {
+      const id = `decode-${position}-${type}-${field}-${kind}`;
+      const bad = `{"type":"${type}","${field}":"${value}"}`;
+      const good = row(id,'probe');
+      errorCase(id, position === 'head' ? [bad,good] : [good,' '.repeat(70000),bad]);
+    }
+  // createdAt is decoded only after a nonempty summary exists. Metadata slow
+  // recovery can produce that summary even when the preview cannot see it.
+  errorCase('decode-no-summary', ['{"createdAt":"\\q"}']);
+  errorCase('decode-slow-summary', ['{"createdAt":"\\q"}',
+    JSON.stringify({type:'session_metadata',padding:' '.repeat(70000),metadata:{title:'Recovered'},endPadding:' '.repeat(70000)})]);
+  errorCase('decode-field-order', ['{"type":"session_metadata","aiTitle":"\\q"}',
+    '{"type":"session_metadata","title":"\\u12"}']);
+  const assertionPatterns = ['\\b*','\\b?','\\B{2}','^*','$+','(?<=a)+','(?<!a)?',
+    '(?=a)+','(?!a){2}','(?:(?<=a))+','a{2,1}','x{2,1}',
+    'a{2147483647,2147483646}'];
+  for (const [i, pattern] of assertionPatterns.entries()) for (const sensitive of [false,true])
+    add(`assertion-regex-${i}-${sensitive}`, [pattern,'--regex','--session','patterns',
+      '--json',...(sensitive ? ['--case-sensitive'] : [])]);
   const subjects = ['Z','[','&','b','x{,3}','\x01','\0','k','xy','aaa','3','-','xzz','zz','u'.repeat(41),'u{41}','a','éx','ax','x','\ud800','é','h','_'];
   reviewFile('patterns', subjects.map(text => row('patterns',text)));
   const patterns = ['[Z-a]','[[]','[a&&b]','[a--b]','x{,3}','\\1','\\0','\\k','(?<a>x)(?<a>y)','a{1000}{1000}{1000}','[\\d]','[\\w-]','[\\s\\S]','\\xzz','\\u{41}','[a-\\d]','(?i)','(?i:a)','[a\\1]','\\8','(x)\\1','(?<name>x)\\k<name>'];

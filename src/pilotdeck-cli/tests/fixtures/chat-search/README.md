@@ -28,3 +28,7 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs \
 src/pilotdeck-cli/tests/fixtures/chat-search/generate.mts /tmp/pdrs-chat-edges-1 edges
 ```
+
+修复轮 4 将 edges 扩至 154 场景，原 77 场景的 argv/stdout/stderr/exit 与原夹具内容逐条保持一致。新增 51 条解码场景覆盖 head/tail、metadata/普通行、title/createdAt、非法 `\x`/`\q`/残缺 `\u12`、原始 TAB/NUL，以及带非 ASCII/非 BMP 前缀时的 UTF-16 错误位置；同时钉住无 summary 不解码、慢路径恢复 summary 后解码及字段求值顺序。损坏文件放在独立 `error-pilot`，仅相应场景通过相对 `--pilot-home` 访问，避免改变已有 all-projects 场景输入。
+
+另加 26 条真实 TS 正则场景，分别以 flags 空串和 `i` 覆盖词边界/行锚点/lookbehind 后量词的错误文本、可量化 lookahead 和断言外层普通组，以及倒序量词。Node 22 的 lookbehind 报 `Invalid quantifier`，词边界和行锚点报 `Nothing to repeat`。生成与复算方式仍用上面的 `edges` 命令；期望全部取自真实 TS，原始流保存在每次输出目录的 `raw/` 中，退出码保存在生成的 `oracle.json` 各场景 `exit` 字段。

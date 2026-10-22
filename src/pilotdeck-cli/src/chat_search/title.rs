@@ -1,6 +1,7 @@
 //! SessionList.ts title projection over the native raw bytes. Preview fields
 //! deliberately use the baseline's raw-line captures, even for partial JSON.
 use super::{Text, string, trim};
+use crate::Failure;
 use fancy_regex::Regex;
 use pilotdeck_protocol::{JsValue, parse_json};
 use std::{collections::HashMap, sync::LazyLock};
@@ -8,24 +9,24 @@ const LITE_BYTES: usize = 65_536;
 const SPACE: &str =
     r"\x09-\x0d\x20\xa0\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}";
 
-pub(super) fn read(bytes: &[u8]) -> Option<Text> {
+pub(super) fn read(bytes: &[u8]) -> Result<Option<Text>, Failure> {
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(LITE_BYTES)]);
     let tail = String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(LITE_BYTES)..]);
     let source = format!("{head}\n{tail}");
-    let fast = (|| {
-        let custom = captured(&source, 0)?;
-        let ai = captured(&source, 1)?;
-        let prompt = prompt(&tail, true).or_else(|| prompt(&head, false));
-        let summary = custom.or(ai).or(prompt).filter(|s| !s.0.is_empty());
-        // readSessionInfo's firstCreatedAt capture is also parsed inside the
-        // caller's catch; malformed escapes invalidate the fast info.
+    // SessionList evaluates each metadata field across all lines in field order.
+    // JSON.parse failures escape readSessionInfo and abort the whole search.
+    let custom = captured(&source, 0)?;
+    let ai = captured(&source, 1)?;
+    for field in 2..5 {
+        captured(&source, field)?;
+    }
+    let prompt = prompt(&tail, true).or_else(|| prompt(&head, false));
+    let fast = custom.or(ai).or(prompt).filter(|s| !s.0.is_empty());
+    if fast.is_some() {
         first_created(&head)?;
-        Ok::<_, ()>(summary)
-    })()
-    .ok()
-    .flatten();
-    if fast.is_some() && bytes.len() <= LITE_BYTES {
-        return fast;
+        if bytes.len() <= LITE_BYTES {
+            return Ok(fast);
+        }
     }
     let mut metadata = HashMap::new();
     // A full trailing snapshot can skip recovery of older patches.
@@ -64,16 +65,14 @@ pub(super) fn read(bytes: &[u8]) -> Option<Text> {
         .find_map(|k| metadata.get(k))
         .filter(|s| !trim(s).0.is_empty());
     if let Some(summary) = metadata_summary {
-        if first_created(&head).is_err() {
-            return None;
-        }
-        return metadata
+        first_created(&head)?;
+        return Ok(metadata
             .get("title")
             .or_else(|| metadata.get("aiTitle"))
             .or(Some(summary))
-            .cloned();
+            .cloned());
     }
-    fast
+    Ok(fast)
 }
 fn merge(target: &mut HashMap<&'static str, Text>, metadata: &JsValue) {
     for key in ["title", "aiTitle", "lastPrompt", "firstPrompt"] {
@@ -113,31 +112,38 @@ fn expressions() -> &'static [Regex; 7] {
     });
     &EXPRESSIONS
 }
-fn captured(source: &str, wanted: usize) -> Result<Option<Text>, ()> {
-    let mut values: [Option<Text>; 6] = Default::default();
-    // All fast metadata captures are evaluated, not only the displayed fields.
+fn captured(source: &str, wanted: usize) -> Result<Option<Text>, Failure> {
+    let mut value = None;
     for line in source
         .split('\n')
         .filter(|line| line.contains("\"session_metadata\""))
     {
-        for (index, value) in values.iter_mut().enumerate().take(5) {
-            if let Some(capture) = expressions()[index].captures(line).map_err(|_| ())?
-                && !capture[1].is_empty()
-            {
-                *value = Some(decode(&capture[1])?);
-            }
+        if let Some(capture) = expressions()[wanted]
+            .captures(line)
+            .map_err(|error| Failure::Error(error.to_string()))?
+            && !capture[1].is_empty()
+        {
+            value = Some(decode(&capture[1])?);
         }
     }
-    Ok(values[wanted].take())
+    Ok(value)
 }
-fn decode(text: &str) -> Result<Text, ()> {
-    parse_json(&format!("\"{text}\""))
-        .ok()
-        .and_then(|v| v.as_string().map(|s| Text(s.clone())))
-        .ok_or(())
+fn decode(text: &str) -> Result<Text, Failure> {
+    let literal = format!("\"{text}\"");
+    let value = parse_json(&literal).map_err(|error| {
+        Failure::Error(
+            pilotdeck_protocol::json_syntax::parse_error(&literal)
+                .unwrap_or_else(|| error.to_string()),
+        )
+    })?;
+    Ok(Text(
+        value.as_string().expect("validated JSON string").clone(),
+    ))
 }
-fn first_created(source: &str) -> Result<(), ()> {
-    if let Some(capture) = expressions()[6].captures(source).map_err(|_| ())?
+fn first_created(source: &str) -> Result<(), Failure> {
+    if let Some(capture) = expressions()[6]
+        .captures(source)
+        .map_err(|error| Failure::Error(error.to_string()))?
         && !capture[1].is_empty()
     {
         decode(&capture[1])?;
