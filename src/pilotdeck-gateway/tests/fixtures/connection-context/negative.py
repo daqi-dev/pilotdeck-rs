@@ -18,14 +18,14 @@ env = dict(os.environ, CARGO_NET_OFFLINE="true")
 assert env.get("CARGO_HOME") and env.get("PDRS_BASELINE")
 # Capture exact formatted blocks so the validation order mutation moves whole checks.
 module = originals["mod.rs"]
-start = module.index('            if frame["protocolVersion"] != GATEWAY_PROTOCOL_VERSION {')
+start = module.index('            let protocol_matches = frame')
 end = module.index('            state.authed = true;', start)
 checks = module[start:end]
-protocol, auth = checks.split('            if frame["token"] != self.token {', 1)
-auth = '            if frame["token"] != self.token {' + auth
+protocol, auth = checks.split('            let token_matches = frame', 1)
+auth = '            let token_matches = frame' + auth
 mutants = [
     ("cleanup-after-final-frame", "mod.rs", "        drop(cleanup);", "        let _late_cleanup = cleanup;", 1),
-    ("remove-server-override", "context.rs", 'fields.insert("interactionBinding".into(), js_value(&binding.to_json()));', 'fields.insert("interactionBinding".into(), js_value(params.get("interactionBinding").unwrap_or(&Value::Null)));', 2),
+    ("remove-server-override", "context.rs", 'fields.insert("interactionBinding".into(), js_value(&binding.to_json()));', 'fields.insert("interactionBinding".into(), params.get("interactionBinding").cloned().unwrap_or(JsValue::Null));', 2),
     ("remove-sdk-control-special-case", "context.rs", 'if !sdk_control {', 'if true || !sdk_control {', 1),
     ("swap-validation-order", "mod.rs", checks, auth + protocol, 1),
     ("wrong-close-code", "mod.rs", 'self.text.close(4003, "auth_failed");', 'self.text.close(4001, "auth_failed");', 1),
@@ -35,19 +35,19 @@ mutants = [
     ("old-binding-disconnects-current", "binding.rs", 'if bindings.get(owner) != Some(binding) {', 'if false && bindings.get(owner) != Some(binding) {', 1),
     ("submit-clears-interaction-session", "mod.rs", '.retain(|s| s != session);', '.retain(|s| s != session);\n        self.connection.state.lock().unwrap().interactions.retain(|s| s != session);', 1),
     ("ticket-scoped-in-flight", None, None, None, 0),
-    ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(Value::Null)',
-     'frame.get("params").filter(|value| !value.is_null()).cloned().unwrap_or_else(|| json!({}))', 1),
-    ("non-string-session-as-empty", "mod.rs", 'truthy(&input["sessionKey"]).then(|| SessionKey::new(input["sessionKey"].clone()))',
-     'input["sessionKey"].as_str().is_some_and(|session| !session.is_empty()).then(|| SessionKey::new(input["sessionKey"].clone()))', 1),
+    ("null-params-as-object", "mod.rs", 'frame.get("params").cloned().unwrap_or(JsValue::Null)',
+     'frame.get("params").cloned().filter(|value| !matches!(value, JsValue::Null)).unwrap_or_else(|| JsValue::Object(JsObject::new()))', 1),
+    ("non-string-session-as-empty", "mod.rs", 'truthy(&session_value).then(|| SessionKey::new(session_value))',
+     'session_value.as_string().is_some_and(|session| !session.is_empty()).then(|| SessionKey::new(session_value))', 1),
     ("tampered-source-hash", "oracle.json",
      json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/server/GatewayWsConnection.ts"], "0" * 64, 1),
 ]
 # Restore the pre-fix spread behavior while keeping the new lossless port.
 context = originals["context.rs"]
 spread_start = context.index("        let mut fields = match &params {")
-spread_end = context.index("        match method {", spread_start)
+spread_end = context.index('        if method.equals_str("submit_turn")', spread_start)
 mutants.append(("non-object-params-as-empty", "context.rs", context[spread_start:spread_end],
-                '        let mut fields = if params.is_object() { js_value(&params).as_object().unwrap().clone() } else { JsObject::new() };\n', 1))
+                '        let mut fields = match &params {\n            JsValue::Object(object) => object.clone(),\n            _ => JsObject::new(),\n        };\n', 1))
 selected = set(sys.argv[2:])
 assert selected <= {name for name, *_ in mutants}, selected
 if selected:
