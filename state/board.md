@@ -1,8 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 11:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #460 | coord | doing | PR #460 board chore，在合并队列等合入
+updated: 2026-10-22 12:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 20261019-decisions | coord | blocked | #354 三决策卡：pr-gate失败,非产品代码
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #458 | impl | blocked | 入站孤立代理（#421 拆出），前置于 A7.2
