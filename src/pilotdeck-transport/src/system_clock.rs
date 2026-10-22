@@ -131,7 +131,8 @@ fn system_tzif() -> Option<Vec<u8>> {
     let path = system_tzif_path(std::env::var_os("TZ").as_deref())?;
     std::fs::read(path).ok()
 }
-pub(crate) fn system_tzif_path(tz: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+/// Safe process-TZ path selection shared with conservative stats retention.
+pub fn system_tzif_path(tz: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
     match tz {
         None => Some(std::path::PathBuf::from("/etc/localtime")),
         Some(tz) => {
@@ -158,7 +159,7 @@ pub(crate) fn system_tzif_path(tz: Option<&std::ffi::OsStr>) -> Option<std::path
 // Pure checked adapter: the registry-pinned parser owns TZif/POSIX decoding.
 // ICU's FORMER policy is applied to each checked normal/skipped result, not to
 // chrono's narrower calendar and not by mapping dates to a convenient year.
-pub(crate) fn resolve_tzif_local(wall: i64, bytes: &[u8]) -> Result<i64, JsString> {
+pub fn resolve_tzif_local(wall: i64, bytes: &[u8]) -> Result<i64, JsString> {
     let zone = tz::TimeZone::from_tz_data(bytes).map_err(|_| JsString::from(
         "NODE22_DATE_LOCAL_TZIF_UNSUPPORTED: system timezone bytes are not an admitted TZif profile."
     ))?;

@@ -25,7 +25,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-d021ff32f7e627dd686cb2b3606c85ce3d0fb7cdcc475ef0c18e0c390b2f8050  accepted-diffs.md
+256d3a5f03ebe9de463febcad2ad8d31da8927e7c6e921866823d891d6d22e42  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
@@ -49,3 +49,5 @@ e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/
 > **2026-10-22 修复轮 4 重登记（PR #476，issue #493）**：按用户本人明确指令，在 A6.4-STATS-BASELINEMODEL-001 节末追加「已实现，差异消除（本 PR 修复轮 4）」及实现/金样依据；Rust 补齐 baselineModel 与 modelPricing 键的引用校验，保留原账本条目。只重登记 accepted-diffs.md 哈希，不新增豁免、不改判分语义；两次真实 TS 生成一致与负控证据见 `_tmp/20261022-a64-pr9b/RESULT.md`「修复轮 4」，两家评审由协调者续办。
 
 > **2026-10-22 人批重登记（issue #496）**：按用户本人选 B 的明确授权，accepted-diffs.md 只追加 A6.4-STATS-SIDECAR-001（降级追加写旁路文件，向安全偏离 TS），修复 retention 锁超时追加与压缩 rename 交错丢账；保留判断、账目行格式与聚合输出不变。真实 TS 两次生成逐字节一致、原版丢账实测及各类变异负控见 `_tmp/20261022-issue-496/RESULT.md`；仅重登记 accepted-diffs.md 哈希，其余哈希与判分语义不变，独立评审由协调者续办。
+
+> **2026-10-22 issue #494 补实现重登记**：按本单用户明确授权，只在 A6.4-STATS-RETENTION-001 末尾追加 V8 共享解析器接入、三个时区真实 TS 回放依据与仍保留的未验证本地 TZif 子集；未宣称全量消除，PR 号待协调者创建后补记。仅重登记 accepted-diffs.md 哈希，不改阈值、装置与判分语义。金样两次一致、变异负控及测试证据见工作区 `_tmp/20261022-issue-494/RESULT.md`，独立评审由协调者续办。
