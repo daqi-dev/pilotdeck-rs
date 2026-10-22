@@ -782,13 +782,10 @@ fn config_reads_snapshot_router_only() {
 }
 
 /// TS `optionalBaselineModel` (`parseRouterConfig.ts:791-811`) resolves the ref
-/// against `modelConfig` and, for an unknown provider, emits the fatal
-/// `ROUTER_REF_PROVIDER_NOT_FOUND` and drops the field. This projection has no
-/// `modelConfig` input, so it accepts the ref — a disclosed gap
-/// (`specs/gateway-parity/accepted-diffs.md` A6.4-STATS-BASELINEMODEL-001).
-/// Pin it so the gap surfaces the day the input lands.
+/// against `modelConfig`; unknown refs must be dropped even by the convenience
+/// projection that does not return diagnostics.
 #[test]
-fn unknown_baseline_model_is_accepted_like_the_recorded_gap() {
+fn unknown_baseline_model_is_dropped() {
     let snapshot = object(vec![(
         "config",
         object(vec![(
@@ -809,7 +806,7 @@ fn unknown_baseline_model_is_accepted_like_the_recorded_gap() {
             .baseline_model
             .as_ref()
             .map(|model| model.id.to_utf8().unwrap()),
-        Some("nope/nope".into())
+        None
     );
 }
 

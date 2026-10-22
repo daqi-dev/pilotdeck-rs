@@ -198,16 +198,27 @@ impl RouterConfig {
     /// Read `snapshot.config.router` from the already-built configuration
     /// snapshot. A snapshot without a router section means "router defaults".
     pub fn from_snapshot(snapshot: &JsValue) -> Self {
+        Self::from_snapshot_with_ref_diagnostics(snapshot).0
+    }
+
+    /// Project the snapshot and report stats reference diagnostics in the TS
+    /// `consumeRef` format. Other configuration diagnostics belong to the loader.
+    pub fn from_snapshot_with_ref_diagnostics(snapshot: &JsValue) -> (Self, Vec<JsValue>) {
+        let mut diagnostics = Vec::new();
         let Some(router) = snapshot
             .get("config")
             .and_then(|config| config.get("router"))
         else {
-            return Self::default();
+            return (Self::default(), diagnostics);
         };
-        Self::from_value(router)
+        let models = field(field(snapshot, "config"), "model");
+        (
+            Self::from_value(router, models, &mut diagnostics),
+            diagnostics,
+        )
     }
 
-    fn from_value(router: &JsValue) -> Self {
+    fn from_value(router: &JsValue, models: &JsValue, diagnostics: &mut Vec<JsValue>) -> Self {
         let mut config = Self::default();
         let Some(object) = router.as_object() else {
             return config;
@@ -231,7 +242,7 @@ impl RouterConfig {
         config.transient_retry = parse_transient(field(router, "transientRetry"));
         config.token_saver = parse_token_saver(field(router, "tokenSaver"));
         config.auto_orchestrate = parse_auto_orchestrate(field(router, "autoOrchestrate"));
-        config.stats = parse_stats(field(router, "stats"));
+        config.stats = parse_stats(field(router, "stats"), models, diagnostics);
         config.custom_router = field(router, "customRouter")
             .get("extensionId")
             .and_then(JsValue::as_string)
@@ -398,7 +409,7 @@ fn parse_auto_orchestrate(value: &JsValue) -> Option<AutoOrchestrateConfig> {
     })
 }
 
-fn parse_stats(value: &JsValue) -> StatsConfig {
+fn parse_stats(value: &JsValue, models: &JsValue, diagnostics: &mut Vec<JsValue>) -> StatsConfig {
     let Some(object) = value.as_object() else {
         return StatsConfig::default();
     };
@@ -415,6 +426,10 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
                 let Some(body) = body.as_object() else {
                     continue;
                 };
+                let path = join_strings(&[&"router.stats.modelPricing.".into(), key]);
+                if consume_ref(key, &path, models, diagnostics).is_none() {
+                    continue;
+                }
                 // `pricingNumber`: a non-finite or negative rate is dropped
                 // (the entry itself stays, matching TS's per-field omission).
                 let rate = |field: &str| {
@@ -433,7 +448,7 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
             }
             map
         });
-    let baseline_model = parse_baseline_model(object.get("baselineModel"));
+    let baseline_model = parse_baseline_model(object.get("baselineModel"), models, diagnostics);
     let retention_ms = object
         .get("retentionMs")
         .and_then(JsValue::as_number)
@@ -453,35 +468,139 @@ fn parse_stats(value: &JsValue) -> StatsConfig {
     }
 }
 
-/// `optionalBaselineModel`: an object whose trimmed `provider`/`model` are
-/// non-empty, or a `"provider/model"` string (`parseRouterConfig.ts:791-811`).
-/// TS additionally validates the ref against `modelConfig` and emits a fatal
-/// diagnostic when it is unknown; this projection has no `modelConfig` input,
-/// so that part stays a recorded divergence.
-fn parse_baseline_model(value: Option<&JsValue>) -> Option<RouterModelRef> {
-    match value? {
-        JsValue::String(value) => parse_model_ref_string(&value.to_utf8().ok()?),
-        value => {
-            let provider = field(value, "provider").as_string()?.to_utf8().ok()?;
-            let model = field(value, "model").as_string()?.to_utf8().ok()?;
-            let provider = crate::metadata::js_trim(&provider);
-            let model = crate::metadata::js_trim(&model);
-            if provider.is_empty() || model.is_empty() {
-                return None;
-            }
-            Some(RouterModelRef::new(provider.into(), model.into()))
-        }
-    }
-}
-
-/// `resolveProviderRef` for the string form: split on the first `/`, both
-/// halves non-empty. The string itself is not trimmed by TS.
-fn parse_model_ref_string(value: &str) -> Option<RouterModelRef> {
-    let (provider, model) = value.split_once('/')?;
-    if provider.is_empty() || model.is_empty() {
+/// `optionalBaselineModel` (`parseRouterConfig.ts:791-811`).
+fn parse_baseline_model(
+    value: Option<&JsValue>,
+    models: &JsValue,
+    diagnostics: &mut Vec<JsValue>,
+) -> Option<RouterModelRef> {
+    let value = value?;
+    if value.is_undefined() {
         return None;
     }
-    Some(RouterModelRef::new(provider.into(), model.into()))
+    let path: JsString = "router.stats.baselineModel".into();
+    if let JsValue::String(value) = value {
+        return consume_ref(value, &path, models, diagnostics);
+    }
+    if let (Some(provider), Some(model)) = (
+        field(value, "provider").as_string(),
+        field(value, "model").as_string(),
+    ) {
+        // Trim UTF-16 code units without replacing lone surrogates.
+        let trim = |s: &JsString| {
+            let units = s.units();
+            let space =
+                |u: &u16| char::from_u32(u32::from(*u)).is_some_and(crate::metadata::js_space);
+            let start = units.iter().position(|u| !space(u)).unwrap_or(units.len());
+            let end = units
+                .iter()
+                .rposition(|u| !space(u))
+                .map_or(start, |i| i + 1);
+            JsString::from_utf16(units[start..end].to_vec())
+        };
+        let provider = trim(provider);
+        let model = trim(model);
+        if !provider.is_empty() && !model.is_empty() {
+            let reference = join_strings(&[&provider, &"/".into(), &model]);
+            return consume_ref(&reference, &path, models, diagnostics);
+        }
+    }
+    ref_diagnostic(
+        diagnostics,
+        "ROUTER_REF_INVALID",
+        &path,
+        join_strings(&[&path, &" must be an object with provider and model.".into()]),
+    );
+    None
+}
+
+fn join_strings(parts: &[&JsString]) -> JsString {
+    JsString::from_utf16(
+        parts
+            .iter()
+            .flat_map(|s| s.units().iter().copied())
+            .collect(),
+    )
+}
+
+fn ref_diagnostic(diagnostics: &mut Vec<JsValue>, code: &str, path: &JsString, message: JsString) {
+    diagnostics.push(crate::metadata::object([
+        ("code", code.into()),
+        ("severity", "fatal".into()),
+        ("path", JsValue::String(path.clone())),
+        ("message", JsValue::String(message)),
+    ]));
+}
+
+/// `schema.ts:233-278` + `consumeRef`: split at the first slash, validate
+/// against the same snapshot's model directory, and drop invalid references.
+fn consume_ref(
+    value: &JsString,
+    path: &JsString,
+    models: &JsValue,
+    diagnostics: &mut Vec<JsValue>,
+) -> Option<RouterModelRef> {
+    let fail = |diagnostics: &mut Vec<JsValue>, code, suffix: JsString| {
+        ref_diagnostic(diagnostics, code, path, join_strings(&[path, &suffix]));
+        None
+    };
+    if value.is_empty() {
+        return fail(
+            diagnostics,
+            "ROUTER_REF_INVALID",
+            " must be a non-empty provider/model string.".into(),
+        );
+    }
+    let Some(separator) = value
+        .units()
+        .iter()
+        .position(|u| *u == 47)
+        .filter(|i| *i > 0 && *i + 1 < value.units().len())
+    else {
+        return fail(
+            diagnostics,
+            "ROUTER_REF_FORMAT",
+            join_strings(&[
+                &" must use provider/model format; got ".into(),
+                value,
+                &".".into(),
+            ]),
+        );
+    };
+    let provider = JsString::from_utf16(value.units()[..separator].to_vec());
+    let model = JsString::from_utf16(value.units()[separator + 1..].to_vec());
+    let provider_entry = field(models, "providers")
+        .as_object()
+        .and_then(|o| o.get_key(&provider));
+    let Some(provider_entry) = provider_entry.filter(|p| truthy(p)) else {
+        return fail(
+            diagnostics,
+            "ROUTER_REF_PROVIDER_NOT_FOUND",
+            join_strings(&[
+                &" references unknown provider ".into(),
+                &provider,
+                &".".into(),
+            ]),
+        );
+    };
+    if !field(provider_entry, "models")
+        .as_object()
+        .and_then(|o| o.get_key(&model))
+        .is_some_and(truthy)
+    {
+        return fail(
+            diagnostics,
+            "ROUTER_REF_MODEL_NOT_FOUND",
+            join_strings(&[
+                &" references unknown model ".into(),
+                &model,
+                &" for provider ".into(),
+                &provider,
+                &".".into(),
+            ]),
+        );
+    }
+    Some(RouterModelRef::new(provider, model))
 }
 
 /// Runtime defaults used by `RouterRetryPolicy`; exported for replay tests.

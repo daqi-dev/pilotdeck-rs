@@ -78730,6 +78730,15 @@
           "baselineModel": "anthropic/claude-sonnet-4-5-20250929"
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true,
         "baselineModel": {
@@ -78747,6 +78756,15 @@
           "baselineModel": {
             "provider": " anthropic ",
             "model": " claude-sonnet-4-5-20250929 "
+          }
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
           }
         }
       },
@@ -78770,13 +78788,24 @@
           }
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true
       },
       "diagnostics": [
         {
           "code": "ROUTER_REF_INVALID",
-          "path": "router.stats.baselineModel"
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel must be an object with provider and model."
         }
       ]
     },
@@ -78787,13 +78816,24 @@
           "baselineModel": "anthropic"
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true
       },
       "diagnostics": [
         {
           "code": "ROUTER_REF_FORMAT",
-          "path": "router.stats.baselineModel"
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel must use provider/model format; got anthropic."
         }
       ]
     },
@@ -78810,6 +78850,15 @@
           }
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true,
         "modelPricing": {
@@ -78821,11 +78870,15 @@
       "diagnostics": [
         {
           "code": "ROUTER_STATS_PRICING_VALUE_INVALID",
-          "path": "router.stats.modelPricing.anthropic/claude-sonnet-4-5-20250929.input"
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic/claude-sonnet-4-5-20250929.input",
+          "message": "pricing values must be finite non-negative numbers."
         },
         {
           "code": "ROUTER_STATS_PRICING_VALUE_INVALID",
-          "path": "router.stats.modelPricing.anthropic/claude-sonnet-4-5-20250929.cacheRead"
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic/claude-sonnet-4-5-20250929.cacheRead",
+          "message": "pricing values must be finite non-negative numbers."
         }
       ]
     },
@@ -78836,13 +78889,24 @@
           "retentionMs": 1000000000000000000
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true
       },
       "diagnostics": [
         {
           "code": "ROUTER_STATS_RETENTION_INVALID",
-          "path": "router.stats.retentionMs"
+          "severity": "fatal",
+          "path": "router.stats.retentionMs",
+          "message": "router.stats.retentionMs must be a positive safe integer in milliseconds."
         }
       ]
     },
@@ -78853,11 +78917,292 @@
           "retentionMs": 60000
         }
       },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
       "stats": {
         "enabled": true,
         "retentionMs": 60000
       },
       "diagnostics": []
+    },
+    {
+      "name": "baseline-unknown-provider",
+      "raw": {
+        "stats": {
+          "baselineModel": "missing/model"
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_PROVIDER_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel references unknown provider missing."
+        }
+      ]
+    },
+    {
+      "name": "baseline-unknown-model",
+      "raw": {
+        "stats": {
+          "baselineModel": "anthropic/missing"
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_MODEL_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel references unknown model missing for provider anthropic."
+        }
+      ]
+    },
+    {
+      "name": "baseline-object-unknown-provider",
+      "raw": {
+        "stats": {
+          "baselineModel": {
+            "provider": " missing ",
+            "model": " model "
+          }
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_PROVIDER_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel references unknown provider missing."
+        }
+      ]
+    },
+    {
+      "name": "baseline-object-unknown-model",
+      "raw": {
+        "stats": {
+          "baselineModel": {
+            "provider": " anthropic ",
+            "model": " missing "
+          }
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_MODEL_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel references unknown model missing for provider anthropic."
+        }
+      ]
+    },
+    {
+      "name": "pricing-mixed-refs",
+      "raw": {
+        "stats": {
+          "modelPricing": {
+            "missing/model": {
+              "input": -1
+            },
+            "anthropic/claude-sonnet-4-5-20250929": {
+              "input": 1,
+              "output": 2,
+              "cacheRead": 0
+            },
+            "anthropic/missing": {
+              "output": 3
+            }
+          },
+          "baselineModel": "missing/baseline"
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true,
+        "modelPricing": {
+          "anthropic/claude-sonnet-4-5-20250929": {
+            "input": 1,
+            "output": 2,
+            "cacheRead": 0
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_PROVIDER_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.missing/model",
+          "message": "router.stats.modelPricing.missing/model references unknown provider missing."
+        },
+        {
+          "code": "ROUTER_REF_MODEL_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic/missing",
+          "message": "router.stats.modelPricing.anthropic/missing references unknown model missing for provider anthropic."
+        },
+        {
+          "code": "ROUTER_REF_PROVIDER_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.baselineModel",
+          "message": "router.stats.baselineModel references unknown provider missing."
+        }
+      ]
+    },
+    {
+      "name": "pricing-no-valid-refs",
+      "raw": {
+        "stats": {
+          "modelPricing": {
+            "missing/model": {
+              "input": 1
+            },
+            "anthropic/missing": {
+              "output": 2
+            }
+          }
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true,
+        "modelPricing": {}
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_PROVIDER_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.missing/model",
+          "message": "router.stats.modelPricing.missing/model references unknown provider missing."
+        },
+        {
+          "code": "ROUTER_REF_MODEL_NOT_FOUND",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic/missing",
+          "message": "router.stats.modelPricing.anthropic/missing references unknown model missing for provider anthropic."
+        }
+      ]
+    },
+    {
+      "name": "pricing-malformed-refs",
+      "raw": {
+        "stats": {
+          "modelPricing": {
+            "": {},
+            "anthropic": {},
+            "/model": {},
+            "anthropic/": {}
+          }
+        }
+      },
+      "modelConfig": {
+        "providers": {
+          "anthropic": {
+            "models": {
+              "claude-sonnet-4-5-20250929": {}
+            }
+          }
+        }
+      },
+      "stats": {
+        "enabled": true,
+        "modelPricing": {}
+      },
+      "diagnostics": [
+        {
+          "code": "ROUTER_REF_INVALID",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.",
+          "message": "router.stats.modelPricing. must be a non-empty provider/model string."
+        },
+        {
+          "code": "ROUTER_REF_FORMAT",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic",
+          "message": "router.stats.modelPricing.anthropic must use provider/model format; got anthropic."
+        },
+        {
+          "code": "ROUTER_REF_FORMAT",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing./model",
+          "message": "router.stats.modelPricing./model must use provider/model format; got /model."
+        },
+        {
+          "code": "ROUTER_REF_FORMAT",
+          "severity": "fatal",
+          "path": "router.stats.modelPricing.anthropic/",
+          "message": "router.stats.modelPricing.anthropic/ must use provider/model format; got anthropic/."
+        }
+      ]
     }
   ]
 }
