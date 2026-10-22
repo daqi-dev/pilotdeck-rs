@@ -389,7 +389,7 @@ impl DefaultContextRuntime {
             let (attachment, memory_diagnostics) = super::memory::build(
                 resolver.as_ref(),
                 super::memory::MemoryRetrieveInput {
-                    query: super::memory::recent_user_text(&messages),
+                    query: super::memory::recent_user_text(&messages)?,
                     session_id: input.session_id_text.clone(),
                     project_root: self
                         .inner

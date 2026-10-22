@@ -25,8 +25,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 58;
-const STEPS: usize = 108;
+const CASES: usize = 68;
+const STEPS: usize = 124;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -533,7 +533,11 @@ async fn prepare_for_model_matches_real_ts() {
                     budget_evaluator: None,
                 })
                 .await;
-            if let Some(memory) = setup.get("memory") {
+            // A step that expects an error can fail before the memory stage
+            // (malformed text block), so the provider is legitimately uncalled.
+            if let Some(memory) = setup.get("memory")
+                && step.get("error").is_none()
+            {
                 let child = memory_child.lock().unwrap();
                 if abort.as_deref() == Some("before") {
                     assert!(child.is_none(), "pre-abort skips provider");
