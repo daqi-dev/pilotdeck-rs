@@ -74,6 +74,11 @@ impl RefreshRouter for Fakes {
             .push(format!("markProjectDirty:{}:{reason}", utf8(key)));
         0
     }
+    fn mark_session_dirty(&self, key: &JsString, reason: &str) -> bool {
+        self.0
+            .push(format!("markSessionDirty:{}:{reason}", utf8(key)));
+        false
+    }
     fn cached_session_count(&self) -> usize {
         0
     }
@@ -499,6 +504,9 @@ impl RefreshRouter for GatedRouter {
     }
     fn mark_project_dirty(&self, key: &JsString, reason: &str) -> usize {
         self.inner.mark_project_dirty(key, reason)
+    }
+    fn mark_session_dirty(&self, key: &JsString, reason: &str) -> bool {
+        self.inner.mark_session_dirty(key, reason)
     }
     fn cached_session_count(&self) -> usize {
         0

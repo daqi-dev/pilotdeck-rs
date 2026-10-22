@@ -245,6 +245,17 @@ async fn bounded<F: Future>(future: F) -> F::Output {
 fn count(owner: &SessionOwner) -> usize {
     owner.cached_session_count()
 }
+fn dirty(owner: &SessionOwner, key: &str) -> bool {
+    owner
+        .0
+        .state
+        .lock()
+        .unwrap()
+        .records
+        .get(&key.into())
+        .unwrap()
+        .dirty
+}
 fn sweep_count(owner: &SessionOwner) -> usize {
     owner.sweep_idle();
     count(owner)
@@ -300,6 +311,58 @@ async fn dirty_mark_during_recreation_is_cleared_matches_ts() {
             "nextIsFresh": next.same_identity(&fresh)}),
         &probe,
     );
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_session_dirty_missing_key_is_noop() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let b = owner.get_or_create(context("b")).await.unwrap();
+    assert!(!owner.mark_session_dirty(&"missing".into(), "sdk_session_config_changed"));
+    assert!(!dirty(&owner, "a"));
+    assert!(!dirty(&owner, "b"));
+    let a_again = owner.get_or_create(context("a")).await.unwrap();
+    let b_again = owner.get_or_create(context("b")).await.unwrap();
+    assert!(a.same_identity(&a_again));
+    assert!(b.same_identity(&b_again));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    assert!(!probe.seen("evict:b:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_session_dirty_existing_key_recreates_and_clears() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert!(owner.mark_session_dirty(&"a".into(), "sdk_session_config_changed"));
+    assert!(dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(!old.same_identity(&fresh));
+    assert!(probe.seen("evict:a:dirty_recreate"));
+    assert!(!dirty(&owner, "a"));
+    let next = owner.get_or_create(context("a")).await.unwrap();
+    assert!(fresh.same_identity(&next));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_session_dirty_targets_only_its_session() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let a = owner.get_or_create(context("a")).await.unwrap();
+    let b = owner.get_or_create(context("b")).await.unwrap();
+    assert!(owner.mark_session_dirty(&"a".into(), "sdk_session_config_changed"));
+    assert!(dirty(&owner, "a"));
+    assert!(!dirty(&owner, "b"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(!a.same_identity(&fresh));
+    let b_again = owner.get_or_create(context("b")).await.unwrap();
+    assert!(b.same_identity(&b_again));
+    assert!(probe.seen("evict:a:dirty_recreate"));
+    assert!(!probe.seen("evict:b:dirty_recreate"));
     owner.shutdown().await.unwrap();
 }
 

@@ -761,6 +761,14 @@ impl RefreshRouter for SessionOwner {
         }
         count
     }
+    fn mark_session_dirty(&self, key: &JsString, _reason: &str) -> bool {
+        let mut state = self.0.state.lock().unwrap();
+        let Some(record) = state.records.get_mut(key) else {
+            return false;
+        };
+        record.dirty = true;
+        true
+    }
     fn cached_session_count(&self) -> usize {
         self.0.state.lock().unwrap().records.len()
     }
