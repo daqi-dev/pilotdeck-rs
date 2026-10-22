@@ -447,7 +447,17 @@ async fn network_fetch_inner(
                             before_abort,
                         ) => {
                             continuation_before_abort = before_abort;
-                            Err(NetworkFetchError::classify(&message, cause_code))
+                            // TS normalizes raw fetch rejection before testing retry
+                            // eligibility. Preserve an earlier error timer's continuation.
+                            Err(
+                                if !before_abort
+                                    && options.parent.is_some_and(ToolRunContext::is_aborted)
+                                {
+                                    abort_error("Network request aborted by parent signal.")
+                                } else {
+                                    NetworkFetchError::classify(&message, cause_code)
+                                },
+                            )
                         }
                         Exchange::Aborted => {
                             Err(abort_error("Network request aborted by parent signal."))

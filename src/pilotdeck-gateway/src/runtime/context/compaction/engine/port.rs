@@ -13,6 +13,31 @@ impl CompactionSummaryPort for CompactionEngine {
     }
 }
 pub trait CompactionBudgetPort: Send + Sync {
+    /// Keep JS values intact until the budget capability consumes them. A
+    /// custom port can observe the same raw arguments as TS's budget.evaluate.
+    fn evaluate_raw(
+        &self,
+        messages: &JsValue,
+        context: &JsValue,
+        reserved: &JsValue,
+    ) -> Result<JsValue, HostError> {
+        let JsValue::Array(messages) = messages else {
+            return Err(failure("messages is not iterable"));
+        };
+        let number = |value: &JsValue| {
+            crate::js_value::to_number(value)
+                .map_err(|_| failure(crate::js_value::StackOverflow::MESSAGE))
+        };
+        self.evaluate(
+            messages,
+            number(context)?,
+            if matches!(reserved, JsValue::Null | JsValue::Undefined) {
+                None
+            } else {
+                Some(number(reserved)?)
+            },
+        )
+    }
     fn evaluate(
         &self,
         messages: &[JsValue],
@@ -22,6 +47,49 @@ pub trait CompactionBudgetPort: Send + Sync {
     fn estimate_messages(&self, messages: &[JsValue]) -> Result<f64, HostError>;
 }
 impl CompactionBudgetPort for TokenBudgetManager {
+    fn evaluate_raw(
+        &self,
+        messages: &JsValue,
+        context: &JsValue,
+        reserved: &JsValue,
+    ) -> Result<JsValue, HostError> {
+        let messages = match messages {
+            JsValue::Array(messages) => messages.as_slice(),
+            JsValue::String(s) if s.is_empty() => &[],
+            JsValue::String(_) => return Err(failure("message.content is not iterable")),
+            _ => return Err(failure("messages is not iterable")),
+        };
+        let number = |v: &JsValue| {
+            crate::js_value::to_number(v)
+                .map_err(|_| failure(crate::js_value::StackOverflow::MESSAGE))
+        };
+        let reserved = if matches!(reserved, JsValue::Null | JsValue::Undefined) {
+            0.0
+        } else {
+            number(reserved)?
+        };
+        let mut result =
+            CompactionBudgetPort::evaluate(self, messages, number(context)?, Some(reserved))?;
+        // effectiveInputContextTokens uses Number.isFinite before coercion,
+        // so non-number context values pass through to the public snapshot.
+        if !matches!(context, JsValue::Number(_)) {
+            let tokens = field(&result, "tokens").as_number().unwrap();
+            let numeric = number(context)?;
+            set(&mut result, "maxContextTokens", context.clone());
+            set(&mut result, "effectiveContextTokens", context.clone());
+            let ratio = if numeric > 0.0 { tokens / numeric } else { 0.0 };
+            set(&mut result, "ratio", JsValue::Number(ratio));
+            let state = if ratio >= self.blocking_ratio {
+                "blocking"
+            } else if ratio >= self.warning_ratio {
+                "warning"
+            } else {
+                "ok"
+            };
+            set(&mut result, "state", state.into());
+        }
+        Ok(result)
+    }
     fn evaluate(
         &self,
         messages: &[JsValue],
@@ -166,49 +234,5 @@ impl CompactionPort {
     }
 }
 
-/// Serializable budget intent; preserve explicitly supplied false/zero.
-pub fn project_compaction_budget(input: &JsValue) -> JsValue {
-    let stage = if !matches!(
-        field(input, "budgetStage"),
-        JsValue::Undefined | JsValue::Null
-    ) {
-        field(input, "budgetStage").clone()
-    } else if field(input, "allowFallbackOnFailure") == &JsValue::Bool(true) {
-        text("recovery")
-    } else if field(input, "maxContextTokens").is_undefined() {
-        text("pre_route")
-    } else {
-        text("routed")
-    };
-    let mut projection = object([
-        ("stage", stage),
-        (
-            "trigger",
-            if matches!(field(input, "trigger"), JsValue::Undefined | JsValue::Null) {
-                text("auto")
-            } else {
-                field(input, "trigger").clone()
-            },
-        ),
-    ]);
-    for name in [
-        "maxContextTokens",
-        "reservedOutputTokens",
-        "manualForce",
-        "allowFallbackOnFailure",
-    ] {
-        if !field(input, name).is_undefined() {
-            set(&mut projection, name, field(input, name).clone());
-        }
-    }
-    for (from, to) in [
-        ("budgetRequest", "request"),
-        ("budgetPreparation", "preparation"),
-        ("budgetCalibration", "calibration"),
-    ] {
-        if js_truthy(field(input, from)) {
-            set(&mut projection, to, field(input, from).clone());
-        }
-    }
-    projection
-}
+/// Shared with the transport serializer that publishes budgetProjection.
+pub use pilotdeck_protocol::compaction::project_compaction_budget;

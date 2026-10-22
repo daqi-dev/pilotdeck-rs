@@ -34,9 +34,11 @@ impl CompactionOrchestrator {
     }
     pub async fn run(&self, input: ContextInput) -> Result<JsValue, HostError> {
         let fields = JsValue::Object(input.fields.clone());
-        let context = field(&fields, "maxContextTokens")
-            .as_number()
-            .unwrap_or(self.max_context_tokens);
+        let context = nullish(
+            field(&fields, "maxContextTokens"),
+            &JsValue::Number(self.max_context_tokens),
+        )
+        .clone();
         let manual = string_field(&fields, "trigger").is_some_and(|s| s.equals_str("manual"))
             && field(&fields, "manualForce") == &JsValue::Bool(true);
         let port = &self.port;
@@ -45,24 +47,21 @@ impl CompactionOrchestrator {
             .as_ref()
             .filter(|_| manual || port.policy.is_some())
         else {
-            return Ok(skipped(empty_snapshot(context)));
+            return Ok(skipped(empty_snapshot(context.clone())));
         };
-        let JsValue::Array(messages) = field(&fields, "messages") else {
-            return Err(ModuleError::new("Compaction input messages must be an array.").into());
-        };
-        let mut messages = messages.clone();
-        let evaluate = |messages: Vec<JsValue>| {
+        let evaluate = |messages: JsValue| {
             let evaluator = input.budget_evaluator.clone();
-            let reserved = field(&fields, "reservedOutputTokens").as_number();
+            let reserved = field(&fields, "reservedOutputTokens").clone();
+            let context = context.clone();
             async move {
                 if let Some(evaluator) = evaluator {
-                    evaluator.evaluate(JsValue::Array(messages)).await
+                    evaluator.evaluate(messages).await
                 } else {
-                    budget.evaluate(&messages, context, reserved)
+                    budget.evaluate_raw(&messages, &context, &reserved)
                 }
             }
         };
-        let mut current = evaluate(messages.clone()).await?;
+        let mut current = evaluate(field(&fields, "messages").clone()).await?;
         if manual {
             if port.summary.is_none() {
                 return Ok(skipped(current));
@@ -76,12 +75,18 @@ impl CompactionOrchestrator {
             if !string_field(&decision, "type").is_some_and(|s| s.equals_str("trigger")) {
                 return Ok(skipped(field(&decision, "snapshot").clone()));
             }
+        }
+        let mut messages = match field(&fields, "messages") {
+            JsValue::Array(messages) => messages.clone(),
+            _ => return Err(ModuleError::new("messages is not iterable").into()),
+        };
+        if !manual {
             if let Some(micro) = &port.micro {
                 let mut micro_input = MicroCompactionInput::new(&messages);
                 micro_input.trim_to_tokens = Some(768.0);
                 let result = micro.apply(&micro_input)?;
                 messages = result.messages;
-                current = evaluate(messages.clone()).await?;
+                current = evaluate(JsValue::Array(messages.clone())).await?;
                 if ratio(&current) < 0.90 {
                     if result.rewritten == 0 {
                         return Ok(skipped(current));
@@ -107,11 +112,12 @@ impl CompactionOrchestrator {
         };
         let effective = js_max(
             1.0,
-            field(&current, "effectiveContextTokens")
-                .as_number()
-                .or_else(|| field(&current, "maxContextTokens").as_number())
-                .unwrap_or(f64::NAN)
-                .floor(),
+            crate::js_value::to_number(nullish(
+                field(&current, "effectiveContextTokens"),
+                field(&current, "maxContextTokens"),
+            ))
+            .map_err(|_| ModuleError::new(crate::js_value::StackOverflow::MESSAGE))?
+            .floor(),
         );
         let target = js_max(1.0, (effective * 0.60).floor());
         let summary_input = |trigger: &str, messages: Vec<JsValue>| {
@@ -144,7 +150,7 @@ impl CompactionOrchestrator {
             messages
         };
         let mut final_result = summary_succeeded.then_some(result);
-        let mut snapshot = evaluate(post.clone()).await?;
+        let mut snapshot = evaluate(JsValue::Array(post.clone())).await?;
         let mut snip_applied = false;
         if summary_succeeded
             && ratio(&snapshot) > 0.60
@@ -161,14 +167,14 @@ impl CompactionOrchestrator {
                 },
             )?;
             post = result.messages;
-            snapshot = evaluate(post.clone()).await?;
+            snapshot = evaluate(JsValue::Array(post.clone())).await?;
             snip_applied = result.applied;
         }
 
         let mut emergency_applied = false;
         if ratio(&snapshot) >= 0.90 {
             // The baseline deliberately evaluates again on emergency entry.
-            snapshot = evaluate(post.clone()).await?;
+            snapshot = evaluate(JsValue::Array(post.clone())).await?;
             if !below_emergency(&snapshot) {
                 let mut emergency_input = summary_input("reactive", post.clone());
                 emergency_input.keep_tail_ratio = Some(0.05);
@@ -184,7 +190,7 @@ impl CompactionOrchestrator {
                         port.build_post_compact_messages(&replacement),
                     );
                     emergency_applied = true;
-                    snapshot = evaluate(post.clone()).await?;
+                    snapshot = evaluate(JsValue::Array(post.clone())).await?;
                     final_result = Some(emergency);
                 }
                 if !below_emergency(&snapshot) {
@@ -196,13 +202,13 @@ impl CompactionOrchestrator {
                         let projected = micro.apply(&micro_input)?;
                         post = projected.messages;
                         emergency_applied |= projected.rewritten > 0;
-                        snapshot = evaluate(post.clone()).await?;
+                        snapshot = evaluate(JsValue::Array(post.clone())).await?;
                     }
                     if !below_emergency(&snapshot) {
                         let truncated = (port.truncate_head_preserving_checkpoint)(&post, 0.10);
                         emergency_applied |= truncated.changed;
                         post = truncated.messages;
-                        snapshot = evaluate(post.clone()).await?;
+                        snapshot = evaluate(JsValue::Array(post.clone())).await?;
                         if let Some(result) = &mut final_result {
                             result.diagnostics.push(diagnostic(
                                 "context_hard_truncate", "error",
@@ -292,13 +298,21 @@ fn diagnostic(code: &str, severity: &str, message: String) -> JsValue {
 pub(crate) fn skipped(snapshot: JsValue) -> JsValue {
     object([("type", "skipped".into()), ("snapshot", snapshot)])
 }
-pub(crate) fn empty_snapshot(context: f64) -> JsValue {
+pub(crate) fn empty_snapshot(context: JsValue) -> JsValue {
     object([
         ("tokens", JsValue::Number(0.0)),
-        ("maxContextTokens", JsValue::Number(context)),
+        ("maxContextTokens", context),
         ("warningRatio", JsValue::Number(0.0)),
         ("blockingRatio", JsValue::Number(0.0)),
         ("state", "ok".into()),
         ("ratio", JsValue::Number(0.0)),
     ])
+}
+
+pub(crate) fn nullish<'a>(value: &'a JsValue, fallback: &'a JsValue) -> &'a JsValue {
+    if matches!(value, JsValue::Null | JsValue::Undefined) {
+        fallback
+    } else {
+        value
+    }
 }

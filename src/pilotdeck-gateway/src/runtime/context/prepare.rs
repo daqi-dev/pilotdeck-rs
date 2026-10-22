@@ -720,8 +720,9 @@ impl ContextRuntime for DefaultContextRuntime {
                 let context = input
                     .fields
                     .get("maxContextTokens")
-                    .and_then(JsValue::as_number)
-                    .unwrap_or(self.inner.max_context_tokens);
+                    .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                    .cloned()
+                    .unwrap_or(JsValue::Number(self.inner.max_context_tokens));
                 Box::pin(async move {
                     Ok(super::compaction::orchestrator::skipped(
                         super::compaction::orchestrator::empty_snapshot(context),

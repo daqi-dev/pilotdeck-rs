@@ -55,7 +55,12 @@ pub async fn classify_and_route(
 
     let prompt = generate_judge_prompt(&user_message, config, previous_tier);
     let judge_request = judge_request(config, prompt);
-    let timeout_ms = config.judge_timeout_ms.max(500.0);
+    // JS Math.max propagates NaN; f64::max would silently replace it.
+    let timeout_ms = if config.judge_timeout_ms.is_nan() {
+        f64::NAN
+    } else {
+        config.judge_timeout_ms.max(500.0)
+    };
 
     for attempt in 1..=MAX_ATTEMPTS {
         if attempt > 1 {
@@ -68,7 +73,10 @@ pub async fn classify_and_route(
         // only forwarded into it (TS `judgeAbortController`).
         let judge_abort = AbortFlag::new();
         let request_future = invoker.complete(judge_request.clone(), Some(judge_abort.clone()));
-        let timed = tokio::time::timeout(Duration::from_millis(timeout_ms as u64), request_future);
+        let timed = tokio::time::timeout(
+            crate::runtime::network::node_timer_duration(timeout_ms),
+            request_future,
+        );
         let outcome = match abort.as_ref() {
             Some(caller) => {
                 tokio::select! {

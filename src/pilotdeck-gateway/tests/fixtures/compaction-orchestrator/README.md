@@ -31,11 +31,10 @@ JSONL 原始字节；两条 recovery 串联案例仅验证决策，不冒充模�
 比较真实主模型/摘要调用次数、完整阶段顺序、事件类型序列、最终结果与持久化回调次数。
 随机 blockId 不属于该观测投影；此处没有排序或重排观测字节。
 
-`admissionProbe` 仅录制真实 TS AgentHandle 的第二次手动 compact 拒绝。
-重入锁位于 `agent/scope/AgentHandle.ts:131-168`，不在 orchestrator；
-Rust 此树尚无该 owner，当前不声称该探针已有 Rust 拒绝回放，本单这项验收仍未闭合。
-协调者可衔接计划 005 的 A7.1 接纳层，但此处不自动更改本单范围。
-两个并发 orchestrator 调用在 TS 中合法，不能为满足案例而加错锁。
+`admissionProbe` 录制真实 TS AgentHandle 第二次手动 compact 的拒绝。
+Rust `compaction_maintenance_reentry_matches_real_ts` 在同层
+`LiveSessionHandle::begin_maintenance` 回放拒绝文本，并验证维护/turn 相斥、
+正常与错误释放后的再次接纳。锁不属于 stage orchestrator。
 
 回放：
 

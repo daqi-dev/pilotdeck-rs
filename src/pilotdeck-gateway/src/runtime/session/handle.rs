@@ -100,9 +100,11 @@ impl LiveSessionHandle {
             return Err(RuntimeError::new("Agent handle is not active."));
         }
         if progress.activity {
-            return Err(RuntimeError::new(
-                "Agent handle already has an active turn.",
-            ));
+            return Err(RuntimeError::new(if maintenance {
+                "Agent handle is not idle for maintenance."
+            } else {
+                "Agent handle already has an active turn."
+            }));
         }
         progress.activity = true;
         progress.maintenance = maintenance;

@@ -281,10 +281,6 @@ fn compact_input(v: &CompactionIntent) -> JsValue {
     ]);
     opt(&mut o, "sessionId", v.session_id.as_ref(), s);
     opt(&mut o, "turnId", v.turn_id.as_ref(), s);
-    let mut projection = obj([
-        ("stage", JsValue::from(stage)),
-        ("trigger", JsValue::from(trigger)),
-    ]);
     for (k, value) in [
         ("maxContextTokens", v.max_context_tokens.map(n)),
         ("reservedOutputTokens", v.reserved_output_tokens.map(n)),
@@ -292,8 +288,7 @@ fn compact_input(v: &CompactionIntent) -> JsValue {
         ("allowFallbackOnFailure", v.allow_fallback_on_failure.map(b)),
     ] {
         if let Some(value) = value {
-            put(&mut o, k, value.clone());
-            put(&mut projection, k, value);
+            put(&mut o, k, value);
         }
     }
     opt(&mut o, "budgetRequest", v.budget_request.as_ref(), |r| {
@@ -314,7 +309,21 @@ fn compact_input(v: &CompactionIntent) -> JsValue {
         v.calibration.as_ref(),
         calibration,
     );
-    put(&mut o, "budgetProjection", JsValue::Object(projection));
+    let mut intent = o.clone();
+    put(&mut intent, "budgetStage", JsValue::from(stage));
+    let projection =
+        pilotdeck_protocol::compaction::project_compaction_budget(&JsValue::Object(intent));
+    // hostContextRuntime carries the rich request/preparation beside projection.
+    let mut serialized = JsObject::new();
+    for (key, value) in projection.as_object().unwrap().entries() {
+        if !["request", "preparation", "calibration"]
+            .iter()
+            .any(|name| key.equals_str(name))
+        {
+            serialized.insert(key.clone(), value.clone());
+        }
+    }
+    put(&mut o, "budgetProjection", JsValue::Object(serialized));
     JsValue::Object(o)
 }
 fn payload(call: &HostCall) -> JsObject {
