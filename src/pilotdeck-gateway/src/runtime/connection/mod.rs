@@ -4,8 +4,8 @@ pub mod binding;
 mod context;
 
 use binding::WsBinding;
-use context::{SessionKey, State, jv_get, jv_str, jv_truthy};
-use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsValue, parse_json};
+use context::{SessionKey, State, truthy};
+use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsValue};
 use serde_json::{Value, json};
 use std::{
     future::Future,
@@ -118,36 +118,33 @@ impl GatewayConnection {
     /// while calling closed(); no synthetic terminal event is sent on cancellation.
     pub fn receive<'a>(&'a self, message: &str) -> Call<'a, Result<(), RequestError>> {
         let mut state = self.state.lock().unwrap();
-        // parse_json accepts lone UTF-16 surrogates; serde_json would reject them.
-        let Ok(frame) = parse_json(message) else {
+        let Ok(frame) = serde_json::from_str::<Value>(message) else {
             drop(state);
             self.text.close(4002, "invalid_json");
             return Box::pin(async { Ok(()) });
         };
         if !state.authed {
-            if jv_str(jv_get(&frame, "type")).as_deref() != Some("hello")
+            if frame["type"] != "hello"
                 || !["protocolVersion", "clientName", "clientVersion", "token"]
                     .iter()
-                    .all(|key| jv_str(jv_get(&frame, key)).is_some())
+                    .all(|key| frame[*key].is_string())
             {
                 drop(state);
                 self.text.close(4001, "hello_required");
                 return Box::pin(async { Ok(()) });
             }
-            if jv_str(jv_get(&frame, "protocolVersion")).as_deref()
-                != Some(GATEWAY_PROTOCOL_VERSION)
-            {
+            if frame["protocolVersion"] != GATEWAY_PROTOCOL_VERSION {
                 drop(state);
                 self.text.close(4001, "protocol_mismatch");
                 return Box::pin(async { Ok(()) });
             }
-            if jv_str(jv_get(&frame, "token")).as_deref() != Some(self.token.as_str()) {
+            if frame["token"] != self.token {
                 drop(state);
                 self.text.close(4003, "auth_failed");
                 return Box::pin(async { Ok(()) });
             }
             state.authed = true;
-            state.client_name = jv_str(jv_get(&frame, "clientName"));
+            state.client_name = frame["clientName"].as_str().map(str::to_owned);
             return Box::pin(async move {
                 // As in TS, authentication is published before describe awaits.
                 let info = self.gateway.describe_server().await?;
@@ -159,28 +156,16 @@ impl GatewayConnection {
                 Ok(())
             });
         }
-        if jv_str(jv_get(&frame, "type")).as_deref() != Some("request")
-            || jv_str(jv_get(&frame, "id")).is_none()
-            || jv_str(jv_get(&frame, "method")).is_none()
-        {
+        if frame["type"] != "request" || !frame["id"].is_string() || !frame["method"].is_string() {
             drop(state);
             self.text.close(4002, "invalid_frame");
             return Box::pin(async { Ok(()) });
         }
-        let id = json!(jv_str(jv_get(&frame, "id")).unwrap());
-        let method = jv_str(jv_get(&frame, "method")).unwrap();
-        // params may contain lone surrogates; keep as JsValue throughout.
-        let input: JsValue = match frame {
-            JsValue::Object(ref o) => o.get("params").cloned().unwrap_or(JsValue::Null),
-            _ => JsValue::Null,
-        };
-        let session_key_jv = jv_get(&input, "sessionKey");
-        let session_key_val: Value = pilotdeck_protocol::stringify_json(session_key_jv)
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(Value::Null);
-        let session = jv_truthy(session_key_jv).then(|| SessionKey::new(session_key_val));
+        let id = frame["id"].clone();
+        let method = frame["method"].as_str().unwrap().to_owned();
+        let input = frame.get("params").cloned().unwrap_or(Value::Null);
+        let session =
+            truthy(&input["sessionKey"]).then(|| SessionKey::new(input["sessionKey"].clone()));
         let is_submit = method == "submit_turn";
         if is_submit && let Some(session) = session.as_ref() {
             state.track_interaction(session);
@@ -204,10 +189,11 @@ impl GatewayConnection {
                     .and_then(|result| {
                         // TS reads the original params only after dispatch succeeds.
                         // Null/undefined throw here even though dispatch saw an object.
-                        if method == "permission_decide" && matches!(input, JsValue::Null) {
-                            let kind = match &frame {
-                                JsValue::Object(o) if o.contains_key("params") => "null",
-                                _ => "undefined",
+                        if method == "permission_decide" && input.is_null() {
+                            let kind = if frame.get("params").is_some() {
+                                "null"
+                            } else {
+                                "undefined"
                             };
                             Err(RequestError::new(format!(
                                 "Cannot read properties of {kind} (reading 'sessionKey')"
@@ -220,15 +206,13 @@ impl GatewayConnection {
             match result {
                 Ok(Some(result)) => {
                     if method == "permission_decide"
-                        && matches!(input, JsValue::Object(_))
-                        && jv_str(jv_get(&input, "sessionKey")).is_some()
-                        && jv_str(jv_get(&input, "requestId")).is_some()
+                        && input.is_object()
+                        && input["sessionKey"].is_string()
+                        && input["requestId"].is_string()
                     {
-                        let session_key = jv_str(jv_get(&input, "sessionKey")).unwrap();
-                        let request_id = jv_str(jv_get(&input, "requestId")).unwrap();
-                        let mut payload = json!({"type":"resolved", "sessionKey":session_key, "requestId":request_id});
-                        if let Some(pk) = jv_str(jv_get(&input, "projectKey")) {
-                            payload["projectKey"] = json!(pk);
+                        let mut payload = json!({"type":"resolved", "sessionKey":input["sessionKey"], "requestId":input["requestId"]});
+                        if input["projectKey"].is_string() {
+                            payload["projectKey"] = input["projectKey"].clone();
                         }
                         self.notify("permission_changed", Some(payload));
                     }
@@ -252,7 +236,7 @@ impl GatewayConnection {
         &self,
         id: &Value,
         params: JsValue,
-        input: &JsValue,
+        input: &Value,
         cleanup: Option<SubmitCleanup<'_>>,
     ) -> Result<(), RequestError> {
         let stream = Mutex::new((0u64, None, None));
@@ -264,18 +248,16 @@ impl GatewayConnection {
             if event["type"] == "error" {
                 stream.2 = Some(event.clone());
             }
-            if event["type"] == "permission_request" && jv_truthy(jv_get(input, "sessionKey")) {
-                let sk_raw = pilotdeck_protocol::stringify_json(jv_get(input, "sessionKey"))
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| "null".to_owned());
-                let sk_val: Value = serde_json::from_str(&sk_raw).unwrap_or(Value::Null);
-                let mut payload = json!({"type":"requested", "sessionKey":sk_val});
-                if let Some(pk) = jv_str(jv_get(input, "projectKey")) {
-                    payload["projectKey"] = json!(pk);
-                }
-                if let Some(rid) = event.get("requestId").and_then(Value::as_str) {
-                    payload["requestId"] = json!(rid);
+            if event["type"] == "permission_request" && truthy(&input["sessionKey"]) {
+                let mut payload = json!({"type":"requested", "sessionKey":input["sessionKey"]});
+                for key in ["projectKey", "requestId"] {
+                    if let Some(value) = if key == "requestId" {
+                        event.get(key)
+                    } else {
+                        input.get(key)
+                    } {
+                        payload[key] = value.clone();
+                    }
                 }
                 self.notify("permission_changed", Some(payload));
             }

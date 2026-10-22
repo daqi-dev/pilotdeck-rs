@@ -7,27 +7,6 @@ fn js_value(value: &Value) -> JsValue {
     parse_json(&value.to_string()).expect("serde JSON is valid JS JSON")
 }
 
-/// Index a JsValue as if it were an object; missing/non-object → JsValue::Null.
-pub(super) fn jv_get<'a>(v: &'a JsValue, key: &str) -> &'a JsValue {
-    static NULL: JsValue = JsValue::Null;
-    v.as_object().and_then(|o| o.get(key)).unwrap_or(&NULL)
-}
-
-/// Return the string value if it is valid UTF-8, else None.
-pub(super) fn jv_str(v: &JsValue) -> Option<String> {
-    v.as_string().and_then(|s| s.to_utf8().ok())
-}
-
-pub(super) fn jv_truthy(v: &JsValue) -> bool {
-    match v {
-        JsValue::Null | JsValue::Undefined => false,
-        JsValue::Bool(b) => *b,
-        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
-        JsValue::String(s) => !s.is_empty(),
-        JsValue::Array(_) | JsValue::Object(_) => true,
-    }
-}
-
 // JSON scalars use JS SameValueZero; arrays/objects retain request identity.
 // Cloning a key for cleanup/close must preserve that identity.
 #[derive(Clone, Debug)]
@@ -78,27 +57,21 @@ impl State {
             self.interactions.push(session.clone());
         }
     }
-    pub fn inject(&mut self, method: &str, params: JsValue, binding: &WsBinding) -> JsValue {
+    pub fn inject(&mut self, method: &str, params: Value, binding: &WsBinding) -> JsValue {
         if !matches!(
             method,
             "submit_turn" | "elicitation_respond" | "permission_decide" | "reconnect_interaction"
         ) {
-            return params;
+            return js_value(&params);
         }
-        // SessionKey still uses serde Value for identity comparison.
-        let session_jv = jv_get(&params, "sessionKey");
-        let session_raw = pilotdeck_protocol::stringify_json(session_jv)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "null".to_owned());
-        let session = SessionKey::new(serde_json::from_str(&session_raw).unwrap_or(Value::Null));
+        let session = SessionKey::new(params["sessionKey"].clone());
         // JS object spread enumerates UTF-16 code units, including surrogate
         // halves. Keep those in JsValue all the way to the gateway dispatch.
         let mut fields = match &params {
-            JsValue::Object(o) => o.clone(),
-            JsValue::String(text) => {
+            Value::Object(_) => js_value(&params).as_object().unwrap().clone(),
+            Value::String(text) => {
                 let mut fields = JsObject::new();
-                for (index, unit) in text.units().iter().copied().enumerate() {
+                for (index, unit) in text.encode_utf16().enumerate() {
                     fields.insert(
                         index.to_string().into(),
                         JsValue::String(JsString::from_utf16(vec![unit])),
@@ -106,10 +79,10 @@ impl State {
                 }
                 fields
             }
-            JsValue::Array(items) => {
+            Value::Array(items) => {
                 let mut fields = JsObject::new();
                 for (index, item) in items.iter().enumerate() {
-                    fields.insert(index.to_string().into(), item.clone());
+                    fields.insert(index.to_string().into(), js_value(item));
                 }
                 fields
             }
@@ -129,25 +102,17 @@ impl State {
             }
             "reconnect_interaction" => {
                 self.track_interaction(&session);
-                // Null sessionKey forwards as "" per TS (GatewayWsConnection.ts:369).
-                let forwarded_key = if session.value().is_null() {
-                    JsValue::String(JsString::from(""))
+                let forwarded = if session.value().is_null() {
+                    serde_json::json!("")
                 } else {
-                    jv_get(&params, "sessionKey").clone()
+                    session.value().clone()
                 };
-                let mut next = JsObject::new();
-                next.insert("sessionKey".into(), forwarded_key);
-                next.insert("nextBinding".into(), js_value(&binding.to_json()));
-                // Forward previousBinding when the key is present, even if null.
-                if let JsValue::Object(ref o) = params
-                    && o.contains_key("previousBinding")
-                {
-                    next.insert(
-                        "previousBinding".into(),
-                        jv_get(&params, "previousBinding").clone(),
-                    );
+                let mut next =
+                    serde_json::json!({"sessionKey":forwarded, "nextBinding":binding.to_json()});
+                if let Some(previous) = params.get("previousBinding") {
+                    next["previousBinding"] = previous.clone();
                 }
-                return JsValue::Object(next);
+                return js_value(&next);
             }
             _ => {}
         }
