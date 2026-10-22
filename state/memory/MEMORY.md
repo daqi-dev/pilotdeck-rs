@@ -7,7 +7,7 @@
 
 
 - [Grok Bot 通道](20261019-grokbot-channel.md) — 本机可直连调用（scripts/grokbot-call.py + CURSOR_ACCESS_TOKEN）；未定为评审谱系
-- [本机模型评审入口](20261015-model-runners.md) — 2026-10-15 已核验的 Z.AI GLM 与 DeepSeek 通道（DeepSeek 首选 scripts/review-deepseek.py 直连 API，dsh 兜底）；区分 provider 错误与工具不可用，不改全局默认。
+- [模型通道正本](20261015-model-runners.md) — 2026-10-22 起优先 glm-5.3-mb + deepseek-v4.1-flash-mb（llm-center）；各入口、unrecognized_model 非失败、--runner anthropic 缺钥等已知坑
 
 - [基线源码锚点](20261016-source-anchors.md) — 入口枚举先定位真实源码表达式，锚点失配不靠猜名或放松匹配解决。
 
