@@ -1,0 +1,48 @@
+# AgentEvent → GatewayEvent 投影金样
+
+基线为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，运行时须
+Node 22（基线根已含 `node_modules/tsx`）。
+
+`generate.mts` 经基线已安装的 esbuild 在内存中把下列**未改写**源文件转为 CJS 并执行：
+
+- `src/gateway/client/GatewayAgentEventProjector.ts`（真实 `mapAgentEvent` facade、
+  `GatewayAgentEventProjector.project` 与全部 55 个 switch 分支）
+- `src/gateway/client/GatewayToolResultArtifactStore.ts`（仅为可注入端口提供类型/类）
+- `src/model/protocol/toolResultContent.ts`（真实 `flattenToolResultBlockText`）
+- `src/tool/protocol/result.ts`（真实 `contentToText`）
+
+只注入 `GatewayToolResultArtifactStorePort` 的确定性替身：它照真实实现的 4096 字节
+阈值决定是否返回路径，路径根固定在 `/tmp/pdrs-agent-event-projector`，不写文件，
+并把每次 `persist` 入参和返回值记入金样。投影本身的排序、截断、附件、错误和
+budget 计算均来自真实 TS 执行；未用到的 import 通过访问即报错的 Proxy 隔离。
+
+93 个 case 覆盖 `AgentEvent` 联合的每个成员（含 `observer_report`、`session_started`
+与未知/缺 type 的 default 分支）、`model_event`/`subagent_model_event` 的各子类型、
+`forwardSubagentText` 真假、timeline/streamBoundary 传播、tool_result 的 bytes/UTF-16
+截断边界、4 种 mime 扩展名与 `value` 回退、providerError 的 raw 截断
+（在代理对中间切开）、`??` 与 `!== undefined` 的 null/缺失差异，以及 persist 阈值。
+
+每个 case 的 `frames` 是 `mapAgentEvent` 返回对象的 `JSON.stringify` 语义快照：
+Rust 回放逐条比 `stringify_json` 的**文本**，因此键顺序、数字格式、lone surrogate
+转义和 undefined 键的省略都参与比对；`persist` 数组同样逐条比对。
+
+```sh
+export PDRS_BASELINE=/absolute/path/to/PilotDeck
+export TSX_DISABLE_CACHE=1 TMPDIR=/tmp LANG=en_US.UTF-8
+node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/fixtures/agent-event-projector/generate.mts /tmp/aep-first
+node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/fixtures/agent-event-projector/generate.mts /tmp/aep-second
+cmp /tmp/aep-first/oracle.json /tmp/aep-second/oracle.json
+```
+
+生成器开始前调用共享 `../_shared/baseline.mts`，核固定 HEAD、tracked 状态与 6 个
+执行源文件的提交版/工作版 SHA-256。Rust 回放统一先走 `crate::test_baseline::oracle`；
+设置 `PDRS_BASELINE` 时重新核对真实源码。
+
+`negative.py` 在 `/tmp` 的隔离 crate 中逐条改坏 `projector.rs`，要求真实断言转红并
+打印对应 case 名；任一负控未被抓住即退出 1。命令：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/agent-event-projector/negative.py /tmp/aep-negative
+```
