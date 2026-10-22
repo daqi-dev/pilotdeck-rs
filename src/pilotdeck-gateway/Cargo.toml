@@ -17,9 +17,6 @@ sha2.workspace = true
 icu_collator = "=2.1.1"
 icu_casemap = "=2.1.1"
 icu_locale_core = "=2.3.0"
-# A6.4-pr9b fix: `Date.parse` resolves a zone-less timestamp in the host local
-# timezone; `clock` supplies that offset without unsafe code in this crate.
-chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
 rustix = { version = "=1.1.5", features = ["fs", "process"] }
 serde_json.workspace = true
 pilotdeck-protocol.workspace = true

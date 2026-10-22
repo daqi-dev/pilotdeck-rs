@@ -212,7 +212,8 @@ pub struct RouterDeps {
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub is_model_allowed: Arc<dyn Fn(&RouterModelRef) -> bool + Send + Sync>,
     /// Native stats collector (`createNativeRouterUsageObserver`); absent means
-    /// a disabled collector, so snapshot projections still answer empty.
+    /// `with_deps` derives one from `config.stats` (enabled only when the router
+    /// is enabled), so snapshot projections still answer and `observe` works.
     pub stats: Option<Arc<Mutex<TokenStatsCollector>>>,
 }
 impl RouterDeps {

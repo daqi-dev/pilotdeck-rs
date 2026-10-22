@@ -134,7 +134,15 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
     let raw_config = get(scenario, "config");
     let enabled = get(raw_config, "enabled").as_bool().unwrap_or(true);
     let config = stats_config(raw_config, &home, enabled);
-    let mut stats = TokenStatsCollector::new(Some(&config), Some(&home));
+    // The TS generator pins `Date.now` for boundary scenarios; mirror it.
+    let fixed_now = get(scenario, "now").as_number();
+    let make = || match fixed_now {
+        Some(now) => {
+            TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now))
+        }
+        None => TokenStatsCollector::new(Some(&config), Some(&home)),
+    };
+    let mut stats = make();
 
     for (index, step) in items(get(scenario, "steps")).iter().enumerate() {
         let op = text(get(step, "op"));
@@ -200,7 +208,7 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
             }
             "reopen" => {
                 stats.dispose();
-                stats = TokenStatsCollector::new(Some(&config), Some(&home));
+                stats = make();
             }
             "clear" => stats.clear(),
             "files" => {}
@@ -219,7 +227,7 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
 fn token_stats_replay_matches_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = items(get(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 7);
+    assert_eq!(scenarios.len(), 8);
     for scenario in scenarios {
         replay_scenario(scenario).unwrap();
     }
