@@ -367,6 +367,90 @@ async fn mark_session_dirty_targets_only_its_session() {
 }
 
 #[tokio::test]
+async fn mark_all_dirty_empty_reason_keeps_clean_session() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert_eq!(owner.mark_all_dirty(""), 1);
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_all_dirty_empty_reason_clears_prior_dirty() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert_eq!(owner.mark_all_dirty("refresh"), 1);
+    assert!(dirty(&owner, "a"));
+    assert_eq!(owner.mark_all_dirty(""), 1);
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_project_dirty_empty_reason_keeps_clean_session() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert_eq!(owner.mark_project_dirty(&"project".into(), ""), 1);
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_project_dirty_empty_reason_clears_prior_dirty() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert_eq!(owner.mark_project_dirty(&"project".into(), "refresh"), 1);
+    assert!(dirty(&owner, "a"));
+    assert_eq!(owner.mark_project_dirty(&"project".into(), ""), 1);
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_session_dirty_empty_reason_keeps_clean_session() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert!(owner.mark_session_dirty(&"a".into(), ""));
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mark_session_dirty_empty_reason_clears_prior_dirty() {
+    let probe = Probe::default();
+    let owner = probe.owner();
+    let old = owner.get_or_create(context("a")).await.unwrap();
+    assert!(owner.mark_session_dirty(&"a".into(), "refresh"));
+    assert!(dirty(&owner, "a"));
+    assert!(owner.mark_session_dirty(&"a".into(), ""));
+    assert!(!dirty(&owner, "a"));
+    let fresh = owner.get_or_create(context("a")).await.unwrap();
+    assert!(old.same_identity(&fresh));
+    assert!(!probe.seen("evict:a:dirty_recreate"));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn dirty_identity_and_publication_matches_ts() {
     let probe = Probe::default();
     let owner = probe.owner();

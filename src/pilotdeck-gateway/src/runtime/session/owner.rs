@@ -743,30 +743,30 @@ impl Drop for MaintenanceReservation {
 }
 
 impl RefreshRouter for SessionOwner {
-    fn mark_all_dirty(&self, _reason: &str) -> usize {
+    fn mark_all_dirty(&self, reason: &str) -> usize {
         let mut state = self.0.state.lock().unwrap();
         for record in state.records.values_mut() {
-            record.dirty = true;
+            record.dirty = !reason.is_empty();
         }
         state.records.len()
     }
-    fn mark_project_dirty(&self, project: &JsString, _reason: &str) -> usize {
+    fn mark_project_dirty(&self, project: &JsString, reason: &str) -> usize {
         let mut state = self.0.state.lock().unwrap();
         let mut count = 0;
         for record in state.records.values_mut() {
             if record.context.project_key.as_ref() == Some(project) {
-                record.dirty = true;
+                record.dirty = !reason.is_empty();
                 count += 1;
             }
         }
         count
     }
-    fn mark_session_dirty(&self, key: &JsString, _reason: &str) -> bool {
+    fn mark_session_dirty(&self, key: &JsString, reason: &str) -> bool {
         let mut state = self.0.state.lock().unwrap();
         let Some(record) = state.records.get_mut(key) else {
             return false;
         };
-        record.dirty = true;
+        record.dirty = !reason.is_empty();
         true
     }
     fn cached_session_count(&self) -> usize {
