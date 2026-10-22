@@ -17,13 +17,16 @@ fn parity(source: &str, errors_only: bool, bounded: Option<&str>) {
     for (name, text) in oracle["files"].as_object().unwrap() {
         let path = root.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            path,
-            text.as_str()
-                .unwrap()
-                .replace("{runtime}", &root.to_string_lossy()),
-        )
-        .unwrap();
+        let mut text = text
+            .as_str()
+            .unwrap()
+            .replace("{runtime}", &root.to_string_lossy());
+        if bounded == Some("bounded-literal") && name.ends_with("/literal.jsonl") {
+            // Repeat nonmatching TS input, preserving the exact TS output/query.
+            // The 32 rows force the old sliding window past the CPU budget.
+            text = (text + "\n").repeat(32);
+        }
+        fs::write(path, text).unwrap();
     }
     let mut failures = Vec::new();
     let mut checked = 0;
@@ -45,7 +48,7 @@ fn parity(source: &str, errors_only: bool, bounded: Option<&str>) {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
+        let mut command = search_command(bounded.is_some());
         command
             .arg("chat")
             .args(args)
@@ -93,11 +96,37 @@ fn parity(source: &str, errors_only: bool, bounded: Option<&str>) {
     );
 }
 
+// RLIMIT_CPU counts CPU consumed by this process, not time waiting to be
+// scheduled. /bin/sh sets both limits then execs the CLI in the same PID, so
+// the watchdog can kill/reap the actual CLI without leaving a wrapper's child.
+// No shell interpolation: all CLI arguments are passed separately via "$@".
+fn search_command(bounded: bool) -> Command {
+    if !bounded {
+        return Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
+    }
+    let mut command = Command::new("/bin/sh");
+    command
+        .args([
+            "-c",
+            "ulimit -t 4 || exit 125; exec \"$@\"",
+            "chat-search-cpu-budget",
+        ])
+        .arg(env!("CARGO_BIN_EXE_pilotdeck"));
+    command
+}
+
 // Drain both pipes while polling: a large JSON query must not block on a full
-// stdout pipe. Kill and reap at the deadline, including for the old OOM path.
+// stdout pipe. CPU exhaustion is a nonzero exit; 120 s is only a hang watchdog.
+// macOS debug measurements (fix6-*.log in RESULT): the old class materializer
+// on the unchanged 65,000-escape input used 83.63 CPU s / 534 MiB before being
+// killed at 120 s. Original literal windows used 0.29-0.33 CPU s per row;
+// at 32 rows it used 7.05/5.94 CPU s, versus KMP's 1.06/0.24 CPU s for the
+// two case modes. A 4 CPU s limit is insensitive to scheduler load;
+// the wall watchdog has >50x the measured 2.11 s new literal wall time.
 fn bounded_output(command: &mut Command, id: &str) -> std::process::Output {
     use std::{
         io::Read,
+        os::unix::process::ExitStatusExt,
         process::Stdio,
         time::{Duration, Instant},
     };
@@ -116,18 +145,23 @@ fn bounded_output(command: &mut Command, id: &str) -> std::process::Output {
     };
     let stdout = drain(Box::new(child.stdout.take().unwrap()));
     let stderr = drain(Box::new(child.stderr.take().unwrap()));
+    let mut killed_at_deadline = false;
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if started.elapsed() >= Duration::from_secs(1) {
-            child.kill().unwrap();
-            child.wait().unwrap();
-            stdout.join().unwrap();
-            stderr.join().unwrap();
-            panic!(
-                "{id}: chat search translation + matching exceeded 1 s; child killed and reaped"
-            );
+        if started.elapsed() >= Duration::from_secs(120) {
+            // Recheck at the deadline. If exit races with kill, wait's actual
+            // status wins: a successful exit must not become a timeout merely
+            // because this polling thread or the pipe drain ran late.
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            // kill may lose the race to a normal exit; still reap and drain.
+            let _ = child.kill();
+            let status = child.wait().unwrap();
+            killed_at_deadline = status.signal() == Some(libc::SIGKILL);
+            break status;
         }
         std::thread::sleep(Duration::from_millis(2));
     };
@@ -137,8 +171,20 @@ fn bounded_output(command: &mut Command, id: &str) -> std::process::Output {
         stderr: stderr.join().unwrap(),
     };
     assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "chat search translation + matching exceeded 1 s"
+        !killed_at_deadline,
+        "{id}: 120 s hang watchdog killed and reaped child; elapsed={:?}, stdout={} bytes, stderr={} bytes",
+        started.elapsed(),
+        output.stdout.len(),
+        output.stderr.len(),
+    );
+    assert!(
+        output.status.success(),
+        "{id}: bounded child failed (4 CPU s budget); status={}, elapsed={:?}, stdout={} bytes, stderr={} bytes; stderr={:?}",
+        output.status,
+        started.elapsed(),
+        output.stdout.len(),
+        output.stderr.len(),
+        String::from_utf8_lossy(&output.stderr),
     );
     output
 }
