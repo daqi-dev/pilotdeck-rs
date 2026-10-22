@@ -425,11 +425,19 @@ pub(crate) fn iso_timestamp_now() -> String {
     iso_timestamp(ms)
 }
 
-/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ` for years 0000–9999 and finite values in
-/// the JS Date range `|ms| <= 8.64e15`. Inside that domain this matches
-/// `new Date(ms).toISOString()`; extended `±YYYYYY` years, NaN, and values
-/// outside the range are unsupported. The only caller is `iso_timestamp_now`
-/// (current wall clock), so those boundaries are unreachable here.
+/// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`, matching `new Date(ms).toISOString()` for
+/// the supported domain: finite `ms` inside the JS Date range `|ms| <= 8.64e15`
+/// whose year is 0000-9999. Callers: `iso_timestamp_now` (current wall clock,
+/// always inside the domain) and the router's `startedAt` / `endedAt`, which
+/// stamp `RouterDeps.clock()` — a seam that tests can pin to any value.
+///
+/// Outside the domain this diverges from TS, which throws
+/// `RangeError: Invalid time value` from `toISOString()` (NaN included) and so
+/// writes no record: NaN casts to 0 here (writing `1970-01-01T00:00:00.000Z`),
+/// and an out-of-range or extended-year instant formats with an over-wide
+/// unsigned year, which is not canonical and is therefore never parsed again by
+/// stats retention. Only an injected clock can reach those values, so callers
+/// injecting a clock must keep it finite and inside the range.
 pub(crate) fn iso_timestamp(timestamp_ms: f64) -> String {
     let ms = timestamp_ms as i64;
     let days = ms.div_euclid(86_400_000);

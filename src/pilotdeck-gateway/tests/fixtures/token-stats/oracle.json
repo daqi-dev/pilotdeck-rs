@@ -54038,6 +54038,87 @@
       ]
     },
     {
+      "name": "retention-expanded-years",
+      "now": 8640000000000002,
+      "config": {
+        "enabled": true,
+        "retentionMs": 0
+      },
+      "initial": {
+        "stats.jsonl": "{\"sessionId\":\"negative-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-000001-12-31T23:59:59.999Z\",\"endedAt\":\"-000001-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"negative-expanded\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-010000-01-01T00:00:00.000Z\",\"endedAt\":\"-010000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"positive-expanded\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+010000-01-01T00:00:00.000Z\",\"endedAt\":\"+010000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"max-date\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+275760-09-13T00:00:00.000Z\",\"endedAt\":\"+275760-09-13T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"min-date\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-271821-04-20T00:00:00.000Z\",\"endedAt\":\"-271821-04-20T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"above-max\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+275760-09-13T00:00:00.001Z\",\"endedAt\":\"+275760-09-13T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-271821-04-19T23:59:59.999Z\",\"endedAt\":\"-271821-04-19T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"above-max-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+999999-12-31T23:59:59.999Z\",\"endedAt\":\"+999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-999999-12-31T23:59:59.999Z\",\"endedAt\":\"-999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"negative-zero\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-000000-01-01T00:00:00.000Z\",\"endedAt\":\"-000000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"unsigned-expanded\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"010000-01-01T00:00:00.000Z\",\"endedAt\":\"010000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+      },
+      "steps": [
+        {
+          "op": "files",
+          "expected": {
+            "result": null,
+            "files": {
+              "stats.jsonl": "{\"sessionId\":\"above-max\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+275760-09-13T00:00:00.001Z\",\"endedAt\":\"+275760-09-13T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-271821-04-19T23:59:59.999Z\",\"endedAt\":\"-271821-04-19T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"above-max-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+999999-12-31T23:59:59.999Z\",\"endedAt\":\"+999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-999999-12-31T23:59:59.999Z\",\"endedAt\":\"-999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"negative-zero\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-000000-01-01T00:00:00.000Z\",\"endedAt\":\"-000000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"unsigned-expanded\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"010000-01-01T00:00:00.000Z\",\"endedAt\":\"010000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+            }
+          }
+        },
+        {
+          "op": "snapshot",
+          "expected": {
+            "result": {
+              "totalRequests": 6,
+              "totalInputTokens": 42,
+              "totalOutputTokens": 18,
+              "totalCost": 0.00043799999999999997,
+              "totalBaselineCost": 0.00043799999999999997,
+              "totalSavedCost": 0,
+              "perScenario": {
+                "default": 6
+              },
+              "perModel": {
+                "anthropic/claude-sonnet-4-5-20250929": 6
+              },
+              "perProvider": {
+                "anthropic": 6
+              },
+              "perTier": {},
+              "perRole": {},
+              "costSources": {
+                "built_in_estimate": 6
+              },
+              "perModelUsage": {
+                "anthropic/claude-sonnet-4-5-20250929": {
+                  "provider": "anthropic",
+                  "model": "claude-sonnet-4-5-20250929",
+                  "totalRequests": 6,
+                  "inputTokens": 42,
+                  "outputTokens": 18,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": 0,
+                  "totalTokens": 60,
+                  "totalCost": 0.00043799999999999997,
+                  "costSources": {
+                    "built_in_estimate": 6
+                  },
+                  "roles": {}
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "reopen",
+          "expected": {
+            "result": null
+          }
+        },
+        {
+          "op": "files",
+          "expected": {
+            "result": null,
+            "files": {
+              "stats.jsonl": "{\"sessionId\":\"above-max\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+275760-09-13T00:00:00.001Z\",\"endedAt\":\"+275760-09-13T00:00:00.001Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-271821-04-19T23:59:59.999Z\",\"endedAt\":\"-271821-04-19T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"above-max-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"+999999-12-31T23:59:59.999Z\",\"endedAt\":\"+999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"below-min-year\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-999999-12-31T23:59:59.999Z\",\"endedAt\":\"-999999-12-31T23:59:59.999Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"negative-zero\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"-000000-01-01T00:00:00.000Z\",\"endedAt\":\"-000000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n{\"sessionId\":\"unsigned-expanded\",\"scenarioType\":\"default\",\"resolvedFrom\":\"scenario\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"inputTokens\":7,\"outputTokens\":3},\"startedAt\":\"010000-01-01T00:00:00.000Z\",\"endedAt\":\"010000-01-01T00:00:00.000Z\",\"cost\":{\"input\":0.000028,\"output\":0.000045,\"cacheRead\":0,\"total\":0.000073},\"costSource\":\"built_in_estimate\",\"baselineCost\":0.000073}\n"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "session-request-log-cap",
       "config": {
         "enabled": true

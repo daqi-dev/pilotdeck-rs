@@ -19,7 +19,7 @@ Gateway `usageSnapshotForSdk` / `modelUsageSnapshotForSdk` projections.
   - `src/router/config/schema.ts`
     `69c8427d7d854eaed0d89475d6a97bfa8e9bd960deefd6e76de7e2f983056609`
 - `oracle.json` sha256:
-  `d557580119bf1aa25bdb99bcc304a1dcb364a69613cec76d5e4e2271df7f4228`
+  `1fb59484c2544f51c0bc12edc4df87dbff97338b76691ad80e2e5beb6ab89f88`
 
 `generate.mts` imports the real modules and calls
 `ProjectRuntimeRegistry.prototype.usageSnapshotForSdk` /
@@ -28,10 +28,15 @@ receiver. Every expected record, aggregate, snapshot, projection and journal
 byte comes from that run. Only the input event streams and checkpoints are
 hand-authored.
 
-Retention only interprets the canonical `toISOString()` shape the collector writes;
-other V8-parseable timestamps are kept. Rows whose V8 parse is a finite past
-instant are therefore not in this oracle (TS would delete them) — they are
-pinned as "kept" in `stats_tests.rs` instead. See RESULT.md「修复轮 2」.
+Retention interprets exactly the two canonical `toISOString()` shapes the
+collector writes: 24-byte `YYYY-MM-DDTHH:mm:ss.sssZ` (years 0000-9999) and
+27-byte `±YYYYYY-MM-DDTHH:mm:ss.sssZ` (outside that range, within the `Date`
+limits). Other V8-parseable timestamps are kept. Rows whose V8 parse is a finite
+past instant and which are *not* canonical are therefore not in this oracle
+(TS would delete them) — they are pinned as "kept" in `stats_tests.rs` instead.
+The divergence is disclosed in `specs/gateway-parity/accepted-diffs.md`
+(A6.4-STATS-RETENTION-001) with the real-TS probe values; the decision behind it
+is in `state/decisions-20261022.md`「A6.4-pr9b」.
 
 ## Regenerate
 
@@ -58,6 +63,7 @@ The generator refuses an existing output directory (the oracle is written with
 | `windows-and-pruning` | 505 events over 80 hourly buckets and 205 sessions: hourly cap 72, session cap 200 (evicted session `w115`, kept `w69`), recent-buffer trim 500→250, reopen rebuild sort |
 | `retention-compaction` | seeded journal with expired (`2000`), retained (`2999`) and malformed `endedAt` rows: out-of-range offsets, `+24:00`, day `32`, `+汉a`, `00:00.500Z`, `24:00:00.0001Z`, `002000-...`, a real leap day (`2024-02-29`) and millisecond timestamps; constructor compaction, lock cleanup, append, reopen |
 | `retention-boundary` | fixed `Date.now` (`now` in the oracle): `endedAt` exactly `now - retentionMs` is kept, one millisecond either side is kept/dropped; leap-day row dropped; reopen |
+| `retention-expanded-years` | fixed `now` past the last valid `Date` instant, zero retention: canonical 27-byte `±YYYYYY` rows (`-000001`, `-010000`, `+010000`, min and max `Date`) expire; rows outside the `Date` range plus non-canonical expanded years (`-000000`, unsigned 6-digit) are kept; reopen |
 | `session-request-log-cap` | 201 observations in one session: `requestLog` length 199/200/201 (200 kept, then `>200` → newest 100), reopen rebuild keeps 100 while aggregates still count 201 |
 | `json-migration` | one-time `stats.json` → `stats.jsonl`, sort by `startedAt`, `.bak` rename, then observe |
 | `disabled` | no journal, empty aggregates, empty projections |

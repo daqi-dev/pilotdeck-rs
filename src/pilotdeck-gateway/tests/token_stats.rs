@@ -227,7 +227,7 @@ fn replay_scenario(scenario: &JsValue) -> Result<(), String> {
 fn token_stats_replay_matches_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = items(get(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 8);
+    assert_eq!(scenarios.len(), 9);
     for scenario in scenarios {
         replay_scenario(scenario).unwrap();
     }
