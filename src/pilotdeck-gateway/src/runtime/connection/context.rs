@@ -139,13 +139,13 @@ impl State {
                 next.insert("sessionKey".into(), forwarded_key);
                 next.insert("nextBinding".into(), js_value(&binding.to_json()));
                 // Forward previousBinding when the key is present, even if null.
-                if let JsValue::Object(ref o) = params {
-                    if o.contains_key("previousBinding") {
-                        next.insert(
-                            "previousBinding".into(),
-                            jv_get(&params, "previousBinding").clone(),
-                        );
-                    }
+                if let JsValue::Object(ref o) = params
+                    && o.contains_key("previousBinding")
+                {
+                    next.insert(
+                        "previousBinding".into(),
+                        jv_get(&params, "previousBinding").clone(),
+                    );
                 }
                 return JsValue::Object(next);
             }
