@@ -9,6 +9,9 @@
 //! Pricing is not duplicated here: `crate::model_cost` owns the rate table and
 //! the exact floating-point composition. Records are kept as plain JS objects
 //! so the persisted JSONL text (key order included) matches `JSON.stringify`.
+#[path = "stats_journal.rs"]
+mod journal;
+
 use super::router::{RouterModelRef, StatsConfig, usage_from_js, wall_clock};
 use crate::model_cost::{self, PricingMap, PricingSource};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -463,13 +466,18 @@ impl TokenStatsCollector {
         };
         if self.retention_ms.is_some() {
             if let Some(lock) = self.acquire_retention_lock(&jsonl) {
-                let _ = fs::write(&jsonl, b"");
+                if journal::recover(&jsonl).is_ok() {
+                    let _ = fs::write(&jsonl, b"");
+                    let _ = journal::clear_pending(&jsonl);
+                }
                 release_lock(&jsonl, lock);
             } else {
                 let _ = fs::write(&jsonl, b"");
+                let _ = journal::clear_pending(&jsonl);
             }
         } else {
             let _ = fs::write(&jsonl, b"");
+            let _ = journal::clear_pending(&jsonl);
         }
     }
 
@@ -572,16 +580,17 @@ impl TokenStatsCollector {
             return;
         };
         if self.retention_ms.is_some() {
-            // TS `appendRecord` (`TokenStatsCollector.ts:257-261`) appends
-            // anyway when the 25×1ms lock attempt fails; that fallback is
-            // intentional parity, not a "we never write unlocked" invariant.
-            // Dropping the row here would lose a fresh record whenever another
-            // writer holds the lock.
+            // Human-approved safety deviation: never append to an inode that
+            // compaction may replace after a lock timeout (issue #496).
             if let Some(lock) = self.acquire_retention_lock(&jsonl) {
-                let _ = append_bytes(&jsonl, line.as_bytes());
+                if journal::recover(&jsonl).is_ok() {
+                    let _ = append_bytes(&jsonl, line.as_bytes());
+                } else {
+                    let _ = journal::append_pending(&jsonl, line.as_bytes());
+                }
                 release_lock(&jsonl, lock);
             } else {
-                let _ = append_bytes(&jsonl, line.as_bytes());
+                let _ = journal::append_pending(&jsonl, line.as_bytes());
             }
             return;
         }
@@ -599,20 +608,11 @@ impl TokenStatsCollector {
         let Some(jsonl) = self.jsonl_path.clone() else {
             return PersistedData::new();
         };
-        let Some(raw) = read_bounded_text(&jsonl, super::MAX_STRING_LENGTH) else {
+        let Some((current, _)) = journal::snapshot(&jsonl) else {
             return PersistedData::new();
         };
         let mut records = Vec::new();
-        for line in raw.split('\n') {
-            if line.is_empty() {
-                continue;
-            }
-            let Ok(record) = parse_json(line) else {
-                continue;
-            };
-            if text(&record, "sessionId").is_none() || text(&record, "startedAt").is_none() {
-                continue;
-            }
+        for record in current {
             if !self.is_retained(&record) {
                 self.expired_records_loaded = true;
                 continue;
@@ -648,9 +648,8 @@ impl TokenStatsCollector {
         self.compact_retained_records();
     }
 
-    /// Retention is opt-in; rewrite only while retention-aware writers hold the
-    /// journal lock. The temporary name embeds pid + `Date.now()` like TS, and
-    /// is renamed onto the journal before the lock is released.
+    /// Retention filtering is unchanged; the replacement also consumes the
+    /// immutable sidecars visible at this snapshot, with a recoverable receipt.
     fn compact_retained_records(&mut self) {
         let Some(jsonl) = self.jsonl_path.clone() else {
             return;
@@ -661,7 +660,17 @@ impl TokenStatsCollector {
         let Some(lock) = self.acquire_retention_lock(&jsonl) else {
             return;
         };
-        let current = read_stats_records(&jsonl);
+        self.compact_locked(&jsonl);
+        release_lock(&jsonl, lock);
+    }
+
+    fn compact_locked(&mut self, jsonl: &Path) {
+        if journal::recover(jsonl).is_err() {
+            return;
+        }
+        let Some((current, pending)) = journal::snapshot(jsonl) else {
+            return;
+        };
         let kept: Vec<JsValue> = current
             .into_iter()
             .filter(|record| self.is_retained(record))
@@ -672,21 +681,12 @@ impl TokenStatsCollector {
         self.recent_records
             .retain(|record| is_retained_record(retention, now, record));
         self.retained_records = Some(kept.clone());
-        let temporary = format!(
-            "{}.{}.{}.tmp",
-            jsonl.display(),
-            std::process::id(),
-            (self.clock)() as i64
-        );
         let text = kept
             .iter()
             .filter_map(|record| stringify_json(record).ok().flatten())
             .map(|line| format!("{line}\n"))
             .collect::<String>();
-        if fs::write(&temporary, text).is_ok() {
-            let _ = fs::rename(&temporary, &jsonl);
-        }
-        release_lock(&jsonl, lock);
+        let _ = journal::replace(jsonl, text.as_bytes(), &pending);
     }
 
     fn acquire_retention_lock(&self, jsonl: &Path) -> Option<File> {
@@ -1084,10 +1084,14 @@ fn is_retained_record(retention: Option<f64>, now: f64, record: &JsValue) -> boo
     ended_at >= now - retention
 }
 
+#[cfg(test)]
 fn read_stats_records(path: &Path) -> Vec<JsValue> {
-    let Some(raw) = read_bounded_text(path, super::MAX_STRING_LENGTH) else {
-        return Vec::new();
-    };
+    journal::snapshot(path)
+        .map(|(records, _)| records)
+        .unwrap_or_default()
+}
+
+fn parse_stats_records(raw: &str) -> Vec<JsValue> {
     let mut records = Vec::new();
     for line in raw.split('\n') {
         if line.is_empty() {

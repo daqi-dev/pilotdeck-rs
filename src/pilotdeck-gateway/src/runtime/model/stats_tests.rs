@@ -377,11 +377,9 @@ fn retention_keeps_non_canonical_rows_the_baseline_deletes() {
     fs::remove_dir_all(&home).unwrap();
 }
 
-/// TS `appendRecord` (`TokenStatsCollector.ts:257-261`) falls back to an
-/// unlocked append when the 25×1ms lock attempt fails; a lock timeout must not
-/// drop a fresh accounting row.
+/// Lock timeout publishes a sidecar without exposing the row to main-file replacement.
 #[test]
-fn append_falls_back_to_unlocked_write_like_ts() {
+fn append_falls_back_to_sidecar_without_losing_visibility() {
     let home = temp_home("lock-append");
     let journal = home.join("stats.jsonl");
     fs::write(&journal, "").unwrap();
@@ -396,8 +394,17 @@ fn append_falls_back_to_unlocked_write_like_ts() {
     )
     .unwrap();
     stats.observe(&mut record);
-    let content = fs::read_to_string(&journal).unwrap();
-    assert!(content.contains("\"locked\""), "{content}");
+    assert_eq!(fs::read_to_string(&journal).unwrap(), "");
+    assert_eq!(read_stats_records(&journal), vec![record]);
+    let mut reader =
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+    assert_eq!(
+        reader
+            .snapshot()
+            .get("totalRequests")
+            .and_then(JsValue::as_number),
+        Some(1.0)
+    );
     fs::remove_file(&lock).unwrap();
     fs::remove_dir_all(&home).unwrap();
 }
