@@ -327,6 +327,14 @@ impl TurnPublisher {
         }
         Ok(())
     }
+    /// TS timeout calls queue.close() immediately after enqueueing its error.
+    /// Already-started durable appends still settle; events completing after
+    /// close cannot re-open live delivery. The owned pump drains separately.
+    pub fn close_live(&self) {
+        let _pump = self.pump.lock().unwrap();
+        self.publication.state.lock().unwrap().closed = true;
+        self.publication.changed.notify_waiters();
+    }
     pub async fn finish(&self) {
         let writes = {
             let _pump = self.pump.lock().unwrap();

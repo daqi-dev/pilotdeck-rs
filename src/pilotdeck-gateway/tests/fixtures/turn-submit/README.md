@@ -28,3 +28,11 @@ PDRS_BASELINE=/absolute/PilotDeck \
 ```
 
 WS 最终包装归 pr5；本夹具比较业务流，不重新分配 registry、WS 或 Module 的 seq。普通业务终态及 WS 最终包装的区分复用 `turn-publish` 已有真实 WS 金样与测试。
+
+修复轮 1 扩展：workspace 接纳与 SDK 写入顺序、cwd setter、pre_user / post_agent 快照、timeoutMs 与 operationDeadline。TS timeout 用注入到真实模块词法作用域的受控 setTimeout/clearTimeout；Rust 用 Tokio 暂停时钟显式 advance，无墙钟等待。快照 recorder 在此夹具是受控宿主 port，生产实现 `NativeSubmitSnapshots` 调用已移植的 ContentAddressedWorkspaceSnapshotRecorder（spawn_blocking），不是空实现。snapshot recorder、cwd 服务与 FailureGuard 配置均须由 SubmitHost 明确提供；配置要求但能力缺失时返回 CAPABILITY_UNAVAILABLE。FailureGuard 运行时尚未移植，启用时拒绝进入 native submit，不能以此宣称 guard 行为已移植。
+
+真实 TS 的 timeout 有两个出口：无 registry 时超时 status/error 直接可见；有异步 registry 时先发起 append 再关闭 live queue，因此后完成的超时事件仅在 registry/replay 中可见。两者分别入金样；不把“落盘后才可见”误写成“timeout 必然在 live 流可见”。`close_live` 保留此 TS 顺序。
+
+消费者契约：持有 TurnSubmission 时须持续 drain 到 End，或者取消时 drop；原生 LiveTurn 在 abort 后须自行排空终态和 SessionEnd，独立 wall-clock timeout 才是异常 provider 的逃生路径。前者由 pr5/pr6 适配器验收，后者由 pr6 验收。此夹具不保证尚未装配的生产 host/WS 行为。
+
+negative.py 为每个变异核验特征断言文本；缺 PDRS_BASELINE 时先拒绝再取锁，不能留下锁。所有新增能力拒绝的断言是明确记录的 Rust 能力边界检查，不伪装成与 TS 相同的 guard 实现。

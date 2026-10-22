@@ -36,6 +36,10 @@ pub trait LiveSession: Send + Sync {
     /// lease release and its own session disposal. Implementations must make
     /// cancellation idempotent and must not panic, including after session
     /// resources have been disposed.
+    /// The A7.2-pr6 adapter must make an active LiveTurn settle after abort
+    /// (terminal then None, or Err), including session lifecycle hooks. Submit
+    /// preserves the native terminal path; wall-clock timeout is its independent
+    /// escape for a provider that does not settle. Test this contract in pr6.
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;

@@ -25,12 +25,20 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(requireBaseline.resolve('tsx'))('esbuild');
 const unexpectedImports: string[] = [];
+let controlledClock: Map<object, () => void> | undefined;
+const controlledSetTimeout = (callback: () => void, ms: number) => {
+  if (!controlledClock) return setTimeout(callback, ms);
+  const key = {}; controlledClock.set(key, callback); return key;
+};
+const controlledClearTimeout = (key: any) => {
+  controlledClock?.delete(key); clearTimeout(key);
+};
 async function load(source: string, imports: Record<string, any> = {}) {
   const compiled = transformSync(await readFile(join(baseline, source), 'utf8'), {
     loader: 'ts', format: 'cjs', target: 'es2022', sourcefile: source,
   }).code;
   const module = { exports: {} as any };
-  new Function('require', 'module', 'exports', compiled)((name: string) => {
+  new Function('require', 'module', 'exports', 'setTimeout', 'clearTimeout', compiled)((name: string) => {
     if (name.startsWith('node:')) return requireBaseline(name);
     if (name in imports) return imports[name];
     return new Proxy({}, { get(_t, key) {
@@ -38,7 +46,7 @@ async function load(source: string, imports: Record<string, any> = {}) {
       const error = `unexercised import: ${source} -> ${name}.${String(key)}`;
       unexpectedImports.push(error); throw Error(error);
     } });
-  }, module, module.exports);
+  }, module, module.exports, controlledSetTimeout, controlledClearTimeout);
   return module.exports;
 }
 const handleModule = await load(sources[2]);
@@ -76,10 +84,11 @@ const defer = () => { let resolve!: () => void; const promise = new Promise<void
 const settle = async () => { for (let i = 0; i < 12; ++i) await new Promise<void>(r => setImmediate(r)); };
 const cases: any[] = [];
 async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 'terminal', 'end']) {
+  controlledClock = steps.includes('timeout') ? new Map() : undefined;
   const root = await mkdtemp(join(tmpdir(), 'pdrs-turn-submit-'));
   const file = new registryModule.FileRunRegistry(join(root, 'registry.json'));
   const hostCalls: any[] = [], durableCalls: any[] = [], registryCalls: any[] = [], native: any[] = [], visible: any[] = [], results: any[] = [];
-  const acceptGate = defer(), terminalGate = defer(), endGate = defer(), prepareGate = defer(), sdkGate = defer(), recoveryGate = defer();
+  const acceptGate = defer(), terminalGate = defer(), endGate = defer(), prepareGate = defer(), sdkGate = defer(), recoveryGate = defer(), consumerGate = defer();
   let cancelled = false, ended = false, thrown: any = null;
   const runRef = { sessionKey: 's', projectKey: 'p', runId: 'r' };
   const input = { ...runRef, message: 'hello', channelKey: 'test', ...setup.input };
@@ -111,12 +120,16 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
     { cwd: '/unused', transcriptPath: '', collectFileArtifacts: false });
   const session = {
     sessionId: 's', pendingTurnCount: () => 0,
-    async recordAgentStatusMessage() { return false; },
+    async recordAgentStatusMessage() {
+      if (setup.statusRecordFailure) throw Error('injected status record failure');
+      return false;
+    },
     snapshotForRuntimeReload: () => ({ messages: [], cwd: '/unused' }),
     abort() { hostCalls.push('session_abort'); cancelled = true; terminalGate.resolve(); endGate.resolve(); acceptGate.resolve(); },
     async dispose() { hostCalls.push('session_dispose'); },
     async *submit(agentInput: any, options: any) {
       hostCalls.push('submit');
+      if (setup.input?.timeoutMs > 0) durableCalls.push({ op: 'execution', execution: clone(options.execution) });
       const gen = runner.run({ sessionId: 's', turnId: 'r', input: agentInput, messages: [] });
       try {
         for await (const event of gen) {
@@ -149,7 +162,13 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
   const gateway = Object.create(InProcessGateway.prototype);
   Object.assign(gateway, {
     options: {
-      runRegistry: port,
+      runRegistry: setup.noRegistry ? undefined : port,
+      workspaceId: setup.workspace,
+      ...(setup.cwdAvailable ? { setSessionCwd() { hostCalls.push('cwd'); } } : {}),
+      ...(setup.snapshots ? { snapshotRecorder: {
+        async capturePreUser() { hostCalls.push('snapshot_pre'); return setup.snapshotFailure ? { state: 'failed', error: 'injected snapshot failure' } : { state: 'committed' }; },
+        async capturePostAgent(input: any) { hostCalls.push('snapshot_post'); durableCalls.push({ op: 'snapshot_post', input: clone(input) }); return { state: 'committed' }; },
+      } } : {}),
       ...(setup.recovery ? { clearRecoveredUserDialogs: async () => { hostCalls.push('recovery'); if (setup.recoveryGate) await recoveryGate.promise; if (setup.recoveryFailure) throw Error('injected recovery failure'); } } : {}),
       ...(setup.selection ? { resolveTurnModelSelection: async () => setup.selection } : {}),
       refreshConfigBeforeTurn: async () => { hostCalls.push('refresh'); if (setup.refreshFailure) throw Error('transient config error'); },
@@ -157,7 +176,8 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
         if (setup.sdkFailure) throw Error('injected SDK config failure'); return { changed: setup.sdkChanged === true }; } } : {}),
       afterTurnCompleted: () => { hostCalls.push('after'); if (setup.finallyFailure) throw Error('injected finally failure'); },
     },
-    dialogProjectKeys: new Map(), workspaceAdmissions: new Map(), activeFailureGuards: new Map(), abortedTurnReasons: new Map(),
+    now: () => new Date(0), abortTurnTimeoutMs: 20,
+    dialogProjectKeys: new Map(), workspaceAdmissions: new Map(setup.workspaceBusy ? [[setup.workspace, 'other:other']] : []), activeFailureGuards: new Map(), abortedTurnReasons: new Map(),
     turnEventCoordinator: coordinator, agentEventProjector: new projectorModule.GatewayAgentEventProjector(),
     turnReplacementCoordinator: { claimForSubmit: () => setup.replacement ? 'conflict' : 'ok', hasTranscriptWriteReservation: () => false,
       commitAcceptedInput: async () => { hostCalls.push('commit'); if (setup.commitFailure) throw Error('injected commit failure'); },
@@ -171,7 +191,10 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
       return { agentInput: { type: 'text', text: input.message }, allowedReadFiles: [] }; },
   });
   let abortOperation: Promise<any> | undefined, closeOperation: Promise<any> | undefined;
-  const consumer = (async () => { try { for await (const event of gateway.submitTurn(input)) visible.push(clone(event)); }
+  const consumer = (async () => { try { for await (const event of gateway.submitTurn(input)) {
+      visible.push(clone(event));
+      if (setup.holdTimeoutConsumer && event.type === 'error' && event.code === 'turn_timeout') await consumerGate.promise;
+    } }
     catch (error: any) { thrown = error.message; } finally { ended = true; } })();
   async function snapshot() {
     await file.ready;
@@ -187,6 +210,8 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
       else if (step === 'prepare') prepareGate.resolve();
       else if (step === 'sdk') sdkGate.resolve();
       else if (step === 'recovery') recoveryGate.resolve();
+      else if (step === 'resume') consumerGate.resolve();
+      else if (step === 'timeout') { const callbacks = [...controlledClock!.values()]; controlledClock!.clear(); for (const callback of callbacks) callback(); }
       else if (step === 'abort') abortOperation = gateway.abortTurn({ sessionKey: 's', runId: 'r', reason: 'stop' });
       else if (step === 'close') closeOperation = router.close('s');
       else if (step === 'supersede') gateway.turnCompletionFence.begin('s', 'replacement');
@@ -202,11 +227,12 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
     cases.push({ name, setup, steps, native, results, registryEvents: await file.events(runRef),
       record: record ? { state: record.state, lastSeq: record.lastSeq, revision: record.revision, ...(record.result ? { result: record.result } : {}) } : null });
   } catch (error) { console.error(name, error); throw error; } finally {
-    acceptGate.resolve(); terminalGate.resolve(); endGate.resolve(); prepareGate.resolve(); sdkGate.resolve(); recoveryGate.resolve();
+    acceptGate.resolve(); terminalGate.resolve(); endGate.resolve(); prepareGate.resolve(); sdkGate.resolve(); recoveryGate.resolve(); consumerGate.resolve();
     await consumer; await settle(); await file.mutationChain;
     // Do not count post-scenario disposal as submit output.
     coordinator.dispose(); await router.shutdown(); await rm(root, { recursive: true, force: true });
     void hostHandle;
+    controlledClock = undefined;
   }
 }
 await run('durable-accept-and-session-end');
@@ -246,6 +272,25 @@ await run('recovery-cleanup-failed', { recovery: true, recoveryFailure: true }, 
 await run('abort-during-recovery', { recovery: true, recoveryGate: true }, ['observe', 'abort', 'recovery']);
 await run('abort-and-recovery-failed', { recovery: true, recoveryGate: true, recoveryFailure: true }, ['observe', 'abort', 'recovery']);
 await run('execution-fingerprint', { input: { telemetry: { ignored: true }, interactionBinding: { key: 'ignored' }, syntheticMessages: [], opaqueExecution: { z: [1, null, { q: '汉字𝄞' }], a: 'included' } } });
+await run('workspace-busy-before-sdk', { workspace: 'w', workspaceBusy: true, sdkAvailable: true, sdkChanged: true, input: { sdkSessionConfig: {} } }, ['observe']);
+await run('workspace-released-after-turn', { workspace: 'w' }, ['observe', 'accept', 'terminal', 'end', 'second']);
+await run('workspace-cwd', { cwdAvailable: true, input: { workspaceCwd: '/work' } });
+await run('snapshot-success', { workspace: 'w', snapshots: true });
+await run('snapshot-pre-failed', { workspace: 'w', snapshots: true, snapshotFailure: true }, ['observe', 'accept']);
+await run('snapshot-agent-failed', { workspace: 'w', snapshots: true, pumpFailure: true }, ['observe', 'accept', 'terminal']);
+await run('snapshot-aborted', { workspace: 'w', snapshots: true }, ['observe', 'accept', 'abort']);
+await run('timeout-active-live', { noRegistry: true, input: { timeoutMs: 100 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-active', { input: { timeoutMs: 100 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-durable-pending', { input: { timeoutMs: 100 } }, ['observe', 'timeout']);
+await run('timeout-prepare-pending', { prepareGate: true, input: { timeoutMs: 100 } }, ['observe', 'timeout', 'prepare']);
+await run('timeout-prepare-no-revival-live-consumer', { noRegistry: true, holdTimeoutConsumer: true, prepareGate: true, input: { timeoutMs: 100 } }, ['observe', 'timeout', 'prepare', 'resume']);
+await run('timeout-status-record-failed', { statusRecordFailure: true, input: { timeoutMs: 100 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-snapshot', { workspace: 'w', snapshots: true, input: { timeoutMs: 100 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-cleared-on-success', { input: { timeoutMs: 100 } }, ['observe', 'accept', 'terminal', 'end', 'timeout']);
+await run('timeout-disabled', { input: { timeoutMs: 0 } });
+await run('timeout-overflow-delay', { input: { timeoutMs: 2147483648 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-fractional-delay', { input: { timeoutMs: 0.5 } }, ['observe', 'accept', 'timeout']);
+await run('timeout-invalid-deadline', { input: { timeoutMs: 9e15 } }, ['observe']);
 // Keep lone UTF-16 units outside the serde_json scenario bridge. They are
 // compared directly as protocol JsValue strings by a dedicated Rust replay.
 const validationProbes: any[] = [];
