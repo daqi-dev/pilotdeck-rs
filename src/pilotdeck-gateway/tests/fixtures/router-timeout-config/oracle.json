@@ -1,0 +1,269 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/router/config/parseRouterConfig.ts": "cbee6bb146f2c2a933ea78011501b641f4bb7cef908ffb6ee365b820a9b37684",
+    "src/router/config/schema.ts": "69c8427d7d854eaed0d89475d6a97bfa8e9bd960deefd6e76de7e2f983056609",
+    "src/router/tokenSaver/classifyAndRoute.ts": "d4172d8ef7999a8863411ca2135d2576bbb9a733c72ad168002a4998bc0961d0"
+  },
+  "node": "v22.22.0",
+  "cases": [
+    {
+      "name": "undefined",
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [],
+      "timerMs": 15000
+    },
+    {
+      "name": "null",
+      "input": null,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "false",
+      "input": false,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "500",
+      "input": "500",
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "-Infinity",
+      "input": "-Infinity",
+      "nonFinite": true,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "-5",
+      "input": -5,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "0",
+      "input": 0,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "0.5",
+      "input": 0.5,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "1",
+      "input": 1,
+      "nonFinite": false,
+      "timeoutMs": 1,
+      "diagnostics": [],
+      "timerMs": 500
+    },
+    {
+      "name": "1.9",
+      "input": 1.9,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "499.5",
+      "input": 499.5,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "500",
+      "input": 500,
+      "nonFinite": false,
+      "timeoutMs": 500,
+      "diagnostics": [],
+      "timerMs": 500
+    },
+    {
+      "name": "500.9",
+      "input": 500.9,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "5000",
+      "input": 5000,
+      "nonFinite": false,
+      "timeoutMs": 5000,
+      "diagnostics": [],
+      "timerMs": 5000
+    },
+    {
+      "name": "2147483647",
+      "input": 2147483647,
+      "nonFinite": false,
+      "timeoutMs": 2147483647,
+      "diagnostics": [],
+      "timerMs": 2147483647
+    },
+    {
+      "name": "2147483647.5",
+      "input": 2147483647.5,
+      "nonFinite": false,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "2147483648",
+      "input": 2147483648,
+      "nonFinite": false,
+      "timeoutMs": 2147483648,
+      "diagnostics": [],
+      "timerMs": 1
+    },
+    {
+      "name": "9007199254740991",
+      "input": 9007199254740991,
+      "nonFinite": false,
+      "timeoutMs": 9007199254740991,
+      "diagnostics": [],
+      "timerMs": 1
+    },
+    {
+      "name": "1e+100",
+      "input": 1e+100,
+      "nonFinite": false,
+      "timeoutMs": 1e+100,
+      "diagnostics": [],
+      "timerMs": 1
+    },
+    {
+      "name": "Infinity",
+      "input": "Infinity",
+      "nonFinite": true,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    },
+    {
+      "name": "NaN",
+      "input": "NaN",
+      "nonFinite": true,
+      "timeoutMs": 15000,
+      "diagnostics": [
+        {
+          "code": "ROUTER_TOKEN_SAVER_JUDGE_TIMEOUT_INVALID",
+          "severity": "fatal",
+          "path": "router.tokenSaver.judgeTimeoutMs",
+          "message": "judgeTimeoutMs must be a positive integer."
+        }
+      ],
+      "timerMs": 15000
+    }
+  ]
+}

@@ -1249,3 +1249,90 @@ async fn terminal_failure_still_flushes_events_when_usage_estimation_throws() {
     assert!(kinds.iter().any(|kind| kind == "text_delta"), "{kinds:?}");
     assert_eq!(kinds.last().map(String::as_str), Some("error"), "{kinds:?}");
 }
+
+#[tokio::test(start_paused = true)]
+async fn judge_timeout_config_matches_real_ts_parser_and_node_timers() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../../tests/fixtures/router-timeout-config/oracle.json"
+    ));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("config timer cases")
+    };
+    for case in cases {
+        let mut raw = object(vec![
+            (
+                "judge",
+                object(vec![("provider", text("p")), ("model", text("j"))]),
+            ),
+            ("defaultTier", text("simple")),
+            (
+                "tiers",
+                object(vec![(
+                    "simple",
+                    object(vec![(
+                        "model",
+                        object(vec![("provider", text("p")), ("model", text("m"))]),
+                    )]),
+                )]),
+            ),
+        ]);
+        if let Some(input) = case.get("input") {
+            let value = if case.get("nonFinite").and_then(JsValue::as_bool) == Some(true) {
+                JsValue::Number(
+                    match input.as_string().unwrap().to_utf8().unwrap().as_str() {
+                        "NaN" => f64::NAN,
+                        "Infinity" => f64::INFINITY,
+                        "-Infinity" => f64::NEG_INFINITY,
+                        _ => panic!("nonfinite input"),
+                    },
+                )
+            } else {
+                input.clone()
+            };
+            let JsValue::Object(raw) = &mut raw else {
+                unreachable!()
+            };
+            raw.insert("judgeTimeoutMs".into(), value);
+        }
+        let snapshot = object(vec![(
+            "config",
+            object(vec![("router", object(vec![("tokenSaver", raw)]))]),
+        )]);
+        let config = RouterConfig::from_snapshot(&snapshot);
+        let saver = config.token_saver().unwrap();
+        assert_eq!(
+            saver.judge_timeout_ms,
+            case.get("timeoutMs").unwrap().as_number().unwrap(),
+            "parser case={case:?}"
+        );
+        let invoker = Invoker::new(vec![Step::Hang]);
+        let start = tokio::time::Instant::now();
+        let decision = classify_and_route(
+            saver,
+            &[user_message("hi")],
+            &invoker,
+            None,
+            None,
+            &"s".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(decision.failure_reason, Some("timeout"));
+        assert_eq!(invoker.calls(), 1);
+        assert_eq!(
+            start.elapsed().as_millis() as f64,
+            case.get("timerMs").unwrap().as_number().unwrap(),
+            "timer case={case:?}"
+        );
+        assert!(
+            invoker
+                .last_abort
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .is_aborted()
+        );
+    }
+}
