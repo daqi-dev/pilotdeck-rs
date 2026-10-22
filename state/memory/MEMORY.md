@@ -48,3 +48,4 @@
 - [worker 证据移回](20261022-worker-evidence-pullback.md) — 沙箱 worker 证据落树内 _tmp；移回只用 pull-evidence.sh，RESULT.md 按节追加，永不覆盖
 - [只按 pid 停进程](20261022-kill-by-pid.md) — 禁 pkill -n / 宽模式 pkill -f；实验与正式任务输出目录不同名（10-22 两次误杀）
 - [DeepSeek 50 RPM](20261022-deepseek-rpm.md) — dsh 默认 ≤8 同跑（dsh-slot.sh），撞 429 由 dsh-retry.sh 自动续跑
+- [合并队列只认 rebase](20261022-merge-queue-rebase-only.md) — PR 分支不能有合并提交，否则入队后被静默踢出；rebase 冲突 ours/theirs 与 merge 相反

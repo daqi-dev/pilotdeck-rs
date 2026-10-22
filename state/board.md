@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-22 19:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-23 00:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -9,15 +9,13 @@ updated: 2026-10-22 19:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓(10-17)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
-- A6.6-pr10a | impl | doing | PR #480 EdgeClaw sqlite；修复轮 1 续跑（DeepSeek）
-- A6.5-pr4b | impl | doing | PR #475 grep；修复轮 2（DeepSeek）
-- A6.4-pr9b | impl | doing | PR #476 stats；修复轮 2：日期只认规范格式（卡见 decisions-20261022）
-- A6.5-pr9c | impl | doing | PR #486（Closes #409）；修复轮 1 待派（DeepSeek）
-- A7.2-pr0 | impl | doing | PR #482（Closes #479）；修复轮 1 已交付，核验中
-- A7.2-pr1 | impl | doing | PR #487 replay；修复轮 1 待派
-- A7.2-pr2 | impl | doing | PR #488 projector；修复轮 1 待派
-- #408 | impl | doing | 夹具回放统一溯源守卫；wt-408；codex
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
+- A7.2-pr1 | impl | doing | PR #487 replay；修复轮 7（GLM）；终态回收差异人批 B，前置于 A7.2-pr5
+- A7.2-pr2 | impl | doing | PR #488 projector；修复轮 5（GLM）
+- A6.6-pr10b | impl | doing | EdgeClaw FileMemoryStore；wt-a66-pr10b-file-memory；codex
+- A6.6-pr10d | impl | doing | EdgeClaw L0 会话读取；wt-a66-pr10d-l0-sessions；DeepSeek
+- #502 | impl | doing | 全仓自述差异集中补登；wt-issue-502-diff-backfill；codex
+- #454 | coord | human | web_fetch 宽页节点内存：候选差异 A6.5-WEBFETCH-NODES-001（向严），待人定
 <!-- READY:END -->
 
 > ## 2026-10-22 16:00 · /loop 协调轮
@@ -70,6 +68,53 @@ updated: 2026-10-22 19:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > - **DeepSeek 限流再收紧**：pr9c、A7.2-pr2 修复轮 1 在 3 并发下用完 4 次续跑仍撞 429。dsh 名额降到 2，续跑改为最多 8 次、间隔 90 s，两单重新续跑。下一步：dsh 评审改用单次请求的 review-deepseek.py；新的实现单试派给 GLM（glm_impl 通道加 Bash，模型 glm-5.3-mb）。
 > - #490（#408）：GLM r1 0/0、DeepSeek r1 0/0，gate1 0/0，交 finalize。A7.2-pr1 codex r2 P1×5，等修复轮 2。
 > **19:05**：人提醒还有 Grok Bot。它 10-19 已人批进入评审谱系，但 real.md 和 model-runners 都没写，今天的派活脚本也没有入口，所以一直没用上。已在 review.sh 加 grok 入口（全局 1 单，没拿到 VERDICT 时自动 `--read` 补取，冒烟通过），real.md 与 model-runners 补上分工：DeepSeek 只做实现，评审默认 GLM + Grok，codex 补位。
+
+> ## 2026-10-22 19:05 → 10-23 00:05 · /loop 两小时交接（补写：19:05 后的记录一直只在 _tmp，超过两小时未进库，本段补上）
+> **合入**：#475 grep（9 轮）、#476 stats、#477 插件 loader、#480 EdgeClaw sqlite、#482 A7.2-pr0、#486 HTML 上界（Closes #409）、#490 #408、#492 memory 附件 + cache、#497 p2-sweep-8、#499 stats 旁路（#496）、#500 p2-sweep-9（#440 #498）、#501 V8 Date.parse（#494）。提交邮箱均 noreply。
+> **人批**：CI 的 rg 选 A（源码编译 15.0.0）；stats 两条差异接受且要求补实现（已实现）；#496 选 B（旁路文件，向安全偏离）；#487 终态回收选 B（前置于 A7.2-pr5）；Grok 新建 5 个评审 agent；磁盘 160 GiB、闸门默认并行。
+> **在途（持有人：协调者本会话）**：见 READY。后台：GLM 修复 #487 / #488，codex 做 pr10b 与 #502，DeepSeek 做 pr10d；收尾链 finalize-reviewed → finalize-pr → merge-when-green。
+> **今晚落规则的教训**：①合并队列是 REBASE 方式，分支里不能有合并提交（#497 两次被静默踢出）；rebase 冲突中 ours/theirs 与 merge 相反；②不在运行中的脚本上 sed -i（bash 边跑边读，导致 exit=127），改脚本写新文件再 mv；③finalize 写 PR 正文遇到孤立代理字符会抛 UnicodeEncodeError（#499、#486、#500 三次没贴上的真正根因），已改为替换成 U+FFFD；④提交用 git add -A（#476 曾漏交 specs/）。
+> **资源**：worktree 6/12（不含本 board 树），磁盘约 64/160 GiB。
+>
+> ## 2026-10-22 19:10 · /loop 协调轮
+> - **Grok agent 池**（人新建）：代码分析、代码分析2/3/4、代码审查1/2，每个 agent 同时 1 单，最多 6 并行（`grok-agents.txt`）。
+> - **#475**：gate5 P1，CI 的 rg 14.1.1 与金样录制用的 15.0.0（基线 @vscode/ripgrep 1.18.0 自带）不一致 → 改钉 15.0.0（95f846a7，Claude），gate6 与 GLM+Grok r5 在跑。#490 早先在 pr-gate 未刷新时被判失败，已重新交 merge-when-green。
+> - **GLM 实现通道启用**：`glm_impl.py` 加 Bash、模型改 glm-5.3-mb，fix-launch 增加 glm 分支。#487 修复轮 2（codex r2 P1×5）派 GLM，接替限流的 DeepSeek；作者谱系变为 DeepSeek+GLM，评审改由 codex+Grok。
+> - #476 修复轮 3（7eab7a18，扩展年份）；A6.6-pr5b → PR #492（Closes #326、#339，codex）。两单闸门与 GLM+Grok 评审在跑。
+> **19:15 Grok 通道修正**：第一版 grok-review.sh 有两个错：①`--read` 不带 `--since-seq` 只返回前约 200 条（「代码分析」会话已有 300+ 条，最大 seq 读成 203）；②VERDICT 检测匹配到了历史记录与任务书里的模板行，误判成已拿到结论。改为 `grok_review.py`：按 since 翻页读到底；只收本次发送之后、kind=send-message 的 bot 回复；VERDICT 必须带数字。旧脚本的锁释放过早，曾把 #475 r5 和 #492 r1 都派到「代码分析」，回复混在同一会话里，已按 seq 拆开（#475 r5 = seq 303-305：0/0/2/2；#492 从 seq 306 起单独收集）。memory「grokbot-channel」待补这两条坑。
+> **19:20**：#490（#408）、#491 合入；wt-408 回收。#475 gate6 concurrency P1：grep 进程组的清理没有 Drop 守卫，future 被调度器丢弃时子进程泄漏 → 修复轮 3 派 codex，比照 bash runner。#476：GLM r4 与 gate4 都撞上「差异账本披露未进提交」。根因是协调者提交时只 `git add src/`，worker 写的 specs/gateway-parity 两处漏交；已补交 b5c3afae（check_frozen PASS），两条均为「已知未对齐，未接受，待人批」。**以后提交用 `git add -A`，提交前先看 `git status`。** gate5 与 GLM+Grok r5 在跑。#492 Grok r1 0/0，等 GLM r1 后收尾。
+> **19:30 人批**：A6.4-STATS-RETENTION-001、A6.4-STATS-BASELINEMODEL-001 接受为已知差异，但要求 Rust 补实现。账本只追加批准说明，FROZEN 重登记（eae0bb15，check_frozen PASS）。补实现跟进 #493（BASELINEMODEL fatal 诊断）、#494（RETENTION：按 V8 dateparser 逐格式移植，配 TS 金样，仍坚持宁可多留），都排在 #476 合入之后。#476 在新 head 上重跑 gate6，finalize-pr 收尾。
+> **19:25 自身失误（同类第二次，落规则）**：
+> - **就地改了正在运行的脚本**：bash 边跑边读脚本文件。我在 `dsh-retry.sh`、`gate-2par.sh` 正在跑时用 `sed -i` 改了它们，正在跑的进程读到错位内容，以 exit=127 退出。受影响：pr9c 续跑、EdgeClaw 修复轮 2（已重派），以及早先 #475 的 gate4。规则：脚本改动一律写到新文件再 `mv` 原子替换。
+> - **merge-when-green 误判**：刚改完 PR 正文时，pr-gate 还没重跑，读到的是旧的失败结果，#490、#492 都因此没能入队。现改为前 4 分钟内的 pr-gate 失败视为旧结果、继续等；#492 已重新交给它。
+> **19:45**：#492 入队（merge-when-green 修好后第一次正常生效）。#476 gate6 P1：`modelPricing` 键的未知模型引用校验与 BASELINEMODEL 同源遗漏 → 修复轮 4 派 codex，两处一起实现，BASELINEMODEL-001 改为「已实现，差异消除」，Closes #493。#475 修复轮 3（fcb3cec6，codex）：抽出共享 process_group 守卫，grep 与 bash 共用；两个新超时测试在高负载下失败、单跑 3/3 通过，请评审核计时余量。#486 修复轮 1（7a9a9d8f）。两单闸门与 GLM+Grok 评审在跑。A7.2-pr2 续跑也因就地改脚本以 exit=127 退出，已重派。
+> **20:00**：#492 合入（#326、#339 关闭），wt-a66-pr5b 回收。#476 修复轮 4（f27f3065，codex）实现 baselineModel 与 modelPricing 键的未知引用 fatal，BASELINEMODEL-001 改为「已实现，差异消除」，Closes #493。#480 修复轮 2（b84db9d6）。两单 gate 与 GLM+Grok 增量评审在跑。新派 p2-sweep-8（#382、#387、#440、#452）给 codex，新树 wt-p2-sweep-8。flaky 新增：host::connection ndjson 用例。GLM 实现 #487 跑了 45 分钟，6 个文件在改。
+> **20:05**：#475 gate7 0/0、GLM r6 0/0；Grok r6 P1：两个新超时测试在压测下 18 次失败 11 次 → 修复轮 4 派 codex，改为不依赖墙钟的握手断言，并复现压测要求 0 失败。#486：CI 上 `bounded_html_conversion_performance` 失败（runner 慢）；Grok r2 P1 `<code>` 截断时快速路径漏替换换行（与 TS 不一致）；gate2 P1×2 → 修复轮 2 等 GLM r2 后派 DeepSeek。#488 A7.2-pr2 修复轮 1 交付，核验中。
+> **20:10**：
+> - #476 gate7 P0（锁失败降级 append 与 compaction rename 竞态丢账目）→ 核实 TS `TokenStatsCollector.ts:258-259` 同样降级，按 #216 先例降为 P2c，开 #496；是否偏离 TS 修复写卡 `_tmp/20261022-loop/card-stats-race.md` 请人定。r6 两家 0/0，结果块与仲裁写进正文，交 merge-when-green。
+> - #480 gate3 sibling P1：localeCompare 排序另写了一份，仓内已有 5 处同类 → 修复轮 3 派 DeepSeek，复用正本。
+> - #488 修复轮 1（96029099），gate2 与 GLM+Grok r2 在跑。
+> **20:25**：人批 #496 选 B（降级追加写旁路文件、压缩时合并，向安全偏离 TS，账本登记 A6.4-STATS-SIDECAR-001），等 #476 合入后由 launch.sh 开树派 codex。#476 已入队。**GLM 实现通道首单交付**：#487 修复轮 2（4d1f12dd，署名 GLM-5.3），沙箱外 lib 808/0；作者谱系 DeepSeek+GLM，评审派 codex+Grok。p2-sweep-8 → PR #497（Closes #382 #387 #452，Refs #440），沙箱外 web_tools 49/0、hooks_runtime 16/0、lib 785/0；评审 GLM+Grok。#488 gate2 P1×3 + Grok r2 P1 → 修复轮 2 派 DeepSeek。
+> **20:40**：#476 合入（#493 手动关闭：PR 正文没写 Closes），wt-a64-pr9b-stats 回收；#496 由 launch.sh 开 wt-496 派 codex。#497 与 main 在 router/tests.rs 冲突，CI 未触发，等它的闸门与评审结束后手动合并冲突。#487 r3 codex P1×3、Grok P1×1 → 修复轮 3 派 GLM（等 gate3）。提交：#475 修复轮 4（b3c4a734，压测 72/0；grep 组旧测试饱和下偶发失败，开 #498）、#486 修复轮 2（a9f3caa8）、#480 修复轮 3（b1ed0ae0）。三单 gate 与 GLM+Grok 增量评审在跑；新增 `finalize-reviewed.sh`：两家评审 P0/P1=0 且闸门 P0/P1=0 才自动贴块入队。
+> **20:50**：#497 手动合并 origin/main（router/tests.rs 两侧各加测试，均保留；d122fa95，沙箱外 lib 802/0），r1 两家 0/0、gate1 0/0，在新 head 跑 gate2 后由 finalize 入队。#496 → PR #499（codex）：旁路文件 + 事务凭据，九项负控，恢复 TS 直接追加可稳定复现丢账；沙箱外 lib 806/0、check_frozen PASS；GLM+Grok r1 与 gate1 在跑，finalize-reviewed 收尾。
+> **21:00 自身失误**：给 #480 补 Closes 时，`gh pr view` 取回的正文是空的，我没校验就写回，原正文被清空。已按记录重建（开 PR 时的说明、gate4 结果块、r1–r4 评审），pr-gate PASS；r4 GLM、Grok 都无 P0/P1，交 merge-when-green。`finalize-pr.sh` 加了保护：取回的正文过短就中止、不写回。规则：「取正文、改、写回」前先确认取回内容非空。
+> #486 GLM r3、Grok r3、gate3 各一条 P1（CRLF 折成两个空格，TS 只折一个）→ 修复轮 3 派 DeepSeek。
+> **21:10**：#480、#497 入队。#475 gate8 boundary P1：本地没有 rg 时对拍空转绿（尺子假通过）→ 协调者直接改成默认失败，跳过须显式 `PDRS_ALLOW_NO_RG=1`（46af1de2）。负控：测试二进制移到 /tmp 且 PATH 无 rg 时 FAILED，设变量后 SKIPPED。之前留在 PATH 外也能通过，是因为 bundled rg 从仓库祖先目录被找到，属合法路径。r8 与 gate9 在跑，finalize-reviewed 收尾。提交 #487 修复轮 3（b1cb8b50，GLM，lib 813/0）、#488 修复轮 2（08bcad36，DeepSeek，lib 776/0），各派增量评审与闸门，finalize-reviewed 收尾。#499 Grok r1 0/0，GLM r1 与 gate1 在跑。
+> **21:15**：#480 合入（#318 关闭），wt-a66-pr10a 回收；#497 在队列。#499 收尾时 /tmp/fin-499.md 是 0 字节，结果块没贴上（离线复测脚本正常，原因未定），已手动贴块（两家 r1 0/0，gate1 0/0），交 merge-when-green。#475 gate9 P1：`command -v rg ||` 遇镜像自带的其他版本 rg 会短路 → 改为校验 ~/.cargo/bin/rg 必须是 15.0.0，否则 --force 重装，并经 $GITHUB_PATH 置于 PATH 最前（959cfa25，Claude）；r9 与 gate10 在跑。#487 codex r4 P1×2 → 修复轮 4 派 GLM（等 gate4 与 Grok r4）。
+> **21:25**：#497 20:50 入队后，13:00Z 被 merge-queue bot 踢出，没有给原因；当时无冲突、检查全绿，已重新入队（排在 #499 之后）。merge-when-green 不会发现「入队后又被踢出」，下轮核队列时补查。#488 gate3 P1：字段类型不对时 TS 抛 TypeError、Rust 静默强转 → 修复轮 3 派 DeepSeek，要求逐处核 TS 实际调用的方法（`.trim()`、`.length` 等）再对齐，不一律报错；两家 r3 都是 0/0。#486 修复轮 3（3c4a3f56，CRLF 只折一处），沙箱外 lib 776/0，r4 与 gate4 在跑。
+> **21:35**：#499 合入（#496 关闭），wt-496 回收。**#497 两次被合并队列踢出的根因**：队列合并方式是 REBASE，分支里有我解冲突时做的合并提交。改为 rebase 到 origin/main（c1fadb19，线性单提交）。rebase 冲突里 ours/theirs 和 merge 时相反，照搬旧的拼接逻辑截断了一个函数，编译报 unclosed delimiter；推送前发现，改从 d122 验证过的版本取文件（先比对两侧函数集合），lib 818/0，force-with-lease。教训草稿 `_tmp/20261022-loop/memory-rebase-queue.md`，随下一个 board PR 入 memory。gate3 后由 finalize 入队。#475：r9 两家 0/0、gate10 0/0，finalize 早前卡住，已手动收尾、贴块 PASS，等 CI 入队。#486：GLM r4 与 Grok r4 各 1 条 P1（pending_cr 跨 partial 接缝不清除）→ 修复轮 4 等 gate4 后派 DeepSeek。
+> **21:45**：#475 在合并队列。#497 gate3 在跑。#488 修复轮 3（9f0ab9ec，DeepSeek，lib 777/0），r4 与 gate4 已派，finalize-reviewed 收尾。#486 修复轮 4（DeepSeek）、#487 修复轮 4（GLM，已跑 28 分钟）在跑。
+> **21:55**：#475 合入（9 轮评审），wt-a65-pr4b-grep 回收；#497 在合并队列（已是线性分支）。#487 修复轮 4（GLM）：codex r4 P1×2、gate4 P1 已修；在差异账本补登 A7.2-ZERO-RETENTION-TIMER-001（零保留终态的回收时机：JS 宏任务边界在 Rust 库级做不到，未批准，待人批）。rebase 到 main 时，accepted-diffs 与 FROZEN 两处都是两侧各追加一节的冲突：main 的节在前、A7.2 的节在后，哈希按合并结果重算，check_frozen PASS，lib 889/0，force-with-lease → 11ca3dc4。r5 codex+Grok 与 gate5 在跑。
+> **22:20**：#497 合入（#382、#387、#452 关闭；#440 部分完成，保持开），wt-p2-sweep-8 回收。#488 Grok r4 P1×2、gate4 P1×2，同类（null、缺失、类型不对）已是第三轮 → 修复轮 4 改为一次系统排查（55 个 case 里所有读属性、调方法的位置，五类值都用 TS 实测），派 GLM。#487 r5：codex P1×3、Grok P1×1，都是零保留计时那条差异——归类、范围、证据都有问题 → 决策卡 `_tmp/20261022-loop/card-replay-timer.md` 请人定（建议 B：本 PR 只改准确范围与证据，标「前置于 A7.2-pr5」，到 pr5 接宿主串行计时器后对齐）；不依赖人定的部分（范围、真实 timer 证据、归类）派 GLM 修复轮 5。#486 修复轮 4（pending_cr 接缝）；rebase 时为免逐个提交重复解冲突，先把 5 个提交压成一个（树不变），web_tools.rs 末尾冲突按括号平衡合并，并核对函数集合，main 与本分支一个不缺。lib 855/0 → ff6d1c17。r5 与 gate5 在跑。
+> **22:20**：codex 空闲、worktree 4/12，派两单：#494（RETENTION 补实现：按 V8 dateparser 两条路径移植，固定 TZ 的真实 TS 大语料金样，宁可多留不误删，无 panic fuzz 回归），新树 wt-494；p2-sweep-9（#440 剩余的 router/config.rs 小数校验 + #498 grep 旧测试改握手同步），新树 wt-p2-sweep-9。#486 r5 与 gate5、#487 修复轮 5、#488 修复轮 4（都是 GLM）在跑。
+> **22:45 人批 #487 选 B**：A7.2-REPLAY-RETENTION-TIMER-001 以「已知未对齐（人批）」合入，前置于 A7.2-pr5 实现宿主串行计时器后对齐。账本只追加批准说明，FROZEN 重登记，check_frozen PASS。修复轮 5（58c07502，GLM）：条目范围、真实 timer 证据、归类改准确；沙箱外 lib 889/0。r6 codex+Grok（任务书写明：行为未对齐已人批，不再算 P1）与 gate6 在跑，finalize-reviewed 收尾。A7.2 拆单 pr5 行加「实现宿主串行计时器，A7.2-REPLAY-RETENTION-TIMER-001 差异消除」。
+> **22:40 收尾脚本 bug（同类第二次，#499 之后又一次，已修）**：finalize-pr 取 PR 正文时 GitHub API 偶发失败（TLS 超时）、返回空，python 的长度保护中止了写回，但脚本照样往下执行入队；stderr 都进了 /dev/null，日志里看不出来。改为：取正文最多重试 5 次，错误写进 finalize.log，贴块失败就停、不入队，贴上后等 15 s 再记 pr-gate 状态。#486 用新脚本收尾，结果块贴上、pr-gate PASS，交 merge-when-green。
+> **22:55**：p2-sweep-9 → PR #500（Closes #440 #498），沙箱外 grep_tool 3/0/1、router_decision 3/0、lib 843/0；GLM+Grok r1 与 gate1 在跑，finalize-reviewed 收尾。#487 gate6 P1（coordinator 自述的交付差异未入账本）与 Grok r6（条目措辞前后矛盾：按只追加原则在条目末追加「当前状态」行，原文不改）→ 修复轮 6 派 GLM。
+> **23:15**：#494 → PR #501（codex）：复用 pilotdeck-transport 已有的 V8 12.4 Date.parse 移植，三时区 47,661 项对拍一致；本地时区未验证的子集仍保留并登记。沙箱外 token_stats 8/0、lib 841/0、transport 全过、check_frozen PASS；GLM+Grok r1 与 gate1 在跑。
+> **23:30**：#486 合入（#409 关闭）。#501 Grok r1 exit=2（发送前读会话失败、按约定未发送），重派。#488 修复轮 4（GLM，系统排查：六种操作 × 五类值，TS 实测）交付，沙箱外 lib 777/0；rebase 到 main 无冲突，复跑 lib 867/0 → c319ee0e。作者谱系 DeepSeek+GLM，r5 派 codex+Grok，gate5 在跑。
+> **23:45 收尾脚本第三个 bug（真正根因）**：finalize-pr 写结果块时报 `UnicodeEncodeError: surrogates not allowed`——Grok 的评审结论里引用了测试用的孤立代理字符（`\ud800` 一类），python 默认的 UTF-8 写入直接抛错。#499、#486 两次「结果块没贴上」很可能也是它。改为读入时用 surrogateescape，写出前把孤立代理换成 U+FFFD；#500 随即贴块成功、pr-gate PASS，交 merge-when-green。#488 codex r5 P1（text 在 map 回调里提前 ToString，多块同时抛错时顺序与 TS 不同）→ 修复轮 5 等 gate5 与 Grok r5 后派 GLM。#487 修复轮 6（GLM）沙箱外 lib 893/0、check_frozen PASS，main 只多 2 个提交且无冲突，直接推送；r7 codex+Grok 与 gate7 在跑。
+> **23:50**：#500（Closes #440 #498）、#501（Closes #494）合入，wt-494、wt-p2-sweep-9 回收。#487 r7 两家均 0/0；gate7 P1×5，其中 2 条属本 PR（coordinator 强捕获 sink 形成引用循环、timer 线程泄漏；with_run_id 对非对象事件与 TS 展开语义不同）→ 修复轮 7 派 GLM。另 3 条是 main 上已有的「只在注释自述、账本未登记」差异（js_value、jsonrepair、workspace_snapshot）→ 按「已合入代码的同类遗漏另开单」开 #502，全仓集中补登（自述注释 7 个文件）。
+> **23:55**：派三单：A6.6-pr10b（EdgeClaw FileMemoryStore，1611 行，codex）、A6.6-pr10d（sqlite 的 L0 会话读取，DeepSeek，与 pr10b 并行，只改 storage.rs）、#502（全仓自述差异集中补登，codex，避开 turn/ 与 edgeclaw/）。拆单依据 pr10a RESULT 第 9 节。
 
 > ## 2026-10-22 15:50 · /loop 协调轮（汇总 14:12 起四轮）
 > **合入**：#472（board）、#473（模型通道核验：real.md、memory model-runners 10-22 段、CLAUDE.md），邮箱 noreply。#471（#414 mark_session_dirty）在合并队列。
