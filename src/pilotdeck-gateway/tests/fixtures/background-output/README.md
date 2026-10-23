@@ -21,11 +21,11 @@ Rust `runtime::background::output::oracle_tests::spill_replays_real_ts_oracle` �
 
 ```sh
 # 在 /tmp 的独立源码副本中串行变异，绝不写真实 worktree 源码。
-# 所有 Cargo 复用本树 src/target，且每次启动前检查 cargo-slots.sh。
-# 同一 target 不能有其他编译/写入；SIGKILL 最多遗留临时源码副本，不污染真实源码。
+# 副本使用自己目录内的 target，仅编译 pilotdeck-gateway 所需目标。
+# 每次启动前检查 cargo-slots.sh；结束时副本与 target 一起删除。
 timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/background-output/negative.py /abs/negative-output
 ```
 
-负控有总期限 590 秒、每次 cargo/test 最长 100 秒、每进程 test-threads=4，超时杀自有进程组。源码变异覆盖 ring ±1、读序、未配置误启用落盘、仅溢出写盘、覆盖旧日志、跳过 flush、禁止目录准备/错误后不重试、缺口标志、close 后仍收输出、dispose 跳过等待、begin_close 未冻结、提前解码磁盘片段、cap 耗尽后误报缺口、close 后拒读磁盘、丢弃 ring 起点 UTF-8 替换字符；编译错误/沙箱错误不计杀死变异。临时源码副本没有自己的 target，正常退出时删除；SIGKILL 后按日志/临时目录所有权核实再清理。
+负控有总期限 590 秒、首次冷构建最长 300 秒、其余 cargo/test 最长 100 秒、每进程 test-threads=4，超时杀自有进程组。源码变异覆盖 ring ±1、读序、未配置误启用落盘、仅溢出写盘、覆盖旧日志、跳过 flush、禁止目录准备/错误后不重试、缺口标志、close 后仍收输出、dispose 跳过等待、begin_close 未冻结、提前解码磁盘片段、cap 耗尽后误报缺口、close 后拒读磁盘、丢弃 ring 起点 UTF-8 替换字符；编译错误/沙箱错误不计杀死变异。副本与隔离 target 由同一个 TemporaryDirectory 管理，正常退出、异常、SIGTERM 和 KeyboardInterrupt 都会清理；SIGKILL 无法运行清理，但只会遗留隔离副本，不污染本树构建。SIGKILL 后按日志中的 scratch 路径核实所有权再清理。开跑前核对共享磁盘预算，跑完立即删除构建产物。生命周期回归：`python3 -m unittest discover -s src/pilotdeck-gateway/tests/fixtures/background-output -p test_negative.py`。
 
 pr2 的 state.json、重启恢复、默认项目/nsjail 配置接线不在本夹具范围。
