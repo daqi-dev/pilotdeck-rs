@@ -248,9 +248,14 @@ async fn resume_replays_cached_or_pending_module_response_without_repeating_effe
             mode,
             Limits {
                 // Generous bounds: these modes test replay semantics, not timeouts,
-                // and a loaded CI host can exceed tighter ones (#230).
+                // and a loaded CI host can exceed tighter ones (#230). Under a fully
+                // parallel lib run the reconnect path must start Python again, kill
+                // and reap the old peer, and rewrite a 2 MiB cached response before
+                // the final event; keep this whole-flow watchdog wide enough that a
+                // loaded host never decides the result (#560). Test-only: production
+                // `Limits::default().execution_timeout` is `None` (no local watchdog, #554).
                 close_timeout: Duration::from_millis(500),
-                execution_timeout: Some(Duration::from_secs(10)),
+                execution_timeout: Some(Duration::from_secs(60)),
                 ..limits()
             },
         )
@@ -458,7 +463,10 @@ async fn coalesced_ack_cumulative_cleanup_slow_pipe_disconnect_and_resume_are_lo
     let (result, handler, receipt) = execute(
         mode,
         Limits {
-            execution_timeout: Some(Duration::from_secs(10)),
+            // Same reconnect + 2 MiB cached-response path as #560 above; keep the
+            // whole-flow watchdog wide enough that a loaded host never decides the
+            // result. Test-only.
+            execution_timeout: Some(Duration::from_secs(60)),
             ..limits()
         },
     )
