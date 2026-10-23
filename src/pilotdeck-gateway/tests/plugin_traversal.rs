@@ -7,12 +7,13 @@ use pilotdeck_gateway::runtime::plugins::{PluginSource, loader};
 use pilotdeck_protocol::{JsValue, stringify_json};
 use scratch::Scratch;
 use serde_json::{Value, json};
+#[cfg(unix)]
 use std::{
-    fs,
-    path::Path,
+    collections::HashSet,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+use std::{fs, path::Path};
 
 fn fixture() -> Value {
     let value = baseline::oracle(include_str!("fixtures/plugin-loader/traversal.json"));
@@ -50,18 +51,75 @@ fn unbounded_case(id: &str) -> Value {
         .unwrap()
         .clone()
 }
+fn boundary_case(id: &str) -> Value {
+    let value = baseline::oracle(include_str!("fixtures/plugin-loader/boundary.json"));
+    let value: Value = serde_json::from_str(&stringify_json(&value).unwrap().unwrap()).unwrap();
+    value["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == id)
+        .unwrap()
+        .clone()
+}
 
 fn commands(commands: &[loader::LoadedPluginCommand], root: &Path) -> Value {
     json!(commands.iter().map(|c| json!({"name":c.name,"path":c.path.to_string_lossy().replace(root.to_str().unwrap(),"<root>"),"content":c.content,"frontmatter":c.frontmatter,"isSkill":c.is_skill})).collect::<Vec<_>>())
 }
 
 // Reap on every exit path, including failed try_wait and assertion unwinding.
+#[cfg(unix)]
 struct ReapedChild(Child);
+#[cfg(unix)]
 impl Drop for ReapedChild {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+// A generous hang guard, never a performance/linearity acceptance threshold.
+// Poll completion before checking the deadline so a descheduled parent accepts
+// a child which has already finished. Drop also reaps on wait errors/panics.
+#[cfg(unix)]
+fn wait_for_traversal(mut child: ReapedChild, label: &str) {
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.0.try_wait().expect("traversal child wait") {
+            assert!(status.success(), "{label} child failed: {status}");
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "{label} hang guard exceeded 20s; child killed and reaped"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
+fn assert_directory_expansions(commands: &[loader::LoadedPluginCommand], unique: usize) {
+    use std::os::unix::fs::MetadataExt;
+    // These graph fixtures put exactly one Markdown file in each non-root
+    // physical directory. Each completed expansion therefore emits one item;
+    // the empty root is expanded once separately. Count work, never elapsed time.
+    assert_eq!(
+        commands.len(),
+        unique,
+        "one contribution per directory expansion"
+    );
+    let identities: HashSet<_> = commands
+        .iter()
+        .map(|command| {
+            let metadata = fs::metadata(command.path.parent().unwrap()).unwrap();
+            (metadata.dev(), metadata.ino())
+        })
+        .collect();
+    assert_eq!(
+        identities.len(),
+        unique,
+        "each physical directory expanded once"
+    );
 }
 #[cfg(unix)]
 fn clique(k: usize) {
@@ -86,8 +144,7 @@ fn clique(k: usize) {
             }
         }
     }
-    let start = Instant::now();
-    let mut child = ReapedChild(
+    let child = ReapedChild(
         Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -101,25 +158,7 @@ fn clique(k: usize) {
             .spawn()
             .unwrap(),
     );
-    loop {
-        match child.0.try_wait() {
-            Ok(Some(status)) => {
-                assert!(status.success(), "clique child failed: {status}");
-                break;
-            }
-            Ok(None) => {}
-            Err(error) => panic!("clique child wait failed: {error}"),
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "markdown clique exceeded 1s; child killed and reaped"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(
-        start.elapsed() < Duration::from_secs(1),
-        "markdown clique exceeded 1s"
-    );
+    wait_for_traversal(child, "markdown clique");
 }
 #[test]
 #[cfg(unix)]
@@ -142,6 +181,7 @@ fn plugin_markdown_clique_20() {
     clique(20);
 }
 #[test]
+#[cfg(unix)]
 #[ignore = "subprocess helper for bounded clique tests"]
 fn plugin_markdown_clique_child() {
     let base = std::env::var_os("PDRS_PLUGIN_CLIQUE_BASE").expect("only invoked by parent");
@@ -150,7 +190,7 @@ fn plugin_markdown_clique_child() {
         .parse()
         .unwrap();
     let commands = loader::load_plugin_commands("clique", Path::new(&base)).unwrap();
-    assert_eq!(commands.len(), k, "each directory inode expanded once");
+    assert_directory_expansions(&commands, k);
 }
 
 #[test]
@@ -240,6 +280,144 @@ fn plugin_markdown_root_boundary() {
     assert!(
         plugin.commands.is_empty() && plugin.skills.is_empty() && plugin.output_styles.is_empty(),
         "configured base cannot escape root"
+    );
+}
+
+#[cfg(unix)]
+fn boundary_contributions(root: &Path, scratch: &Path) -> Value {
+    let plugin = loader::load_plugin_from_path(root, PluginSource::Global).unwrap();
+    let styles = loader::load_plugin_output_styles_from_path(root, PluginSource::Global).unwrap();
+    json!({
+        "commands": commands(&plugin.commands, scratch),
+        "skills": commands(&plugin.skills, scratch),
+        "outputStyles": commands(&plugin.output_styles, scratch),
+        "styleOnly": commands(&styles.output_styles, scratch),
+    })
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_configured_base_symlink() {
+    let scratch = Scratch::new("484-base-symlink");
+    let root = scratch.path().join("base-symlink");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(scratch.path().join("outside")).unwrap();
+    fs::write(scratch.path().join("outside/SKILL.md"), "SECRET").unwrap();
+    fs::write(
+        root.join("plugin.json"),
+        r#"{"name":"p","commands":"linked","skills":"linked","outputStyles":"linked"}"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../outside", root.join("linked")).unwrap();
+    let mut expected = boundary_case("configured-base-symlink")["result"].clone();
+    // ROOT-001 projects out the real TS contributions escaping the plugin.
+    for family in expected.as_object_mut().unwrap().values_mut() {
+        assert_eq!(
+            family.as_array().unwrap().len(),
+            1,
+            "TS observes base symlink escape"
+        );
+        family
+            .as_array_mut()
+            .unwrap()
+            .retain(|c| c["content"] != "SECRET");
+    }
+    assert_eq!(
+        boundary_contributions(&root, scratch.path()),
+        expected,
+        "configured base symlink stays inside plugin root across four loaders"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_plugin_root_symlink() {
+    let scratch = Scratch::new("484-root-symlink");
+    let real = scratch.path().join("real-root");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("plugin.json"), r#"{"name":"p"}"#).unwrap();
+    for dir in ["commands", "skills", "output-styles"] {
+        fs::create_dir(real.join(dir)).unwrap();
+        fs::write(real.join(dir).join("SKILL.md"), "safe").unwrap();
+    }
+    let root = scratch.path().join("root-symlink");
+    std::os::unix::fs::symlink("real-root", &root).unwrap();
+    assert_eq!(
+        boundary_contributions(&root, scratch.path()),
+        boundary_case("plugin-root-symlink")["result"],
+        "plugin root symlink retains TS lexical contributions across four loaders"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_absolute_configured_path() {
+    let scratch = Scratch::new("484-absolute");
+    let root = scratch.path().join("absolute");
+    let observed = boundary_case("absolute-configured-path");
+    // Use the recorded /private/tmp absolute operand unchanged. All fixture
+    // writes still go below our owned root, as Node path.join does.
+    let absolute = observed["input"]["configured"].as_str().unwrap();
+    let inside = root.join(absolute.trim_start_matches('/'));
+    fs::create_dir_all(&inside).unwrap();
+    fs::write(inside.join("SKILL.md"), "safe absolute").unwrap();
+    fs::write(
+        root.join("plugin.json"),
+        json!({"name":"p","commands":absolute,"skills":absolute,"outputStyles":absolute})
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        boundary_contributions(&root, scratch.path()),
+        observed["result"],
+        "absolute configuration follows TS join across four loaders"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_outside_unreadable_file() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(std::path::PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o600));
+        }
+    }
+    let scratch = Scratch::new("484-outside-denied");
+    let root = scratch.path().join("denied-plugin");
+    fs::create_dir_all(root.join("items")).unwrap();
+    fs::create_dir(scratch.path().join("outside")).unwrap();
+    let denied = scratch.path().join("outside/denied.md");
+    fs::write(&denied, "SECRET denied").unwrap();
+    fs::write(root.join("items/SKILL.md"), "safe").unwrap();
+    fs::write(
+        root.join("plugin.json"),
+        r#"{"name":"p","commands":"items","skills":"items","outputStyles":"items"}"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../../outside/denied.md", root.join("items/denied.md")).unwrap();
+    let _restore = Restore(denied.clone());
+    fs::set_permissions(&denied, fs::Permissions::from_mode(0o0)).unwrap();
+    assert_eq!(
+        fs::read(&denied).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "native permission oracle"
+    );
+    for family in boundary_case("outside-unreadable-file")["result"]
+        .as_object()
+        .unwrap()
+        .values()
+    {
+        assert!(
+            family.as_array().unwrap().is_empty(),
+            "TS discards configured directory on outside read error"
+        );
+    }
+    assert_eq!(
+        boundary_contributions(&root, scratch.path()),
+        boundary_case("outside-unreadable-file-safe")["result"],
+        "ROOT-001 retains safe contributions when outside Markdown is unreadable"
     );
 }
 
@@ -467,8 +645,7 @@ fn plugin_markdown_alias_dag() {
     // subprocess so removing de-duplication cannot wedge the test process.
     let base = scratch.path().join("deep-dag");
     alias_dag(&base, 24);
-    let start = Instant::now();
-    let mut child = ReapedChild(
+    let child = ReapedChild(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "plugin_markdown_alias_dag_child", "--ignored"])
             .env("PDRS_PLUGIN_DAG_BASE", &base)
@@ -476,35 +653,16 @@ fn plugin_markdown_alias_dag() {
             .spawn()
             .unwrap(),
     );
-    loop {
-        if let Some(status) = child.0.try_wait().unwrap() {
-            assert!(status.success(), "alias DAG child failed");
-            break;
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "alias DAG child exceeded 5s including startup"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_traversal(child, "alias DAG");
 }
 
 #[test]
+#[cfg(unix)]
 #[ignore = "subprocess helper for bounded alias DAG test"]
 fn plugin_markdown_alias_dag_child() {
     let base = std::env::var_os("PDRS_PLUGIN_DAG_BASE").expect("only invoked by parent");
-    let start = Instant::now();
-    assert_eq!(
-        loader::load_plugin_commands("p", Path::new(&base))
-            .unwrap()
-            .len(),
-        25,
-        "alias DAG expands each physical directory once"
-    );
-    assert!(
-        start.elapsed() < Duration::from_secs(1),
-        "alias DAG traversal exceeded 1s"
-    );
+    let commands = loader::load_plugin_commands("p", Path::new(&base)).unwrap();
+    assert_directory_expansions(&commands, 25);
 }
 
 #[test]

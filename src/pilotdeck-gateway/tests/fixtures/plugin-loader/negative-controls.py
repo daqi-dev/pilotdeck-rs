@@ -110,6 +110,11 @@ DEPTH_LIMIT = replace_once(DEPTH_LIMIT, '            pending.extend(markdown_ent
     '            if depth > 64 { return Err(PluginRuntimeError::new("negative-control depth budget")); }\n            pending.extend(markdown_entries(&path).into_iter().rev().map(|p| (p, depth + 1)));')
 CASES += [
     ('markdown-cycle', MARKDOWN, DEDUP, 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_clique_10'),
+    ('markdown-expansion-identity', MARKDOWN, '    Ok(output)\n}', '    if let Some(first) = output.first().map(|c| c.path.clone()) {\n        for command in &mut output { command.path = first.clone(); }\n    }\n    Ok(output)\n}', 'traversal:plugin_markdown_clique_10'),
+    ('markdown-base-symlink', MARKDOWN, '    if !canonical.starts_with(&root) {\n        return Ok(Vec::new());\n    }', '    let root = canonical.clone();', 'traversal:plugin_markdown_configured_base_symlink'),
+    ('markdown-root-symlink', MARKDOWN, 'plugin_root.canonicalize()', 'Ok::<_, std::io::Error>(plugin_root.to_path_buf())', 'traversal:plugin_markdown_plugin_root_symlink'),
+    ('markdown-absolute-configured', CONFIG, 'PathBuf::from(format!("{}/{}", base.display(), part))', 'base.join(part)', 'traversal:plugin_markdown_absolute_configured_path'),
+    ('markdown-outside-unreadable', MARKDOWN, ENTRY_GUARD, '', 'traversal:plugin_markdown_outside_unreadable_file'),
     ('markdown-alias', MARKDOWN, 'path: path.into(),', 'path: source.into(),', 'traversal:plugin_markdown_alias_first_path'),
     ('markdown-entry-budget', MARKDOWN, markdown_source, ENTRY_LIMIT, 'traversal:plugin_markdown_entries_match_ts'),
     ('markdown-depth-budget', MARKDOWN, markdown_source, DEPTH_LIMIT, 'traversal:plugin_markdown_deep_tree_matches_ts'),
@@ -172,7 +177,12 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'manifest-trim-name': ['assertion `left == right` failed: manifest Object {"name": String(" '
                         '\\t\\u{feff}")}'],
  'markdown-alias': ['first alias retains TS name and path'],
- 'markdown-cycle': ['markdown clique exceeded 1s; child killed and reaped'],
+ 'markdown-cycle': ['markdown clique hang guard exceeded 20s; child killed and reaped'],
+ 'markdown-expansion-identity': ['each physical directory expanded once', '  left: 1', ' right: 10'],
+ 'markdown-base-symlink': ['configured base symlink stays inside plugin root across four loaders'],
+ 'markdown-root-symlink': ['plugin root symlink retains TS lexical contributions across four loaders'],
+ 'markdown-absolute-configured': ['absolute configuration follows TS join across four loaders'],
+ 'markdown-outside-unreadable': ['ROOT-001 retains safe contributions when outside Markdown is unreadable'],
  'marketplace-deferred': ['assertion `left == right` failed: marketplace reference'],
  'marketplace-name': ['assertion `left == right` failed: {"error":"Marketplace name impersonates '
                       'an official PilotDeck marketplace.","name":"official-pilot"}'],
