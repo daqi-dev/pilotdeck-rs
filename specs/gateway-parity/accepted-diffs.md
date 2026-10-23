@@ -582,3 +582,59 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 
 ### A7.4-HTTPSTORE-CLIENT-BODY-UNITS-001 · 客户端响应体上限按 UTF-8 字节计（TS 按 UTF-16 码元）
 - **类别**：字符串上限语义。**TS 依据**：`Response.text()` 受 V8 `MAX_STRING_LENGTH`（UTF-16 码元）约束。**Rust 行为**：复用 `fetch_redirect::read_body`，按 UTF-8 字节累计，多字节文本可能更早触发上限并映射为 invalid response。**范围**：仅接近 512 MB 的超大响应。**机器判据**：暂无（需构造多字节 512 MB 边界）。**批准记录**：无；**已知未对齐（未批准）**。
+
+## A7.4 user_dialog HTTP store 条目更正（PR #535 修复轮 2；原条目保留在上方）
+
+### A7.4-HTTPSTORE-MAX-CONNECTIONS-001-R1 · 更正
+
+- **类别**：新增资源上限 / 过载响应。
+- **TS 依据**：Node v22 `maxConnections` 默认无限，`net.Server` 不因连接数停止 accept。
+- **Rust 行为**：保留 `DEFAULT_MAX_CONNECTIONS = 64` + Semaphore；满额时 accept 不阻塞，立即 503 + `Connection: close`，最多 drain 100 ms；释放后继续服务。旧条目“满额时暂停 accept”已不成立。
+- **范围**：单进程 server；攻击者仍可占满 64 个 permit，合法请求得到 503（不是成功），故仍是“向安全/可用性偏离”的未对齐项。
+- **机器判据**：`http_store_tests.rs:665 connection_cap_answers_overflow_with_503_and_recovers`、`:714 overflow_connections_do_not_block_the_accept_loop`；负控恢复阻塞 accept 后 1 s 超时红。
+- **批准记录**：无；候选，待协调者改条目文字与判据，**未批准**。
+
+### A7.4-HTTPSTORE-431-408-SHAPE-001-R1 · 更正
+
+- **类别**：错误响应字节 / 头部计数。
+- **TS 依据**：Node v22.22.0 头部超时实测 `HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n`；`maxHeaderSize` 按 name+value 计数（2,500×`aaaaa: x` 通过、2,800 失败；16,350 B 值通过、16,380 失败）。
+- **Rust 行为**：`header_read_timeout` 到期由 hyper 直接关闭连接，**没有 408**；408 只出现在 body `requestTimeout` 路径。431 阈值按原始头字节（含请求行/分隔符）求和，可比 Node 更早拒绝；431/408 是否带 `content-length: 0` 尚未逐字节比对。
+- **范围**：仅头超时、body 超时、>16 KiB 头路径。
+- **机器判据**：现有 `partial_headers_are_closed_after_headers_timeout`、`idle_keep_alive_connections_close_at_headers_timeout`、`oversized_headers_are_rejected_like_node`、`many_small_headers_are_not_capped_at_the_documented_two_thousand`；头部 408 形状与 name+value 计数需新增对照（当前会红）。
+- **批准记录**：无；原条目“状态码与 Node 一致”与实测矛盾，需改写；**未批准**。
+
+### A7.4-HTTPSTORE-KEEPALIVE-001-R1 · 更正
+
+- **类别**：连接生命周期。
+- **TS 依据**：Node 默认 `keepAliveTimeout = 5000`。
+- **Rust 行为**：仍未实现独立 5 s keep-alive 超时，空闲连接由 60 s 头超时兜底；`close()` 会主动关闭空闲连接。
+- **范围**：空闲 keep-alive 连接；单请求不受影响。
+- **机器判据**：`http_store_tests.rs:519 idle_keep_alive_connections_close_at_headers_timeout`（200 ms 配置验证兜底）、`:489 close_closes_idle_keep_alive_connections`；负控删除 header timeout 后 2 s 红。原“暂无”应替换为这两条。
+- **批准记录**：无；仍为未对齐项，**未批准**。
+
+### A7.4-HTTPSTORE-CLIENT-ERROR-CLASS-001-R1 · 更正
+
+- **类别**：错误对象形状。
+- **TS 依据**：`:140-168` 只把 `response.json()` 失败吞成 undefined；网络/中止异常仍是 TypeError / AbortError（类名不可观察）。
+- **Rust 行为**：`HttpStoreTransportError` 现在只有 `message`，已删除 `invalid_response` 标志；**响应头之后**的 body 失败不再算 transport 错误（body=undefined，按状态码出文案），只有头之前的网络/中止仍是 message-only。
+- **范围**：client 错误面；成功路径与 body-failure 文案已对齐。
+- **机器判据**：`clientRequests` 的 message 金样；`http_store_tests.rs:955 client_body_failures_follow_typescript_status_order`（六例状态优先）。原条目提到的 `invalid_response` 标志已不存在，需改写。
+- **批准记录**：无；建议缩小为“网络/中止不保留 JS 类名”，**未批准**。
+
+### A7.4-HTTPSTORE-CLIENT-BODY-UNITS-001-R1 · 更正
+
+- **类别**：字符串上限语义。
+- **TS 依据**：`Response.text()` 受 V8 `MAX_STRING_LENGTH`（UTF-16 码元）约束（`:154`）。
+- **Rust 行为**：`fetch_redirect::read_body` 按 UTF-8 字节累计；2xx 超限 → `returned an invalid response.`，非 2xx → `failed: HTTP n`（状态优先）。
+- **范围**：仅接近 512 MB 的超大响应，多字节文本可能更早触发。
+- **机器判据**：`http_store_tests.rs:1000 client_body_limit_counts_utf8_bytes_not_utf16_units`（64 B/17 CJK 字符），负控放大上限后 `expect_err` 红；`clientBodyFailures` 的 oversized 六例。原“暂无”应替换。
+- **批准记录**：无；仍为未对齐项，**未批准**。
+
+### A7.4-HTTPSTORE-AUTH-BEFORE-BODY-001-R1 · 更正（可选项，按候选登记）
+
+- **类别**：处理顺序 / 资源边界。
+- **TS 依据**：`:515-523` 先收完整 body 再进 handler；401 在 `:194-204`。
+- **Rust 行为**：405/404/401 与 Content-Length 检查先于读 body；未知/未认证的大 body 立即 401。
+- **范围**：HTTP server 包装层；handler API 仍接收完整 body。
+- **机器判据**：原有 `request_body_limit_rejects_oversized_content_length_before_reading`；建议追加 `http_store_tests.rs:576 anonymous_oversized_body_is_rejected_before_reading`（4 GiB CL，150 ms 内 401）。负控把 precheck 后移即 413 红。
+- **批准记录**：无；行为未变，仅补强判据，**未批准**。
