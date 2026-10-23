@@ -18,6 +18,7 @@ import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.m
 
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const commandPath = 'src/extension/plugins/loading/PluginCommandLoader.ts';
+const loaderPath = 'src/extension/plugins/loading/PluginLoader.ts';
 if (process.argv[2] === '--child') {
   // Observe a blocking readFile (FIFO) in a killable child, like generate-toctou.
   const {loadStandaloneSkill} = await import(pathToFileURL(join(baseline, commandPath)).href);
@@ -32,7 +33,7 @@ if (process.argv[2] === '--child') {
   bindSourceTree(baseline, sourceCommit, git);
   const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
   assert.equal(execFileSync(git, ['--no-replace-objects', '-C', baseline, 'status', '--porcelain', '--untracked-files=no'], {env: gitEnv}).toString(), '');
-  const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git, [commandPath]);
+  const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git, [commandPath, loaderPath]);
   const {loadStandaloneSkill} = await import(pathToFileURL(join(baseline, commandPath)).href);
   const output = resolve(process.argv[2]);
   assert.ok(output !== baseline && !output.startsWith(baseline + '/'), 'never write the baseline');

@@ -61,8 +61,8 @@ CASES += [
     ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
     # #564 fix 1: the read moved into read_markdown(...)?; swallow its error here.
     ('configured-directory-read-error', MARKDOWN,
-     'let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {\n                continue;\n            };',
-     'let Ok(Some(raw)) = read_markdown(&root, &canonical, checked_identity) else {\n                continue;\n            };',
+     'let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?\n            else {\n                continue;\n            };',
+     'let Ok(Some(raw)) = read_markdown(&root, &canonical, &canonical, checked_identity, false) else {\n                continue;\n            };',
      'plugin_loader_hooks_paths'),
 ]
 PLUGINS = 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -109,8 +109,8 @@ CASES += [
     ('markdown-ancestor-file-open-skip', MARKDOWN, '&& has_symlink_ancestor(canonical)', '&& true', TOCTOU + 'ancestor_file_after_lstat_propagates_error'),
     ('markdown-ancestor-file-lstat-skip', MARKDOWN, "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate", '        Err(_) => return Ok(None), // negative control: ENOTDIR silently skipped', TOCTOU + 'ancestor_file_before_lstat_propagates_error'),
     ('markdown-ancestor-file-directory-skip', MARKDOWN,
-     'let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {\n                continue;\n            };',
-     'let Ok(Some(raw)) = read_markdown(&root, &canonical, checked_identity) else {\n                continue;\n            };',
+     'let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?\n            else {\n                continue;\n            };',
+     'let Ok(Some(raw)) = read_markdown(&root, &canonical, &canonical, checked_identity, false) else {\n                continue;\n            };',
      TOCTOU + 'ancestor_file_rejects_only_its_configured_directory'),
     # Race errors are skipped, not turned into a failed load.
     ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
@@ -128,8 +128,8 @@ CASES += [
      TOCTOU + 'standalone_static_leaf_symlink_outside_is_refused'),
     # A refused read (None) must fail the whole skill, not load empty content.
     ('standalone-none-error', MARKDOWN,
-     'read_markdown(&root, &canonical, file_identity(&metadata))?.ok_or_else(refused)',
-     'Ok(read_markdown(&root, &canonical, file_identity(&metadata))?.unwrap_or_default())',
+     'read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.ok_or_else(refused)',
+     'Ok(read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.unwrap_or_default())',
      TOCTOU + 'standalone_static_fifo_is_refused_without_blocking'),
     # Leaf NOFOLLOW under a race: revert to a path read after the swap fires.
     ('standalone-raced-leaf-symlink', MARKDOWN,
@@ -146,6 +146,36 @@ CASES += [
      "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate",
      '        Err(_) => return Ok(None), // negative control: deletion silently skipped',
      TOCTOU + 'standalone_deleted_after_check_rejects_like_ts'),
+]
+CASES += [
+    ('standalone-resolution-enoent', MARKDOWN,
+     'std::io::ErrorKind::NotFound => error,',
+     'std::io::ErrorKind::NotFound => std::io::Error::from_raw_os_error(libc::EACCES),',
+     TOCTOU + 'standalone_dangling_symlink_preserves_enoent'),
+    ('standalone-resolution-other', MARKDOWN,
+     '        _ => error,\n    };\n    super::io_error("open", file, &error)',
+     '        _ => std::io::Error::from_raw_os_error(libc::EACCES),\n    };\n    super::io_error("open", file, &error)',
+     TOCTOU + 'standalone_resolution_errors_keep_non_refusal_codes'),
+    ('standalone-resolution-refusal', MARKDOWN,
+     '            std::io::Error::from_raw_os_error(libc::EACCES)\n        }\n        _ => error,',
+     '            error\n        }\n        _ => error,',
+     TOCTOU + 'standalone_self_symlink_is_refused'),
+    ('standalone-lexical-error', MARKDOWN,
+     'let error = |e: std::io::Error| super::io_error("open", lexical, &e);',
+     'let error = |e: std::io::Error| super::io_error("open", canonical, &e);',
+     TOCTOU + 'standalone_in_root_symlink_read_failure_keeps_lexical_path'),
+    ('standalone-static-hardlink', MARKDOWN,
+     'if require_single_link && after.nlink() > 1 {',
+     'if require_single_link && after.nlink() > u64::MAX {',
+     TOCTOU + 'standalone_static_outside_hardlink_is_refused'),
+    ('standalone-postopen-nlink', MARKDOWN,
+     'if require_single_link && after.nlink() > 1 {',
+     'if require_single_link && _before.nlink() > 1 {',
+     TOCTOU + 'standalone_hardlink_added_after_check_is_refused'),
+    ('standalone-in-root-hardlink', MARKDOWN,
+     'if require_single_link && after.nlink() > 1 {',
+     'if require_single_link && after.nlink() > u64::MAX {',
+     TOCTOU + 'standalone_in_root_hardlink_is_conservatively_refused'),
 ]
 # Each mutation restores one removed limit, or removes global directory de-dup.
 markdown_source = (ROOT/MARKDOWN).read_text()
@@ -366,6 +396,16 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'standalone-raced-leaf-symlink': ['leaf symlink raced after check must be refused'],
  'standalone-raced-hardlink': ['hardlinked different inode must be refused by identity recheck'],
  'standalone-deleted-code': ['error matches TS code ENOENT']}
+
+EXPECTED_FAILURES.update({
+    'standalone-resolution-enoent': ['dangling link keeps ENOENT and lexical path'],
+    'standalone-resolution-other': ['resolution errno'],
+    'standalone-resolution-refusal': ['ELOOP is a refused resolution'],
+    'standalone-lexical-error': ['in-root link error uses lexical SKILL.md'],
+    'standalone-static-hardlink': ['called `Option::unwrap()` on a `None` value'],
+    'standalone-postopen-nlink': ['called `Option::unwrap()` on a `None` value'],
+    'standalone-in-root-hardlink': ['all multiply linked skills are refused regardless of alias location'],
+})
 
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
