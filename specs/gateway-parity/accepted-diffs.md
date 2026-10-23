@@ -805,3 +805,39 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：`src/pilotdeck-gateway/tests/mcp_https.rs` 的 `replays_ts_mcp_https_over_local_tls`（本地 TLS 上回放真实 TS 金样：initialize / tools/list / tools/call、重定向、握手卡住、端口关闭）、`production_roots_do_not_trust_the_fixture_ca`、`mcp_https_fixtures_regenerate_identically_from_ts`（ignored，真实 TS 两次生成逐字节一致）。
 - **批准记录**：人批 2026-10-23「A6.5-MCP-HTTPS-001 … 修」；本条为修复完成的状态追加。
 
+
+### A6.5-MCP-HTTPS-001 · 状态追加的更正（追加，不改上文；#361-3 修复轮 1）
+
+- **类别**：状态追加更正（补齐字段/可追溯批准，修正「机器判据」覆盖范围）。
+- **TS 依据**：`mcp/client/McpClient.ts:163-205`；SDK `sse.js:70`、`streamableHttp.js:89,306,443`；undici `connect.js:69`（10 s connectTimeout）、`util.js:904-918`（timeout 文案）、eventsource `dist/index.js:48-49,98`（cause 展平）。
+- **Rust 行为**：`runtime/mcp/http.rs` 的 `parse_endpoint` 接受 http/https，`HttpLink::with_config` 用共享 `ConnectDeadline` 罩 10 s 整连；SSE 首连失败文本已对齐四类失败（自签、握手卡住、显式拒连、443 默认端口）；streamable 仍按 `strip_cause` 只报 `fetch failed`。
+- **范围**：MCP streamable_http / sse 的 http(s) 端点；残余的信任源与证书文案差异见 B、D。非 http(s) 见 C。
+- **机器判据**：`src/pilotdeck-gateway/tests/mcp_https.rs` 的 `replays_ts_mcp_https_over_local_tls`（12 场景 / 42 步 / 30 请求，oracle sha256 `92e1759a3b60501d8a20cc0d82ce2f59c0ce2398e3812c9da07ceebc2a77272b`）、`production_roots_do_not_trust_the_fixture_ca`、`mcp_https_fixtures_regenerate_identically_from_ts`（ignored，真实 TS 重生成一次并与入库比对）。**账本该行括注「真实 TS 两次生成逐字节一致」应改为「重生成一次与入库比对；两次独立运行见 RESULT §3」**（`tests/common/baseline.rs:106-126` 每次只 spawn 一次生成器）。
+- **批准记录**：人批 2026-10-23「A6.5-MCP-HTTPS-001 … 修」，原话见 `state/decisions-20261023.md`「#505 补登 32 条批复」（PR #550 合入）；本条为修复完成后的状态更正。
+
+### A6.5-MCP-TLS-TRUST-001 · MCP https 的信任源与代理不同于 Node（未批准）
+
+- **类别**：未实现（信任源 / 代理）。
+- **TS 依据**：Node `fetch` 在进程启动时读取 `NODE_EXTRA_CA_CERTS` 扩展信任（本夹具生成器正是靠它让真实 TS 信任夹具 CA，`generate.mts:46-67`）；TS CLI 启动时安装 undici proxy dispatcher（`cli/proxy.ts`，与 A6.7-HOOK-TLS-TRUST-001 同源依据）。
+- **Rust 行为**：`McpClient::new()` 只信 webpki（Mozilla bundle），不读 `NODE_EXTRA_CA_CERTS`、不读 OS 信任库、不走代理 dispatcher；私有 CA 的 https MCP 在 Rust 报 `fetch failed`、TS 成功。
+- **范围**：用私有 CA、OS 信任库或依赖代理的 https MCP。扩展信任源会改变安全边界，需产品决定。
+- **机器判据**：暂无（`production_roots_do_not_trust_the_fixture_ca` 只证明夹具 CA 不进生产；生成器的 `NODE_EXTRA_CA_CERTS` 是 TS 会读该变量的反证）。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**。
+
+### A6.5-MCP-SCHEME-001 · 非 http(s) 的失败时机不同（未批准）
+
+- **类别**：错误时机 / fail-closed 差异。
+- **TS 依据**：`McpClient.buildTransport()` 只做 `new URL(spec.url)`，不检查协议；非 http(s) 要等 `fetch` / `EventSource` 才失败（`sse.js:70`、`streamableHttp.js` 的 `fetch`）。
+- **Rust 行为**：`runtime/mcp/http.rs:parse_endpoint` 在 buildTransport 同步阶段立即返回 `mcp_unsupported_transport`（模块文档已披露为故意差异）。
+- **范围**：仅非 `http:`/`https:` 的 MCP URL。
+- **机器判据**：`runtime::mcp::http::tests::http_and_https_urls_are_served`（ftp → `mcp_unsupported_transport`；无 TS 金样）。
+- **批准记录**：无；**已知未对齐（未批准）**。
+
+### A6.5-MCP-TLS-CAUSE-001 · SSE 证书失败 cause 文案的两处残余（未批准）
+
+- **类别**：错误文本未对齐（仅失败路径）。
+- **TS 依据**：实测 Node v22.22.0：自签叶子 `self-signed certificate`；私有 CA 签发但不被信任 `unable to verify the first certificate`；主机名不匹配 `Hostname/IP does not match certificate's altnames: Host: localhost. is not cert's CN: 127.0.0.1`。
+- **Rust 行为**：rustls 0.23 对所有不可验证链只给 `CertificateError::UnknownIssuer`，`io::Error` payload 里不带叶子证书，故统一映射为 `self-signed certificate`（私有 CA 场景文案因此偏）；`NotValidForName*` 拿不到证书 CN，未映射，SSE 仍报裸 `fetch failed`。
+- **范围**：legacy SSE 首连的证书失败；成功路径与 streamable（`strip_cause`）不受影响。
+- **机器判据**：`https-sse-certificate` 钉住自签文案；私有 CA 与主机名不匹配**无金样**（Rust 侧无法正确合成 Node 文案，未伪造期望值）。
+- **批准记录**：无；fixture README「已知未对齐」已如实写明。
