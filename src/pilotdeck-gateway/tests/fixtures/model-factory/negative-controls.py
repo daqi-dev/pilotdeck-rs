@@ -78,14 +78,8 @@ controls = [
      '        !self.state.lock().unwrap().entries.is_empty()',
      'empty_registry_router_staging_and_missing_judge_match_ts'),
     ('complete-ignores-requested-provider', registry,
-     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
-        let lease = request
-            .get("provider")
-            .and_then(JsValue::as_string)
-            .ok_or_else(|| missing(&JsString::from("undefined")))
-            .and_then(|id| self.acquire(id));''',
-     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
-        let lease = self.acquire(&"a".into());''',
+     'let lease = self.acquire_request(&request);',
+     'let lease = self.acquire_request(&pilotdeck_protocol::parse_json(r#"{"provider":"a"}"#).unwrap());',
      'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
     ('model-family-panics-outside-tokio', family,
      '''tokio::runtime::Handle::try_current().map_err(|_| {
@@ -98,17 +92,38 @@ controls = [
      'impl RouterModelInvocation for NativeModelInvocationProvider {\n    fn supports_complete(&self) -> bool { true }',
      'native_registry_enabled_router_staging_matches_ts'),
     ('complete-missing-provider-error-is-wrong', registry,
-     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
-        let lease = request
-            .get("provider")
-            .and_then(JsValue::as_string)
-            .ok_or_else(|| missing(&JsString::from("undefined")))''',
-     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
-        let lease = request
-            .get("provider")
-            .and_then(JsValue::as_string)
-            .ok_or_else(|| missing(&JsString::from("null")))''',
+     'static UNDEFINED: JsValue = JsValue::Undefined;',
+     'static UNDEFINED: JsValue = JsValue::Null;',
      'empty_registry_complete_without_provider_matches_ts'),
+    ('unregister-keeps-replacement', registry,
+     'let entry = self.state.lock().unwrap().entries.remove(id);',
+     'let entry = { let mut state = self.state.lock().unwrap(); if state.entries.get(id).is_some_and(|entry| entry.generation > 1) { None } else { state.entries.remove(id) } };',
+     'unregister_after_replace_removes_current_generation_matches_ts'),
+    ('stream-non-string-provider-is-undefined', registry,
+     'let lease = self.acquire_request(request);',
+     'let mut request_copy = request.as_object().unwrap().clone(); request_copy.insert("provider".into(), JsValue::Undefined); let lease = self.acquire_request(&JsValue::Object(request_copy));',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+    ('complete-non-string-provider-is-undefined', registry,
+     'let lease = self.acquire_request(&request);',
+     'let mut request_copy = request.as_object().unwrap().clone(); if !matches!(request.get("provider"), Some(JsValue::String(_))) { request_copy.insert("provider".into(), JsValue::Undefined); } let lease = self.acquire_request(&JsValue::Object(request_copy));',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+    ('non-string-provider-coerces-route-key', registry,
+     'Err(missing(&JsString::from_utf16(units)))',
+     'self.acquire(&JsString::from_utf16(units))',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+    ('null-provider-formatted-as-undefined', registry,
+     'to_string_units_checked(provider)',
+     'to_string_units_checked(if matches!(provider, JsValue::Null) { &UNDEFINED } else { provider })',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+    ('number-provider-formatted-as-undefined', registry,
+     'to_string_units_checked(provider)',
+     'to_string_units_checked(if matches!(provider, JsValue::Number(_)) { &UNDEFINED } else { provider })',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+    ('boolean-provider-formatted-as-undefined', registry,
+     'to_string_units_checked(provider)',
+     'to_string_units_checked(if matches!(provider, JsValue::Bool(_)) { &UNDEFINED } else { provider })',
+     'non_string_provider_errors_match_ts_without_coercing_route_keys'),
+
 ]
 
 try:

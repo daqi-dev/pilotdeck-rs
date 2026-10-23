@@ -793,6 +793,348 @@
     "still-current:2",
     "dispose:new"
   ],
+  "unregisterAfterReplace": [
+    "dispose:old",
+    "old-dispose-keeps-current:2",
+    "unregister-removed-current:true",
+    "new-disposed-before-drain:false",
+    "dispose:new",
+    "unregister:true",
+    "later-still-current:3",
+    "dispose:later",
+    "unregister:true",
+    "unregister:false"
+  ],
+  "providerValueCases": [
+    {
+      "name": "missing",
+      "stringId": "undefined",
+      "request": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider undefined does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider undefined does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "undefined",
+      "stringId": "undefined",
+      "request": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider undefined does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider undefined does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "null",
+      "stringId": "null",
+      "request": {
+        "provider": null,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider null does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider null does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "integer",
+      "stringId": "123",
+      "request": {
+        "provider": 123,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider 123 does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider 123 does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "fraction",
+      "stringId": "-7.5",
+      "request": {
+        "provider": -7.5,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider -7.5 does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider -7.5 does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "true",
+      "stringId": "true",
+      "request": {
+        "provider": true,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider true does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider true does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "false",
+      "stringId": "false",
+      "request": {
+        "provider": false,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider false does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider false does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "negative-zero",
+      "stringId": "0",
+      "request": {
+        "provider": 0,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider 0 does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider 0 does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "large-number",
+      "stringId": "1e+21",
+      "request": {
+        "provider": 1e+21,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider 1e+21 does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider 1e+21 does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "small-number",
+      "stringId": "1e-7",
+      "request": {
+        "provider": 1e-7,
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "streamError": {
+        "code": "provider_not_found",
+        "message": "Provider 1e-7 does not exist."
+      },
+      "completeError": {
+        "code": "provider_not_found",
+        "message": "Provider 1e-7 does not exist."
+      },
+      "stringCompletion": {
+        "label": "judge-b"
+      }
+    }
+  ],
   "api": [
     {
       "code": "invalid_provider",

@@ -618,6 +618,135 @@ fn error_value(error: ModuleError) -> JsValue {
     value.insert("message".into(), JsValue::String(error.message));
     JsValue::Object(value)
 }
+
+#[tokio::test]
+async fn unregister_after_replace_removes_current_generation_matches_ts() {
+    let oracle = baseline::oracle(ORACLE);
+    let trace = Trace::default();
+    let registry = ModelInvocationProviderRegistry::new(tokio::runtime::Handle::current());
+    let make = |label| {
+        Arc::new(ReplacementProvider {
+            id: "a".into(),
+            label,
+            trace: trace.clone(),
+        }) as Arc<dyn ModelInvocationProvider>
+    };
+    let original = registry.register(make("old")).unwrap();
+    let replaced = registry.replace(make("new")).unwrap();
+    bounded(replaced.retired.unwrap().dispose()).await.unwrap();
+    bounded(original.dispose()).await.unwrap();
+    push(
+        &trace,
+        format!(
+            "old-dispose-keeps-current:{}",
+            registry.acquire(&"a".into()).unwrap().generation()
+        ),
+    );
+    let held_current = registry.acquire(&"a".into()).unwrap();
+    let id = "a".into();
+    let removing = registry.unregister(&id);
+    tokio::pin!(removing);
+    assert!(matches!(
+        std::future::poll_fn(|cx| Poll::Ready(removing.as_mut().poll(cx))).await,
+        Poll::Pending
+    ));
+    push(
+        &trace,
+        format!(
+            "unregister-removed-current:{}",
+            registry.get_provider_generation(&"a".into()).is_undefined()
+        ),
+    );
+    push(
+        &trace,
+        format!("new-disposed-before-drain:{}", has(&trace, "dispose:new")),
+    );
+    registry.register(make("later")).unwrap();
+    drop(held_current);
+    let removed = bounded(removing).await.unwrap();
+    push(&trace, format!("unregister:{removed}"));
+    push(
+        &trace,
+        format!(
+            "later-still-current:{}",
+            registry.acquire(&"a".into()).unwrap().generation()
+        ),
+    );
+    let removed = bounded(registry.unregister(&"a".into())).await.unwrap();
+    push(&trace, format!("unregister:{removed}"));
+    let removed = bounded(registry.unregister(&"a".into())).await.unwrap();
+    push(&trace, format!("unregister:{removed}"));
+    bounded(registry.dispose()).await.unwrap();
+    assert_eq!(
+        *trace.lock().unwrap(),
+        strings(get(&oracle, "unregisterAfterReplace"))
+    );
+}
+
+#[tokio::test]
+async fn non_string_provider_errors_match_ts_without_coercing_route_keys() {
+    let oracle = baseline::oracle(ORACLE);
+    let JsValue::Array(cases) = get(&oracle, "providerValueCases") else {
+        panic!("provider value cases")
+    };
+    let registry = ModelInvocationProviderRegistry::new(tokio::runtime::Handle::current());
+    for case in cases {
+        let string_id = get(case, "stringId").as_string().unwrap();
+        if registry.acquire(string_id).is_err() {
+            registry
+                .register(Arc::new(JudgeProvider {
+                    id: string_id.clone(),
+                }))
+                .unwrap();
+        }
+        let mut request = get(case, "request").clone();
+        // JSON omits undefined properties and encodes -0 as 0. Restore the
+        // exact JS probe inputs so both typed boundary cases are exercised.
+        if let JsValue::Object(object) = &mut request {
+            match text(get(case, "name")).as_str() {
+                "undefined" => {
+                    object.insert("provider".into(), JsValue::Undefined);
+                }
+                "negative-zero" => {
+                    object.insert("provider".into(), JsValue::Number(-0.0));
+                }
+                _ => {}
+            }
+        }
+        let stream_error = bounded(registry.stream(
+            &request,
+            &StreamOptions::default(),
+            &mut |_| panic!("missing provider emitted an event"),
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error_value(stream_error.into()),
+            *get(case, "streamError"),
+            "stream case {}",
+            text(get(case, "name"))
+        );
+        let complete_error = bounded(registry.complete(request, None)).await.unwrap_err();
+        let mut error = ModuleError::new(complete_error.message);
+        error.code = complete_error.code;
+        assert_eq!(
+            error_value(error),
+            *get(case, "completeError"),
+            "complete case {}",
+            text(get(case, "name"))
+        );
+        let mut string_request = get(case, "request").as_object().unwrap().clone();
+        string_request.insert("provider".into(), JsValue::String(string_id.clone()));
+        assert_eq!(
+            bounded(registry.complete(JsValue::Object(string_request), None))
+                .await
+                .unwrap(),
+            *get(case, "stringCompletion")
+        );
+    }
+    bounded(registry.dispose()).await.unwrap();
+}
+
 struct ApiProvider {
     id: JsString,
     label: &'static str,

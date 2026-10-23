@@ -258,6 +258,9 @@ impl ModelInvocationProviderRegistry {
             .cloned()
             .ok_or_else(|| missing(id))
     }
+    /// Removes the current generation by id, including a published replacement.
+    /// Unlike `ProviderRegistration::dispose`, this does not target an owned
+    /// generation (ModelInvocationProviderRegistry.ts:108-114).
     pub async fn unregister(&self, id: &JsString) -> Result<bool, RuntimeError> {
         let entry = self.state.lock().unwrap().entries.remove(id);
         match entry {
@@ -268,6 +271,28 @@ impl ModelInvocationProviderRegistry {
             }
             None => Ok(false),
         }
+    }
+    fn acquire_request(&self, request: &JsValue) -> Result<ProviderLease, ModelStreamError> {
+        static UNDEFINED: JsValue = JsValue::Undefined;
+        let provider = request.get("provider").unwrap_or(&UNDEFINED);
+        let result = if let JsValue::String(id) = provider {
+            self.acquire(id)
+        } else {
+            // JS Map lookup does not coerce keys. String(provider) is only
+            // used by missingProvider's error, never to select a route.
+            let units = crate::js_value::to_string_units_checked(provider).map_err(|error| {
+                ModelStreamError::Thrown {
+                    name: error.name().into(),
+                    message: error.message().into(),
+                }
+            })?;
+            Err(missing(&JsString::from_utf16(units)))
+        };
+        result.map_err(|error| ModelStreamError::Request {
+            code: error.code.unwrap_or_default(),
+            message: error.message,
+            details: None,
+        })
     }
     pub async fn dispose(&self) -> RuntimeResult {
         let entries = {
@@ -348,17 +373,9 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
         sink: &'a mut (dyn FnMut(StreamOutput) + Send),
     ) -> RouterStreamFuture<'a> {
         // Acquire when stream() is called, before the body is first polled.
-        let lease = request
-            .get("provider")
-            .and_then(JsValue::as_string)
-            .ok_or_else(|| missing(&JsString::from("undefined")))
-            .and_then(|id| self.acquire(id));
+        let lease = self.acquire_request(request);
         Box::pin(async move {
-            let lease = lease.map_err(|error| ModelStreamError::Request {
-                code: error.code.unwrap_or_default(),
-                message: error.message,
-                details: None,
-            })?;
+            let lease = lease?;
             lease.provider().stream(request, options, sink).await
         })
     }
@@ -369,14 +386,13 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
         true
     }
     fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
-        let lease = request
-            .get("provider")
-            .and_then(JsValue::as_string)
-            .ok_or_else(|| missing(&JsString::from("undefined")))
-            .and_then(|id| self.acquire(id));
+        let lease = self.acquire_request(&request);
         Box::pin(async move {
-            let lease = lease.map_err(|error| {
-                RouterInvokeError::request(error.code.unwrap_or_default(), error.message)
+            let lease = lease.map_err(|error| match error {
+                ModelStreamError::Request { code, message, .. } => {
+                    RouterInvokeError::request(code, message)
+                }
+                error => RouterInvokeError::other(error.message()),
             })?;
             lease.provider().complete(request, abort).await
         })
