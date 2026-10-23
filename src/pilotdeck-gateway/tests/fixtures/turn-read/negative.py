@@ -79,9 +79,22 @@ mutants = [
      'after.as_number().is_some_and(|a| a > last)', 'after.as_number().is_some_and(|a| a > last + 1.0)',
      'run_events_paging'),
     ('gap-number-only', source,
-     'js_value::to_number(last)',
-     'js_value::to_number(&JsValue::Number(last.as_number().unwrap_or(f64::NAN)))',
+     'last_seq_to_number(last)',
+     'last_seq_to_number(&JsValue::Number(last.as_number().unwrap_or(f64::NAN)))',
      'run_events_non_numeric_last_seq'),
+    ('toprimitive-error-swallowed', source,
+     'if object.get_property("toString").is_some() {',
+     'if false && object.get_property("toString").is_some() {',
+     'run_events_toprimitive_throw_last_seq'),
+    ('deep-array-gate-reintroduced', source,
+     'Some(JsValue::Array(items)) => frames.push((items.iter(), false)),',
+     'Some(JsValue::Array(items)) => {\n'
+     '                if frames.len() >= js_value::MAX_ARRAY_DEPTH {\n'
+     '                    return Err(NotPrimitive);\n'
+     '                }\n'
+     '                frames.push((items.iter(), false));\n'
+     '            }',
+     'run_events_deep_array_last_seq'),
     ('nextseq-dropped', source,
      '    if let Some(last) = events.last() {\n        result.insert("nextSeq".into(), field(last, "seq").clone());\n    }',
      '    let _ = events.last();',

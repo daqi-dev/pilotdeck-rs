@@ -172,6 +172,12 @@ impl RunRecord {
     pub fn as_json(&self) -> &JsValue {
         &self.0
     }
+    /// A record exactly as a port hands it to the read face; the in-memory
+    /// test port wraps a stored-shape value directly.
+    #[cfg(test)]
+    pub(crate) fn from_json(value: JsValue) -> Self {
+        Self(value)
+    }
     pub fn state(&self) -> Option<RunState> {
         RunState::of(field(&self.0, "state"))
     }

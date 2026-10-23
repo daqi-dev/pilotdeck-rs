@@ -41,7 +41,7 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 /// wire code; the two `readSessionMessages` throws are plain `Error`s; a
 /// registry rejection crosses with its own `RunRegistryError` name and code,
 /// or with the builtin JS name (`SyntaxError`, `TypeError`) of a corrupt
-/// snapshot.
+/// snapshot or a stored `lastSeq` ToPrimitive cannot convert.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnReadError {
     /// `DialogGatewayError.code`, or the TS registry code (`conflict`,
@@ -122,6 +122,103 @@ fn is_valid_limit(value: &JsValue) -> bool {
         && value
             .as_number()
             .is_some_and(|n| (1.0..=500.0).contains(&n))
+}
+
+/// The ToPrimitive failure the gap check's relational `>` can raise:
+/// `TypeError: Cannot convert object to primitive value`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NotPrimitive;
+
+/// Whether an object's ToPrimitive still has a primitive source. JSON data
+/// cannot hold callables, so an own `toString` property — whatever its value
+/// — shadows the inherited `Object.prototype.toString` with data, and the
+/// inherited `valueOf` only ever returns the object itself; V8 then throws
+/// (node probe: `6 > {toString: null}` and `6 > {valueOf: 5, toString: 5}`
+/// both raise the TypeError, while `6 > {valueOf: 5}` stays false because the
+/// inherited `toString` still answers `[object Object]`).
+fn own_to_string(object: &JsObject) -> Result<(), NotPrimitive> {
+    if object.get_property("toString").is_some() {
+        Err(NotPrimitive)
+    } else {
+        Ok(())
+    }
+}
+
+/// `ToNumber` for the stored `lastSeq`, with ToPrimitive failures kept: the
+/// JS relational `>` (InProcessGateway.ts:2541-2542) applies ToNumber to the
+/// stored value before comparing, so an object — or an array element — with
+/// an own `toString` throws V8's TypeError instead of quietly comparing
+/// against NaN.
+///
+/// Unlike the shared [`js_value::to_number`], the array walk below carries
+/// no depth bound: V8's join recursion converts arrays thousands of layers
+/// deep inside `runEvents` (measured, node 22: 2530 layers convert, 2540
+/// throw; caller-stack dependent), and the shared 2000-layer gate
+/// (A6-JSVALUE-DEPTH-001, unapproved) must not reach this comparison.
+fn last_seq_to_number(value: &JsValue) -> Result<f64, NotPrimitive> {
+    match value {
+        // Both ToPrimitive hints consult the same two methods, and for JSON
+        // data only the inherited `toString` can answer (see
+        // [`own_to_string`]); its `[object Object]` is never a number.
+        JsValue::Object(object) => own_to_string(object).map(|()| f64::NAN),
+        JsValue::Array(_) => Ok(js_value::string_to_number(&join_string(value)?)),
+        // Only the array walk fails in the shared converter, and arrays are
+        // matched above; a scalar is always `Ok` (NaN for `undefined` and
+        // unparseable strings, exactly like ToNumber).
+        scalar => Ok(js_value::to_number(scalar).unwrap_or(f64::NAN)),
+    }
+}
+
+/// `Array.prototype.join` for a JSON-representable wire array, iterative and
+/// without a depth bound (see [`last_seq_to_number`]). Object elements keep
+/// ToPrimitive's failure — an own `toString` throws instead of rendering.
+fn join_string(value: &JsValue) -> Result<String, NotPrimitive> {
+    let mut out = Vec::new();
+    // One frame per array being joined: its remaining items and whether a
+    // separator is due before the next one.
+    let mut frames: Vec<(std::slice::Iter<'_, JsValue>, bool)> = Vec::new();
+    let mut next = Some(value);
+    loop {
+        match next.take() {
+            Some(JsValue::Array(items)) => frames.push((items.iter(), false)),
+            Some(JsValue::Object(object)) => {
+                own_to_string(object)?;
+                out.extend("[object Object]".encode_utf16());
+            }
+            Some(scalar) => join_scalar_units(scalar, &mut out),
+            None => {}
+        }
+        let Some((items, separate)) = frames.last_mut() else {
+            return Ok(String::from_utf16_lossy(&out));
+        };
+        match items.next() {
+            Some(item) => {
+                if *separate {
+                    out.push(u16::from(b','));
+                }
+                *separate = true;
+                if !matches!(item, JsValue::Undefined | JsValue::Null) {
+                    next = Some(item);
+                }
+            }
+            None => {
+                frames.pop();
+            }
+        }
+    }
+}
+
+/// `ToString` of a joined element: `null` / `undefined` join as empty
+/// strings; a lone surrogate survives the units and never parses as a
+/// number, so the lossy fold at the end of [`join_string`] is equivalent.
+fn join_scalar_units(value: &JsValue, out: &mut Vec<u16>) {
+    match value {
+        JsValue::String(s) => out.extend_from_slice(s.units()),
+        JsValue::Bool(b) => out.extend(b.to_string().encode_utf16()),
+        JsValue::Number(n) => out.extend(js_value::number_string(*n).encode_utf16()),
+        JsValue::Undefined | JsValue::Null => {}
+        JsValue::Object(_) | JsValue::Array(_) => unreachable!("containers are joined above"),
+    }
 }
 
 /// The `options.readSessionMessages` port (InProcessGateway.ts:279): the
@@ -299,16 +396,18 @@ pub async fn run_events(
         // TS compares against the stored record's `lastSeq` with the JS
         // relational `>` (InProcessGateway.ts:2541-2542): the stored value may
         // be a string / null / boolean / array, and ToNumber applies before
-        // the comparison (NaN → false), while a too-deep array throws V8's
-        // RangeError instead.
+        // the comparison (NaN → false). A ToPrimitive failure throws with
+        // V8's exact shape — and the conversion must be the ungated one, so
+        // a deep stored array converts like V8's join does here instead of
+        // hitting the shared converter's conservative depth bound.
         let last = field(record.as_json(), "lastSeq");
-        let gap = match js_value::to_number(last) {
+        let gap = match last_seq_to_number(last) {
             Ok(last) => after.as_number().is_some_and(|a| a > last),
-            Err(_) => {
+            Err(NotPrimitive) => {
                 return Err(TurnReadError {
                     code: None,
-                    name: "RangeError".to_string(),
-                    message: js_value::StackOverflow::MESSAGE.into(),
+                    name: "TypeError".to_string(),
+                    message: js_value::ToStringError::NOT_PRIMITIVE.into(),
                 });
             }
         };
