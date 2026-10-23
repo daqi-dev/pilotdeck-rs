@@ -1,0 +1,910 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "nodeVersion": "v22.22.0",
+  "sourceSha256": {
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/mcp/protocol/types.ts": "8176ead2cf6d407d93caf96d6b882cf959b81a6f172857dafeae188a82b4e5aa",
+    "src/mcp/runtime/sanitize.ts": "53851ed8c64e37496a98291b5f630c27b5d4231b849a8b6af939f59dc988945a",
+    "src/mcp/runtime/truncate.ts": "b28e609f9df3d7173e92c0570cd75ea1c1e82a3a796d7692f7482bd877c7651b",
+    "src/mcp/runtime/wireName.ts": "311952c3359f583082c440a6bbb99d89bffd75b03cf23b4a6190eb74ac12e630",
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f"
+  },
+  "sdkVersion": "1.29.0",
+  "cases": [
+    {
+      "id": "https-streamable",
+      "transport": "streamable_http",
+      "url": "https://<mock>/mcp",
+      "headers": {
+        "X-Api-Key": "k"
+      },
+      "options": {},
+      "mockTls": true,
+      "redirect": null,
+      "stall": false,
+      "closed": false,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-tls",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo over TLS",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "over https"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over https"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "https-sse",
+      "transport": "sse",
+      "url": "https://<mock>/sse",
+      "headers": {
+        "x-api-key": "k"
+      },
+      "options": {},
+      "mockTls": true,
+      "redirect": null,
+      "stall": false,
+      "closed": false,
+      "script": {
+        "GET /sse": [
+          {
+            "sse": [
+              ": hello\n\n",
+              "event: endpoint\ndata: /messages?session=abc\n\n"
+            ],
+            "channel": true
+          }
+        ],
+        "initialize": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-tls\",\"version\":\"1.0.0\"}}}\n\n"
+            ]
+          }
+        ],
+        "tools/list": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"tools\":[{\"name\":\"echo\",\"description\":\"echo over TLS\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}}]}}\n\n"
+            ]
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"over sse https\"}]}}\n\n"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {}
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over sse https"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "http-to-https-redirect",
+      "transport": "streamable_http",
+      "url": "http://<redirect>/mcp",
+      "headers": {
+        "X-Api-Key": "k",
+        "Authorization": "Bearer secret"
+      },
+      "options": {},
+      "mockTls": true,
+      "redirect": {
+        "status": 307,
+        "mockTls": true
+      },
+      "stall": false,
+      "closed": false,
+      "script": {
+        "initialize": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-tls",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo over TLS",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "over redirect"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {}
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over redirect"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "https-to-http-downgrade",
+      "transport": "streamable_http",
+      "url": "https://<redirect>/mcp",
+      "headers": {
+        "X-Api-Key": "k",
+        "Authorization": "Bearer secret"
+      },
+      "options": {},
+      "mockTls": false,
+      "redirect": {
+        "status": 307,
+        "mockTls": false
+      },
+      "stall": false,
+      "closed": false,
+      "script": {
+        "initialize": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-tls",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo over TLS",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "over downgrade"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {}
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over downgrade"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "https-handshake-stall",
+      "transport": "streamable_http",
+      "url": "https://<stall>/mcp",
+      "headers": {},
+      "options": {
+        "handshakeTimeoutMs": 30000
+      },
+      "mockTls": false,
+      "redirect": null,
+      "stall": true,
+      "closed": false,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: fetch failed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
+      "id": "https-refused",
+      "transport": "streamable_http",
+      "url": "https://<closed>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "redirect": null,
+      "stall": false,
+      "closed": true,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: fetch failed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    }
+  ]
+}

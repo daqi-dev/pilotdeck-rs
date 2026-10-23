@@ -21,7 +21,7 @@ use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use sha2::{Digest, Sha256};
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use super::count_body::{field, is, put, text as header_text};
 use super::providers::{self, StreamState};
@@ -257,6 +257,58 @@ pub(crate) fn https_connector(
         .https_or_http()
         .enable_http1()
         .wrap_connector(http)
+}
+
+/// One deadline around a connector's whole connect future, DNS and TLS
+/// handshake included. undici's `connectTimeout` (10 s by default) spans
+/// socket establishment *including* the TLS handshake, while hyper's
+/// `HttpConnector::set_connect_timeout` only bounds the TCP phase
+/// (`node_modules/undici/lib/core/connect.js:69,126`). Call sites that need
+/// undici's semantics wrap the shared connector with this without changing
+/// [`https_connector`] itself. hyper-util's `Connect` is blanket-implemented
+/// for `tower_service::Service<Uri>`, so this wrapper is the seam.
+#[derive(Clone)]
+pub(crate) struct ConnectDeadline<C> {
+    inner: C,
+    timeout: Duration,
+}
+impl<C> ConnectDeadline<C> {
+    pub(crate) fn new(inner: C, timeout: Duration) -> Self {
+        Self { inner, timeout }
+    }
+}
+impl<C> tower_service::Service<hyper::Uri> for ConnectDeadline<C>
+where
+    C: tower_service::Service<hyper::Uri> + Send + Sync + 'static,
+    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    C::Future: Send + 'static,
+{
+    type Response = C::Response;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    fn poll_ready(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(context).map_err(Into::into)
+    }
+    fn call(&mut self, destination: hyper::Uri) -> Self::Future {
+        let timeout = self.timeout;
+        let connect = self.inner.call(destination);
+        Box::pin(async move {
+            match tokio::time::timeout(timeout, connect).await {
+                Ok(result) => result.map_err(Into::into),
+                // TS reports this as `TypeError: fetch failed` (cause
+                // `UND_ERR_CONNECT_TIMEOUT`, probe measured ~10.5 s); callers
+                // map the message the same way they map any fetch failure.
+                Err(_) => Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "connect timeout",
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>),
+            }
+        })
+    }
 }
 
 /// rustls client config trusting the Mozilla roots (`webpki-roots`).
