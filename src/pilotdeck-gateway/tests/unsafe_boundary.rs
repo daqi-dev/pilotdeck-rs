@@ -280,6 +280,107 @@ fn rust_tokens(source: &str) -> Vec<String> {
     tokens
 }
 
+// The complete expected content of pilotdeck-child-signals/src/lib.rs
+// (comments stripped by `rust_tokens`, so comment-only edits pass; every
+// other change — imports, type aliases shadowing `libc`, helper items, a
+// moved or copied unsafe block — changes the token sequence). ANY change to
+// that file must update this copy in the same commit and re-extends the
+// #386/#552 human-approved unsafe exception; do not edit either side alone.
+// Source order: the #386 signal reset, then the #552 setsid.
+const CHILD_SOURCE: &str = r#"
+//! The #386 human-approved exception: reset inherited child signals before exec.
+//! The #552 human-approved addition: libuv's `detached` `setsid()` in the same
+//! fork-to-exec window, for every spawn whose TS counterpart is detached (the
+//! bash runner, background tasks, the ripgrep engine spawn and command hooks;
+//! A6.5-BASH-OS-001 setsid half).
+#![cfg(unix)]
+
+use std::{io, os::unix::process::CommandExt, process::Command};
+
+// libuv's Unix child-init range is 1..32, excluding unchangeable signals.
+// This is 29 signals on macOS and Linux; Linux 32/33 (glibc's internal
+// realtime signals), and all other realtime dispositions, are left alone.
+// Build the list at compile time, never by querying libc after fork.
+const CHILD_SIGNALS: [libc::c_int; 29] = {
+    let mut signals = [0; 29];
+    let mut signal = 1;
+    let mut index = 0;
+    while signal < 32 {
+        if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+            signals[index] = signal;
+            index += 1;
+        }
+        signal += 1;
+    }
+    signals
+};
+
+/// Install before spawn, after any caller-owned pre-exec hooks. Tokio callers
+/// pass `as_std_mut()`. Only the forked child executes this hook; std retains
+/// ownership of cwd, stdio, exec-error reporting, and the child handle.
+#[allow(unsafe_code)]
+pub fn install_child_signal_reset(command: &mut Command) {
+    // SAFETY: pre_exec runs only in the single-threaded child after fork. The
+    // closure captures nothing and uses only stack/POD data, a constant list,
+    // and async-signal-safe sigemptyset/sigaction/sigprocmask. A zeroed sigaction
+    // is valid on macOS/Linux (integer fields and nullable sa_restorer); its
+    // mask is explicitly initialized before use and its handler is SIG_DFL.
+    // All pointers refer to live stack storage; null old-action/mask pointers
+    // request no output. Each error immediately reads thread-local errno via
+    // last_os_error, which constructs an inline OS error without allocation.
+    // No locks, environment access, formatting, destructors, or panics occur.
+    unsafe {
+        command.pre_exec(|| {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = libc::SIG_DFL;
+            if libc::sigemptyset(&mut action.sa_mask) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            for signal in CHILD_SIGNALS {
+                if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            // Unblock only after every disposition has been reset.
+            if libc::sigprocmask(libc::SIG_SETMASK, &action.sa_mask, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// `detached: true` (#552): libuv's child init calls `setsid()`, so the
+/// child leads a fresh session — its own process group with no controlling
+/// terminal, so commands cannot read the gateway's terminal (`/dev/tty`
+/// opens fail ENXIO). Install before `install_child_signal_reset`, which
+/// stays the last hook per its own contract; the run order relative to the
+/// resets is immaterial (the steps are independent, unlike in libuv where
+/// the resets come first). Installers are the spawns whose TS counterparts
+/// are detached: the bash runner (with its shared background-task spawn),
+/// the ripgrep engine spawn and command hooks. The sidecar and MCP stdio
+/// spawns mirror TS spawns that are not detached. Callers that use this
+/// must not also request `process_group(0)`: the forked child would already
+/// be a group leader and `setsid` would fail with EPERM.
+#[allow(unsafe_code)]
+pub fn install_child_detach_session(command: &mut Command) {
+    // SAFETY: pre_exec runs only in the single-threaded child after fork. The
+    // closure captures nothing and calls only setsid, an async-signal-safe
+    // syscall with no locks, environment access, allocation, formatting, or
+    // destructors. Its error path reports the child's errno through
+    // last_os_error, which constructs an inline OS error without allocating.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+"#;
+
 fn child_source_boundary(source: &str) {
     let tokens = rust_tokens(source);
     let mut lint_attributes = Vec::new();
@@ -320,6 +421,10 @@ fn child_source_boundary(source: &str) {
         2,
         "exactly one unsafe_code lint attribute per approved function"
     );
+    // The approved functions' full extents: the lint attribute through the
+    // closing brace of the body. `bodies` holds `(body_open, body_close)`
+    // half-open token ranges for the unsafe-block binding below.
+    let mut functions = Vec::new();
     for ((start, end), name) in lint_attributes
         .iter()
         .zip(["install_child_signal_reset", "install_child_detach_session"])
@@ -329,6 +434,43 @@ fn child_source_boundary(source: &str) {
             ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
         );
         assert_eq!(&tokens[*end..*end + 4], ["pub", "fn", name, "("]);
+        // Skip the balanced parameter list to the body's opening brace.
+        let mut depth = 0;
+        let mut index = *end + 3;
+        loop {
+            match tokens
+                .get(index)
+                .map(String::as_str)
+                .expect("closed parameter list")
+            {
+                "(" => depth += 1,
+                ")" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        let body_open = index + 1;
+        assert_eq!(tokens[body_open], "{", "approved function body");
+        let mut depth = 1;
+        let mut body_close = body_open + 1;
+        while depth != 0 {
+            match tokens
+                .get(body_close)
+                .map(String::as_str)
+                .expect("closed function body")
+            {
+                "{" => depth += 1,
+                "}" => depth -= 1,
+                _ => {}
+            }
+            body_close += 1;
+        }
+        functions.push((*start, body_open, body_close));
     }
     let unsafe_blocks: Vec<(usize, usize)> = tokens
         .iter()
@@ -358,48 +500,39 @@ fn child_source_boundary(source: &str) {
         2,
         "exactly one unsafe keyword per approved function"
     );
-    // 改动闭包须同步更新此处并经评审。Pin the entire approved unsafe
-    // blocks, including the pre_exec calls, rather than just counting
-    // keywords. Source order: the #386 signal reset, then the #552 setsid.
-    let expected = [
-        rust_tokens(
-            r#"
-        command.pre_exec(|| {
-            let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = libc::SIG_DFL;
-            if libc::sigemptyset(&mut action.sa_mask) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            for signal in CHILD_SIGNALS {
-                if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-            }
-            if libc::sigprocmask(libc::SIG_SETMASK, &action.sa_mask, std::ptr::null_mut()) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-        "#,
-        ),
-        rust_tokens(
-            r#"
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-        "#,
-        ),
-    ];
-    for ((start, end), expected) in unsafe_blocks.iter().zip(expected) {
+    // Bind every unsafe block to an approved function body: each block must
+    // lie inside exactly one approved body, and each approved body must own
+    // exactly one block. Moving a block across functions (reset=2, detach=0)
+    // or adding a copy fails here even before the full-file pin below.
+    for (start, _) in &unsafe_blocks {
+        let owners = functions
+            .iter()
+            .filter(|(_, body_open, body_close)| *start > *body_open && *start < *body_close)
+            .count();
         assert_eq!(
-            tokens[start + 2..*end - 1],
-            expected,
-            "approved pre_exec unsafe block token sequence changed"
+            owners, 1,
+            "unsafe block outside the approved function bodies"
         );
     }
+    for (_, body_open, body_close) in &functions {
+        let owned = unsafe_blocks
+            .iter()
+            .filter(|(start, _)| *start > *body_open && *start < *body_close)
+            .count();
+        assert_eq!(
+            owned, 1,
+            "each approved function body owns exactly one unsafe block"
+        );
+    }
+    // Pin the entire file's token sequence (comments stripped). Pinning only
+    // the unsafe blocks left the surrounding function body editable: a local
+    // `AliasLibc::setsid()` plus `type libc = AliasLibc` kept the pinned
+    // block's tokens byte-identical while redirecting the actual call.
+    assert_eq!(
+        tokens,
+        rust_tokens(CHILD_SOURCE),
+        "pilotdeck-child-signals/src/lib.rs changed; updating CHILD_SOURCE requires extending the #386/#552 human-approved unsafe exception"
+    );
     assert!(source.contains("#![cfg(unix)]"));
     for forbidden in ["macro_rules", "macro", "include", "mod"] {
         assert!(

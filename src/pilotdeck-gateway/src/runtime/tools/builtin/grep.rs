@@ -588,11 +588,17 @@ async fn run_ripgrep_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    // `spawn(..., { detached: true })` on every platform TS supports a group
-    // for, plus libuv's child-init signal reset. The reset matters when the
+    // `spawn(..., { detached: true })` (`SubprocessPort.executeFile`, the
+    // spawn `ripgrep.ts` drives) on every platform TS supports a group for,
+    // plus libuv's child-init signal reset. The reset matters when the
     // gateway itself inherited ignored/blocked signals.
+    // `detached` (#552): `setsid()` between fork and exec, so the rg child
+    // leads a new session — its own process group (this replaces
+    // `process_group(0)`; the two are mutually exclusive, the child would
+    // already be a group leader and `setsid` would fail EPERM) with no
+    // controlling terminal.
     #[cfg(unix)]
-    command.process_group(0);
+    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
     #[cfg(unix)]
     pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     // The TS baseline hands `context.env` to `spawn` as the child environment
@@ -2298,8 +2304,9 @@ mod tests {
                 .expect("chmod fake rg");
             let mut command = std::process::Command::new(&script);
             command
-                // Same detached group as `run_ripgrep`'s spawn (grep.rs:583-595):
-                // when this test dies, only the scripts themselves can clean up.
+                // Same detached group as `run_ripgrep`'s spawn (grep.rs:591-603,
+                // a session leader is also a group leader): when this test
+                // dies, only the scripts themselves can clean up.
                 .process_group(0)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -2639,6 +2646,137 @@ mod tests {
                 .as_deref(),
             Some("boom")
         );
+    }
+
+    /// Replay of the real-TS grep-session oracle (#552 修复轮 1): what the
+    /// executable that `SubprocessPort.executeFile` spawns — the spawn
+    /// `filesystem/ripgrep.ts` drives, `detached: process.platform !==
+    /// "win32"` — reports about its own session, process group, controlling
+    /// terminal and `/dev/tty`, recorded with the spawning parent
+    /// demonstrably holding a controlling terminal. See
+    /// `tests/fixtures/grep-session/README.md`.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detached_ripgrep_session_matches_real_ts() {
+        fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+            static UNDEFINED: JsValue = JsValue::Undefined;
+            value.get(key).unwrap_or(&UNDEFINED)
+        }
+        fn value_text(value: &JsValue) -> String {
+            String::from_utf16_lossy(value.as_string().expect("fixture string").units())
+        }
+        let oracle_text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/grep-session/oracle.json"
+        ))
+        .expect("grep-session oracle");
+        let oracle = crate::test_baseline::oracle(&oracle_text);
+        assert_eq!(value_text(field(&oracle, "platform")), "darwin");
+        assert_eq!(value_text(field(&oracle, "parentDevTty")), "open");
+        let cases = match field(&oracle, "cases") {
+            JsValue::Array(cases) => cases,
+            other => panic!("fixture array, got {other:?}"),
+        };
+        assert_eq!(cases.len(), 4, "session, pgroup, ctty and devtty probes");
+        for case in cases {
+            let name = value_text(field(case, "name"));
+            let scratch = Scratch::new(&format!("grep-session-{name}"));
+            let script = scratch.script(&format!("rg-{name}"), &value_text(field(case, "script")));
+            let context = context(
+                &[
+                    ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
+                    ("PATH", "/usr/bin:/bin"),
+                ],
+                None,
+                &scratch.root,
+            );
+            let output = futures_block(run_ripgrep_with_timeout(
+                &[],
+                &cwd_string(&scratch.root),
+                &context,
+                StdDuration::from_secs(60),
+            ))
+            .expect("session probe run");
+            assert_eq!(output, value_text(field(case, "stdout")), "{name}");
+        }
+    }
+
+    /// `getsid(rg) == rg pid`: the TS engine spawn is `detached`, so
+    /// `setsid()` runs between fork and exec and the engine leads a session
+    /// of its own — independent of whether this test process itself has a
+    /// controlling terminal. Mirrors `tests/bash_session.rs`; the run must
+    /// stay alive at the assertion, and its Drop reclamation must survive
+    /// the session change.
+    #[test]
+    fn detached_ripgrep_leads_its_own_session() {
+        let scratch = Scratch::new("session-direct");
+        let leader_file = scratch.root.join("leader.pid");
+        let script = scratch.script(
+            "rg-session-direct",
+            &format!(
+                "#!/bin/sh\n{WATCH_PARENT}\necho $$ > '{}'\n{}\n",
+                leader_file.display(),
+                stay_alive_loop(),
+            ),
+        );
+        let context = context(
+            &[
+                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
+                ("PATH", "/usr/bin:/bin"),
+            ],
+            None,
+            &scratch.root,
+        );
+        let cwd = cwd_string(&scratch.root);
+        futures_block(async {
+            let mut run = Box::pin(run_ripgrep_with_timeout(
+                &[],
+                &cwd,
+                &context,
+                Duration::from_secs(60),
+            ));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let leader = loop {
+                assert!(Instant::now() < deadline, "no leader pid file appeared");
+                tokio::select! {
+                    status = &mut run => panic!("the engine must still be running: {status:?}"),
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                }
+                if pid_file_ready(&leader_file) {
+                    break read_pid(&leader_file);
+                }
+            };
+            assert_eq!(
+                rustix::process::getsid(Some(leader)).expect("getsid"),
+                leader,
+                "setsid: the engine leads its own session"
+            );
+            assert_ne!(
+                rustix::process::getsid(Some(leader)).expect("getsid"),
+                rustix::process::getsid(None).expect("getsid"),
+                "the engine's session must differ from ours"
+            );
+            // Dropping the run kills the group (TERM, then the deferred
+            // KILL and reap); the session change must not disturb that.
+            drop(run);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while crate::process_group::group_exists(leader) {
+                assert!(
+                    Instant::now() < deadline,
+                    "process group {} was not reclaimed",
+                    leader.as_raw_pid()
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+    }
+
+    /// The committed oracle is exactly what the real TS baseline produces.
+    #[test]
+    #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules), Node 22, darwin and script(1)"]
+    #[cfg(target_os = "macos")]
+    fn fixture_regenerates_identically_from_the_baseline() {
+        crate::test_baseline::regenerates_identically("grep-session");
     }
 
     #[test]

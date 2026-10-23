@@ -526,6 +526,71 @@ async fn command_cleanup_aborts_stdin_writer() {
     assert!(settled, "stdin writer task leaked past command cleanup");
 }
 
+/// #552 修复轮 1: TS runs command hooks through `NodeShellCommandRunner`
+/// (`commandRunner.ts` `spawn(..., { detached: !isWindows })` via the hook
+/// executor's `ShellPort`), so the hook shell must lead a new session of its
+/// own: `getsid(shell) == shell pid`, different from the test process's
+/// session, asserted while the hook is still running. Dropping the pending
+/// run must still reclaim the process group.
+#[tokio::test]
+async fn command_hook_shell_leads_its_own_session() {
+    let scratch = Scratch::new("hooks-session");
+    let root = scratch_root(&scratch);
+    let pid_file = format!("{root}/leader.pid");
+    // The loop stops on its own once the spawning test process is gone, so a
+    // killed test cannot leave this shell spinning (see grep's WATCH_PARENT).
+    let command = format!(
+        "echo $$ > '{pid_file}'; while kill -0 $PPID 2>/dev/null; do /bin/sleep 0.02; done"
+    );
+    let executor = CommandHookExecutor::default();
+    let mut run = Box::pin(executor.execute(CommandHookOptions {
+        command: command.into(),
+        hook_input: object(&parse_json("{}").unwrap()),
+        cwd: root.clone().into(),
+        env: None,
+        signal: None,
+        timeout_ms: Some(600_000.0),
+    }));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let leader = loop {
+        assert!(Instant::now() < deadline, "no leader pid file appeared");
+        tokio::select! {
+            result = &mut run => panic!("the hook must still be running: {result:?}"),
+            _ = sleep(Duration::from_millis(10)) => {}
+        }
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .and_then(|text| text.parse::<i32>().ok())
+        {
+            break rustix::process::Pid::from_raw(pid).expect("valid pid");
+        }
+    };
+    assert_eq!(
+        rustix::process::getsid(Some(leader)).expect("getsid"),
+        leader,
+        "setsid: the hook shell leads its own session"
+    );
+    assert_ne!(
+        rustix::process::getsid(Some(leader)).expect("getsid"),
+        rustix::process::getsid(None).expect("getsid"),
+        "the hook shell's session must differ from ours"
+    );
+    // Dropping the pending run kills the group; the session change must not
+    // disturb that reclamation.
+    drop(run);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while rustix::process::test_kill_process_group(leader).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "process group {} was not reclaimed",
+            leader.as_raw_pid()
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
 // ---------------------------------------------------------------- HTTP mock
 
 fn response(status: u16, body: Vec<u8>) -> hyper::Response<http_body_util::Full<bytes::Bytes>> {
