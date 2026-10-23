@@ -297,6 +297,10 @@ fn normalize_memory_bundle(value: &JsValue, clock: &FileMemoryClock) -> Result<J
     let Some(record) = value.as_object() else {
         return Err(bundle_error("Invalid memory bundle"));
     };
+    // `normalizeString(typeof value.scope === "string" ? value.scope :
+    // undefined)` (sqlite.ts:301-303): the typeof guard runs before the
+    // truthiness check, so every non-string scope — truthy or falsy — is
+    // treated like a missing one, exactly what `text()` yields for those.
     let scope = text(record, "scope");
     if !scope.is_empty() && scope != "current_project" {
         return Err(bundle_error(

@@ -41,6 +41,16 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
   (sqlite.ts:1733-1737 / 1762-1766), and the global path's whitelist
   (sqlite.ts:894-901) drops it — on the project repos a foreign id empties
   the workspace side, on the general repo it selects one project's entries.
+- Review round 5 pins the type-coercion edges of import validation and
+  pagination: non-string bundle scopes (`42`, `true`, `{}`, `0`, `false`,
+  `""`, `null`) import like a missing one (the scope check reads strings
+  only, sqlite.ts:301-305) and the scope error outranks a bad
+  `formatVersion`; non-string `relativePath`/`content` stay invalid. List /
+  UI-snapshot inputs with non-number `limit`/`offset` (`'3'`, `'abc'`,
+  `true`, `null`, `[5]`, `[1,2]`) pin the JS ToNumber coercion of
+  `Math.max(0/1, … ?? …)` — only `null`/`undefined` fall back to the
+  defaults, and the UI snapshot's `limit = 50` default applies only to a
+  missing argument, so `null` lists everything.
 
 Regenerate: `node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <out-dir>`
 with `PDRS_BASELINE` set (see `tests/common/baseline.rs`; the ignored

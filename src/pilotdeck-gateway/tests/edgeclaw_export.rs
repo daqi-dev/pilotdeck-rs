@@ -323,7 +323,9 @@ fn invoke(
             r.import_memory_bundle(&bundle)
         }
         "overview" => r.get_overview(),
-        "uiSnapshot" => match js_number(&input, "limit") {
+        // `r.getUiSnapshot(input.limit)` passes any value through; only a
+        // missing key uses the `limit = 50` default (like `getUiSnapshot()`).
+        "uiSnapshot" => match input.get("limit") {
             Some(limit) => r.get_ui_snapshot(Some(limit)),
             None => r.get_ui_snapshot(None),
         },

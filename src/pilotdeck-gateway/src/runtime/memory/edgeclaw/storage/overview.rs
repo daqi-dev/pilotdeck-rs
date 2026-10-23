@@ -46,6 +46,15 @@ fn objects(value: JsValue) -> Vec<JsObject> {
 fn values(items: Vec<JsObject>) -> JsValue {
     JsValue::Array(items.into_iter().map(JsValue::Object).collect())
 }
+/// JS `Number(value)` — the shared ECMAScript ToNumber port
+/// ([`crate::js_value::to_number`]), reused for the `Math.max` coercions in
+/// `listMemoryEntries` instead of a local copy. Only a pathologically nested
+/// array can fail, and TS throws the same "Maximum call stack size exceeded"
+/// `RangeError` there.
+fn to_number(value: &JsValue) -> Result<f64> {
+    crate::js_value::to_number(value)
+        .map_err(|_| FileMemoryError::Type(crate::js_value::StackOverflow::MESSAGE.into()))
+}
 /// `sortManifestEntries` (`sqlite.ts:385-391`): `updatedAt` descending, ties
 /// broken by `relativePath` ascending, both with `localeCompare`.
 fn sort_manifest_entries(entries: &mut [JsObject]) -> Result<()> {
@@ -117,6 +126,8 @@ impl EdgeClawFileStores {
         };
         let workspace_has_project_memory =
             number_of("projectMemories") + number_of("feedbackMemories") > 0.0;
+        // `limit: 10` is the TS literal too (sqlite.ts:1674-1677): the probe
+        // only inspects the first 10 global user entries, by design.
         let user_profile_count = usize::from(
             objects(self.list_global_memory_entries(&obj(&[
                 ("kinds", JsValue::Array(vec![s("user")])),
@@ -200,9 +211,16 @@ impl EdgeClawFileStores {
         }
         Ok(JsValue::Object(overview))
     }
-    /// `getUiSnapshot` (`sqlite.ts:1708-1718`).
-    pub fn get_ui_snapshot(&self, limit: Option<f64>) -> Result<JsValue> {
-        let options = obj(&[("limit", JsValue::Number(limit.unwrap_or(50.0)))]);
+    /// `getUiSnapshot` (`sqlite.ts:1708-1718`). The `limit = 50` default
+    /// parameter applies only when the argument is `undefined`; any other
+    /// value reaches `listMemoryEntries` untouched, whose `Math.max` coerces
+    /// it (`getUiSnapshot(null)` lists everything, `'abc'` lists nothing).
+    pub fn get_ui_snapshot(&self, limit: Option<&JsValue>) -> Result<JsValue> {
+        let limit = match limit {
+            None | Some(JsValue::Undefined) => JsValue::Number(50.0),
+            Some(value) => value.clone(),
+        };
+        let options = obj(&[("limit", limit)]);
         let settings = self.storage.get_indexing_settings(&IndexingSettings {
             reasoning_mode: "answer_first".into(),
             auto_index_interval_minutes: 30,
@@ -232,16 +250,18 @@ impl EdgeClawFileStores {
         }
         sort_manifest_entries(&mut filtered)?;
         // `Math.max(0, options.offset ?? 0)` / `Math.max(1, options.limit ?? …)`:
-        // JS `Math.max` keeps NaN, so a NaN offset or limit empties the slice.
-        // Rust's `f64::max` returns the other operand, so NaN is checked before
-        // the clamps instead of after them.
-        let raw_offset = options
-            .get("offset")
-            .and_then(JsValue::as_number)
-            .unwrap_or(0.0);
-        let raw_limit = match options.get("limit").and_then(JsValue::as_number) {
-            Some(value) => value,
-            None => (filtered.len().max(1)) as f64,
+        // `??` only treats null/undefined as missing, and `Math.max` coerces its
+        // arguments with JS ToNumber, so `'3'` → 3, `true` → 1 and `'abc'` →
+        // NaN. NaN survives JS `Math.max`, emptying the slice; Rust's `f64::max`
+        // returns the other operand, so NaN is checked before the clamps
+        // instead of after them.
+        let raw_offset = match options.get("offset") {
+            None | Some(JsValue::Undefined) | Some(JsValue::Null) => 0.0,
+            Some(value) => to_number(value)?,
+        };
+        let raw_limit = match options.get("limit") {
+            None | Some(JsValue::Undefined) | Some(JsValue::Null) => (filtered.len().max(1)) as f64,
+            Some(value) => to_number(value)?,
         };
         if raw_offset.is_nan() || raw_limit.is_nan() {
             return Ok(values(vec![]));

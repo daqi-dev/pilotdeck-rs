@@ -200,6 +200,29 @@ ops.push(
   ...[{projectId:'g1'},{projectId:'g2'},{projectId:'g3'},{projectId:'missing'},{projectId:'current_project'},{kinds:['project'],projectId:'g2'},{scope:'project',projectId:'g3'}].map(input=>({repo:'general',method:'list',input})),
   ...[{projectId:'g1'},{projectId:'missing'}].map(input=>({repo:'general',method:'count',input})),
 );
+// Review fix round 5 (gate5 #1/#2, pinning #3/#5); appended after everything
+// else so every earlier observation keeps its index.
+ops.push(
+  // #2: `Math.max(0, options.offset ?? 0)` / `Math.max(1, options.limit ?? …)`
+  // coerce with JS ToNumber — `??` only skips null/undefined — so '3' → 3,
+  // 'abc' → NaN (empty), true → 1, [5] → 5, [1,2] → NaN, null falls back to
+  // the entry count and a string offset slices past the end.
+  ...[{limit:'3'},{limit:'abc'},{limit:true},{limit:null},{limit:[5]},{limit:[1,2]},{offset:'5'},{offset:false}].map(input=>({method:'list',input})),
+  ...[{limit:'2'},{limit:'abc'},{limit:true},{limit:null}].map(input=>({method:'uiSnapshot',input})),
+  // #1: the scope check reads strings only
+  // (`typeof value.scope === "string" ? value.scope : undefined`), so every
+  // non-string scope — truthy or falsy — imports like a missing one.
+  ...[42, true, {}, 0, false, '', null].map(scope=>({repo:'empty',method:'import',input:{bundle:bundle({scope})}})),
+  {repo:'empty',method:'overview'},
+  // #5: cross-field precedence — the scope error outranks a bad formatVersion.
+  {repo:'empty',method:'import',input:{bundle:bundle({scope:'workspace',formatVersion:'bogus.v4'})}},
+  // #3: non-string relativePath/content stay invalid (normalizeString → ''
+  // and the `typeof value.content === "string"` check), pinning that TS does
+  // not coerce them.
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:42,content:'x'}]})}},
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a.md',content:42}]})}},
+  {repo:'empty',method:'overview'},
+);
 // The observed phase runs on a stepping clock so timestamps expose the number
 // and order of nowIso() reads (exportedAt, manifest "Updated" lines,
 // importedAt); the seed phase above stayed frozen.
