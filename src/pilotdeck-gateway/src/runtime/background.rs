@@ -2,7 +2,7 @@
 //! Background tasks (A6.5-pr12), ported from the fixed TS baseline:
 //!
 //! - `task/runtime/BackgroundTaskRuntime.ts` + `task/storage/TaskOutputStore.ts`
-//!   (in-memory ring only) + the POSIX half of
+//!   and the POSIX half of
 //!   `tool/execution-world/DetachedShellPort.ts`: detached shell tasks, their
 //!   combined output buffer and read cursor, the pending → running →
 //!   completed / failed / cancelled state machine, stop (SIGTERM → grace →
@@ -22,8 +22,8 @@
 //! runtime dropped without `dispose` leaves its children running.
 //!
 //! Deliberate deviations (see the fixture README):
-//! - Disk spill and snapshot persistence are not ported; output lives in the
-//!   1 MB ring and restored `unknown` tasks cannot occur. Ledger:
+//! - Snapshot persistence remains for pr2; restored `unknown` tasks cannot
+//!   occur yet. Output spill is enabled by `background_task_state_dir`. Ledger:
 //!   specs/gateway-parity/accepted-diffs.md A6.5-BACKGROUND-PERSIST-001 (unapproved).
 //! - A spawn that Node reports asynchronously (ENOENT, EACCES, ...) never
 //!   emits `exit` in the baseline, so its task stays `running` with no pid
@@ -58,9 +58,8 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::system_clock::format_epoch_iso;
 use std::{
-    collections::VecDeque,
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex},
@@ -172,110 +171,8 @@ pub struct OutputSlice {
     pub truncated: bool,
 }
 
-/// `TaskOutputStore` without disk spill: a byte ring of `max` bytes over the
-/// combined stdout/stderr stream with a monotonically increasing total.
-struct OutputStore {
-    chunks: VecDeque<Vec<u8>>,
-    memory: usize,
-    total: u64,
-    dropped: u64,
-    max: usize,
-    closed: bool,
-}
-
-impl OutputStore {
-    fn new(max: usize) -> Self {
-        Self {
-            chunks: VecDeque::new(),
-            memory: 0,
-            total: 0,
-            dropped: 0,
-            max,
-            closed: false,
-        }
-    }
-    fn append(&mut self, chunk: &[u8]) {
-        if self.closed || chunk.is_empty() {
-            return;
-        }
-        self.total += chunk.len() as u64;
-        self.chunks.push_back(chunk.to_vec());
-        self.memory += chunk.len();
-        while self.memory > self.max {
-            let overflow = self.memory - self.max;
-            let Some(oldest) = self.chunks.front_mut() else {
-                break;
-            };
-            if oldest.len() <= overflow {
-                let length = oldest.len();
-                self.chunks.pop_front();
-                self.memory -= length;
-                self.dropped += length as u64;
-            } else {
-                oldest.drain(..overflow);
-                self.memory -= overflow;
-                self.dropped += overflow as u64;
-            }
-        }
-    }
-    /// `readSlice(offset, maxBytes)`: `offset` is used only when it is a
-    /// finite number; a `maxBytes` that is not a finite number (after `??
-    /// Infinity`) reads up to the ring size.
-    fn read_slice(&self, offset: &JsValue, max_bytes: &JsValue) -> OutputSlice {
-        let head = self.total as f64;
-        let mut cursor = match offset {
-            JsValue::Number(n) if n.is_finite() => n.floor().max(0.0),
-            _ => 0.0,
-        };
-        let mut remaining = match max_bytes {
-            JsValue::Number(n) if n.is_finite() => n.floor().max(0.0),
-            _ => self.max as f64,
-        };
-        let mut truncated = false;
-        let slice = |content: Vec<u8>, next_offset: f64, truncated: bool| OutputSlice {
-            content: String::from_utf8_lossy(&content).into_owned(),
-            next_offset,
-            total_bytes: head,
-            truncated,
-        };
-        if remaining <= 0.0 {
-            return slice(Vec::new(), cursor, truncated);
-        }
-        let dropped = self.dropped as f64;
-        if cursor < dropped {
-            truncated = true;
-            cursor = dropped;
-        }
-        if cursor >= head {
-            return slice(Vec::new(), cursor.min(head), truncated);
-        }
-        let wanted = (head - cursor).min(remaining);
-        remaining = wanted;
-        let mut skip = (cursor - dropped) as usize;
-        let mut content = Vec::new();
-        for chunk in &self.chunks {
-            if remaining <= 0.0 {
-                break;
-            }
-            if skip >= chunk.len() {
-                skip -= chunk.len();
-                continue;
-            }
-            let end = chunk.len().min(skip + remaining as usize);
-            content.extend_from_slice(&chunk[skip..end]);
-            remaining -= (end - skip) as f64;
-            skip = 0;
-        }
-        let collected = content.len() as f64;
-        slice(content, cursor + collected, truncated)
-    }
-    /// `close()`: the readable buffer is released; totals stay.
-    fn close(&mut self) {
-        self.closed = true;
-        self.chunks.clear();
-        self.memory = 0;
-    }
-}
+mod output;
+use output::OutputStore;
 
 struct ChildState {
     pid: Option<rustix::process::Pid>,
@@ -352,9 +249,12 @@ struct RuntimeState {
     dispose_started: bool,
 }
 
-/// `BackgroundTaskRuntimeOptions` (without disk spill / snapshot store).
+/// `BackgroundTaskRuntimeOptions` (snapshot recovery is a separate follow-up).
 #[derive(Clone, Default)]
 pub struct BackgroundTaskRuntimeOptions {
+    /// Execution-world state directory; logs use `<dir>/output/<taskId>.log`.
+    /// `None` preserves the memory-only runtime. No implicit user-home writes.
+    pub background_task_state_dir: Option<PathBuf>,
     pub now: Option<Clock>,
     pub max_tasks: Option<usize>,
     pub on_completion: Option<CompletionHandler>,
@@ -369,6 +269,7 @@ struct Inner {
     max_tasks: usize,
     on_completion: Option<CompletionHandler>,
     completion_preview_bytes: f64,
+    background_task_state_dir: Option<PathBuf>,
 }
 
 /// `StartTaskSpec`. `env: None` inherits the gateway's environment, like
@@ -470,6 +371,7 @@ impl BackgroundTaskRuntime {
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
                 max_tasks: options.max_tasks.unwrap_or(DEFAULT_MAX_TASKS),
                 on_completion: options.on_completion,
+                background_task_state_dir: options.background_task_state_dir,
                 completion_preview_bytes: options
                     .completion_preview_bytes
                     .unwrap_or(DEFAULT_COMPLETION_PREVIEW_BYTES),
@@ -671,7 +573,13 @@ impl BackgroundTaskRuntime {
             |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| Entry {
                 state: Mutex::new(EntryState {
                     task,
-                    output: OutputStore::new(DEFAULT_MEMORY_BYTES),
+                    output: OutputStore::with_spill(
+                        DEFAULT_MEMORY_BYTES,
+                        self.inner.background_task_state_dir.as_ref().map(|dir| {
+                            dir.join("output")
+                                .join(format!("{}.log", String::from_utf16_lossy(task_id.units())))
+                        }),
+                    ),
                     child,
                 }),
                 done: watch::channel(false).0,
@@ -899,6 +807,8 @@ impl BackgroundTaskRuntime {
                 entry.wait_done().await;
             }
             for entry in &entries {
+                let flushed = entry.state.lock().unwrap().output.begin_close();
+                flushed.await;
                 entry.state.lock().unwrap().output.close();
                 entry.closed.send_replace(true);
             }
@@ -1731,32 +1641,5 @@ mod tests {
         );
         assert!(replacement.is_ok());
         assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
-    }
-
-    #[test]
-    fn output_ring_drops_oldest_bytes_and_reports_the_gap() {
-        let mut store = OutputStore::new(4);
-        store.append(b"abc");
-        store.append(b"def");
-        assert_eq!((store.total, store.dropped, store.memory), (6, 2, 4));
-        let slice = store.read_slice(&JsValue::Number(0.0), &JsValue::Undefined);
-        assert_eq!(
-            (slice.content.as_str(), slice.next_offset, slice.truncated),
-            ("cdef", 6.0, true)
-        );
-        let slice = store.read_slice(&JsValue::Number(3.5), &JsValue::Number(2.0));
-        assert_eq!(
-            (slice.content.as_str(), slice.next_offset, slice.truncated),
-            ("de", 5.0, false)
-        );
-        let slice = store.read_slice(&JsValue::from("3"), &JsValue::Number(0.0));
-        assert_eq!((slice.content.as_str(), slice.next_offset), ("", 0.0));
-        store.close();
-        store.append(b"x");
-        let slice = store.read_slice(&JsValue::Number(0.0), &JsValue::Undefined);
-        assert_eq!(
-            (slice.content.as_str(), slice.next_offset, slice.total_bytes),
-            ("", 2.0, 6.0)
-        );
     }
 }
