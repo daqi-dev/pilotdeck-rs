@@ -9,7 +9,6 @@ use crate::runtime::{
     },
     model::http::ProxySettings,
 };
-use pilotdeck_protocol::JsString;
 use std::{any::Any, sync::Arc};
 
 // ---------------------------------------------------------------------------
@@ -32,7 +31,6 @@ impl FamilyResource for McpProviderResource {
 
 /// Production MCP family source.  Constructs a `ProjectMcpRuntimeProvider`
 /// from the staged config and registers it as the McpProvider owner.
-#[derive(Default)]
 pub struct McpFamilySource;
 
 impl ResourceFamilySource for McpFamilySource {
@@ -101,7 +99,6 @@ impl FamilyResource for ExecutionWorldResource {
 /// Minimal production execution-world family source.  Registers the bundle
 /// owner so downstream staging does not fail; full sandbox wiring follows in
 /// A6.9-pr3c2.
-#[derive(Default)]
 pub struct ExecutionWorldFamilySource;
 
 impl ResourceFamilySource for ExecutionWorldFamilySource {
@@ -114,17 +111,5 @@ impl ResourceFamilySource for ExecutionWorldFamilySource {
         sink.register_owner(self.family(), resource.clone());
         sink.register_resource(Resource::ExecutionWorld, resource);
         Ok(())
-    }
-}
-
-// Make the `JsString` → UTF-8 conversion available in this module.
-trait JsStringExt {
-    fn to_utf8(&self) -> Result<std::borrow::Cow<'_, str>, ()>;
-}
-impl JsStringExt for JsString {
-    fn to_utf8(&self) -> Result<std::borrow::Cow<'_, str>, ()> {
-        String::from_utf16(self.units())
-            .map(std::borrow::Cow::Owned)
-            .map_err(|_| ())
     }
 }

@@ -433,8 +433,8 @@ impl Families {
 
     /// Wire the MCP and execution-world families (A6.9-pr3c1).
     pub fn with_tools_mcp(mut self) -> Self {
-        self.mcp = Arc::new(super::tools_mcp::McpFamilySource::default());
-        self.execution_world = Arc::new(super::tools_mcp::ExecutionWorldFamilySource::default());
+        self.mcp = Arc::new(super::tools_mcp::McpFamilySource);
+        self.execution_world = Arc::new(super::tools_mcp::ExecutionWorldFamilySource);
         self
     }
 
