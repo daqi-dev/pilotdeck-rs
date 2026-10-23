@@ -36,7 +36,7 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
-use super::count_body::{field, is, put, text as header_text};
+use super::count_body::{array, field, is, object, put, text as header_text};
 use super::providers::{self, StreamState};
 use super::router::AbortFlag;
 use crate::host::ModuleError;
@@ -2247,6 +2247,269 @@ async fn stream_google_model(
     Ok(())
 }
 
+/// `parseModelResponse(protocol, raw, providerId)` — converts provider-specific
+/// complete response to canonical format. Ports `parseModelResponse.ts` and
+/// provider-specific `parse*Response` functions.
+fn parse_complete_response(protocol: &JsValue, raw: &JsValue, provider_id: &JsValue) -> JsValue {
+    let protocol_str = protocol
+        .as_string()
+        .and_then(|s| s.to_utf8().ok())
+        .unwrap_or_default();
+
+    match protocol_str.as_str() {
+        "anthropic" => parse_anthropic_complete_response(raw),
+        "openai-responses" => parse_openai_responses_complete_response(raw, provider_id),
+        _ => parse_openai_complete_response(raw, provider_id), // default: openai
+    }
+}
+
+/// Parses Anthropic complete response to canonical format.
+/// Ports `parseAnthropicResponse` from `anthropic/response.ts`.
+fn parse_anthropic_complete_response(raw: &JsValue) -> JsValue {
+    let response = if matches!(raw, JsValue::Object(_)) {
+        raw
+    } else {
+        &JsValue::Object(JsObject::new())
+    };
+
+    let content_array = field(response, "content");
+    let content: Vec<JsValue> = if matches!(content_array, JsValue::Array(_)) {
+        array(content_array)
+            .iter()
+            .flat_map(|block| {
+                let block_obj = if matches!(block, JsValue::Object(_)) {
+                    block
+                } else {
+                    return Vec::new();
+                };
+                let block_type = field(block_obj, "type");
+                let block_type_str = block_type
+                    .as_string()
+                    .and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_default();
+
+                match block_type_str.as_str() {
+                    "text" => {
+                        let text = field(block_obj, "text")
+                            .as_string()
+                            .map_or("".into(), |s| JsValue::String(s.clone()));
+                        vec![object([("type", "text".into()), ("text", text)])]
+                    }
+                    "thinking" => {
+                        let thinking_text = field(block_obj, "thinking")
+                            .as_string()
+                            .or_else(|| field(block_obj, "text").as_string())
+                            .map_or("".into(), |s| JsValue::String(s.clone()));
+                        let mut thinking_block = object([
+                            ("type", "thinking".into()),
+                            ("text", thinking_text),
+                        ]);
+                        if let Some(sig) = field(block_obj, "signature").as_string() {
+                            put(&mut thinking_block, "signature", JsValue::String(sig.clone()));
+                        }
+                        vec![thinking_block]
+                    }
+                    "tool_use" => {
+                        let id = field(block_obj, "id")
+                            .as_string()
+                            .map_or("".into(), |s| JsValue::String(s.clone()));
+                        let name = field(block_obj, "name")
+                            .as_string()
+                            .map_or("".into(), |s| JsValue::String(s.clone()));
+                        vec![object([
+                            ("type", "tool_call".into()),
+                            ("id", id),
+                            ("name", name),
+                            ("input", field(block_obj, "input").clone()),
+                            ("raw", block.clone()),
+                        ])]
+                    }
+                    _ => Vec::new(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Inline normalize Anthropic usage
+    let usage_raw = field(response, "usage");
+    let usage = if matches!(usage_raw, JsValue::Object(_)) {
+        let mut usage_obj = JsObject::new();
+        if let Some(input_tokens) = field(usage_raw, "input_tokens").as_number() {
+            usage_obj.insert("inputTokens".into(), JsValue::Number(input_tokens));
+        }
+        if let Some(output_tokens) = field(usage_raw, "output_tokens").as_number() {
+            usage_obj.insert("outputTokens".into(), JsValue::Number(output_tokens));
+        }
+        if let Some(cache_read) = field(usage_raw, "cache_read_input_tokens").as_number() {
+            usage_obj.insert("cacheReadTokens".into(), JsValue::Number(cache_read));
+        }
+        if let Some(cache_write) = field(usage_raw, "cache_creation_input_tokens").as_number() {
+            usage_obj.insert("cacheWriteTokens".into(), JsValue::Number(cache_write));
+        }
+        if !usage_obj.is_empty() {
+            JsValue::Object(usage_obj)
+        } else {
+            JsValue::Undefined
+        }
+    } else {
+        JsValue::Undefined
+    };
+
+    let finish_reason = normalize_anthropic_finish_reason(field(response, "stop_reason"));
+
+    object([
+        ("role", "assistant".into()),
+        ("content", JsValue::Array(content)),
+        ("usage", usage),
+        ("finishReason", finish_reason),
+        ("raw", raw.clone()),
+    ])
+}
+
+/// Parses OpenAI complete response to canonical format.
+/// Ports `parseOpenAIResponse` from `openai/response.ts`.
+fn parse_openai_complete_response(raw: &JsValue, _provider_id: &JsValue) -> JsValue {
+    let response = if matches!(raw, JsValue::Object(_)) {
+        raw
+    } else {
+        &JsValue::Object(JsObject::new())
+    };
+
+    let empty_obj = JsValue::Object(JsObject::new());
+
+    let choices = field(response, "choices");
+    let choices_array: &[JsValue] = if matches!(choices, JsValue::Array(_)) {
+        array(choices)
+    } else {
+        &[]
+    };
+
+    let first_choice = choices_array.first().unwrap_or(&empty_obj);
+    let first_choice = if matches!(first_choice, JsValue::Object(_)) {
+        first_choice
+    } else {
+        &empty_obj
+    };
+
+    let message = field(first_choice, "message");
+    let message = if matches!(message, JsValue::Object(_)) {
+        message
+    } else {
+        &empty_obj
+    };
+
+    let mut content: Vec<JsValue> = Vec::new();
+
+    // Handle reasoning/thinking content
+    if let Some(reasoning) = field(message, "reasoning_content")
+        .as_string()
+        .or_else(|| field(message, "reasoning").as_string())
+    {
+        if !reasoning.is_empty() {
+            content.push(object([
+                ("type", "thinking".into()),
+                ("text", JsValue::String(reasoning.clone())),
+                ("reasoningContent", JsValue::String(reasoning.clone())),
+            ]));
+        }
+    }
+
+    // Handle text content
+    if let Some(text) = field(message, "content").as_string() {
+        if !text.is_empty() {
+            content.push(object([("type", "text".into()), ("text", JsValue::String(text.clone()))]));
+        }
+    }
+
+    // Handle tool calls
+    let tool_calls = field(message, "tool_calls");
+    if matches!(tool_calls, JsValue::Array(_)) {
+        for call in array(tool_calls) {
+            let call_obj = if matches!(call, JsValue::Object(_)) {
+                call
+            } else {
+                continue;
+            };
+            let id = field(call_obj, "id")
+                .as_string()
+                .map_or("".into(), |s| JsValue::String(s.clone()));
+            let function = field(call_obj, "function");
+            let name = field(function, "name")
+                .as_string()
+                .map_or("".into(), |s| JsValue::String(s.clone()));
+            let arguments = field(function, "arguments");
+            let input = parse_json(
+                arguments
+                    .as_string()
+                    .and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_default()
+                    .as_str(),
+            )
+            .unwrap_or(JsValue::Object(JsObject::new()));
+
+            content.push(object([
+                ("type", "tool_call".into()),
+                ("id", id),
+                ("name", name),
+                ("input", input),
+                ("raw", call.clone()),
+            ]));
+        }
+    }
+
+    let usage = providers::openai::normalize_usage(field(response, "usage"));
+    let finish_reason = normalize_openai_finish_reason(field(first_choice, "finish_reason"));
+
+    object([
+        ("role", "assistant".into()),
+        ("content", JsValue::Array(content)),
+        ("usage", usage.unwrap_or(JsValue::Undefined)),
+        ("finishReason", finish_reason),
+        ("raw", raw.clone()),
+    ])
+}
+
+/// Parses OpenAI-responses complete response to canonical format.
+/// Ports `parseOpenAIResponsesResponse` from `openai-responses/response.ts`.
+fn parse_openai_responses_complete_response(raw: &JsValue, _provider_id: &JsValue) -> JsValue {
+    // openai-responses typically has the same structure as openai for complete responses
+    parse_openai_complete_response(raw, _provider_id)
+}
+
+/// Normalizes Anthropic finish reason to canonical format.
+fn normalize_anthropic_finish_reason(stop_reason: &JsValue) -> JsValue {
+    let reason = stop_reason
+        .as_string()
+        .and_then(|s| s.to_utf8().ok())
+        .unwrap_or_default();
+    match reason.as_str() {
+        "end_turn" => "stop".into(),
+        "max_tokens" => "length".into(),
+        "tool_use" => "tool_calls".into(),
+        "stop_sequence" => "stop".into(),
+        _ if !reason.is_empty() => JsValue::String(JsString::from(reason.as_str())),
+        _ => JsValue::Undefined,
+    }
+}
+
+/// Normalizes OpenAI finish reason to canonical format.
+fn normalize_openai_finish_reason(finish_reason: &JsValue) -> JsValue {
+    let reason = finish_reason
+        .as_string()
+        .and_then(|s| s.to_utf8().ok())
+        .unwrap_or_default();
+    match reason.as_str() {
+        "stop" | "end_turn" => "stop".into(),
+        "length" | "max_tokens" => "length".into(),
+        "tool_calls" | "function_call" => "tool_calls".into(),
+        "content_filter" => "content_filter".into(),
+        _ if !reason.is_empty() => JsValue::String(JsString::from(reason.as_str())),
+        _ => JsValue::Undefined,
+    }
+}
+
 /// `complete(request, config, options)` — non-streaming HTTP path.
 /// `streamModel.ts:76`: sends `stream: false`, reads the full body, returns the
 /// parsed response object. Shares the retry policy with the streaming path.
@@ -2259,6 +2522,15 @@ pub async fn complete_model(
     let mut current = request.clone();
     put(&mut current, "stream", JsValue::Bool(false));
     let (provider, _) = providers::validate_model_request(&current, config)?;
+
+    // P1-2: Google protocol not supported in complete path
+    if is(field(&provider, "protocol"), "google") {
+        return Err(ModelStreamError::thrown(
+            "UnsupportedProtocol",
+            "complete(): Google protocol is not supported in non-streaming mode"
+        ));
+    }
+
     let (max_retries, _) = retry_decide(&provider, 0.0, None, 0.0);
     let mut attempt = 0.0;
     loop {
@@ -2278,23 +2550,53 @@ pub async fn complete_model(
             }
         };
         let status = response.status().as_u16();
+        let retry_after_header = {
+            let values: Vec<String> = response
+                .headers()
+                .get_all("retry-after")
+                .iter()
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                .collect();
+            (!values.is_empty()).then(|| values.join(", "))
+        };
         let (mut body_stream, before_abort) = response.into_body();
         let text = response_text(&mut body_stream, options, before_abort).await?;
+
+        // P1-5: Handle retryable non-2xx responses (429/5xx)
         if !(200..300).contains(&status) {
             let raw = parse_json(&text).unwrap_or(JsValue::Null);
-            return Err(ModelStreamError::Provider(normalize_model_error(
+            let mut error = normalize_model_error(
                 &provider_id(&provider),
                 &protocol(&provider),
                 ErrorInput::Value(&raw),
                 Some(f64::from(status)),
-            )));
+            );
+            // Consume Retry-After header if not already in error
+            if error.get("retryAfterMs").is_none_or(JsValue::is_undefined)
+                && let Some(ms) =
+                    errors::retry_after_header(retry_after_header.as_deref(), (options.clock)())
+            {
+                errors::set_retry_after(&mut error, ms);
+            }
+            let retryable = error.get("retryable") == Some(&JsValue::Bool(true));
+            if retryable && attempt < max_retries {
+                let after = error.get("retryAfterMs").and_then(JsValue::as_number);
+                let (_, delay_ms) = retry_decide(&provider, attempt, after, (options.random)());
+                let _ = delay(delay_ms, options).await?;
+                attempt += 1.0;
+                continue;
+            }
+            return Err(ModelStreamError::Provider(error));
         }
         let raw = parse_json(&text).map_err(|_| {
             ModelStreamError::thrown("SyntaxError", "complete(): response is not valid JSON")
         })?;
-        // `parseModelResponse(provider.protocol, raw, provider.id)`: for
-        // non-Google providers the raw JSON body is the response itself.
-        return Ok(raw);
+
+        // P1-1: Parse response to canonical format
+        let protocol_value = field(&provider, "protocol").clone();
+        let provider_id_value = field(&provider, "id").clone();
+        let canonical = parse_complete_response(&protocol_value, &raw, &provider_id_value);
+        return Ok(canonical);
     }
 }
 
