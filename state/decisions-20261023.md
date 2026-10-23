@@ -45,3 +45,8 @@
 - **原话**：「1. macmini 装 rustup 和 Node 22  2. 账本拆文件，按提案做(但是提案本身需要先被fable结合当前项目的42plugin中的skill来审核优化)」
 - **执行**：① 在 macmini-01 安装 rustup（与本机同版本工具链）与 Node v22.22.0（与 TS 基线一致），作为第二台编译 / 测试 / 负控机；不碰 macmini 上已有的 PilotDeck-* 目录与 ~/.pilotdeck。此授权覆盖红线「不下载预编译二进制」对这两项工具链的限制，仅限这两项。② 账本拆文件提案 `_tmp/20261023-loop/proposal-ledger-split.md` 先交 claude-fable-5-1 按本项目 42plugin 中的相关 skill 审核优化，优化稿经协调者核对后再按冻结尺子变更程序实施（独立 issue、两家评审、真实数据等价复算）。
 - **更正（17:25）**：sccache 经 `_build/cargo-home/config.toml` 全局接入与 `tests/unsafe_boundary.rs` 守卫冲突——该守卫禁止 CARGO_HOME 下任何 `config*` 与 `RUSTC_WRAPPER` 等环境变量（防止替换编译器或改 lint 策略，属有意的安全护栏），致 17:05 后用共享 cargo-home 跑的 unsafe_boundary 全部失败（#573 核验命中）。已删除该配置恢复原状；不为提速绕开该护栏。sccache 实测 25 命中 / 758 未命中，收益本就有限，放弃。
+
+## #547 两块按「同一处修 3 次不过」挂起拆分（自决·待复核，AI 代批，待人复核，22:00–22:20）
+- **tree_files 别名遍历**：三轮修复后 r4 仍 P1 → 拆到 #595，先出设计再实现。卡 `_tmp/20261023-loop/card-547-tree-files.md`。
+- **源码身份合同的 include 宏正则扫描**：三轮后 r5 仍 P1 → 移到 #426，改由 cargo metadata + rustc dep-info 认定（PR #598）。卡 `_tmp/20261023-loop/card-547-source-identity.md`。
+- **原则**：需要「编译器看到了哪些文件」时问编译器（dep-info），不自己写解析器；同一处修 3 次不过就换方案或拆出，不在原 PR 里继续修第 4 轮。
