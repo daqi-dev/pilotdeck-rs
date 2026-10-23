@@ -18,8 +18,8 @@ use std::{
     sync::Arc,
 };
 const ORACLE: &str = include_str!("fixtures/tool-budget/oracle.json");
-const CASES: usize = 38;
-const STEPS: usize = 41;
+const CASES: usize = 39;
+const STEPS: usize = 42;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -166,9 +166,11 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
         fs::create_dir_all(&case_root).unwrap();
         let tool_results_dir =
             PathBuf::from(text(field(case, "toolResultsDir")).replace("<fixture>", &root_string));
-        if field(case, "blockingFile").is_undefined() {
+        if field(case, "blockingFile").is_undefined()
+            && field(case, "missingParents").as_bool() != Some(true)
+        {
             fs::create_dir_all(tool_results_dir.parent().unwrap()).unwrap();
-        } else {
+        } else if !field(case, "blockingFile").is_undefined() {
             fs::write(
                 case_root.join(text(field(case, "blockingFile"))),
                 b"not a directory\n",
@@ -316,7 +318,7 @@ async fn spill_rejects_traversal_and_symlink_escapes() {
     assert!(error.message.contains("EACCES"), "{}", error.message);
     assert_eq!(foreign_entries(outside.path()), 0);
 
-    // A symlinked intermediate directory below the root is refused as well.
+    // A symlinked refs directory (the alias spill root) is refused as well.
     let inner = scratch.path().join("inner");
     fs::create_dir_all(&inner).unwrap();
     std::os::unix::fs::symlink(outside.path(), inner.join("refs")).unwrap();

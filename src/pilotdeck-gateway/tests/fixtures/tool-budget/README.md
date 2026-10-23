@@ -36,7 +36,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   SHA-256、≤4096 字节文件的原文）。
 
 Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完整 `outputJson` 与
-`filesJson` 的逐字节内容，条数精确断言（38 cases / 41 steps）。路径统一规范化为
+`filesJson` 的逐字节内容，条数精确断言（39 cases / 42 steps）。路径统一规范化为
 `<fixture>`；`locale` 固定 en-US。
 
 覆盖：
@@ -92,4 +92,14 @@ Unix 上原文件与别名目标都复用 `project_files::create_new_beneath`：
 `openat + O_NOFOLLOW`，末级 `O_CREAT | O_EXCL`、0600，打开后 fstat。
 `tool_budget` 单元测试在 containment 后、open 前按目标路径触发钩子，把中间
 目录换成根外链接；断言钩子确实执行、根外为空、错误与预置链接完全相同。
+新增回归直接经生产 persist/alias 路径，以 project 为根，覆盖预置或竞态换入
+`.pilotdeck` / `tool-results` 链接，以及文件创建前替换 session / refs 根。
+目录缺失时用父句柄 `mkdirat(0700)` 再 NOFOLLOW 打开；测试拒绝链接时不在
+项目外建目录。真实 TS 的 `project-layout-missing-parents` 金样从缺失
+`.pilotdeck` 开始，复刻 recursive mkdir 的正常落盘。
+
+负控：`timeout 580 python3 src/pilotdeck-gateway/tests/fixtures/tool-budget/negative_project.py`。
+串行跑四条变异，使用本树 `src/target`；每个 cargo 子进程有期限且超时终止进程组，
+`finally` 按原字节恢复并核 SHA-256。控制包括 spill 根基准回退、按路径 mkdir、
+移除目录 NOFOLLOW、跳过 mkdir；编译失败、空匹配、超时均不算检出。
 非 Unix 保持原有按路径 `create_new` 行为。
