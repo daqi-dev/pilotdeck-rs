@@ -79,7 +79,7 @@ controls = [
      'empty_registry_router_staging_and_missing_judge_match_ts'),
     ('complete-ignores-requested-provider', registry,
      'let lease = self.acquire_request(&request);',
-     'let lease = self.acquire(&JsString::from("a")).map_err(|error| ModelStreamError::Request { code: error.code.unwrap_or_default(), message: error.message, details: None });',
+     'let mut request_copy = request.as_object().unwrap().clone(); request_copy.insert("provider".into(), JsValue::String("a".into())); let lease = self.acquire_request(&JsValue::Object(request_copy));',
      'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
     ('model-family-panics-outside-tokio', family,
      '''tokio::runtime::Handle::try_current().map_err(|_| {
@@ -101,7 +101,7 @@ controls = [
      'unregister_after_replace_removes_current_generation_matches_ts'),
     ('unregister-returns-before-drain', registry,
      '                entry.disposed().await?;',
-     '                // NEGATIVE: return before accepted invocations drain.',
+     '                drop(entry.disposed());',
      'unregister_after_replace_removes_current_generation_matches_ts'),
     ('stream-non-string-provider-is-undefined', registry,
      'let lease = self.acquire_request(request);',
