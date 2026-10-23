@@ -35,10 +35,12 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
   compares every observation and the final tree.
 - `verify.mts` replays the oracle's operations against real TS on the
   Rust-seeded root, proving the Rust-written databases and files round-trip.
-- `projectId`-filtered list/count ops are gated behind
-  `PDRS_EXPORT_PROJECT_ID=1` (they depend on the `accessors.rs` projectId
-  pass-through fixed in PR #525 / #517; regenerate the oracle after that PR
-  is merged and this branch is rebased on it — see the review round notes).
+- `projectId` list/count combinations run un-gated since PR #525 / #517
+  removed the Rust `listGlobalMemoryEntries` projectId passthrough: the
+  repository methods forward the id only to the workspace store
+  (sqlite.ts:1733-1737 / 1762-1766), and the global path's whitelist
+  (sqlite.ts:894-901) drops it — on the project repos a foreign id empties
+  the workspace side, on the general repo it selects one project's entries.
 
 Regenerate: `node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <out-dir>`
 with `PDRS_BASELINE` set (see `tests/common/baseline.rs`; the ignored

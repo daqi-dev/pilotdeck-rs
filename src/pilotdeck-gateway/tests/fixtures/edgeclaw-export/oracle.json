@@ -1598,6 +1598,127 @@
     {
       "repo": "beta",
       "method": "overview"
+    },
+    {
+      "method": "list",
+      "input": {
+        "projectId": "current_project"
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "projectId": "g1"
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "scope": "project",
+        "projectId": "g1"
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "scope": "global",
+        "projectId": "g1"
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "kinds": [
+          "user"
+        ],
+        "projectId": "g1"
+      }
+    },
+    {
+      "method": "count",
+      "input": {
+        "projectId": "current_project"
+      }
+    },
+    {
+      "method": "count",
+      "input": {
+        "projectId": "g1"
+      }
+    },
+    {
+      "method": "count",
+      "input": {
+        "scope": "global",
+        "projectId": "g1"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "projectId": "g1"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "projectId": "g2"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "projectId": "g3"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "projectId": "missing"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "projectId": "current_project"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "kinds": [
+          "project"
+        ],
+        "projectId": "g2"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "list",
+      "input": {
+        "scope": "project",
+        "projectId": "g3"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "count",
+      "input": {
+        "projectId": "g1"
+      }
+    },
+    {
+      "repo": "general",
+      "method": "count",
+      "input": {
+        "projectId": "missing"
+      }
     }
   ],
   "observations": [
@@ -2872,7 +2993,450 @@
       "recentIndexTraceCount": 0,
       "recentDreamTraceCount": 0,
       "lastDreamAt": "2026-10-19T00:00:00.000Z"
-    }
+    },
+    [
+      {
+        "name": "main project memory",
+        "description": "main project memory description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-23T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-main project memory",
+        "file": "main-project-memory-86b980984f.md",
+        "relativePath": "Project/main-project-memory-86b980984f.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Project/main-project-memory-86b980984f.md"
+      },
+      {
+        "name": "main feedback memory",
+        "description": "main feedback memory description",
+        "type": "feedback",
+        "scope": "project",
+        "projectId": "current_project",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-main feedback memory",
+        "file": "main-feedback-memory-3b2c2e7185.md",
+        "relativePath": "Feedback/main-feedback-memory-3b2c2e7185.md",
+        "absolutePath": "$ROOT/workspaces/main/memory/Feedback/main-feedback-memory-3b2c2e7185.md"
+      },
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    [],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    5,
+    3,
+    3,
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      },
+      {
+        "name": "Alpha",
+        "description": "Alpha description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "g1",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Alpha",
+        "file": "alpha-016a26d17b.md",
+        "relativePath": "Project/alpha-016a26d17b.md",
+        "absolutePath": "$ROOT/workspaces/general/memory/Project/alpha-016a26d17b.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      },
+      {
+        "name": "Zebra",
+        "description": "Zebra description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "g2",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Zebra",
+        "file": "zebra-a8e313c1e6.md",
+        "relativePath": "Project/zebra-a8e313c1e6.md",
+        "absolutePath": "$ROOT/workspaces/general/memory/Project/zebra-a8e313c1e6.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      },
+      {
+        "name": "中文",
+        "description": "中文 description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "g3",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-中文",
+        "file": "中文-9cad1cf0e7.md",
+        "relativePath": "Project/中文-9cad1cf0e7.md",
+        "absolutePath": "$ROOT/workspaces/general/memory/Project/中文-9cad1cf0e7.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    [
+      {
+        "name": "Global profile",
+        "description": "Global profile description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global profile",
+        "file": "user-profile.md",
+        "relativePath": "global/UserIdentity/user-profile.md",
+        "absolutePath": "$ROOT/global/UserIdentity/user-profile.md"
+      },
+      {
+        "name": "Global user",
+        "description": "Global user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Global user",
+        "file": "global-user-8d46a02888.md",
+        "relativePath": "global/UserIdentityNotes/global-user-8d46a02888.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/global-user-8d46a02888.md"
+      },
+      {
+        "name": "Second user",
+        "description": "Second user description",
+        "type": "user",
+        "scope": "global",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Second user",
+        "file": "second-user-166ca824c2.md",
+        "relativePath": "global/UserIdentityNotes/second-user-166ca824c2.md",
+        "absolutePath": "$ROOT/global/UserIdentityNotes/second-user-166ca824c2.md"
+      }
+    ],
+    [
+      {
+        "name": "Zebra",
+        "description": "Zebra description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "g2",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-Zebra",
+        "file": "zebra-a8e313c1e6.md",
+        "relativePath": "Project/zebra-a8e313c1e6.md",
+        "absolutePath": "$ROOT/workspaces/general/memory/Project/zebra-a8e313c1e6.md"
+      }
+    ],
+    [
+      {
+        "name": "中文",
+        "description": "中文 description",
+        "type": "project",
+        "scope": "project",
+        "projectId": "g3",
+        "updatedAt": "2026-10-22T00:00:00.000Z",
+        "capturedAt": "2026-10-22T00:00:00.000Z",
+        "sourceSessionKey": "session-中文",
+        "file": "中文-9cad1cf0e7.md",
+        "relativePath": "Project/中文-9cad1cf0e7.md",
+        "absolutePath": "$ROOT/workspaces/general/memory/Project/中文-9cad1cf0e7.md"
+      }
+    ],
+    4,
+    3
   ],
   "files": [
     {
