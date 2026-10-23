@@ -6,7 +6,7 @@
 //! and re-sort with `localeCompare`, matching the TS ordering.
 use super::{EdgeClawStorage, IndexingSettings, StorageError};
 use crate::runtime::memory::edgeclaw::file_memory::{
-    EdgeClawFileStores, FileMemoryError, OperationGuard, helpers::sort_manifest_entries,
+    EdgeClawFileStores, FileMemoryError, OperationScope, helpers::sort_manifest_entries,
 };
 use pilotdeck_protocol::{JsObject, JsValue};
 type Result<T> = std::result::Result<T, FileMemoryError>;
@@ -93,46 +93,19 @@ impl EdgeClawStorage {
     }
 }
 impl EdgeClawFileStores {
-    /// TS repository-level reads (`getOverview`, `getUiSnapshot`,
-    /// `listMemoryEntries`, `countMemoryEntries`) are single synchronous
-    /// functions on a single thread, so no writer can interleave between
-    /// their storage, workspace-store and global-store reads. The per-root
-    /// operation locks approximate that window; every acquisition in this
-    /// module (and the store calls it reaches) follows one order:
-    ///
-    ///   own workspace root → own external-catalog cache → sibling
-    ///   workspace roots (general-mode scan) → global user root
-    ///
-    /// - normal workspace reads/writes and provider nesting take the
-    ///   workspace root first and the global root second — `read_scope`,
-    ///   the import critical section (`bundle.rs`), `snapshot_operation`
-    ///   (`snapshots.rs`) and the `manifest_user_entries_provider` closure;
-    /// - the general-mode catalog scan locks sibling workspace roots
-    ///   (constructing and querying their snapshot stores, including the
-    ///   external-catalog cache mutex) while only the own workspace root is
-    ///   held — never the global root: sibling repositories hold their own
-    ///   workspace root while waiting for the shared global root, so
-    ///   scanning under the global lock lets two plain reads deadlock
-    ///   (B→G→B; the `overview` tests pin that interleaving).
-    ///
-    /// The workspace guard therefore covers the whole read, while the global
-    /// guard starts only after the scan. Locks are reentrant per thread, so
-    /// store-level `execute` calls, `getUiSnapshot`'s composite reads and
-    /// nested providers keep working under an already-held guard. Mutual
-    /// general-to-general cataloging (two general repositories scanning each
-    /// other) is the one layout this order does not cover: both scans would
-    /// hold their own workspace root while taking each other's.
-    fn read_scope(&self) -> Result<(OperationGuard<'_>, OperationGuard<'_>)> {
+    /// Composite local reads hold the complete workspace/global dependency
+    /// set in root order. General
+    /// catalog discovery must finish before entering it: a catalog call only
+    /// holds one workspace root at a time (see `general_catalog`).
+    fn read_scope(&self) -> Result<(OperationScope<'_>, OperationScope<'_>)> {
         let workspace = self.workspace_memory.operation_scope()?;
         let global = self.global_user_memory.operation_scope()?;
         Ok((workspace, global))
     }
-    /// `getOverview`'s general-mode readable-project list
-    /// (`sqlite.ts:1671-1673`): the catalog scan minus its
-    /// `workspace_external` filter target. Runs before the global root's
-    /// lock is taken, because the scan locks sibling workspace roots, which
-    /// their own repositories hold ahead of the shared global root (see
-    /// `read_scope`).
+    /// Capture the catalog without an outer workspace/global guard. Its local
+    /// metadata and each sibling query return owned values after releasing
+    /// their store lock, so mutually scanning general repositories cannot
+    /// form workspace → workspace edges, on either cache path.
     fn general_catalog(&self) -> Result<Vec<JsObject>> {
         if self.get_workspace_mode() != "general" {
             return Ok(vec![]);
@@ -142,20 +115,16 @@ impl EdgeClawFileStores {
             .filter(|project| text(project, "sourceType") != "workspace_external")
             .collect())
     }
-    /// `getOverview` (`sqlite.ts:1660-1706`). The workspace root's guard
-    /// opens the consistency window; the general-mode scan runs inside it
-    /// but before the global root's guard, whose lock the scanned siblings
-    /// take behind their own workspace root (`read_scope`).
+    /// `getOverview` (`sqlite.ts:1660-1706`). Discover siblings before the
+    /// local workspace/global read window; never wait for a sibling under it.
     pub fn get_overview(&self) -> Result<JsValue> {
-        let _workspace_lock = self.workspace_memory.operation_scope()?;
         let readable_projects = self.general_catalog()?;
-        let _global_lock = self.global_user_memory.operation_scope()?;
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         self.overview_locked(&readable_projects)
     }
     /// The `getOverview` body with the workspace and global guards already
-    /// held; inner acquisitions reenter them as no-ops. `readable_projects`
-    /// is the general-mode catalog scanned by the caller before the global
-    /// guard (`sqlite.ts:1671-1673`).
+    /// held; inner acquisitions reenter them. The catalog is an owned snapshot
+    /// taken before either guard (`sqlite.ts:1671-1673`).
     fn overview_locked(&self, readable_projects: &[JsObject]) -> Result<JsValue> {
         let pending_sessions = self.storage.count_pending_sessions()?;
         let last_dream_at = self.storage.get_pipeline_state(LAST_DREAM_AT_STATE_KEY)?;
@@ -266,19 +235,16 @@ impl EdgeClawFileStores {
     /// parameter applies only when the argument is `undefined`; any other
     /// value reaches `listMemoryEntries` untouched, whose `Math.max` coerces
     /// it (`getUiSnapshot(null)` lists everything, `'abc'` lists nothing).
-    /// Like `get_overview`, the general-mode scan runs before the global
-    /// root's guard so a sibling waiting on the shared global root cannot
-    /// cycle with it (`read_scope`); the composite reads then share one
-    /// workspace-plus-global window.
+    /// Like `get_overview`, capture the general catalog without an outer
+    /// store guard, then hold the ordered workspace/global dependency set.
     pub fn get_ui_snapshot(&self, limit: Option<&JsValue>) -> Result<JsValue> {
-        let _workspace_lock = self.workspace_memory.operation_scope()?;
         let limit = match limit {
             None | Some(JsValue::Undefined) => JsValue::Number(50.0),
             Some(value) => value.clone(),
         };
         let options = obj(&[("limit", limit)]);
         let readable_projects = self.general_catalog()?;
-        let _global_lock = self.global_user_memory.operation_scope()?;
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         // Object-literal evaluation order (`sqlite.ts:1710-1716`): the
         // overview, then the settings, then the entry list.
         let overview = self.overview_locked(&readable_projects)?;
@@ -425,117 +391,8 @@ mod tests {
         stores.close().unwrap();
         std::fs::remove_dir_all(&parent).unwrap();
     }
-
-    /// Round 7's P0 regression: a general repository A and a single
-    /// repository B under one workspaces root share the global store G. B's
-    /// `listMemoryEntries` takes B's workspace root before G, while A's
-    /// general-mode catalog scan takes sibling workspace roots — B's. Taking
-    /// G before that scan lets the two plain reads deadlock (B→G→B), so the
-    /// scan must run while only A's workspace root is held.
-    ///
-    /// The interleaving is pinned with channels: the B thread parks holding
-    /// B's workspace-root lock — as any in-flight B store operation would —
-    /// then runs `list_memory_entries`, which waits on G; the A thread runs
-    /// `get_overview`, which waits on B's root inside the scan. With the
-    /// scan ordered before G both sides return within the deadline; with
-    /// the pre-fix order neither does, so the joins below fail on the
-    /// deadline instead of hanging (the parked threads are detached, not
-    /// joined by `thread::scope`). Round 1 parks in the scan's
-    /// snapshot-store construction (cold catalog cache); round 2, warmed by
-    /// round 1, parks in the catalog query (`accessors.rs`
-    /// `listReadableProjectCatalog`'s `getProjectMeta`).
-    #[test]
-    fn overview_scan_does_not_cycle_with_sibling_global_wait() {
-        let parent = std::env::temp_dir().join(format!(
-            "pdrs-overview-cycle-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&parent).unwrap();
-        let clock: crate::runtime::memory::edgeclaw::file_memory::FileMemoryClock =
-            std::sync::Arc::new(|| "unit-test".into());
-        let open = |dir: &str, workspace: &str| {
-            EdgeClawFileStores::with_workspace_clock(
-                parent.join(dir).join("control.sqlite"),
-                parent.join(dir).join("memory"),
-                parent.join("global"),
-                parent.join(workspace),
-                parent.join("home/.pilotdeck"),
-                clock.clone(),
-            )
-            .unwrap()
-        };
-        let a = std::sync::Arc::new(open("workspaces/a", "home/.pilotdeck"));
-        let b = std::sync::Arc::new(open("workspaces/b", "workspaces/b-project"));
-        // The scan discovers B through its `workspaceDir` pipeline state.
-        b.storage
-            .set_pipeline_state(
-                "workspaceDir",
-                &s(parent.join("workspaces/b-project").to_string_lossy()),
-            )
-            .unwrap();
-        for round in 0..2 {
-            let (b_held, held) = std::sync::mpsc::channel::<()>();
-            let (b_go, go) = std::sync::mpsc::channel::<()>();
-            let (b_finished, b_done) = std::sync::mpsc::channel::<()>();
-            let (a_started, started) = std::sync::mpsc::channel::<()>();
-            let (a_finished, a_done) = std::sync::mpsc::channel::<()>();
-            let b_path = std::thread::spawn({
-                let b = b.clone();
-                move || {
-                    // Hold B's workspace root across the parked handoff, as
-                    // an in-flight B store operation would; the call below
-                    // reenters it and then waits on the shared global root.
-                    let _b_operation = b.workspace_memory.operation_scope().unwrap();
-                    let _ = b_held.send(());
-                    go.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
-                    b.list_memory_entries(&JsObject::new()).unwrap();
-                    let _ = b_finished.send(());
-                }
-            });
-            held.recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-            let a_path = std::thread::spawn({
-                let a = a.clone();
-                move || {
-                    let _ = a_started.send(());
-                    a.get_overview().unwrap();
-                    let _ = a_finished.send(());
-                }
-            });
-            started
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-            // `get_overview` is now parked on B's workspace root under either
-            // lock order — the same blocked-window idiom as the test above —
-            // so releasing B must let it through unless some guard is held
-            // in the wrong order.
-            assert!(
-                matches!(
-                    a_done.recv_timeout(std::time::Duration::from_secs(1)),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                ),
-                "round {round}: the general scan must park on the sibling's workspace root"
-            );
-            let _ = b_go.send(());
-            let deadline = std::time::Duration::from_secs(10);
-            a_done.recv_timeout(deadline).unwrap_or_else(|_| {
-                panic!("round {round}: get_overview did not return: the scan holds the shared global root while the sibling waits on it (B→G→B)")
-            });
-            b_done.recv_timeout(deadline).unwrap_or_else(|_| {
-                panic!("round {round}: the sibling's list_memory_entries did not return")
-            });
-            a_path.join().unwrap();
-            b_path.join().unwrap();
-        }
-        // Same-thread nesting: the composite reenters the held workspace
-        // root through `overview_locked` and `list_memory_entries`.
-        a.get_ui_snapshot(None).unwrap();
-        a.close().unwrap();
-        b.close().unwrap();
-        std::fs::remove_dir_all(&parent).unwrap();
-    }
 }
+
+#[cfg(test)]
+#[path = "overview_lock_tests.rs"]
+mod lock_tests;

@@ -1,0 +1,161 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9"
+  },
+  "cases": [
+    {
+      "topology": "general-single",
+      "modes": [
+        "general",
+        "single"
+      ],
+      "observations": [
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "general",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        },
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "single",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        }
+      ]
+    },
+    {
+      "topology": "two-general",
+      "modes": [
+        "general",
+        "general"
+      ],
+      "observations": [
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "general",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        },
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "general",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        }
+      ]
+    },
+    {
+      "topology": "three-general",
+      "modes": [
+        "general",
+        "general",
+        "general"
+      ],
+      "observations": [
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "general",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        },
+        [],
+        {
+          "overview": {
+            "pendingSessions": 0,
+            "workspaceMode": "general",
+            "currentProjectCount": 0,
+            "projectMetaPresent": false,
+            "projectMemoryCount": 0,
+            "feedbackMemoryCount": 0,
+            "userProfileCount": 0,
+            "recentRecallTraceCount": 0,
+            "recentIndexTraceCount": 0,
+            "recentDreamTraceCount": 0
+          },
+          "settings": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 30,
+            "autoDreamIntervalMinutes": 60
+          },
+          "recentMemoryFiles": []
+        }
+      ]
+    }
+  ]
+}

@@ -4,8 +4,8 @@
 //! no cross-process lock or transaction in TS; failures can leave a new inverse
 //! snapshot installed before live roots or pipeline state have changed.
 use super::super::file_memory::{
-    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, OperationGuard, absolute,
-    io_mkdir, io_write, operation_lock, repository_global_options, repository_workspace_options,
+    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, absolute, io_mkdir, io_write,
+    repository_global_options, repository_workspace_options,
 };
 use crate::{
     metadata::object,
@@ -362,22 +362,11 @@ impl EdgeClawFileStores {
         self.repository.snapshot_io = hook;
     }
     pub(super) fn snapshot_operation<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        let mut roots = vec![
-            absolute(self.workspace_memory.get_root_dir())?,
-            absolute(self.global_user_memory.get_root_dir())?,
-        ];
-        // Workspace manifest repair calls the global provider while holding
-        // the workspace lock. Use that same order here to avoid an inversion
-        // with a concurrent FileMemoryStore call on these live roots.
-        roots.dedup();
-        let locks = roots
-            .iter()
-            .map(|p| operation_lock(p))
-            .collect::<Result<Vec<_>>>()?;
-        let _guards = locks
-            .iter()
-            .map(|l| OperationGuard::enter(l))
-            .collect::<Result<Vec<_>>>()?;
+        // The workspace store predeclares the provider's global root and
+        // acquires the complete set in root order, even if another repository
+        // uses one of these paths in the opposite role.
+        let _workspace = self.workspace_memory.operation_scope()?;
+        let _global = self.global_user_memory.operation_scope()?;
         f()
     }
     fn runtime_state(&self) -> Result<JsValue> {

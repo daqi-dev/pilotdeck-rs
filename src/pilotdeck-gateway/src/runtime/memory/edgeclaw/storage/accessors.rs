@@ -322,11 +322,16 @@ impl EdgeClawFileStores {
         let current = absolute(&self.current_workspace()?)?;
         let memory = absolute(self.workspace_memory.get_root_dir())?;
         let mut snapshots = vec![];
-        let mut cache = self
+        // Copy handles under E, then release E before constructing any store
+        // (construction acquires its W). Publish only after all W guards have
+        // gone away. Concurrent scans may replace the cache, but their owned
+        // handles remain valid and each snapshot preserves discovery order.
+        let cache = self
             .repository
             .external
             .lock()
-            .expect("external cache poisoned");
+            .expect("external cache poisoned")
+            .clone();
         let mut next = HashMap::new();
         if self.repository.workspaces_root.exists() {
             let root = &self.repository.workspaces_root;
@@ -378,7 +383,11 @@ impl EdgeClawFileStores {
                 snapshots.push(snapshot);
             }
         }
-        *cache = next;
+        *self
+            .repository
+            .external
+            .lock()
+            .expect("external cache poisoned") = next;
         Ok(snapshots)
     }
     pub fn list_readable_project_catalog(&self) -> Result<JsValue> {
@@ -818,6 +827,61 @@ fn external_record_path(record: &JsObject) -> Result<&JsString> {
 #[cfg(test)]
 mod round6_tests {
     use super::*;
+    #[test]
+    fn external_cache_is_released_before_cold_and_warm_store_locks() {
+        use crate::runtime::memory::edgeclaw::file_memory::{lock_test_hook, operation_lock};
+        use std::cell::Cell;
+        let root = std::env::temp_dir().join(format!("pdrs-r9-cache-{}", std::process::id()));
+        let general = root.join("home/.pilotdeck");
+        let open = |name: &str, workspace: &Path| {
+            EdgeClawFileStores::with_workspace_clock(
+                root.join(format!("workspaces/{name}/control.sqlite")),
+                root.join(format!("workspaces/{name}/memory")),
+                root.join("global"),
+                workspace,
+                &general,
+                Arc::new(|| "2026-10-22T00:00:00.000Z".into()),
+            )
+            .unwrap()
+        };
+        let a = Arc::new(open("a", &general));
+        let b = open("b", &root.join("project-b"));
+        b.storage
+            .set_pipeline_state("workspaceDir", &s("/fixture/B"))
+            .unwrap();
+        let lock = operation_lock(b.workspace_memory.get_root_dir()).unwrap();
+        let target = Arc::as_ptr(&lock) as usize;
+        let observed = std::rc::Rc::new(Cell::new(0));
+        let calls = observed.clone();
+        let reader = a.clone();
+        lock_test_hook::set(move |event| {
+            if !event.acquired && event.key == target {
+                assert!(
+                    reader.repository.external.try_lock().is_ok(),
+                    "E held while acquiring sibling W"
+                );
+                assert!(
+                    event.held.is_empty(),
+                    "store held while acquiring sibling W"
+                );
+                calls.set(calls.get() + 1);
+            }
+        });
+        a.list_readable_project_catalog().unwrap();
+        let cold = observed.get();
+        assert_eq!(cold, 2, "cold construction and query must both acquire W");
+        a.list_readable_project_catalog().unwrap();
+        assert_eq!(
+            observed.get(),
+            cold + 1,
+            "warm cache must skip construction but still query under W"
+        );
+        lock_test_hook::set(|_| {});
+        a.close().unwrap();
+        b.close().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn malformed_external_record_returns_internal_error() {
         for value in [None, Some(JsValue::Null), Some(JsValue::Number(1.0))] {

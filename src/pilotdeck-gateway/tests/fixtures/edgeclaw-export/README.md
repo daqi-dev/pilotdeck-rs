@@ -66,3 +66,26 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
 Regenerate: `node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <out-dir>`
 with `PDRS_BASELINE` set (see `tests/common/baseline.rs`; the ignored
 `regenerates_identically` test does exactly this and diffs the bytes).
+
+
+Round 9 lock regression: `generate_locks.mts` uses the same fixed-source guard
+and real public TS constructors plus `setPipelineState("workspaceDir", ...)`.
+It records `lock-oracle.json` for general/single, two general repositories,
+and a three-repository cycle whose middle repository's global root is the
+third repository's memory root. Both cold and warmed TS calls must return the
+same observations. Regenerate with the command above, substituting
+`generate_locks.mts`; sha256 is
+`21dfe8e71916697a67a3d248c3803c1e57eed5dbeb67688219d6d5da961f4e51`.
+
+`storage/overview_lock_tests.rs` coordinates actual root lock acquisitions
+using cfg(test) thread-local hooks, covers both standalone overview and UI
+snapshot with cold/warm caches, and compares returns to these real TS values.
+The parent kills/reaps a child after 20 s only to prevent a deadlocked mutant
+from hanging the suite. `negative_locks.py <evidence-dir>` temporarily restores
+r6/r7 scan order, removes root sorting, holds E over construction, and restores
+an outer lock on standalone overview; all source bytes are restored in finally.
+The r7 general/single case completes but violates the no-outer-lock invariant;
+its negative result is an invariant assertion, not a claimed deadlock. Other
+r6/r7 cyclic layouts fail by the parent deadline. Builds inherit the launcher's
+target directory (otherwise Cargo's existing `src/target`); no second target is
+created. Optional trailing `r6`, `r7`, `overview`, or `snapshot` selects a repair mutant.

@@ -130,7 +130,7 @@ type Result<T> = std::result::Result<T, FileMemoryError>;
 pub struct FileMemoryStore {
     declared_root: PathBuf,
     core: Core,
-    operation: Arc<Mutex<()>>,
+    operations: Vec<(PathBuf, Arc<Mutex<()>>)>,
 }
 thread_local! {
     static HELD_OPERATIONS: RefCell<HashSet<usize>> = RefCell::default();
@@ -142,26 +142,61 @@ pub(crate) struct OperationGuard<'a> {
     outer: Option<MutexGuard<'a, ()>>,
     key: usize,
 }
+pub(crate) type OperationScope<'a> = Vec<OperationGuard<'a>>;
 impl<'a> OperationGuard<'a> {
     pub(super) fn enter(operation: &'a Mutex<()>) -> Result<Self> {
         let key = std::ptr::from_ref(operation) as usize;
         if HELD_OPERATIONS.with(|held| held.borrow().contains(&key)) {
             return Ok(Self { outer: None, key });
         }
+        #[cfg(test)]
+        lock_test_hook::notify(key, false);
         let outer = operation
             .lock()
             .map_err(|_| FileMemoryError::Invalid("file memory operation mutex poisoned".into()))?;
         HELD_OPERATIONS.with(|held| held.borrow_mut().insert(key));
-        Ok(Self {
+        let guard = Self {
             outer: Some(outer),
             key,
-        })
+        };
+        #[cfg(test)]
+        lock_test_hook::notify(key, true);
+        Ok(guard)
     }
 }
 impl Drop for OperationGuard<'_> {
     fn drop(&mut self) {
         if self.outer.is_some() {
             HELD_OPERATIONS.with(|held| held.borrow_mut().remove(&self.key));
+        }
+    }
+}
+/// Thread-local hooks run at actual mutex acquisition points, never on a
+/// same-thread reentry. Production builds contain neither hooks nor callbacks.
+#[cfg(test)]
+pub(super) mod lock_test_hook {
+    use super::*;
+    pub struct Event {
+        pub key: usize,
+        pub acquired: bool,
+        pub held: Vec<usize>,
+    }
+    type Hook = std::rc::Rc<dyn Fn(Event)>;
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = RefCell::default();
+    }
+    pub fn set(hook: impl Fn(Event) + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(std::rc::Rc::new(hook)));
+    }
+    pub(super) fn notify(key: usize, acquired: bool) {
+        let hook = HOOK.with(|slot| slot.borrow().clone());
+        if let Some(hook) = hook {
+            let held = HELD_OPERATIONS.with(|held| held.borrow().iter().copied().collect());
+            hook(Event {
+                key,
+                acquired,
+                held,
+            });
         }
     }
 }
@@ -193,8 +228,19 @@ impl FileMemoryStore {
     /// Deterministic clock injection for replay and callers already owning a clock.
     pub fn with_clock(
         root: impl AsRef<Path>,
+        options: FileMemoryStoreOptions,
+        clock: FileMemoryClock,
+    ) -> Result<Self> {
+        Self::with_clock_dependency(root, options, clock, None)
+    }
+    /// The built-in provider declares its global dependency before either
+    /// root is locked. Root roles may overlap across repositories, so both
+    /// must participate in the same path order, including construction.
+    fn with_clock_dependency(
+        root: impl AsRef<Path>,
         mut options: FileMemoryStoreOptions,
         clock: FileMemoryClock,
+        dependency: Option<&FileMemoryStore>,
     ) -> Result<Self> {
         if !options.manage_user_profile {
             options.user_profile_relative_path = None;
@@ -207,16 +253,22 @@ impl FileMemoryStore {
             options,
             clock,
         };
-        let operation = operation_lock(&core.root)?;
-        {
-            let _guard = OperationGuard::enter(&operation)?;
-            core.ensure_layout()?;
+        let mut operations = vec![(core.root.clone(), operation_lock(&core.root)?)];
+        if let Some(dependency) = dependency {
+            operations.extend(dependency.operations.iter().cloned());
         }
-        Ok(Self {
+        operations.sort_by(|a, b| a.0.cmp(&b.0));
+        operations.dedup_by(|a, b| a.0 == b.0);
+        let store = Self {
             declared_root,
             core,
-            operation,
-        })
+            operations,
+        };
+        {
+            let _guards = store.operation_scope()?;
+            store.core.ensure_layout()?;
+        }
+        Ok(store)
     }
     pub(super) fn validate_entry_path(&self, path: &JsString) -> Result<()> {
         self.core.within(&String::from_utf16_lossy(path.units()))?;
@@ -237,14 +289,18 @@ impl FileMemoryStore {
     /// Execute one synchronous TS-shaped operation. Positional TS arguments are
     /// named (`ids`, `maxLines`, `relativePaths`, `lastDreamAt`) in this adapter.
     pub fn execute(&self, method: &str, input: &JsObject) -> Result<JsValue> {
-        let _guard = OperationGuard::enter(&self.operation)?;
+        let _guards = self.operation_scope()?;
         self.core.execute(method, input)
     }
-    /// Holds this store's per-root operation lock across a multi-step
-    /// sequence (import's directory swap). Reentrant with `execute` on the
-    /// same thread; keep the returned guard alive for the whole sequence.
-    pub(crate) fn operation_scope(&self) -> Result<OperationGuard<'_>> {
-        OperationGuard::enter(&self.operation)
+    /// Hold the complete built-in dependency set in normalized root order.
+    /// Provider nesting reenters already-held locks. Every composite caller
+    /// uses this same set, rather than adding a possibly lower global root
+    /// after acquiring the workspace root. Keep all guards for the sequence.
+    pub(crate) fn operation_scope(&self) -> Result<OperationScope<'_>> {
+        self.operations
+            .iter()
+            .map(|(_, lock)| OperationGuard::enter(lock))
+            .collect()
     }
     object_methods! {
         upsert_candidate => "upsertCandidate", upsert_user_profile => "upsertUserProfile",
@@ -347,7 +403,7 @@ impl EdgeClawFileStores {
             clock.clone(),
         )?);
         let provider = global_user_memory.clone();
-        let workspace_memory = FileMemoryStore::with_clock(
+        let workspace_memory = FileMemoryStore::with_clock_dependency(
             &memory,
             FileMemoryStoreOptions {
                 manifest_user_entries_provider: Some(Arc::new(move || {
@@ -367,6 +423,7 @@ impl EdgeClawFileStores {
                 ..repository_workspace_options(mode)
             },
             clock.clone(),
+            Some(&global_user_memory),
         )?;
         let repository = match general_workspace {
             Some(general) => super::storage::accessors::RepositoryContext::with_general(
