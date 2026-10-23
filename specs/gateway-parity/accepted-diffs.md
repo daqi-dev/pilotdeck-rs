@@ -973,3 +973,9 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **仍为已知差异**：stdio 为 pipe 而非 socketpair（人批 2026-10-23 接受）。
 - **机器判据**：`src/pilotdeck-gateway/tests/bash_session.rs`（子进程 `getsid == getpid`、`/dev/tty` ENXIO；去掉 setsid 时转红），bash_tool / background_tasks / unsafe_boundary 回归。
 - **批准记录**：人批 2026-10-23「A6.5-BASH-OS-001（setsid 部分）修」与「#552 选 A」，原话见 `state/decisions-20261023.md`。
+
+### A6.5-BASH-OS-001 · 当前状态更正（追加，不改上文；#552 修复轮 1）
+
+- **更正**：上一条「只有 bash runner 安装此 hook，其他 spawn 点在 TS 中本就不是 detached」不实（协调者转述实现方结论未核；PR #573 gate1 sibling 指出）。按 TS 逐点核对（协调者抽查 `src/agent/.../SubprocessPort.ts:63` `detached: process.platform !== "win32"`、`src/tool/builtin/bash/commandRunner.ts:43` `detached: !isWindows`、`stdioAgentLoopSidecarConnection.ts:75-81` 无 detached）：**bash runner、grep / glob 的 ripgrep spawn、command hook** 在 TS 中为 detached，本 PR 均已改为 setsid（复用人批 `install_child_detach_session`，不新增 unsafe）；**宿主 sidecar（host/connection.rs）、MCP stdio** 在 TS 中不是 detached，保持 `process_group(0)`；TS `NodeCodeRuntimePort.ts:87-91` 为 detached 但 Rust 尚无对应位点。
+- **机器判据**（补充）：`tests/fixtures/grep-session/` 真实 TS 金样与 grep 子进程新会话断言；`tests/hooks_runtime.rs` 的 command hook 会话断言；`tests/unsafe_boundary.rs` 按函数体绑定 + 完整 token 序列 pin（负控：跨函数搬块、复制、删除、同名遮蔽、grep / 钩子回退均被拒绝）。
+- **批准记录**：同上文（人批 2026-10-23「#552 选 A」，原话见 `state/decisions-20261023.md`）。
