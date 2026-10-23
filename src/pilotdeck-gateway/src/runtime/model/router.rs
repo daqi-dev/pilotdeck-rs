@@ -145,8 +145,13 @@ pub trait RouterModelInvocation: Send + Sync {
         })
     }
     /// Whether this invocation port exposes [`complete`](Self::complete).
-    /// A registry exposes dispatch even when a particular route is absent or
-    /// its provider cannot complete; those errors belong to the invocation.
+    /// `true` does not guarantee that `complete()` succeeds. This matches the
+    /// TS registry adapter's dispatch-exposes semantics: even an empty registry
+    /// exposes dispatch, with missing/unsupported routes failing at invocation.
+    /// The native provider still returns `false` because its HTTP layer has no
+    /// non-streaming complete implementation. Callers must handle invocation
+    /// errors even after `true`; this flag alone cannot select a success/fallback
+    /// path for a requested provider.
     fn supports_complete(&self) -> bool {
         false
     }

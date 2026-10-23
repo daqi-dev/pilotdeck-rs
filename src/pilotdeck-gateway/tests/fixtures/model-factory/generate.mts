@@ -253,7 +253,7 @@ try {
   // Actual bundle staging with token-saver enabled. Capability belongs to
   // the registry port, not to every provider currently registered in it.
   const registryRouterCases: any[] = [];
-  for (const name of ['mixed', 'native', 'empty']) {
+  for (const name of ['mixed', 'native', 'empty', 'empty-missing-provider']) {
     const judge = name === 'native' ? 'a' : 'b';
     const routerYaml = `router:
   enabled: true
@@ -277,7 +277,7 @@ try {
     await writeFile(join(home, 'pilotdeck.yaml'), config(name, 3000) + providerYaml + routerYaml);
     const snapshot = loadPilotConfig({ projectRoot: project, env: { PILOT_HOME: home } });
     const modelBundle = new ProjectModelRuntimeBundle({ snapshot,
-      ...(name === 'native' ? {} : { modelInvocationProviderFactory: () => name === 'empty' ? [] : [
+      ...(name === 'native' ? {} : { modelInvocationProviderFactory: () => name.startsWith('empty') ? [] : [
         model.createNativeModelInvocationProvider(snapshot.config.model.providers.a),
         { ...make('judge-b'), providerId: 'b', dispose() {} },
       ] }),
@@ -294,7 +294,10 @@ try {
     // Native non-streaming HTTP is a separate Rust gap: this case compares
     // staging only. Mixed/empty also exercise the actual registry dispatch.
     if (name !== 'native') {
-      const judgeRequest = { ...request, provider: judge };
+      const judgeRequest: any = { ...request, provider: judge };
+      // Deliberately cross the typed API boundary to exercise JS's undefined
+      // route lookup when the request has no provider property at all.
+      if (name === 'empty-missing-provider') delete judgeRequest.provider;
       result.request = judgeRequest;
       try { result.completion = await invocation.complete!(judgeRequest); }
       catch (error) { result.error = errorOf(error); }

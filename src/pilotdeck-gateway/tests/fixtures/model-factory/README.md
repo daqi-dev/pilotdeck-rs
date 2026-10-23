@@ -24,6 +24,10 @@ timeout 600 cargo test --manifest-path src/Cargo.toml \
 
 registry adapter 与 TS 一样始终暴露 `complete()` 分派端口，混合注册表、全 native 和空表均可构造启用 token-saver 的 router；调用时按 request.provider 取租约并分派。混合表的 judge 可正常调用 complete-capable provider；空表到调用时才报 provider_not_found。直接注入不提供 complete 的非 registry invocation port 仍在 router 构造时报 judge_invoker_missing。
 
+`supports_complete()` 只表示接线存在（TS dispatch-exposes 语义），返回 true 不保证 `complete()` 成功，也不保证请求所指 provider 已注册或有 complete 实现。调用方即使检查为 true 也必须处理调用错误；若需要错误回退，应依据实际调用结果。native provider 因没有 HTTP complete 实现仍返回 false；registry 返回 true 是其分派端口的契约。
+
+`empty-missing-provider` 金样刻意越过 TS 类型边界，删除 request 的 provider 属性后调用真实 registry adapter：端口仍存在、router staging 成功，调用返回 `provider_not_found` / `Provider undefined does not exist.`。Rust 新测试单独回放此项，覆盖 `missing("undefined")` 分支；既有 `empty`（provider=b）金样保留。
+
 现有 Rust HTTP 层无 non-streaming `complete()`，原生 provider 自身的 supports_complete 仍为 false；经 registry 调它会在调用时返回缺失端口错误。全 native 金样仅验证 enabled router staging，不声明原生 judge HTTP 已对齐 TS。该存量缺口继续列入 RESULT「范围外」。
 
 补充金样：9 项 registry API 结果（空/空白/BOM provider id、重复注册、重复 lease.release、unregister、missing/closed 错误）；替换保留 JS Map 原插入位置的多错误清理及聚合；complete 调用在取消 settle 前保持 lease，whenDrained 的前后状态；原生 provider 默认构造分支（TS 只在调用层注入 fetch，router 使用保留的 model-runtime 兼容注入口）；4 组真实 `ensureRouterConfig` 默认与显式覆盖输入。源闭包共 728 个文件。新增 registryRouterCases 来自真实 ProjectModelRuntimeBundle / ProjectRouterRuntimeBundle：混合（native a + complete b，judge=b）、全 native（judge=a）、空表（合法配置声明 b，但注入返回空注册表，judge=b）；后两种中的全 native 只对照 staging，混合和空表另对照 registry port 的真实 complete 调用。每次使用真实配置加载器校验配置。
@@ -41,3 +45,5 @@ CARGO_BUILD_JOBS=4 timeout 600 python3 \
 15 个变异：新调用误拿旧代、drain 前释放、HTTP 不接取消、旧 registration 误删新代、替换改变 Map 清理次序、complete 提前释放 lease、factory 跳过 recorder、漏校验 JS BOM 空白、原生族不注册 provider、忽略项目 router 默认值。各项的测试名与精确变异锚点直接见脚本。
 
 本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器的 CARGO_TARGET_DIR（本树 src/target）；缺失时只补此同一路径，不另建 target。
+
+修复轮 2 再增 2 项（合计 17 项）：native provider 错报支持 complete，以及无 provider 的 complete 错报 `Provider null`。分别要求原生能力契约测试与新增无 provider 金样测试断言失败。registry 的混合 / 全 native / 空表暴露语义继续由既有三项负控守护。
