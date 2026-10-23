@@ -766,3 +766,11 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：`src/pilotdeck-gateway/tests/plugin_traversal.rs` 的 `plugin_markdown_root_boundary`（相似文本前缀、目录链接、文件链接、链接链、SKILL.md 链接、三个贡献族、style-only、越界配置 base、安全兄弟保留）；目录 / 文件 / 链接链 / 配置根四条独立负控实际读到越界内容并命中断言。原 oracle 中两条已知根外贡献只在测试中精确排除，原金样未改。
 - **批准记录**：无；依据人批先例 #496 由协调者在 #484 修复轮 1 任务书中授权，**AI 代批，待人复核**；**已知未对齐（未批准）**。同类：#508（MCP 读图越出 cwd，仍待人定）、A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001。
 
+### A6.3-PLUGIN-MARKDOWN-CYCLE-001-R2 · 更正 R1 的 TS 环行为与预算口径，补充指数别名 DAG（首版与 R1 原文保留在上方）
+
+- **类别**：向安全偏离（目录互链与别名图的重复展开 → 每物理目录一次；Markdown 候选与深度设限，并对拒绝结果给出诊断）。
+- **TS 依据**（cc7c4e6）：`PluginCommandLoader.ts:79-102` 递归跟随目录链接、不去重，stat 遇 ELOOP 等错误跳过；`PluginLoader.ts:93` 静默对每配置目录 error→[]。原 traversal.json 的 k=3/7/10/20 互链团只证明 1000 ms 截止时未返回，不能泛化为所有环永久不返回。新增 budget.json 的简单互链成功返回 64 条、2 个唯一正文；12 层无环双别名 DAG 成功返回 16369 条、13 个唯一正文；含 4800 个非 Markdown 资产的插件返回 3 个 skill。两次真实 TS 输出字节一致。
+- **Rust 行为**：每配置贡献目录独立全局目录身份去重，保留首次词法访问；预算只计通过根检查的 `.md` 候选，最多 4096 个、进入目录深度最多 64 层，目录和非 Markdown 文件不计候选预算。超限仍返回 `Plugin markdown traversal limit exceeded.`，配置入口只丢弃该目录全部结果，并在 stderr 输出被丢弃目录、原因及两项限额；同配置数组其他目录继续保留。
+- **范围**：插件 commands / skills / output-styles 与 style-only；Unix dev+ino，非 Unix 规范化路径回退未验证；不同配置目录不共享访问集或预算。**可观察差异重述**：① 非循环别名可以是任意多路径，含指数别名 DAG；TS 按路径重复贡献，Rust 每物理目录只展开一次（本次 DAG 16369→13，并保留各目录首次词法路径）。② 超过 4096 个 `.md` 候选或 64 层的目录树 TS 可成功，Rust 出错配置目录为空且额外输出诊断；超过 4096 个纯非 Markdown 资产本身不触发拒绝。③ **更正 R1 第三处**：成环/互链的 TS 行为取决于拓扑与系统链接解析限制；简单回边可以在 ELOOP 截止后成功返回重复条目，分叉互链可在探针截止时仍未返回，不再写「成环 / 互链目录 TS 不返回」。Rust 均以全局物理目录去重有界返回；简单环本次 64→2，词法路径可能不同于 TS 反复回边后得到的首次路径。候选预算不再充当总枚举量/目录数量的上限。
+- **机器判据**：`src/pilotdeck-gateway/tests/plugin_traversal.rs:284` 资产插件完整 TS 回放；`:329` DAG 首次路径回放与 24 层独立压力；`:389` 简单环去重；`:418` 两种超限、四入口诊断、目录边界与兄弟保留；原有 entry/depth/clique/alias 判据仍通过。`negative-controls.py:144` 起四项新负控和五项相关旧负控实测 9/9 命中；金样双跑 SHA-256 与上文一致。最终 fmt / clippy / 相关测试原始输出见本 RESULT。
+- **批准记录**：没有新增人批或豁免。本轮用户修复任务书明确授权代码修复、候选预算与可观察诊断；账本由协调者按只追加写 R2，**AI 代批，待人复核；已知未对齐（未批准）**。本交付不修改冻结文件，不将候选当成已批准差异。
