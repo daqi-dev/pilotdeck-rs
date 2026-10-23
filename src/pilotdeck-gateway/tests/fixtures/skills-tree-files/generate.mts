@@ -13,7 +13,7 @@
 //
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see
 // README.md. Every case runs twice and both runs must serialize identically.
-import { assertBaseline, baselineSourceHashes } from '../../_shared/baseline.mts';
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 import { mkdtemp, writeFile, symlink, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
