@@ -20,6 +20,9 @@ const sources = [
   'src/agent/turn/TurnRunner.ts', 'src/agent/turn/TurnInputProcessor.ts',
   'src/agent/protocol/errors.ts', 'src/agent/session/AgentSessionEventRecorder.ts',
   'src/gateway/dialog/errors.ts', 'src/router/protocol/errors.ts',
+  'src/agent/policy/FailureGuard.ts', 'src/agent/policy/classify.ts',
+  'src/gateway/client/GatewayToolResultArtifactStore.ts',
+  'src/tool/protocol/result.ts',
 ];
 const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const requireBaseline = createRequire(join(baseline, 'package.json'));
@@ -57,7 +60,9 @@ const routerModule = await load(sources[1], { '../agent/index.js': { ...handleMo
 const fenceModule = await load(sources[6]);
 const replayModule = await load(sources[7]);
 const coordinatorModule = await load(sources[8], { './GatewayTurnReplayStore.js': replayModule });
-const projectorModule = await load(sources[9], { './GatewayToolResultArtifactStore.js': { GatewayToolResultArtifactStore: class { persist() { throw Error('unexpected artifact'); } } } });
+const artifactsModule = await load(sources[21]);
+const toolResultModule = await load(sources[22]);
+const projectorModule = await load(sources[9], { './GatewayToolResultArtifactStore.js': artifactsModule, '../../tool/index.js': toolResultModule });
 const queueModule = await load(sources[10]);
 const registryModule = await load(sources[11]);
 const statusModule = await load(sources[12]);
@@ -70,7 +75,10 @@ const runnerModule = await load(sources[13], {
 });
 const dialogErrors = await load(sources[17]);
 const routerErrors = await load(sources[18]);
+const classifyModule = await load(sources[20]);
+const guardModule = await load(sources[19], { './classify.js': classifyModule });
 const { InProcessGateway } = await load(sources[0], {
+  '../../agent/policy/FailureGuard.js': guardModule,
   './GatewayTurnEventCoordinator.js': coordinatorModule,
   './GatewayAgentEventProjector.js': projectorModule, '../util/AsyncQueue.js': queueModule,
   '../dialog/errors.js': dialogErrors, '../../router/index.js': routerErrors,
@@ -90,6 +98,7 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
   const hostCalls: any[] = [], durableCalls: any[] = [], registryCalls: any[] = [], native: any[] = [], visible: any[] = [], results: any[] = [];
   const acceptGate = defer(), terminalGate = defer(), endGate = defer(), prepareGate = defer(), sdkGate = defer(), recoveryGate = defer(), consumerGate = defer();
   let cancelled = false, ended = false, thrown: any = null;
+  let guardConfig = setup.failureGuard;
   const runRef = { sessionKey: 's', projectKey: 'p', runId: 'r' };
   const input = { ...runRef, message: 'hello', channelKey: 'test', ...setup.input };
   const pendingRegistry: Promise<any>[] = [];
@@ -120,15 +129,17 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
     { cwd: '/unused', transcriptPath: '', collectFileArtifacts: false });
   const session = {
     sessionId: 's', pendingTurnCount: () => 0,
-    async recordAgentStatusMessage() {
+    async recordAgentStatusMessage(_turnId: string, status: any) {
+      if (setup.failureGuard) durableCalls.push({ op: 'status', status: clone(status), wire: JSON.stringify(status) });
       if (setup.statusRecordFailure) throw Error('injected status record failure');
       return false;
     },
     snapshotForRuntimeReload: () => ({ messages: [], cwd: '/unused' }),
-    abort() { hostCalls.push('session_abort'); cancelled = true; terminalGate.resolve(); endGate.resolve(); acceptGate.resolve(); },
+    abort(reason: string) { hostCalls.push('session_abort'); if (setup.failureGuard) durableCalls.push({ op: 'abort', reason }); cancelled = true; terminalGate.resolve(); endGate.resolve(); acceptGate.resolve(); if (setup.sessionAbortFailure) throw Error('injected abort failure'); },
     async dispose() { hostCalls.push('session_dispose'); },
     async *submit(agentInput: any, options: any) {
       hostCalls.push('submit');
+      cancelled = false;
       if (setup.input?.timeoutMs > 0) durableCalls.push({ op: 'execution', execution: clone(options.execution) });
       const gen = runner.run({ sessionId: 's', turnId: 'r', input: agentInput, messages: [] });
       try {
@@ -144,9 +155,13 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
           { type: 'model_event', event: { type: 'request_started', provider: 'provider', model: 'configured' } },
           { type: 'model_event', event: { type: 'request_started', provider: 'provider', model: 'actual' } },
         ] : [];
+        for (const event of [...modelEvents, ...(setup.failureEvents ?? [])]) {
+          if (cancelled) break;
+          native.push(clone(event)); yield event;
+        }
         const events = cancelled
           ? [{ type: 'turn_completed', result: { type: 'aborted', stopReason: 'aborted_streaming', usage: {} } }]
-          : [...modelEvents, { type: 'model_event', event: { type: 'text_delta', text: 'hello back' } },
+          : [{ type: 'model_event', event: { type: 'text_delta', text: 'hello back' } },
              { type: 'turn_completed', result: { type: 'success', stopReason: 'completed', usage: {} } }];
         for (const event of events) { native.push(clone(event)); yield event; }
       }
@@ -171,7 +186,8 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
       } } : {}),
       ...(setup.recovery ? { clearRecoveredUserDialogs: async () => { hostCalls.push('recovery'); if (setup.recoveryGate) await recoveryGate.promise; if (setup.recoveryFailure) throw Error('injected recovery failure'); } } : {}),
       ...(setup.selection ? { resolveTurnModelSelection: async () => setup.selection } : {}),
-      refreshConfigBeforeTurn: async () => { hostCalls.push('refresh'); if (setup.refreshFailure) throw Error('transient config error'); },
+      resolveRunPolicy: () => ({ failureGuard: guardConfig }),
+      refreshConfigBeforeTurn: async () => { hostCalls.push('refresh'); if (setup.guardAfterRefresh) guardConfig = setup.guardAfterRefresh; if (setup.refreshFailure) throw Error('transient config error'); },
       ...(setup.sdkAvailable ? { setSdkSessionConfig: async () => { hostCalls.push('sdk_config'); if (setup.sdkGate) await sdkGate.promise;
         if (setup.sdkFailure) throw Error('injected SDK config failure'); return { changed: setup.sdkChanged === true }; } } : {}),
       afterTurnCompleted: () => { hostCalls.push('after'); if (setup.finallyFailure) throw Error('injected finally failure'); },
@@ -200,7 +216,7 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
     await file.ready;
     for (let i = 0; i < 3; ++i) { await settle(); await Promise.all(pendingRegistry); await file.mutationChain; }
     results.push({ visible: clone(visible), hostCalls: clone(hostCalls), durableCalls: clone(durableCalls), registryCalls: clone(registryCalls),
-      active: router.hasActiveTurn('s'), ended, thrown });
+      active: router.hasActiveTurn('s'), ended, thrown, ...(setup.failureGuard ? { guardWire: visible.map(e => JSON.stringify(e)) } : {}) });
   }
   try {
     for (const step of steps) {
@@ -291,6 +307,28 @@ await run('timeout-disabled', { input: { timeoutMs: 0 } });
 await run('timeout-overflow-delay', { input: { timeoutMs: 2147483648 } }, ['observe', 'accept', 'timeout']);
 await run('timeout-fractional-delay', { input: { timeoutMs: 0.5 } }, ['observe', 'accept', 'timeout']);
 await run('timeout-invalid-deadline', { input: { timeoutMs: 9e15 } }, ['observe']);
+// FailureGuard is the real TS implementation injected into the real gateway.
+const failureGuard = { enabled: true, modelFailureLimit: 2, toolFailureLimits: { read_file: 2, mcp__: 4, mcp__db__: 2 }, toolLabels: { read_file: '文件', mcp__db__: '数据库' } };
+const modelFailure = { type: 'turn_continued', reason: 'model_error' };
+let toolSerial = 0;
+const toolFailure = (toolName: string, code = 'tool_execution_failed', type = 'tool_result', success = false) => ({
+  type, sessionId: 's', turnId: 'r', ...(type === 'subagent_tool_result' ? { subagentId: 'sub', subagentType: 'test' } : {}),
+  result: { type: success ? 'success' : 'error', toolName, toolCallId: `call-${++toolSerial}`, content: [{ type: 'text', text: 'result' }], ...(success ? {} : { error: { code, message: 'failed' } }) },
+});
+await run('guard-under-limit', { failureGuard, failureEvents: [modelFailure, toolFailure('read_file'), toolFailure('read_file', 'permission_denied'), { type: 'turn_continued', reason: 'other' }] });
+await run('guard-disabled', { failureGuard: { ...failureGuard, enabled: false }, failureEvents: [modelFailure, modelFailure, modelFailure] });
+await run('guard-model-trip', { failureGuard, modelEvents: true, failureEvents: [modelFailure, modelFailure, modelFailure] });
+await run('guard-tool-trip', { failureGuard, failureEvents: [toolFailure('read_file'), toolFailure('read_file', '', 'tool_result', true), toolFailure('read_file', 'tool_unavailable'), toolFailure('read_file')] });
+await run('guard-subagent-trip', { failureGuard, failureEvents: [toolFailure('mcp__db__a'), toolFailure('mcp__db__b', 'setup_required', 'subagent_tool_result'), modelFailure] });
+await run('guard-trip-status-record-failed', { failureGuard, statusRecordFailure: true, failureEvents: [modelFailure, modelFailure] });
+await run('guard-trip-abort-failed', { failureGuard, sessionAbortFailure: true, failureEvents: [modelFailure, modelFailure] });
+await run('guard-reset-next-turn', { failureGuard, failureEvents: [modelFailure] }, ['observe', 'accept', 'terminal', 'end', 'second']);
+await run('guard-trip-next-turn', { failureGuard, failureEvents: [modelFailure, modelFailure] }, ['observe', 'accept', 'terminal', 'end', 'second']);
+await run('guard-refresh-enables', { failureGuard: { ...failureGuard, enabled: false }, guardAfterRefresh: failureGuard, failureEvents: [modelFailure, modelFailure] });
+await run('guard-refresh-disables', { failureGuard, guardAfterRefresh: { ...failureGuard, enabled: false }, failureEvents: [modelFailure, modelFailure] });
+await run('guard-snapshot-trip', { failureGuard, workspace: 'w', snapshots: true, failureEvents: [modelFailure, modelFailure] });
+await run('guard-abort-before-prepare', { failureGuard, prepareGate: true }, ['observe', 'abort', 'prepare']);
+await run('guard-timeout-cleanup', { failureGuard, input: { timeoutMs: 100 } }, ['observe', 'accept', 'timeout']);
 // Keep lone UTF-16 units outside the serde_json scenario bridge. They are
 // compared directly as protocol JsValue strings by a dedicated Rust replay.
 const validationProbes: any[] = [];

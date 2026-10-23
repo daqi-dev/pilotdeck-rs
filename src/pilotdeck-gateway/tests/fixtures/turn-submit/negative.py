@@ -22,7 +22,7 @@ source = rust / 'pilotdeck-gateway/src/runtime/turn/submit.rs'
 original = source.read_bytes()
 lock = repo / '_tmp/turn-submit-mutation.lock'
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
-env.setdefault('CARGO_TARGET_DIR', str(rust / 'target'))
+assert Path(env['CARGO_TARGET_DIR']).resolve() == rust / 'target'
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 lock.mkdir()
 test = 'runtime::turn::submit::tests'
@@ -40,9 +40,9 @@ mutants = [
     ('sdk-abort-ignored', 'let event = if completion.is_cancelled() {', 'let event = if false && completion.is_cancelled() {', 'abort-during-sdk-failure', 'abort-during-sdk-failure: step', None),
     ('refresh-error-propagated', 'let _ = self.host.refresh().await;', 'self.host.refresh().await?;', 'refresh-failed-keeps-snapshot', 'refresh-failed-keeps-snapshot: step', None),
     ('accepted-commit-skipped', 'self.host.commit_accepted_input(run).await?;', 'let _ = run;', 'commit-failed', 'commit-failed: step', None),
-    ('projection-drop-event', '                publisher.gateway_event(event);\n            }\n        }\n        Ok(())', '                let _ = event;\n            }\n        }\n        Ok(())', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-    ('projection-duplicate-event', '                publisher.gateway_event(event);\n            }\n        }\n        Ok(())', '                publisher.gateway_event(event.clone()); publisher.gateway_event(event);\n            }\n        }\n        Ok(())', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-    ('early-terminal-before-session-end', '                publisher.gateway_event(event);\n            }\n        }\n        Ok(())', '                let terminal = is(&event, "type", "turn_completed"); publisher.gateway_event(event); if terminal { publisher.finish().await; }\n            }\n        }\n        Ok(())', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
+    ('projection-drop-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let _ = event;\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
+    ('projection-duplicate-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                publisher.gateway_event(event.clone()); publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
+    ('early-terminal-before-session-end', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let terminal = is(&event, "type", "turn_completed"); publisher.gateway_event(event); if terminal { publisher.finish().await; }\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
     ('finally-error-swallowed', 'self.host.after_turn(&run)', 'let _ = self.host.after_turn(&run); Ok(())', 'finally-failed', 'finally-failed: step', None),
     ('input-ack-before-native-durable', 'let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'publisher.gateway_event(object([("type", "input_accepted".into()), ("runId", JsValue::String(run.run_id.clone()))]));\n        let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
     ('stale-completion-filter-skipped', '|| !self\n                    .owner\n                    .is_current_completion(&run.session_key, completion)', '|| false', 'superseded-completion', 'superseded-completion: step', None),
@@ -73,7 +73,7 @@ mutants = [
     ('snapshot-timeout-kind-wrong', '"timeout".into()\n            } else', '"unknown".into()\n            } else', 'timeout-snapshot', 'timeout-snapshot: step', None),
     ('timeout-live-close-skipped', 'publisher.close_live();', 'let _ = &publisher;', 'timeout-active', 'timeout-active: step', None),
     ('invalid-deadline-accepted', 'value.abs() > 8_640_000_000_000_000.0', 'value.abs() > f64::MAX', 'timeout-invalid-deadline', 'timeout-invalid-deadline: step', None),
-    ('failureguard-refusal-skipped', 'if self.host.failure_guard_enabled()', 'if false && self.host.failure_guard_enabled()', 'invalid-mode', 'failure-guard-unavailable: explicit capability refusal', 'failure-guard-unavailable'),
+    ('failureguard-model-observe-skipped', '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip', 'guard-model-trip: step', None),
     ('snapshot-capability-refusal-skipped', 'if workspace.snapshots_required &&', 'if false && workspace.snapshots_required &&', 'invalid-mode', 'snapshot-recorder-unavailable: explicit capability refusal', 'snapshot-recorder-unavailable'),
     ('snapshot-cwd-refusal-skipped', 'return Err(SubmitError::new(\n                    "CAPABILITY_UNAVAILABLE",\n                    "Workspace snapshot cwd is unavailable.",\n                ));', '/* silently skip missing snapshot cwd */', 'invalid-mode', 'snapshot-cwd-unavailable: explicit capability refusal', 'snapshot-cwd-unavailable'),
     ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),

@@ -20,6 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     coordinator::TurnEventCoordinator,
+    failure_guard::{FailureGuard, GuardTrip, build_guard_trip_message},
     projector::{GatewayAgentEventProjectionInput, GatewayAgentEventProjector},
     publish::{
         TurnAcceptance, TurnPublisher, TurnRunRegistry, accept_turn, persist_preflight_event,
@@ -155,9 +156,9 @@ struct PumpContext<'a> {
 /// The production host/WS adapter is assembled by pr5/pr6.
 pub trait SubmitHost: Send + Sync {
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
-    /// FailureGuard runtime is not ported. Enabled policies MUST be reported;
-    /// submit explicitly refuses them until A7.2-pr4b implements the guard.
-    fn failure_guard_enabled(&self) -> bool;
+    /// Normalized runPolicy.failureGuard snapshot, resolved after refresh.
+    /// None means no configured policy; enabled=false keeps accounting disabled.
+    fn failure_guard_config(&self) -> Option<JsValue>;
     /// Host registration is mandatory even when the host has no cwd service:
     /// return CAPABILITY_UNAVAILABLE for a requested cwd in that case.
     fn set_session_cwd(&self, session: &JsString, cwd: &JsString) -> Result<(), SubmitError>;
@@ -678,6 +679,70 @@ impl TurnSubmitter {
         self.host.after_turn(&run)
     }
 
+    async fn trip_failure_guard(
+        &self,
+        run: &RunRef,
+        publisher: &TurnPublisher,
+        handle: &LiveSessionHandle,
+        trip: &GuardTrip,
+        last_model: Option<&(JsValue, JsValue)>,
+    ) -> Result<(), SubmitError> {
+        // TS stores the emitted model as `${provider}\0${model}` and splits
+        // at the first NUL, preserving any NULs in the remaining model name.
+        let model = last_model.map(|(provider, model)| {
+            let mut key = crate::js_value::to_string_units(provider).unwrap_or_default();
+            key.push(0);
+            key.extend(crate::js_value::to_string_units(model).unwrap_or_default());
+            let separator = key.iter().position(|c| *c == 0).unwrap();
+            object([
+                (
+                    "provider",
+                    JsValue::String(JsString::from_utf16(key[..separator].to_vec())),
+                ),
+                (
+                    "model",
+                    JsValue::String(JsString::from_utf16(key[separator + 1..].to_vec())),
+                ),
+            ])
+        });
+        let built = build_guard_trip_message(trip, model.as_ref());
+        let mut detail = object([
+            ("message", field(&built, "message").clone()),
+            ("code", field(&built, "code").clone()),
+            ("severity", "error".into()),
+            ("visible", JsValue::Bool(true)),
+            ("userHint", field(&built, "message").clone()),
+            ("scope", "turn".into()),
+            ("source", "gateway".into()),
+            ("kind", trip.kind().into()),
+        ]);
+        if let JsValue::Object(extra) = field(&built, "detail") {
+            for (key, value) in extra.entries() {
+                if let JsValue::Object(detail) = &mut detail {
+                    detail.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let record = object([
+            ("event", "run_policy_stopped".into()),
+            ("kind", "error".into()),
+            ("text", field(&built, "message").clone()),
+            ("detail", detail.clone()),
+        ]);
+        // recordGatewayStatusMessage is best effort in TS.
+        let _ = self.host.record_failure(run, &record).await;
+        publisher.gateway_event(object([
+            ("type", "agent_status".into()),
+            ("runId", JsValue::String(run.run_id.clone())),
+            ("event", "run_policy_stopped".into()),
+            ("detail", detail),
+        ]));
+        // The native session owns its terminal path; abort errors are best effort.
+        let code = display(&string(field(&built, "code")));
+        let _ = handle.abort(&format!("run_policy:{code}").into());
+        Ok(())
+    }
+
     async fn publish_failure(&self, run: &RunRef, publisher: &TurnPublisher, error: &SubmitError) {
         let managed = error.code == "SDK_MANAGED_MODEL_DENIED"
             || error.code.starts_with("GATEWAY_ORGANIZATION_")
@@ -794,12 +859,14 @@ impl TurnSubmitter {
             publisher.gateway_event(aborted(run));
             return Ok(());
         }
-        if self.host.failure_guard_enabled() {
-            return Err(SubmitError::new(
-                "CAPABILITY_UNAVAILABLE",
-                "FailureGuard runtime is unavailable; requires A7.2-pr4b.",
-            ));
-        }
+        // This pump owns exactly one active (session, run, completion) guard.
+        // Current-completion checks below fence stale pumps; lexical ownership
+        // drops the guard on every pump exit, including failure and timeout.
+        let mut failure_guard = self
+            .host
+            .failure_guard_config()
+            .filter(|config| truthy(field(config, "enabled")))
+            .map(FailureGuard::new);
         let handle = self
             .owner
             .get_or_create(SessionContext {
@@ -1009,6 +1076,17 @@ impl TurnSubmitter {
                     );
                 }
                 publisher.gateway_event(event);
+            }
+            if let Some(guard) = &mut failure_guard
+                && !timed_out.load(Ordering::SeqCst)
+                && self
+                    .owner
+                    .is_current_completion(&run.session_key, completion)
+                && !guard.is_tripped()
+                && let Some(trip) = guard.observe(&event)
+            {
+                self.trip_failure_guard(run, publisher, &handle, &trip, last_model.as_ref())
+                    .await?;
             }
         }
         Ok(())
