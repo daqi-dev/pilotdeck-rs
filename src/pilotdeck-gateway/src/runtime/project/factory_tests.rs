@@ -78,6 +78,11 @@ struct Probe {
     next: AtomicUsize,
     fail: Mutex<Option<(Family, Phase)>>,
     fail_cleanup: Mutex<Vec<Family>>,
+    /// Per-step cross-family disposal dependency (the generator's
+    /// `disposeWaits`): the waiter family's disposal only starts once the
+    /// signal family's disposal has.
+    dispose_waits: Mutex<Option<(Family, Family)>>,
+    started: Mutex<Vec<Family>>,
 }
 impl Probe {
     fn event(&self, event: String) {
@@ -88,6 +93,19 @@ impl Probe {
     }
     fn fails(&self, family: Family, phase: Phase) -> bool {
         *self.fail.lock().unwrap() == Some((family, phase))
+    }
+    fn dispose_wait(&self, family: Family) -> Option<Family> {
+        self.dispose_waits
+            .lock()
+            .unwrap()
+            .filter(|(waiter, _)| *waiter == family)
+            .map(|(_, signal)| signal)
+    }
+    fn dispose_started(&self, family: Family) -> bool {
+        self.started.lock().unwrap().contains(&family)
+    }
+    fn mark_dispose_started(&self, family: Family) {
+        self.started.lock().unwrap().push(family);
     }
     fn construct(&self, family: Family, extra: &str) -> Result<usize, RuntimeError> {
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
@@ -136,7 +154,8 @@ impl FakeHandle {
 impl FamilyResource for FakeHandle {
     fn dispose(&self) -> DisposeFuture<'_> {
         let probe = Arc::clone(&self.probe);
-        let family = self.family.as_str();
+        let family = self.family;
+        let name = self.family.as_str();
         let id = self.id;
         let fail = self
             .probe
@@ -144,10 +163,21 @@ impl FamilyResource for FakeHandle {
             .lock()
             .unwrap()
             .contains(&self.family);
+        let wait = probe.dispose_wait(family);
         Box::pin(async move {
-            probe.event(format!("dispose:{family}:{id}"));
+            if let Some(signal) = wait {
+                // The generator's `setImmediate` poll: yield until the signal
+                // family's disposal has started. Only the concurrent
+                // parallel-group start can satisfy this; a sequential
+                // implementation hangs and fails the step by deadline.
+                while !probe.dispose_started(signal) {
+                    tokio::task::yield_now().await;
+                }
+            }
+            probe.mark_dispose_started(family);
+            probe.event(format!("dispose:{name}:{id}"));
             if fail {
-                Err(RuntimeError::new(format!("dispose failed:{family}:{id}")))
+                Err(RuntimeError::new(format!("dispose failed:{name}:{id}")))
             } else {
                 Ok(())
             }
@@ -184,7 +214,27 @@ fn agent_model(context: &StageContext) -> String {
         .unwrap_or_default()
 }
 fn model_runtime(context: &StageContext) -> String {
-    format!("agent={}", agent_model(context))
+    let snapshot = context.snapshot();
+    let recent = snapshot
+        .get("loadedAt")
+        .and_then(JsValue::as_string)
+        .map(loaded_at_recent)
+        .unwrap_or(false);
+    format!("agent={}:loadedAtRecent={recent}", agent_model(context))
+}
+/// The generator's `loadedAtRecent` flag: `loadPilotConfig`'s own wall clock
+/// (`new Date()`, loadPilotConfig.ts:65) stamps the snapshot even though the
+/// injected resource clock is stateful — the bundle never passes
+/// `options.now` to the config read (ProjectRuntimeResourcesBundle.ts:201-204).
+fn loaded_at_recent(loaded_at: &pilotdeck_protocol::JsString) -> bool {
+    let Ok(Some(epoch_ms)) = pilotdeck_transport::system_clock::parse_node22_date(loaded_at) else {
+        return false;
+    };
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as f64)
+        .unwrap_or_default();
+    (now_ms - epoch_ms).abs() < 3_600_000.0
 }
 fn builtin_plugins_enabled(context: &StageContext) -> String {
     let snapshot = context.snapshot();
@@ -398,13 +448,24 @@ fn make_registry(scratch: &Path, probe: &Arc<Probe>) -> Arc<ProjectRuntimeRegist
         "PILOT_HOME".to_owned(),
         scratch.join("config-home").to_string_lossy().into_owned(),
     );
+    // The generator's stateful clock (`new Date(1000 * ++nowCalls)`): the
+    // recorded compaction ticks prove how many times the resource clock was
+    // consumed before each compaction construct. A config read that also
+    // drew from this clock would shift every later tick.
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let now = {
+        let ticks = Arc::clone(&ticks);
+        Arc::new(move || {
+            UNIX_EPOCH + Duration::from_secs(ticks.fetch_add(1, Ordering::SeqCst) as u64 + 1)
+        }) as Now
+    };
     let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
         pilot_home: scratch.join("home"),
         cwd: scratch.to_path_buf(),
         env,
         homedir: Some(scratch.join("home")),
         builtin_skills_root: None,
-        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        now,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families: families(probe),
@@ -449,7 +510,7 @@ async fn real_ts_factory_oracle() {
     crate::test_baseline::oracle(text);
     let oracle: Value = serde_json::from_str(text).unwrap();
     let cases = oracle["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 9);
+    assert_eq!(cases.len(), 12);
     let mut replayed = 0;
     for case in cases {
         let scratch = Scratch::new();
@@ -480,6 +541,13 @@ async fn real_ts_factory_oracle() {
                         .collect()
                 })
                 .unwrap_or_default();
+            *probe.dispose_waits.lock().unwrap() = input["disposeWaits"].as_object().map(|wait| {
+                (
+                    family_from(wait["waiter"].as_str().unwrap()),
+                    family_from(wait["signal"].as_str().unwrap()),
+                )
+            });
+            probe.started.lock().unwrap().clear();
             let root = input["root"].as_str().map(|key| scratch.0.join(key));
             let mut resolved_id = Value::Null;
             let outcome = match input["op"].as_str().unwrap() {
@@ -541,7 +609,7 @@ async fn real_ts_factory_oracle() {
             replayed += 1;
         }
     }
-    assert_eq!(replayed, 50, "all recorded steps must be replayed");
+    assert_eq!(replayed, 68, "all recorded steps must be replayed");
 }
 
 /// Regenerates the oracle from the real TS registry and compares bytes,
@@ -602,4 +670,256 @@ async fn unwired_families_report_explicit_errors() {
             .starts_with("Project runtime resource family modelRuntime")
     );
     bounded(registry.dispose()).await.unwrap();
+}
+
+/// The eight parallel-group disposals start together (`Promise.allSettled`,
+/// ProjectRuntimeResourcesBundle.ts:416-425): a disposal that waits for a
+/// sibling's cleanup signal is unblocked by that sibling's start. A
+/// sequential implementation never starts the sibling and fails here by
+/// deadline.
+#[tokio::test]
+async fn dispose_starts_parallel_group_concurrently() {
+    let probe = Arc::new(Probe::default());
+    *probe.dispose_waits.lock().unwrap() = Some((Family::PluginRuntime, Family::LspService));
+    let profile = RuntimeProfile {
+        sandbox_mode: SandboxMode::DangerFullAccess,
+        runtime_context_surface: RuntimeContextSurface::SystemPrompt,
+        interaction: InteractionProfile::resolve(InteractionProfileName::Interactive),
+    };
+    let group = ProjectResources::new(
+        PathBuf::from("/project"),
+        PathBuf::from("/home"),
+        None,
+        crate::config::Env::new(),
+        Arc::new(|| SystemTime::UNIX_EPOCH),
+        Arc::new(JsValue::Undefined),
+        profile,
+    );
+    {
+        let mut sink = group.sink();
+        sink.register_owner(
+            Family::PluginRuntime,
+            FakeHandle::new(&probe, Family::PluginRuntime, 1),
+        );
+        sink.register_owner(
+            Family::LspService,
+            FakeHandle::new(&probe, Family::LspService, 2),
+        );
+        sink.register_owner(
+            Family::MemoryBundle,
+            FakeHandle::new(&probe, Family::MemoryBundle, 3),
+        );
+    }
+    bounded(group.dispose()).await.unwrap();
+    // lspService starts in the same pass as the rest of the group;
+    // pluginRuntime's wait resolves only after it, and memoryBundle waits
+    // for the whole group.
+    assert_eq!(
+        probe.events(),
+        [
+            "dispose:lspService:2",
+            "dispose:pluginRuntime:1",
+            "dispose:memoryBundle:3"
+        ]
+    );
+}
+
+/// The config snapshot's `loadedAt` is the config read's own wall clock
+/// (`new Date()`, loadPilotConfig.ts:65), never the injected resource clock:
+/// with a frozen epoch clock the snapshot still carries a current timestamp,
+/// and the resource clock is not consumed by the config read.
+#[tokio::test]
+async fn config_loaded_at_uses_wall_clock_not_resource_clock() {
+    let scratch = Scratch::new();
+    std::fs::create_dir_all(scratch.0.join("a/.pilotdeck")).unwrap();
+    std::fs::write(
+        scratch.0.join("a/.pilotdeck/pilotdeck.yaml"),
+        PROJECT_CONFIGS[0].1,
+    )
+    .unwrap();
+    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), GLOBAL_YAML).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let now = {
+        let calls = Arc::clone(&calls);
+        Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            SystemTime::UNIX_EPOCH
+        }) as Now
+    };
+    let loaded_at: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    struct CapturingSource {
+        loaded_at: Arc<Mutex<Option<String>>>,
+    }
+    impl ResourceFamilySource for CapturingSource {
+        fn family(&self) -> Family {
+            Family::ModelRuntime
+        }
+        fn stage(&self, context: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+            *self.loaded_at.lock().unwrap() = context
+                .snapshot()
+                .get("loadedAt")
+                .and_then(JsValue::as_string)
+                .and_then(|value| value.to_utf8().ok());
+            // Staging stops right after the config read was observed.
+            Err(RuntimeError::new("stop staging here"))
+        }
+    }
+    let mut env = crate::config::Env::new();
+    env.insert(
+        "PILOT_HOME".to_owned(),
+        scratch.0.join("config-home").to_string_lossy().into_owned(),
+    );
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: scratch.0.join("home"),
+        cwd: scratch.0.to_path_buf(),
+        env,
+        homedir: Some(scratch.0.join("home")),
+        builtin_skills_root: None,
+        now,
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families: Families {
+            model_runtime: Arc::new(CapturingSource {
+                loaded_at: Arc::clone(&loaded_at),
+            }),
+            ..Families::unwired()
+        },
+    });
+    let registry = ProjectRuntimeRegistry::new(scratch.0.join("fallback"), Arc::new(factory));
+    let error = match registry.resolve(Some(&scratch.0.join("a"))) {
+        Err(error) => error,
+        Ok(_) => panic!("staging stops after the config read"),
+    };
+    assert_eq!(error.message, "stop staging here");
+    let loaded_at = loaded_at.lock().unwrap().clone().expect("config was read");
+    let loaded_at = pilotdeck_protocol::JsString::from(loaded_at);
+    assert!(
+        loaded_at_recent(&loaded_at),
+        "loadedAt must be the config read's wall clock, not the frozen resource clock"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the config read must not consume the injected resource clock"
+    );
+    bounded(registry.dispose()).await.unwrap();
+}
+
+/// Every family `Families::unwired` reports carries its own name and package
+/// tag, not only the first one in stage order: the families staged before it
+/// are no-ops, so each unsupported family is the one that fails the
+/// generation. Compaction and the prompt-cache coordinator are absent by
+/// default in both the baseline and `Families::unwired` and report nothing.
+#[tokio::test]
+async fn unwired_families_report_each_family() {
+    const STAGE_ORDER: [Family; 12] = [
+        Family::ModelRuntime,
+        Family::PluginRuntime,
+        Family::RouterCustomRouters,
+        Family::RouterRuntime,
+        Family::LspService,
+        Family::ExecutionWorld,
+        Family::ContextStorage,
+        Family::Compaction,
+        Family::PromptCacheCoordinator,
+        Family::SessionTitleProvider,
+        Family::McpProvider,
+        Family::MemoryBundle,
+    ];
+    struct NoopSource(Family);
+    impl ResourceFamilySource for NoopSource {
+        fn family(&self) -> Family {
+            self.0
+        }
+        fn stage(&self, _: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+            Ok(())
+        }
+    }
+    fn noop(families: &mut Families, family: Family) {
+        match family {
+            Family::ModelRuntime => families.model_runtime = Arc::new(NoopSource(family)),
+            Family::PluginRuntime => families.plugins = Arc::new(NoopSource(family)),
+            Family::RouterCustomRouters => {
+                families.router_custom_routers = Some(Arc::new(NoopSource(family)))
+            }
+            Family::RouterRuntime => families.router_runtime = Arc::new(NoopSource(family)),
+            Family::LspService => families.lsp = Some(Arc::new(NoopSource(family))),
+            Family::ExecutionWorld => families.execution_world = Arc::new(NoopSource(family)),
+            Family::ContextStorage => families.context_storage = Arc::new(NoopSource(family)),
+            Family::SessionTitleProvider => {
+                families.session_title = Some(Arc::new(NoopSource(family)))
+            }
+            Family::McpProvider => families.mcp = Arc::new(NoopSource(family)),
+            Family::MemoryBundle => families.memory = Arc::new(NoopSource(family)),
+            // Absent by default in the baseline; `unwired` leaves them out.
+            Family::Compaction | Family::PromptCacheCoordinator => {}
+        }
+    }
+    let scratch = Scratch::new();
+    std::fs::create_dir_all(scratch.0.join("a/.pilotdeck")).unwrap();
+    std::fs::write(
+        scratch.0.join("a/.pilotdeck/pilotdeck.yaml"),
+        PROJECT_CONFIGS[0].1,
+    )
+    .unwrap();
+    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), GLOBAL_YAML).unwrap();
+    for (family, tag) in [
+        (Family::ModelRuntime, "A6.9-pr3b"),
+        (Family::PluginRuntime, "A6.9-pr3e"),
+        (
+            Family::RouterCustomRouters,
+            "A6.9-pr3e createNativeRouterSessionCustomRouterPort",
+        ),
+        (Family::RouterRuntime, "A6.9-pr3b"),
+        (Family::LspService, "A6.9-pr3c LspService"),
+        (Family::ExecutionWorld, "A6.9-pr3c"),
+        (Family::ContextStorage, "A6.9-pr3d"),
+        (
+            Family::SessionTitleProvider,
+            "A6.9-pr3d createNativeSessionTitleProvider",
+        ),
+        (Family::McpProvider, "A6.9-pr3c"),
+        (Family::MemoryBundle, "A6.9-pr3d"),
+    ] {
+        let mut families = Families::unwired();
+        for before in STAGE_ORDER
+            .into_iter()
+            .take_while(|&staged| staged != family)
+        {
+            noop(&mut families, before);
+        }
+        let mut env = crate::config::Env::new();
+        env.insert(
+            "PILOT_HOME".to_owned(),
+            scratch.0.join("config-home").to_string_lossy().into_owned(),
+        );
+        let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+            pilot_home: scratch.0.join("home"),
+            cwd: scratch.0.to_path_buf(),
+            env,
+            homedir: Some(scratch.0.join("home")),
+            builtin_skills_root: None,
+            now: Arc::new(|| SystemTime::UNIX_EPOCH),
+            config_version: None,
+            runtime_profile_overrides: RuntimeProfileOverrides::default(),
+            families,
+        });
+        let registry = ProjectRuntimeRegistry::new(scratch.0.join("fallback"), Arc::new(factory));
+        let error = match registry.resolve(Some(&scratch.0.join("a"))) {
+            Err(error) => error,
+            Ok(_) => panic!("{family:?} must fail the generation"),
+        };
+        assert_eq!(
+            error.message,
+            format!(
+                "Project runtime resource family {} is not available in the native runtime yet ({}).",
+                family.as_str(),
+                tag
+            ),
+            "family {family:?}"
+        );
+        bounded(registry.dispose()).await.unwrap();
+    }
 }
