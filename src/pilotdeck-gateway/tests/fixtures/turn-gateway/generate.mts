@@ -281,6 +281,53 @@ await run('abort-active', {}, ['observe', 'accept', 'abort']);
 await run('abort-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'abort']);
 await run('close-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'close']);
 
+// Deterministic abort/fence interleavings. The real router and fence own all
+// cancellation/wait behavior; only admission/consumer completion are stepped.
+const abortFenceCases: any[] = [];
+for (const [name, steps] of [
+  ['admission-cleared-before-consumer', ['begin-a', 'owner-done-a', 'abort-a', 'release-router', 'observe', 'finish-a', 'observe']],
+  ['replacement-during-abort', ['begin-a', 'abort-a', 'observe', 'finish-a', 'begin-b', 'release-router', 'observe', 'owner-done-b', 'observe', 'finish-b', 'observe']],
+  ['latest-session-fence-only', ['begin-a', 'owner-done-a', 'begin-b', 'owner-done-b', 'abort-session', 'release-router', 'observe', 'finish-b', 'observe', 'finish-a']],
+  ['replacement-after-wait-snapshot', ['begin-b', 'owner-done-b', 'abort-session', 'release-router', 'observe', 'begin-c', 'finish-b', 'observe', 'finish-c']],
+  ['stale-run-does-not-wait', ['begin-a', 'owner-done-a', 'begin-b', 'abort-a', 'observe', 'finish-b', 'finish-a']],
+] as [string, string[]][]) {
+  const router = new routerModule.SessionRouter({ createSession() { throw Error('unexpected session creation'); }, idleSweepIntervalMs: 0 });
+  const routerGate = defer();
+  const realAbort = router.abort.bind(router);
+  router.abort = async (...args: any[]) => { await realAbort(...args); await routerGate.promise; };
+  const fence = new fenceModule.GatewayTurnCompletionFence();
+  const gateway = Object.create(InProcessGateway.prototype);
+  Object.assign(gateway, { router, turnCompletionFence: fence, abortedTurnReasons: new Map() });
+  const handles = new Map<string, any>();
+  const results: boolean[] = [];
+  let ended = false;
+  let abort: Promise<void> | undefined;
+  for (const step of steps) {
+    const runId = step.slice(-1);
+    if (step.startsWith('begin-')) {
+      assert.ok(router.beginTurn('s', runId));
+      handles.set(runId, fence.begin('s', runId));
+    } else if (step.startsWith('owner-done-')) {
+      router.endTurn('s', runId);
+    } else if (step.startsWith('finish-')) {
+      router.endTurn('s', runId);
+      fence.complete('s', handles.get(runId));
+    } else if (step === 'release-router') {
+      routerGate.resolve();
+    } else if (step.startsWith('abort-')) {
+      abort = gateway.abortTurn({ sessionKey: 's', ...(step === 'abort-a' ? { runId: 'a' } : {}) }).then(() => { ended = true; });
+    } else {
+      assert.equal(step, 'observe');
+      await settle();
+      results.push(ended);
+    }
+  }
+  routerGate.resolve();
+  await abort;
+  abortFenceCases.push({ name, steps, results });
+  await router.shutdown();
+}
+
 // Exercise the real Module sequence owner with an independent nonzero origin.
 const moduleHost = new ModuleOperationHost(() => new Date(0));
 moduleHost.accept({ runId: 'r', operationId: 'op', requestId: 'module-request' });
@@ -317,5 +364,5 @@ for (const retention of [0, 5, 30000]) {
 }
 assert.deepEqual(unexpectedImports, [], 'unexpected imports');
 const out = resolve(process.argv[2]); await mkdir(out, { recursive: true });
-await writeFile(join(out, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, moduleSequences, timerCases }, null, 2) + '\n');
-console.log(`${cases.length} WS cases, ${timerCases.length} controlled timer cases`);
+await writeFile(join(out, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, moduleSequences, timerCases, abortFenceCases }, null, 2) + '\n');
+console.log(`${cases.length} WS cases, ${timerCases.length} controlled timer cases, ${abortFenceCases.length} abort fence cases`);

@@ -6,6 +6,7 @@
 生成器编译并执行真实 `GatewayWsConnection`、`InProcessGateway.submitTurn/emitForSession/abortTurn/disconnectInteraction`、`SessionRouter`、`AgentHandle`、`TurnRunner`、projector、coordinator、replay、`FileRunRegistry` 和 interaction coordinator/buses。受控端口是 transcript writer、Agent 原生事件生成器与提交策略/配置服务。没有手写 Gateway 事件期望或 WS 帧期望。
 
 - `cases`：17 个 WS 场景，逐步骤记录 **JSON.stringify 原始字符串**、宿主 admission、消费结束状态、真实 registry 事件（仅剔除时间戳）、终态 replay。覆盖 permission notification 先于普通帧、SessionEnd 先于 deferred completion、唯一 final 包装、error 优先、并发 busy、close 与 pending permission、busy 后 close 的 Set 语义、重复 run 从 WS seq=0 重放、冲突、finally 错误、registry append 失败、显式/生成 runId 的 abort/close、并行 describe。
+- `abortFenceCases`：5 个确定性交错探针，运行真实 `InProcessGateway.abortTurn`、`SessionRouter` 与 `GatewayTurnCompletionFence`。仅在真实 router.abort 返回后加入可释放 gate，控制 await 期间旧 turn 结束、新 turn 准入。覆盖 admission 清除后的消费窗口、await 后最新 session fence、只等最新 fence、等待开始后不重定向，以及旧 run 请求不等待新 run。Rust 在对应观察点手工 poll 真实 abort future，不用 sleep。
 - `timerCases`：0/5/30000ms × 5 种时序。控制时钟只标记到期，调度栈和 ready continuation 内不执行 timer 回调，后续宿主 timer 回合才执行。覆盖步骤中到期、步骤后到期、dispose 前/后到期、已到期旧回调与新 replay generation 交错。Rust 对拍经过实际 `TurnGateway` 线程及其 `HostSerialTimer`，不靠墙钟或轮询 sleep。
 - `moduleSequences`：真实 TS `ModuleOperationHost.acceptSequence` 的独立序列探针。permission 事件额外携带 `sequence:41` 作为跨层哨兵；WS seq 从 0 开始、registry seq 从 1 开始，哨兵必须原样保留。`negative.py` 覆盖三种序列两两混用的六个方向。A6 Module 传输的完整接线与流校验属于 pr6；本单不重写 Module sequence owner。
 
@@ -25,3 +26,12 @@ python3 src/pilotdeck-gateway/tests/fixtures/turn-gateway/negative.py \
 负控只临时改产品源码，原样回放金样与测试，逐例还原并校验源码字节；编译失败、超时不计杀伤。必须独占工作树，不与格式化、其他 cargo 或人工编辑并行。产物目录保存每条完整输出和 `summary.json`；可在最后追加控制名只跑指定项。
 
 生产构造入口为 `TurnGateway::start` → `connect` → `HostedConnection::{receive,closed,notify}`。宿主 builder 使用注入的 coordinator 构造 `TurnSubmitter`，已有 FileRegistry / SessionOwner / projector 等依赖继续复用；外部事件走 `TurnGateway::emit`。原始 `ConnectionTurnGateway` 不对外暴露，避免连接 future 被别的执行器 poll。`GatewayRequests` 留给既有宿主方法/读面实现，不提供 TS fallback；pr6 补真实 LiveSession/HostClient 与宿主策略服务。
+
+修复轮 1 的针对性负控（仍使用启动器的本树 `src/target`）：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/turn-gateway/negative-fence.py \
+  _tmp/20261023-a72-pr5-gateway/fix1-negative
+```
+
+五种产品变异分别把快照移回 abort await 前、恢复 active/runId 过滤、移除旧 run 校验、选择最旧 fence；另以不存在的用例名和空串验证过滤必须失败。每条检查具体失败标记；编译失败与超时不算杀伤。脚本结束校验产品源码逐字节还原。

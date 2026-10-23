@@ -73,7 +73,7 @@ lock.mkdir()
 summary = []
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
-env.setdefault('CARGO_TARGET_DIR', str(repo / '_build/target'))
+assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target', 'use this tree src/target'
 command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
 (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
 try:
@@ -104,7 +104,7 @@ try:
             for path, data in original.items():
                 assert path.read_bytes() == modified[path], f'concurrent source edit: {path}; preserve it'
                 if modified[path] != data: path.write_bytes(data)
-        valid = not timed_out and ((process.returncode == 0 and 'test result: ok. 3 passed' in raw) if mutant['name'] == 'baseline' else (
+        valid = not timed_out and ((process.returncode == 0 and 'test result: ok. 4 passed' in raw) if mutant['name'] == 'baseline' else (
             process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and 'assertion' in raw and mutant['marker'] in raw))
         (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
         summary.append(dict(name=mutant['name'], case=mutant['case'], exit=process.returncode, marker=mutant['marker'], valid=valid))

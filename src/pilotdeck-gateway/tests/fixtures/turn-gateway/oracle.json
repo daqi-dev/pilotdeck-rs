@@ -3467,5 +3467,97 @@
         }
       ]
     }
+  ],
+  "abortFenceCases": [
+    {
+      "name": "admission-cleared-before-consumer",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "abort-a",
+        "release-router",
+        "observe",
+        "finish-a",
+        "observe"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "replacement-during-abort",
+      "steps": [
+        "begin-a",
+        "abort-a",
+        "observe",
+        "finish-a",
+        "begin-b",
+        "release-router",
+        "observe",
+        "owner-done-b",
+        "observe",
+        "finish-b",
+        "observe"
+      ],
+      "results": [
+        false,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "name": "latest-session-fence-only",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b",
+        "owner-done-b",
+        "abort-session",
+        "release-router",
+        "observe",
+        "finish-b",
+        "observe",
+        "finish-a"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "replacement-after-wait-snapshot",
+      "steps": [
+        "begin-b",
+        "owner-done-b",
+        "abort-session",
+        "release-router",
+        "observe",
+        "begin-c",
+        "finish-b",
+        "observe",
+        "finish-c"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "stale-run-does-not-wait",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b",
+        "abort-a",
+        "observe",
+        "finish-b",
+        "finish-a"
+      ],
+      "results": [
+        true
+      ]
+    }
   ]
 }
