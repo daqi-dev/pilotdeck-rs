@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #537 修复轮 5）**：accepted-diffs.md 末尾只追加 A6.6-EDGECLAW-ENTRY-IDS-SHAPE-001（四个按 ids 批量入口的参数形状接口边界，已知未对齐、未批准）；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
+
 > **2026-10-23 重登记（PR #537，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A6.6 EdgeClaw memory entries」一节，登记 A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001（entry id 不得越出 store 根，向安全偏离，AI 代批待人复核），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-23 重登记（A7.2-pr5 PR，状态更新）**：accepted-diffs.md 末尾追加「A7.2 turn replay 条目状态更新」：A7.2-REPLAY-RETENTION-TIMER-001 在生产 TurnGateway 宿主内已消除（追加说明，不改原条目；裸 TurnReplayStore 仍保持原行为）。不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
@@ -69,7 +71,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-b1c4463de68449ea874ab9f011301f4af756153344488183f141e1be86c009f1  accepted-diffs.md
+73c456de36c4b382597821288a2bb5e8e12dc2c3fd1c74fa30b8b386eb4f40ec  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
