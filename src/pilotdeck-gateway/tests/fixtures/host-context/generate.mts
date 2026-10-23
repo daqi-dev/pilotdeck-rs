@@ -129,6 +129,14 @@ compact('without-budget-port-lax',{maxContextTokens:null,reservedOutputTokens:nu
 // `name` read once the comparator runs), and the comparator's JS evaluation
 // order reads `right.name` before the `localeCompare` call check.
 for (const tools of [[U,{name:'a'}],[{name:'a'},U],[U,U],[U,null],[null,U],[{name:'z'},U,{name:'a'}],[U,null,{name:42}],[null,{name:42}],[{name:42},null],[{name:null},{name:42}],[{name:42},{name:null}],[{name:'a'},{name:42},{name:null}]]) compact(`cache-r1-${specs.length}`,{}, {preview:{cachePlan:{generation:0},tools}});
+// A6.9-pr1 fix round 7: half-route preparations (the in-process adapter's
+// modelOverride={} output carries present-undefined route keys) against the
+// dispatcher:323 canonical gate and the :334/:536 strict route comparisons,
+// with request keys missing vs present-undefined.
+compact('route-mismatch-undefined-route',{budgetPreparationId:'known'},{prepared:true,preparedRoute:{provider:U,model:U}});
+compact('route-mismatch-undefined-route-missing-provider',{budgetPreparationId:'known',budgetRequest:{model:'m',messages:[],tools:[]}},{prepared:true,preparedRoute:{provider:U,model:U}});
+for (const candidate of [{model:'m',messages:[],tools:[]}, {provider:U,model:'m',messages:[],tools:[]}]) compact(`request-route-${specs.length}`,{budgetRequest:candidate});
+compact('calibration-present-undefined-route',{budgetCalibration:{provider:U,model:U,actualInputTokens:2,estimatedInputTokens:1}});
 const cases=[];
 for(const raw of specs) {
   const spec=decode(raw), calls:any[]=[];

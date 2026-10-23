@@ -32194,6 +32194,313 @@
           "message": "left.name.localeCompare is not a function"
         }
       }
+    },
+    {
+      "name": "route-mismatch-undefined-route",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetPreparationId": "known"
+        }
+      },
+      "prepared": true,
+      "preparedRoute": {
+        "provider": {
+          "$undefined": true
+        },
+        "model": {
+          "$undefined": true
+        }
+      },
+      "calls": [
+        {
+          "operation": "model.prepare",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar compaction budget preparation does not match the request route."
+        }
+      }
+    },
+    {
+      "name": "route-mismatch-undefined-route-missing-provider",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "model": "m",
+            "messages": [],
+            "tools": []
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetPreparationId": "known"
+        }
+      },
+      "prepared": true,
+      "preparedRoute": {
+        "provider": {
+          "$undefined": true
+        },
+        "model": {
+          "$undefined": true
+        }
+      },
+      "calls": [
+        {
+          "operation": "model.prepare",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar model call contains an invalid canonical request."
+        }
+      }
+    },
+    {
+      "name": "request-route-369",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "model": "m",
+            "messages": [],
+            "tools": []
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "calls": [],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar model call contains an invalid canonical request."
+        }
+      }
+    },
+    {
+      "name": "request-route-370",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": {
+              "$undefined": true
+            },
+            "model": "m",
+            "messages": [],
+            "tools": []
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "calls": [],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar model call contains an invalid canonical request."
+        }
+      }
+    },
+    {
+      "name": "calibration-present-undefined-route",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetCalibration": {
+            "provider": {
+              "$undefined": true
+            },
+            "model": {
+              "$undefined": true
+            },
+            "actualInputTokens": 2,
+            "estimatedInputTokens": 1
+          }
+        }
+      },
+      "calls": [],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar compaction budget calibration does not match the request route."
+        }
+      }
     }
   ]
 }

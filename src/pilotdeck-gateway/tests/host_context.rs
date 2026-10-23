@@ -358,7 +358,7 @@ fn outcome(result: Result<JsObject, HostError>) -> JsValue {
 async fn real_ts_context_dispatcher_replay() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 367);
+    assert_eq!(cases.len(), 372);
     let root = std::env::temp_dir().join(format!("pdrs-host-context-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("media.txt"), b"aGVsbG8=\n").unwrap();

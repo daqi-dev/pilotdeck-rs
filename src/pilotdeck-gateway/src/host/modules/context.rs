@@ -209,9 +209,11 @@ impl Handler {
                         };
                         // `dispatcher:334` compares the prepared route to the
                         // request route with strict `!==`, raw values included.
+                        // A missing key reads as `undefined` in JS, so absence
+                        // normalizes to `Undefined` before comparing.
                         if prepared.as_ref().is_some_and(|p| {
-                            request.get("provider") != Some(&p.provider)
-                                || request.get("model") != Some(&p.model)
+                            get(&request, "provider") != p.provider
+                                || get(&request, "model") != p.model
                         }) {
                             return Err(contract_error(
                                 "Sidecar compaction budget preparation does not match the request route.",
@@ -367,7 +369,10 @@ fn calibration(value: Option<&JsValue>, request: &JsObject) -> Result<Option<JsO
     let calibration = value
         .and_then(JsValue::as_object)
         .filter(|c| {
-            c.get("provider") == request.get("provider") && c.get("model") == request.get("model")
+            // `dispatcher:536` compares with strict `!==` against the
+            // request route: a missing key reads as `undefined` in JS.
+            get(c, "provider") == get(request, "provider")
+                && get(c, "model") == get(request, "model")
         })
         .ok_or_else(|| {
             contract_error(
