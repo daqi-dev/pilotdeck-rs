@@ -2239,6 +2239,16 @@ mod tests {
     }
 
     const ORPHAN_ROOT_ENV: &str = "PDRS_GREP_ORPHAN_ROOT";
+    /// One absolute budget for the helper's whole fixture handshake, supplied by
+    /// the parent so inner and outer deadlines cannot disagree. A per-stage
+    /// 15 s bound used to expire under load while the parent kept waiting, the
+    /// helper then exited 101 and the parent failed at its first poll
+    /// (trigger-1.log:1183-1188), so the parent's own wait was never reached.
+    const ORPHAN_BUDGET_ENV: &str = "PDRS_GREP_ORPHAN_BUDGET_MS";
+    /// The helper's whole-handshake budget. Strictly inside the parent's own
+    /// wait (+10 s grace below), so a stalled stage is diagnosed by the helper
+    /// that stalled, with its own stderr, rather than by the parent killing it.
+    const ORPHAN_HELPER_BUDGET: StdDuration = StdDuration::from_secs(110);
 
     /// The fake-rg shapes that leaked in #507: a spinning descendant whose
     /// leader exits (`spin`), that descendant already inside its `TERM` trap
@@ -2272,8 +2282,7 @@ mod tests {
         }
     }
 
-    fn orphan_wait_for(label: &str, mut done: impl FnMut() -> bool) {
-        let deadline = std::time::Instant::now() + StdDuration::from_secs(15);
+    fn orphan_wait_for(deadline: std::time::Instant, label: &str, mut done: impl FnMut() -> bool) {
         while !done() {
             assert!(
                 std::time::Instant::now() < deadline,
@@ -2294,6 +2303,15 @@ mod tests {
         let root = PathBuf::from(
             std::env::var_os(ORPHAN_ROOT_ENV).expect("helper runs with the scratch root"),
         );
+        // One budget for all shapes and stages, fixed once at start. A fresh
+        // per-stage bound could sum past the parent's wait under load.
+        let budget = StdDuration::from_millis(
+            std::env::var(ORPHAN_BUDGET_ENV)
+                .expect("helper runs with the parent's budget")
+                .parse()
+                .expect("budget millis"),
+        );
+        let deadline = std::time::Instant::now() + budget;
         let mut children = Vec::new();
         for (shape, send_term) in ORPHAN_SHAPES {
             let dir = root.join(shape);
@@ -2312,13 +2330,13 @@ mod tests {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             children.push(command.spawn().expect("spawn fake rg"));
-            orphan_wait_for("leader/descendant pids", || {
+            orphan_wait_for(deadline, "leader/descendant pids", || {
                 pid_file_ready(&dir.join("leader.pid"))
                     && pid_file_ready(&dir.join("descendant.pid"))
             });
             // `ready` is written only after the trap is installed: sending
             // TERM at pid-file time races a freshly forked subshell under load.
-            orphan_wait_for("ready", || dir.join("ready").exists());
+            orphan_wait_for(deadline, "ready", || dir.join("ready").exists());
             if send_term {
                 crate::process_group::kill(
                     Some(read_pid(&dir.join("leader.pid"))),
@@ -2326,7 +2344,7 @@ mod tests {
                 );
                 // `term` proves the descendant is inside its trap's wait loop,
                 // which is where several #507 orphans were stuck.
-                orphan_wait_for("term", || dir.join("term").exists());
+                orphan_wait_for(deadline, "term", || dir.join("term").exists());
             }
         }
         std::fs::write(root.join("ready"), "ready").expect("ready");
@@ -2371,15 +2389,24 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(ORPHAN_ROOT_ENV, &root)
+                .env(
+                    ORPHAN_BUDGET_ENV,
+                    ORPHAN_HELPER_BUDGET.as_millis().to_string(),
+                )
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawn helper test");
         let mut pids = Vec::new();
-        // Under load, fake rg fixture spawning and handshake can take longer.
-        // This is test orchestration timing, not production code.
-        let deadline = std::time::Instant::now() + StdDuration::from_secs(120);
+        // One outer wait for the whole handshake, strictly longer than the
+        // helper's own `ORPHAN_HELPER_BUDGET` handed over above. The earlier
+        // per-stage bound lived only in the helper, so under load it expired
+        // first, the helper exited 101 and this loop failed on its first poll
+        // (trigger-1.log:1183-1188). Inner < outer keeps that diagnostic
+        // attributable; neither widens a behavior assertion.
+        let deadline =
+            std::time::Instant::now() + ORPHAN_HELPER_BUDGET + StdDuration::from_secs(10);
         loop {
             if let Some(status) = helper.try_wait().expect("poll helper") {
                 use std::io::Read as _;

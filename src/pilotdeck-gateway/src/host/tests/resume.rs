@@ -403,8 +403,14 @@ async fn reconnect_preserves_command_environment_clear_removals_and_cwd() {
         command,
         None,
         Limits {
-            // Under load, Python fixture + handshake + execute + reconnect + replay
-            // can exceed the default 2 s. Widen test-only; production unchanged.
+            // Two independent clocks, both test-only. `handshake_timeout` bounds
+            // the initial hello/capabilities exchange (mod.rs:422-424) and the
+            // post-reconnect handshake (recovery.rs:55); the recorded load
+            // failures for this test are exactly that bound expiring on Python
+            // startup (s4.log:1159, s7.log:1159), so it must be widened too.
+            // `execution_timeout` only starts at execute (execution.rs:134) and
+            // bounds the rest of the flow. Production keeps its own defaults.
+            handshake_timeout: Duration::from_secs(20),
             execution_timeout: Some(Duration::from_secs(20)),
             ..limits()
         },
