@@ -77,6 +77,27 @@ impl SessionTurns {
         F: FnOnce(Option<JsString>, JsString) -> Fut,
         Fut: Future<Output = ()> + Send + 'a,
     {
+        let operation = self.start_abort(session_key, run_id, reason, abort);
+        let session_key = session_key.clone();
+        async move {
+            if let Some(operation) = operation {
+                operation.await;
+                self.completion.wait_for_completion(&session_key).await;
+            }
+        }
+    }
+    /// Synchronous cancel/Router prefix shared with the transport consumer
+    /// fence. The caller chooses its wait immediately after Router returns.
+    pub(super) fn start_abort<F, T>(
+        &self,
+        session_key: &JsString,
+        run_id: Option<&JsString>,
+        reason: Option<&JsString>,
+        abort: F,
+    ) -> Option<T>
+    where
+        F: FnOnce(Option<JsString>, JsString) -> T,
+    {
         let reason = reason.cloned().unwrap_or_else(|| match run_id {
             Some(id) if !id.is_empty() => {
                 let mut units = JsString::from("aborted:").units().to_vec();
@@ -101,14 +122,7 @@ impl SessionTurns {
         let allowed = run_id.is_none() || cancelled || active.as_ref() == run_id;
         // Invoke the sink now, then select the wait after the sink's drain (as
         // TS does after `await router.abort`). Never hold locks across either.
-        let operation = allowed.then(|| abort(run_id.cloned(), reason));
-        let session_key = session_key.clone();
-        async move {
-            if let Some(operation) = operation {
-                operation.await;
-                self.completion.wait_for_completion(&session_key).await;
-            }
-        }
+        allowed.then(|| abort(run_id.cloned(), reason))
     }
 }
 

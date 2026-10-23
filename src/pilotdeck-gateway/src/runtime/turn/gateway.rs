@@ -132,34 +132,51 @@ pub struct GatewayServices {
 #[derive(Default)]
 struct SubmissionDrains {
     next: u64,
-    active: HashMap<
-        u64,
-        (
-            watch::Receiver<Option<crate::storage::RunRef>>,
-            watch::Sender<bool>,
-        ),
-    >,
+    current: HashMap<JsString, u64>,
+    active: HashMap<u64, (Option<crate::storage::RunRef>, watch::Sender<bool>)>,
+}
+impl SubmissionDrains {
+    fn admit(&mut self, id: u64, run: &crate::storage::RunRef) {
+        let Some((identity, _)) = self.active.get_mut(&id) else {
+            // The transport may drop before the owned submit reaches admission.
+            return;
+        };
+        *identity = Some(run.clone());
+        // begin overwrites the one session slot; obsolete drains never refill it.
+        self.current.insert(run.session_key.clone(), id);
+    }
 }
 struct SubmissionDrain {
     drains: Arc<Mutex<SubmissionDrains>>,
     id: u64,
 }
+impl SubmissionDrain {
+    fn observer(&self) -> impl FnOnce(&crate::storage::RunRef) + Send + use<> {
+        let drains = self.drains.clone();
+        let id = self.id;
+        move |run| drains.lock().unwrap().admit(id, run)
+    }
+}
 impl Drop for SubmissionDrain {
     fn drop(&mut self) {
-        if let Some((_, done)) = self.drains.lock().unwrap().active.remove(&self.id) {
+        let mut drains = self.drains.lock().unwrap();
+        if let Some((run, done)) = drains.active.remove(&self.id) {
+            if let Some(run) = run
+                && drains.current.get(&run.session_key) == Some(&self.id)
+            {
+                drains.current.remove(&run.session_key);
+            }
             done.send_replace(true);
         }
     }
 }
 struct ConnectionTurnGateway(GatewayServices, Arc<Mutex<SubmissionDrains>>);
 impl ConnectionTurnGateway {
-    fn track(&self, identity: watch::Receiver<Option<crate::storage::RunRef>>) -> SubmissionDrain {
+    fn track(&self) -> SubmissionDrain {
         let mut drains = self.1.lock().unwrap();
         let id = drains.next;
         drains.next += 1;
-        drains
-            .active
-            .insert(id, (identity, watch::channel(false).0));
+        drains.active.insert(id, (None, watch::channel(false).0));
         SubmissionDrain {
             drains: self.1.clone(),
             id,
@@ -195,8 +212,8 @@ impl ConnectionGateway for ConnectionTurnGateway {
             // Signal after the consumer-finally fence. On this serial host,
             // GatewayConnection emits final/error in the same poll as this
             // future returns, before an abort waiter can resume.
-            let mut submission = self.0.submitter.submit(params);
-            let _drain = self.track(submission.identity());
+            let drain = self.track();
+            let mut submission = self.0.submitter.submit_observed(params, drain.observer());
             while let Some(event) = submission.next().await.map_err(|error| RequestError {
                 code: error.code,
                 message: error.message.into(),
@@ -238,57 +255,26 @@ impl ConnectionGateway for ConnectionTurnGateway {
                 .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
             let run = params.get("runId").and_then(JsValue::as_string);
             let reason = params.get("reason").and_then(JsValue::as_string);
-            // A stale explicit run must not wait for an unrelated submission.
-            // This check precedes the await; the completion selected below must
-            // instead be the latest session fence *after* owner abort drains.
-            if let Some(run) = run {
-                let active = self.0.submitter.owner.active_turn_run_id(key);
-                let matching = self
-                    .1
-                    .lock()
-                    .unwrap()
-                    .active
-                    .iter()
-                    .filter(|(_, (identity, _))| {
-                        identity
-                            .borrow()
-                            .as_ref()
-                            .is_some_and(|submitted| &submitted.session_key == key)
-                    })
-                    .max_by_key(|(id, _)| *id)
-                    .is_some_and(|(_, (identity, _))| {
-                        identity
-                            .borrow()
-                            .as_ref()
-                            .is_some_and(|submitted| &submitted.run_id == run)
-                    });
-                if active.as_ref() != Some(run) && !matching {
-                    return Ok(());
-                }
-            }
-            self.0
+            let allowed = self
+                .0
                 .submitter
                 .owner
-                .abort_turn(key, run, reason)
-                .await
+                .start_gateway_abort(key, run, reason)
                 .map_err(|error| RequestError::new(error.to_string()))?;
-            // InProcessGateway.abortTurn waits by session after router.abort.
-            // A replacement admitted during that await owns the current fence,
-            // even if its runId differs or admission has already been cleared.
-            let wait_for = self
-                .1
-                .lock()
-                .unwrap()
-                .active
-                .iter()
-                .filter(|(_, (identity, _))| {
-                    identity
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|submitted| &submitted.session_key == key)
-                })
-                .max_by_key(|(id, _)| *id)
-                .map(|(_, (_, done))| done.subscribe());
+            if !allowed {
+                return Ok(());
+            }
+            // Router.abort has returned. Model its async boundary before taking
+            // the one current session slot, without first draining the owner.
+            tokio::task::yield_now().await;
+            let wait_for = {
+                let drains = self.1.lock().unwrap();
+                drains
+                    .current
+                    .get(key)
+                    .and_then(|id| drains.active.get(id))
+                    .map(|(_, done)| done.subscribe())
+            };
             if let Some(mut done) = wait_for {
                 let _ = done.wait_for(|done| *done).await;
             }

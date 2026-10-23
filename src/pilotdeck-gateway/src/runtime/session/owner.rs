@@ -407,6 +407,24 @@ impl SessionOwner {
         }
     }
 
+    /// Start the real cancel/Router abort without waiting on the owner fence.
+    /// The connection selects its consumer fence at the Router await boundary,
+    /// before cleanup can admit another turn.
+    pub(crate) fn start_gateway_abort(
+        &self,
+        key: &JsString,
+        run: Option<&JsString>,
+        reason: Option<&JsString>,
+    ) -> Result<bool, RuntimeError> {
+        self.0
+            .turns
+            .start_abort(key, run, reason, |target, reason| {
+                self.abort(key, target.as_ref(), &reason)
+            })
+            .transpose()
+            .map(|result| result.is_some())
+    }
+
     pub fn begin_turn(&self, key: &JsString, run: &JsString) -> Option<TurnReservation> {
         self.sweep_idle();
         let state = self.0.state.lock().unwrap();
