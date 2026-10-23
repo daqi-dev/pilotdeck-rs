@@ -13,9 +13,12 @@
 //!
 //! Covered: `https` initial URLs for both `streamable_http` and legacy `sse`
 //! (initialize, tools/list, tools/call), `http:`→`https:` and `https:`→`http:`
-//! 307 redirects (method/body preserved, cross-origin `authorization`
-//! dropped), a TLS handshake that stalls (10 s connect deadline shared with
-//! the hooks transport), and a refused TLS port.
+//! 307/308 redirects (method/body preserved, cross-origin `authorization`
+//! dropped), a 307 SSE redirect, TLS handshakes that stall (10 s connect
+//! deadline shared with the hooks transport), refused TLS ports (explicit and
+//! https's default 443), and the legacy SSE first-connect error causes
+//! (self-signed certificate, connect timeout, refused) the SDK's
+//! `EventSource` flattens into `SSE error: TypeError: fetch failed: …`.
 
 #[path = "common/baseline.rs"]
 mod baseline;
@@ -203,7 +206,7 @@ struct Mock {
     port: u16,
 }
 impl Mock {
-    async fn start(dir: &Path, tls: bool) -> Self {
+    async fn start(dir: &Path, tls: Option<&Path>) -> Self {
         use tokio::io::AsyncBufReadExt;
         let mut command = tokio::process::Command::new("node");
         command
@@ -213,11 +216,8 @@ impl Mock {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .kill_on_drop(true);
-        if tls {
-            command.env(
-                "MOCK_TLS",
-                fixture_path("tests/fixtures/model-stream/tls.json"),
-            );
+        if let Some(tls) = tls {
+            command.env("MOCK_TLS", tls);
         }
         let mut child = command.spawn().expect("spawn HTTP mock");
         let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
@@ -470,8 +470,10 @@ async fn replays_ts_mcp_https_over_local_tls() {
     );
     let oracle = oracle();
     let cases = array(field(&oracle, "cases"), "cases");
-    assert_eq!(cases.len(), 6);
+    assert_eq!(cases.len(), 12);
     let (roots, server_config) = tls_material();
+    let untrusted_tls = fixture_path("tests/fixtures/mcp-https/untrusted-tls.json");
+    let trusted_tls = fixture_path("tests/fixtures/model-stream/tls.json");
     let scratch = Scratch::new("mcp-https");
     let mut steps_seen = 0usize;
     let mut requests_seen = 0usize;
@@ -486,12 +488,23 @@ async fn replays_ts_mcp_https_over_local_tls() {
         .unwrap();
         let template = string(field(case, "url"), "url");
         let mock_tls = field(case, "mockTls").as_bool().unwrap_or(false);
+        let untrusted = field(case, "untrustedTls").as_bool().unwrap_or(false);
         let redirect = field(case, "redirect").as_object().cloned();
         let stall = field(case, "stall").as_bool().unwrap_or(false);
         let closed = field(case, "closed").as_bool().unwrap_or(false);
 
         let mock = if template.contains("<mock>") || redirect.is_some() {
-            Some(Mock::start(&dir, mock_tls).await)
+            Some(
+                Mock::start(
+                    &dir,
+                    mock_tls.then_some(if untrusted {
+                        untrusted_tls.as_path()
+                    } else {
+                        trusted_tls.as_path()
+                    }),
+                )
+                .await,
+            )
         } else {
             None
         };
@@ -550,19 +563,20 @@ async fn replays_ts_mcp_https_over_local_tls() {
         assert_eq!(ops.len(), expected.len(), "{id}: step count");
         for (index, op) in ops.iter().enumerate() {
             let started = Instant::now();
-            let fields =
-                if id == "https-handshake-stall" && string(field(op, "op"), "op") == "start" {
-                    match tokio::time::timeout(STALL_BOUND, run_op(client.clone(), op)).await {
-                        Ok(fields) => fields,
-                        Err(_) => panic!(
-                            "{id}: connect deadline did not fire within {STALL_BOUND:?} ({:?})",
-                            started.elapsed()
-                        ),
-                    }
-                } else {
-                    run_op(client.clone(), op).await
-                };
-            if id == "https-handshake-stall" && string(field(op, "op"), "op") == "start" {
+            let stalling = (id == "https-handshake-stall" || id == "https-sse-handshake-stall")
+                && string(field(op, "op"), "op") == "start";
+            let fields = if stalling {
+                match tokio::time::timeout(STALL_BOUND, run_op(client.clone(), op)).await {
+                    Ok(fields) => fields,
+                    Err(_) => panic!(
+                        "{id}: connect deadline did not fire within {STALL_BOUND:?} ({:?})",
+                        started.elapsed()
+                    ),
+                }
+            } else {
+                run_op(client.clone(), op).await
+            };
+            if stalling {
                 assert!(
                     started.elapsed() >= Duration::from_secs(9),
                     "{id}: returned after {:?}, before the 10 s deadline",
@@ -592,8 +606,8 @@ async fn replays_ts_mcp_https_over_local_tls() {
         requests_seen += actual.len();
         drop(mock);
     }
-    assert_eq!(steps_seen, 22);
-    assert_eq!(requests_seen, 20);
+    assert_eq!(steps_seen, 42);
+    assert_eq!(requests_seen, 30);
 }
 
 fn redirect_tls(value: &JsValue) -> bool {
@@ -620,7 +634,11 @@ async fn production_roots_do_not_trust_the_fixture_ca() {
         r#"{"http":{"initialize":[{"json":{"jsonrpc":"2.0","id":"$id","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"m","version":"1"}}}}]}}"#,
     )
     .unwrap();
-    let mock = Mock::start(scratch.path(), true).await;
+    let mock = Mock::start(
+        scratch.path(),
+        Some(&fixture_path("tests/fixtures/model-stream/tls.json")),
+    )
+    .await;
     let client = McpClient::new(
         McpServerSpec {
             id: "mock".into(),

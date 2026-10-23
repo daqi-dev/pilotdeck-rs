@@ -28,7 +28,8 @@ HEAD==`cc7c4e6`、已跟踪文件干净、逐 blob 对照）；`oracle.json.sour
 - `https-connection-refused`：先绑定再关闭的回环端口，TLS 连接拒绝 → `fetch failed`。
 - `https-handshake-stall`：只 accept TCP、不回 TLS 握手的 `net.Server`。undici `connectTimeout`
   （默认 10 000 ms，覆盖 TCP + 握手）在 ~10.5 s 失败 → `fetch failed`、`non_blocking_error`；
-  Rust 侧由 hook 本地 `ConnectDeadline` 同样在 10 s 触发，回放测试自带 12 s 上限（去掉上限即转红）。
+  Rust 侧由共享 `ConnectDeadline`（`runtime/model/http.rs`，hook 以 `HOOK_CONNECT_TIMEOUT`
+  10 s 构造）同样在 10 s 触发，回放测试自带 12 s 上限（去掉上限即转红）。
 
 自签证书信任方式比照 `tests/fixtures/model-stream`：夹具 CA/叶子是 `../model-stream/tls.json` 的
 一次性测试材料（`127.0.0.1` SAN，非凭据）。TS 生成器用 undici `connect.ca` 注入；Rust 回放用
@@ -37,5 +38,6 @@ HEAD==`cc7c4e6`、已跟踪文件干净、逐 blob 对照）；`oracle.json.sour
 
 回放：`tests/hooks_https.rs`。金样再生成测试 `hooks_https_fixtures_regenerate_identically_from_ts`
 （`#[ignore]`）重跑真实 TS 并逐字节比对。负控：把 `HttpHookExecutor` 改回 plain HTTP client 后
-`http_hooks_over_tls_match_real_ts` 必须转红（见 RESULT）；把 `ConnectDeadline` 的 10 s 改成 600 s
+`http_hooks_over_tls_match_real_ts` 必须转红（见 RESULT）；把 hook 侧的 `HOOK_CONNECT_TIMEOUT`
+（`runtime/hooks/exec.rs`，不是 MCP 的 `MCP_CONNECT_TIMEOUT`）从 10 s 改成 600 s
 后 `https-handshake-stall` 在测试自带的 12 s 上限转红（见 RESULT 修复轮 1）。

@@ -20,6 +20,7 @@
       },
       "options": {},
       "mockTls": true,
+      "untrustedTls": false,
       "redirect": null,
       "stall": false,
       "closed": false,
@@ -230,6 +231,7 @@
       },
       "options": {},
       "mockTls": true,
+      "untrustedTls": false,
       "redirect": null,
       "stall": false,
       "closed": false,
@@ -404,6 +406,7 @@
       },
       "options": {},
       "mockTls": true,
+      "untrustedTls": false,
       "redirect": {
         "status": 307,
         "mockTls": true
@@ -607,6 +610,7 @@
       },
       "options": {},
       "mockTls": false,
+      "untrustedTls": false,
       "redirect": {
         "status": 307,
         "mockTls": false
@@ -809,6 +813,7 @@
         "handshakeTimeoutMs": 30000
       },
       "mockTls": false,
+      "untrustedTls": false,
       "redirect": null,
       "stall": true,
       "closed": false,
@@ -861,6 +866,7 @@
       "headers": {},
       "options": {},
       "mockTls": false,
+      "untrustedTls": false,
       "redirect": null,
       "stall": false,
       "closed": true,
@@ -886,6 +892,601 @@
             "code": "mcp_handshake_failed",
             "serverId": "mock",
             "message": "MCP handshake failed: fetch failed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
+      "id": "https-to-http-308",
+      "transport": "streamable_http",
+      "url": "https://<redirect>/mcp",
+      "headers": {
+        "X-Api-Key": "k",
+        "Authorization": "Bearer secret"
+      },
+      "options": {},
+      "mockTls": false,
+      "untrustedTls": false,
+      "redirect": {
+        "status": 308,
+        "mockTls": false
+      },
+      "stall": false,
+      "closed": false,
+      "script": {
+        "initialize": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-tls",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo over TLS",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "over 308 downgrade"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {}
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over 308 downgrade"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "https-sse-redirect",
+      "transport": "sse",
+      "url": "https://<redirect>/sse",
+      "headers": {
+        "x-api-key": "k"
+      },
+      "options": {},
+      "mockTls": true,
+      "untrustedTls": false,
+      "redirect": {
+        "status": 307,
+        "mockTls": true
+      },
+      "stall": false,
+      "closed": false,
+      "script": {
+        "GET /sse": [
+          {
+            "sse": [
+              ": hello\n\n",
+              "event: endpoint\ndata: /messages?session=abc\n\n"
+            ],
+            "channel": true
+          }
+        ],
+        "initialize": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-tls\",\"version\":\"1.0.0\"}}}\n\n"
+            ]
+          }
+        ],
+        "tools/list": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"tools\":[{\"name\":\"echo\",\"description\":\"echo over TLS\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"q\":{\"type\":\"string\"}}}}]}}\n\n"
+            ]
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "status": 202,
+            "push": [
+              "data: {\"jsonrpc\":\"2.0\",\"id\":$ID,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"over sse redirect\"}]}}\n\n"
+            ]
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {}
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo over TLS",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {}
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "over sse redirect"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/sse",
+          "headers": {
+            "accept": "text/event-stream",
+            "x-api-key": "k"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/messages?session=abc",
+          "headers": {
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-api-key": "k"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ]
+    },
+    {
+      "id": "https-sse-certificate",
+      "transport": "sse",
+      "url": "https://<mock>/sse",
+      "headers": {},
+      "options": {},
+      "mockTls": true,
+      "untrustedTls": true,
+      "redirect": null,
+      "stall": false,
+      "closed": false,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: self-signed certificate"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
+      "id": "https-sse-handshake-stall",
+      "transport": "sse",
+      "url": "https://<stall>/sse",
+      "headers": {},
+      "options": {
+        "handshakeTimeoutMs": 30000
+      },
+      "mockTls": false,
+      "untrustedTls": false,
+      "redirect": null,
+      "stall": true,
+      "closed": false,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: Connect Timeout Error (attempted address: <stall>, timeout: 10000ms)"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
+      "id": "https-sse-refused",
+      "transport": "sse",
+      "url": "https://<closed>/sse",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "untrustedTls": false,
+      "redirect": null,
+      "stall": false,
+      "closed": true,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED <closed>"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
+      "id": "https-sse-default-port",
+      "transport": "sse",
+      "url": "https://127.0.0.1/sse",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "untrustedTls": false,
+      "redirect": null,
+      "stall": false,
+      "closed": false,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:443"
           },
           "status": "error"
         },

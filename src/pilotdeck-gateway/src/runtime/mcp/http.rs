@@ -185,24 +185,115 @@ async fn fetch_once(
 ) -> Result<hyper::Response<Incoming>, McpClientError> {
     fetch_with(method, url, headers, body, |request| async move {
         let target = request.uri().clone();
-        client.request(request).await.map_err(|error| {
-            let refused = std::error::Error::source(&error)
-                .and_then(|source| source.downcast_ref::<std::io::Error>())
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
-                || format!("{error:?}").contains("ConnectionRefused");
-            if refused {
-                let host = target.host().unwrap_or_default();
-                let port = target.port_u16().unwrap_or(80);
-                network_error(
-                    "network_connection_refused",
-                    format!("fetch failed\u{0}connect ECONNREFUSED {host}:{port}"),
-                )
-            } else {
-                network_error("network_fetch_failed", "fetch failed".into())
-            }
-        })
+        client
+            .request(request)
+            .await
+            .map_err(|error| match failure_cause(&target, &error) {
+                Some(cause) => {
+                    let code = if cause.starts_with("connect ECONNREFUSED") {
+                        "network_connection_refused"
+                    } else {
+                        "network_fetch_failed"
+                    };
+                    network_error(code, format!("fetch failed\u{0}{cause}"))
+                }
+                None => network_error("network_fetch_failed", "fetch failed".into()),
+            })
     })
     .await
+}
+
+/// The scheme's default port (undici's `port = port || 443` / `|| 80`) and the
+/// peer address in Node's `host:port` form. `http::Uri::host()` keeps IPv6
+/// brackets (`[::1]`); the guard also brackets an unbracketed `::1` so the
+/// composed string cannot become the ambiguous `::1:443`.
+fn target_address(target: &hyper::Uri) -> String {
+    let default_port = match target.scheme_str() {
+        Some("https") => 443,
+        _ => 80,
+    };
+    let port = target.port_u16().unwrap_or(default_port);
+    let host = target.host().unwrap_or_default();
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Every error reachable from `root`, following both `source()` and the
+/// payload of `io::Error::new`: `io::Error` stores the wrapped TLS error as a
+/// custom payload and its own `source()` chain stops at the `io::Error`, so
+/// `get_ref()` is the only way to reach `rustls::Error` (pointer-checked to
+/// avoid loops).
+fn error_chain<'a>(
+    root: &'a (dyn std::error::Error + 'static),
+) -> Vec<&'a (dyn std::error::Error + 'static)> {
+    fn visit<'a>(
+        out: &mut Vec<&'a (dyn std::error::Error + 'static)>,
+        item: &'a (dyn std::error::Error + 'static),
+    ) {
+        if out.iter().any(|seen| std::ptr::eq(*seen, item)) {
+            return;
+        }
+        out.push(item);
+        if let Some(inner) = item
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+        {
+            visit(out, inner);
+        }
+        if let Some(source) = item.source() {
+            visit(out, source);
+        }
+    }
+    let mut out = Vec::new();
+    visit(&mut out, root);
+    out
+}
+
+/// undici surfaces a rejected fetch as `TypeError: fetch failed` whose cause
+/// carries the socket error. The legacy SSE transport's `EventSource` flattens
+/// that cause into the rejection (`eventsource@3` `flattenError`), so the text
+/// must match Node's for the observable cases.
+fn failure_cause(target: &hyper::Uri, error: &hyper_util::client::legacy::Error) -> Option<String> {
+    let source = error as &(dyn std::error::Error + 'static);
+    let chain = error_chain(source);
+    let refused = chain.iter().any(|source| {
+        source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+    }) || format!("{error:?}").contains("ConnectionRefused");
+    if refused {
+        return Some(format!("connect ECONNREFUSED {}", target_address(target)));
+    }
+    // Both the MCP-local whole-connect deadline and the connector's own TCP
+    // timer express undici's single `connectTimeout`; whichever fires first is
+    // the same failure to the caller.
+    let timed_out = chain.iter().any(|source| {
+        source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
+    });
+    if timed_out {
+        return Some(format!(
+            "Connect Timeout Error (attempted address: {}, timeout: {}ms)",
+            target_address(target),
+            MCP_CONNECT_TIMEOUT.as_millis()
+        ));
+    }
+    let tls = chain
+        .iter()
+        .find_map(|source| source.downcast_ref::<rustls::Error>());
+    match tls {
+        // rustls reports every unverifiable chain as `UnknownIssuer`; Node
+        // distinguishes `self-signed certificate` (DEPTH_ZERO_SELF_SIGNED_CERT)
+        // from `unable to verify the first certificate` (an untrusted CA).
+        Some(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)) => {
+            Some("self-signed certificate".into())
+        }
+        _ => None,
+    }
 }
 
 /// The exchange is injectable so fetch policy is tested without TCP timing.
@@ -2455,6 +2546,22 @@ mod tests {
                 ("x-a".to_owned(), "1, 2".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn failure_addresses_use_the_scheme_default_and_bracket_ipv6() {
+        let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
+        assert_eq!(
+            target_address(&uri("https://127.0.0.1/sse")),
+            "127.0.0.1:443"
+        );
+        assert_eq!(target_address(&uri("http://127.0.0.1/sse")), "127.0.0.1:80");
+        assert_eq!(
+            target_address(&uri("https://example.com:8443/sse")),
+            "example.com:8443"
+        );
+        assert_eq!(target_address(&uri("https://[::1]/sse")), "[::1]:443");
+        assert_eq!(target_address(&uri("http://[::1]:8080/sse")), "[::1]:8080");
     }
 
     #[test]
