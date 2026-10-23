@@ -92,10 +92,33 @@ def git(root, *args):
 
 
 def check_append_only(root, base):
-    """Compare working bytes with the merge-base, including README and git modes."""
+    """Freeze the legacy ledger/hash row and existing diffs at the merge-base."""
     failures = []
     try:
         merge_base = git(root, 'merge-base', 'HEAD', base).decode().strip()
+        legacy = 'specs/gateway-parity/accepted-diffs.md'
+        before = git(root, 'show', f'{merge_base}:{legacy}')
+        path = root / legacy
+        after = path.read_bytes() if path.is_file() and not path.is_symlink() else b''
+        if before != after or path.is_symlink():
+            offset = next((i for i, (a, b) in enumerate(zip(before, after)) if a != b),
+                          min(len(before), len(after)))
+            line = before[:offset].count(b'\n') + 1
+            failures.append(f'{legacy}:{line}: historical ledger differs from base '
+                            '(byte-frozen; first differing line)')
+        manifest = 'specs/gateway-parity/FROZEN.md'
+        before_manifest = git(root, 'show', f'{merge_base}:{manifest}')
+        after_manifest = (root / manifest).read_bytes()
+        # Compare the entire raw hash row (including its line ending), not just
+        # the digest. Other rows may change for an approved ruler registration.
+        hash_row = rb'[0-9a-f]{64}\s+accepted-diffs\.md\s*'
+        before_rows = [row for row in before_manifest.splitlines(keepends=True)
+                       if re.fullmatch(hash_row, row)]
+        after_rows = [row for row in after_manifest.splitlines(keepends=True)
+                      if re.fullmatch(hash_row, row)]
+        if len(before_rows) != 1 or before_rows != after_rows:
+            failures.append(f'{manifest}: accepted-diffs.md hash line changed/absent/duplicate '
+                            '(byte-frozen)')
         entries = git(root, 'ls-tree', '-rz', merge_base, '--',
                       'specs/gateway-parity/diffs/').split(b'\0')
         for entry in filter(None, entries):
@@ -114,7 +137,8 @@ def check_append_only(root, base):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base', help='compare existing diffs files with merge-base(HEAD, ref)')
+    parser.add_argument('--base', help='freeze historical ledger/hash row and existing diffs '
+                        'against merge-base(HEAD, ref)')
     parser.add_argument('--print-ledger', action='store_true', help='emit validated combined ledger bytes')
     args = parser.parse_args(argv)
     folder = ROOT / 'specs/gateway-parity'
