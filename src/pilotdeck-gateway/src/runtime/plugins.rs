@@ -120,6 +120,8 @@ pub(super) struct PluginRegistry {
     // JS Map order also determines the outer AggregateError cause order.
     pending_disposals: Vec<PendingDisposal>,
     disposal_waiters: Vec<Arc<LoadedPlugin>>,
+    #[cfg(test)]
+    after_disposal_first_poll: Option<Box<dyn FnOnce(bool) + Send>>,
     lease_counts: HashMap<usize, usize>,
     waiters: Arc<Notify>,
     state: RegistryState,
@@ -156,6 +158,8 @@ impl PluginRegistry {
             retired_plugins: Vec::new(),
             pending_disposals: Vec::new(),
             disposal_waiters: Vec::new(),
+            #[cfg(test)]
+            after_disposal_first_poll: None,
             lease_counts: HashMap::new(),
             waiters: Arc::new(Notify::new()),
             state: RegistryState::Active,
@@ -660,9 +664,17 @@ fn start_ready_disposals(
             }
             Ok(())
         });
+        // Pending futures keep their state (including Notified's notification).
+        // The spawned task unconditionally polls this same pinned future once,
+        // covering wakes sent to the noop waker before the task starts; later
+        // pending polls register the task's real waker.
         let first = callback
             .as_mut()
             .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        #[cfg(test)]
+        if let Some(hook) = registry.after_disposal_first_poll.take() {
+            hook(first.is_pending());
+        }
         let state = Arc::clone(state_mutex);
         tokio::spawn(async move {
             // Finish the synchronous start batch before resuming any callback.
