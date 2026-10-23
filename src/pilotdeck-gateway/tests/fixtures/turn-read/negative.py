@@ -97,6 +97,37 @@ mutants = [
      '                frames.push((items.iter(), false));\n'
      '            }',
      'run_events_deep_array_last_seq'),
+    # r5 (A7.2-pr7 gate5 P2a): the two r4 negative controls for the
+    # pathological-depth probe, previously only run tree-out, now reproducible
+    # in the suite. Both target the parent test; the spin outlives its 10 s
+    # deadline, the recursive join overflows the child's stack at 100,000
+    # layers. Both must compile — only the probe may fail.
+    ('lastseq-conversion-spin', source,
+     'fn last_seq_to_number(value: &JsValue) -> Result<f64, NotPrimitive> {\n    match value {',
+     'fn last_seq_to_number(value: &JsValue) -> Result<f64, NotPrimitive> {\n'
+     '    let spin = std::time::Instant::now();\n'
+     '    while spin.elapsed() < std::time::Duration::from_secs(30) { std::hint::spin_loop(); }\n'
+     '    match value {',
+     'run_events_pathological_depth_last_seq_is_bounded'),
+    ('join-string-recursive', source,
+     'fn join_string(value: &JsValue) -> Result<String, NotPrimitive> {\n    let mut out = Vec::new();',
+     'fn join_string(value: &JsValue) -> Result<String, NotPrimitive> {\n'
+     '    if let JsValue::Array(items) = value {\n'
+     '        let mut out = String::new();\n'
+     '        let mut separate = false;\n'
+     '        for item in items {\n'
+     '            if separate {\n'
+     '                out.push_str(",");\n'
+     '            }\n'
+     '            separate = true;\n'
+     '            if !matches!(item, JsValue::Undefined | JsValue::Null) {\n'
+     '                out.push_str(&join_string(item)?);\n'
+     '            }\n'
+     '        }\n'
+     '        return Ok(out);\n'
+     '    }\n'
+     '    let mut out = Vec::new();',
+     'run_events_pathological_depth_last_seq_is_bounded'),
     ('nextseq-dropped', source,
      '    if let Some(last) = events.last() {\n        result.insert("nextSeq".into(), field(last, "seq").clone());\n    }',
      '    let _ = events.last();',
