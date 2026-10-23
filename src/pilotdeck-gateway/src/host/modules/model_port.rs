@@ -17,18 +17,21 @@
 //!   the `try { ... } catch { return undefined }` lookups.
 //!
 //! Stream events are pull-shaped at the module boundary but push-shaped in
-//! `RouterRuntime::execute`, so one stream owns a lazily started body future
+//! `RouterRuntime::execute`, so one stream owns a lazily started body task
 //! whose sink feeds an unbounded queue. The body starts on the first `next`
 //! (a TS async generator's body never runs before that, so an unstarted
 //! stream never touches the provider), advances only at its await points and
 //! suspends at every consumer-visible event behind a [`YieldGate`] — the TS
 //! yield boundary — so provider reads and terminal side effects stay behind
 //! the pull that consumes the last delivered event. The turn's abort flag
-//! (`dispatcher:81,441`, `adapter:68`) is forwarded into the per-stream
-//! child [`AbortFlag`], so a turn cancel interrupts a `next()` waiting on the
-//! provider without waiting for the stream mutex. Closing the handle aborts
-//! and drops the body — a TS `return()` never runs the code after the
-//! suspension it returns at — and closing also drops undelivered queued
+//! (`dispatcher:81,441`, `adapter:68`) reaches the per-stream child
+//! [`AbortFlag`] through a dedicated task the moment it fires, like the abort
+//! listener TS registers directly on the response body
+//! (`streamModel.ts`'s `cancelReader`), so a turn cancel interrupts the
+//! provider request without waiting for the stream mutex, for a consumer
+//! pull, or for a recorder write the outer durable stream is awaiting. Closing
+//! the handle aborts the body task — a TS `return()` never runs the code after
+//! the suspension it returns at — and closing also drops undelivered queued
 //! events, so a closed stream answers `done` like an exhausted generator.
 //!
 //! Out of scope by design (composition gaps, not silently accepted here):
@@ -53,7 +56,7 @@ use crate::runtime::model::router::{
 use crate::storage::recorder::{Recorder, RecorderError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// `RouterModelInvokerAdapterOptions`. `workspaceId`/`storageConfigVersion`
 /// only feed the invocation audit sink (out of scope), so they are absent.
@@ -264,12 +267,13 @@ impl ModelExecution for RouterModelPort {
                 router,
                 pending: Some((decision, input.prepared.request, ctx)),
                 body: None,
+                forwarder: None,
                 events: None,
-                failure: None,
+                outcome: None,
+                awaiting_pull: false,
                 abort,
                 gate,
                 turn_abort: input.abort,
-                turn_wait: None,
             }) as Box<dyn ModelStream>)
         })
     }
@@ -410,7 +414,8 @@ impl ModelExecution for DurableModelExecution {
                 request,
                 // The durable generator records the request on its first pull,
                 // so an unstarted stream records nothing.
-                started: false,
+                request_record: RequestRecord::Unstarted,
+                held: None,
             }) as Box<dyn ModelStream>)
         })
     }
@@ -422,40 +427,160 @@ struct DurableModelStream {
     session_id: JsString,
     turn_id: JsString,
     request: JsValue,
-    started: bool,
+    /// The request record of the first pull. TS `recordModelRequest` runs
+    /// synchronously inside that pull, so the spawned record must complete
+    /// (and be observed) before any event is pulled — no matter how many
+    /// times the pull is cancelled and retried in between.
+    request_record: RequestRecord,
+    /// An event already pulled from the inner stream, held until its record
+    /// has been observed complete. Keeping it in the stream (not in a local
+    /// of one `next()` future) is what preserves it across a pull cancelled
+    /// while the record was in flight: the next pull first awaits that same
+    /// record, then delivers the same event — never skipping it, never
+    /// re-recording it, exactly once like the TS wrapper's synchronous write.
+    held: Option<HeldEvent>,
+}
+
+/// Where the request record of [`DurableModelStream`] stands.
+enum RequestRecord {
+    /// The first pull has not spawned it yet.
+    Unstarted,
+    /// Spawned; awaited across pulls until its completion is observed.
+    InFlight(RecordCompletion),
+    /// Completed and observed (a record failure is also terminal here).
+    Done,
+}
+
+struct HeldEvent {
+    event: JsValue,
+    record: RecordCompletion,
+}
+
+/// A spawned record's result channel. Polled in place — never consumed by a
+/// cancelled pull — so one completion observation serves any number of
+/// retried pulls. `Receiver` is `Unpin`, so [`Future::poll`] works on a
+/// mutable reference.
+type RecordCompletion = oneshot::Receiver<Result<(), ModuleError>>;
+
+/// Poll a [`RecordCompletion`] in place.
+fn poll_record(
+    record: &mut RecordCompletion,
+    cx: &mut std::task::Context<'_>,
+) -> Poll<Result<Result<(), ModuleError>, oneshot::error::RecvError>> {
+    Future::poll(Pin::new(record), cx)
 }
 
 impl ModelStream for DurableModelStream {
     fn next(&mut self) -> StreamFuture<'_, Option<JsValue>> {
         Box::pin(async move {
-            if !self.started {
-                self.started = true;
-                record_off_thread(
-                    self.recorder.clone(),
-                    self.session_id.clone(),
-                    self.turn_id.clone(),
-                    RecordCall::Request(self.request.clone()),
-                )
-                .await?;
-            }
-            let event = self.inner.next().await?;
-            if let Some(event) = &event {
-                record_off_thread(
-                    self.recorder.clone(),
-                    self.session_id.clone(),
-                    self.turn_id.clone(),
-                    RecordCall::Event(event.clone()),
-                )
-                .await?;
-            }
-            Ok(event)
+            std::future::poll_fn(|cx| {
+                loop {
+                    if matches!(self.request_record, RequestRecord::Unstarted) {
+                        self.request_record = RequestRecord::InFlight(spawn_record(
+                            self.recorder.clone(),
+                            self.session_id.clone(),
+                            self.turn_id.clone(),
+                            RecordCall::Request(self.request.clone()),
+                        ));
+                    }
+                    if let RequestRecord::InFlight(record) = &mut self.request_record
+                        && let Poll::Ready(result) = poll_record(record, cx)
+                    {
+                        self.request_record = RequestRecord::Done;
+                        if let Err(error) = record_result(result) {
+                            return Poll::Ready(Err(error));
+                        }
+                    } else if matches!(self.request_record, RequestRecord::InFlight(_)) {
+                        return Poll::Pending;
+                    }
+                    if let Some(held) = self.held.as_mut() {
+                        return match poll_record(&mut held.record, cx) {
+                            Poll::Pending => Poll::Pending,
+                            Poll::Ready(result) => {
+                                let HeldEvent { event, .. } = self.held.take().expect("held event");
+                                match record_result(result) {
+                                    Ok(()) => Poll::Ready(Ok(Some(event))),
+                                    Err(error) => Poll::Ready(Err(error)),
+                                }
+                            }
+                        };
+                    }
+                    let polled = {
+                        let mut inner = self.inner.next();
+                        inner.as_mut().poll(cx)
+                    };
+                    match polled {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(None)) => return Poll::Ready(Ok(None)),
+                        Poll::Ready(Ok(Some(event))) => {
+                            self.held = Some(HeldEvent {
+                                record: spawn_record(
+                                    self.recorder.clone(),
+                                    self.session_id.clone(),
+                                    self.turn_id.clone(),
+                                    RecordCall::Event(event.clone()),
+                                ),
+                                event,
+                            });
+                        }
+                    }
+                }
+            })
+            .await
         })
     }
     fn close(&mut self) -> StreamFuture<'_, ()> {
-        // `return()` on the durable wrapper records nothing; recording state
-        // only advances while events are yielded.
-        Box::pin(async move { self.inner.close().await })
+        // `return()` on the durable wrapper records nothing new, but a record
+        // already in flight still lands first: TS writes it synchronously
+        // inside the pull it belonged to, so close settles after that write
+        // and the event it gated is discarded — recorded, never yielded.
+        Box::pin(async move {
+            let records = [
+                match std::mem::replace(&mut self.request_record, RequestRecord::Done) {
+                    RequestRecord::InFlight(record) => Some(record),
+                    _ => None,
+                },
+                self.held.take().map(|held| held.record),
+            ];
+            for record in records.into_iter().flatten() {
+                let _ = record.await;
+            }
+            self.inner.close().await
+        })
     }
+}
+
+/// A record's completion as observed by the stream. `Err` is a record failure
+/// (the TS recorder throws); a dropped channel means the record task ended
+/// without completing, which it never does by design.
+fn record_result(
+    result: Result<Result<(), ModuleError>, oneshot::error::RecvError>,
+) -> Result<(), ModuleError> {
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(ModuleError::new(
+            "Model transcript record ended without completing.",
+        )),
+    }
+}
+
+/// Spawn one recorder call as its own task. The write completes regardless of
+/// whether anyone still awaits it — the caller-cancellable `cpu::run` future
+/// stays inside the task — and the result comes back through a oneshot the
+/// stream re-awaits across cancelled pulls, so an abandoned pull neither
+/// aborts the write nor duplicates it.
+fn spawn_record(
+    recorder: Arc<Recorder>,
+    session_id: JsString,
+    turn_id: JsString,
+    call: RecordCall,
+) -> RecordCompletion {
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let _ = sender.send(record_off_thread(recorder, session_id, turn_id, call).await);
+    });
+    receiver
 }
 
 /// Which recorder call a [`record_off_thread`] run performs.
@@ -489,47 +614,94 @@ async fn record_off_thread(
     .map_err(|error| ModuleError::new(error.message.clone()))
 }
 
-/// The lazily started `RouterRuntime::execute` body of one stream.
-type ExecuteBody = Pin<Box<dyn Future<Output = Result<(), RouterExecuteError>> + Send>>;
-/// The turn abort's `cancelled()` wait, boxed so it can live in the stream.
-type TurnWait = Pin<Box<dyn Future<Output = ()> + Send>>;
+/// The `RouterRuntime::execute` body of one stream, as its own executor task:
+/// the executor polls it, so the turn abort can interrupt the provider request
+/// without a consumer pull (`next` only reads the queue the body feeds).
+type BodyTask = tokio::task::JoinHandle<()>;
+/// The turn abort's forwarder: one wait, fired the moment the turn cancels.
+type Forwarder = tokio::task::JoinHandle<()>;
 
-/// The router-backed stream: a lazily started `execute` body feeding a queue.
+/// The router-backed stream: a lazily started `execute` body task feeding a
+/// queue.
 struct RouterModelStream {
     router: Arc<RouterRuntime>,
     /// `(decision, request, ctx)` until the first `next` starts the body.
     pending: Option<(JsValue, JsValue, RouterExecuteContext)>,
-    body: Option<ExecuteBody>,
+    /// The body task; `None` before the first `next` and once it finished.
+    body: Option<BodyTask>,
+    /// Forwards the turn abort into [`Self::abort`] without a consumer pull.
+    forwarder: Option<Forwarder>,
     events: Option<mpsc::UnboundedReceiver<JsValue>>,
-    failure: Option<ModuleError>,
+    /// The body task's outcome — sent before its events channel closes.
+    outcome: Option<mpsc::UnboundedReceiver<Result<(), RouterExecuteError>>>,
+    /// An event was taken from the queue; its [`YieldGate`] pull is deferred
+    /// to the next `next()` call.
+    awaiting_pull: bool,
     abort: AbortFlag,
     gate: YieldGate,
     /// The turn-level abort forwarded into [`Self::abort`].
     turn_abort: Option<AbortFlag>,
-    /// `turn_abort.cancelled()` once the body has started.
-    turn_wait: Option<TurnWait>,
 }
 
 impl RouterModelStream {
+    /// Stop the tasks a closed or dropped handle no longer needs. Aborting a
+    /// task only takes effect at its current suspension, so nothing runs
+    /// after it, and the provider connection goes with the abandoned body.
+    fn stop_tasks(&mut self) {
+        if let Some(forwarder) = self.forwarder.take() {
+            forwarder.abort();
+        }
+        if let Some(body) = self.body.take() {
+            body.abort();
+        }
+    }
+
     fn start(&mut self) {
         let Some((decision, request, ctx)) = self.pending.take() else {
             return;
         };
+        // TS registers the abort listener on the response body when the
+        // stream starts (`streamModel.ts`'s `cancelReader`): cancellation
+        // must not depend on the consumer pulling. A turn already cancelled
+        // when the body starts is forwarded inline so the body observes it on
+        // its first poll, like the attempts-loop precheck
+        // (`RouterRuntime.ts:685`); otherwise a dedicated task forwards it
+        // the moment it fires — including while the consumer sits between
+        // pulls or while the outer durable stream awaits a recorder write.
+        if let Some(turn) = self.turn_abort.clone() {
+            if turn.is_aborted() {
+                self.abort.abort();
+            } else {
+                let child = self.abort.clone();
+                self.forwarder = Some(tokio::spawn(async move {
+                    turn.cancelled().await;
+                    child.abort();
+                }));
+            }
+        }
         let (sender, receiver) = mpsc::unbounded_channel();
+        let (outcome_sender, outcome) = mpsc::unbounded_channel();
         let router = self.router.clone();
         let gate = self.gate.clone();
         self.events = Some(receiver);
-        self.turn_wait = self.turn_abort.as_ref().map(|turn| {
-            let turn = turn.clone();
-            Box::pin(async move { turn.cancelled().await }) as TurnWait
-        });
-        self.body = Some(Box::pin(async move {
+        self.outcome = Some(outcome);
+        self.body = Some(tokio::spawn(async move {
             let mut sink = move |event: JsValue| {
                 gate.deliver();
                 let _ = sender.send(event);
             };
-            router.execute(&decision, &request, &ctx, &mut sink).await
+            let _ = outcome_sender.send(router.execute(&decision, &request, &ctx, &mut sink).await);
         }));
+    }
+}
+
+impl Drop for RouterModelStream {
+    /// Dropping the handle loses the consumer, like undici's connection when
+    /// its consumer goes away: the provider request is interrupted and both
+    /// tasks stop. Aborting a finished task is a no-op.
+    fn drop(&mut self) {
+        self.abort.abort();
+        self.stop_tasks();
     }
 }
 
@@ -538,52 +710,53 @@ impl ModelStream for RouterModelStream {
         Box::pin(async move {
             self.start();
             std::future::poll_fn(|cx| {
-                loop {
-                    if let Some(events) = self.events.as_mut() {
-                        let received = events.poll_recv(cx);
-                        match received {
-                            // Events ahead of the body's completion are yielded
-                            // first; only a drained closed channel falls through.
-                            // Taking one completes a TS yield: the suspended body
-                            // may advance to its next provider read.
-                            Poll::Ready(Some(event)) => {
-                                self.gate.pull();
-                                return Poll::Ready(Ok(Some(event)));
-                            }
-                            Poll::Ready(None) => self.events = None,
-                            Poll::Pending => {}
+                // Taking an event completes a TS yield, but the suspended
+                // body only resumes on the consumer's next pull — which,
+                // through the durable wrapper, is after the yielded event has
+                // been recorded and delivered. Pulling at queue-take would
+                // let the body's post-yield terminal handling (e.g. the
+                // execute_failed event) race the record window and surface
+                // before the yielded event, diverging from TS. So the pull
+                // is deferred to the start of the next `next()` call.
+                if self.awaiting_pull {
+                    self.awaiting_pull = false;
+                    self.gate.pull();
+                }
+                if let Some(events) = self.events.as_mut() {
+                    match events.poll_recv(cx) {
+                        // Events ahead of the body's completion are yielded
+                        // first; only a drained closed channel falls through.
+                        Poll::Ready(Some(event)) => {
+                            self.awaiting_pull = true;
+                            return Poll::Ready(Ok(Some(event)));
                         }
-                    }
-                    // Forward the turn abort into the child flag, then let the
-                    // body observe it at its own await points. A pre-aborted
-                    // turn therefore finishes the body with no provider work,
-                    // like the attempts-loop check in `RouterRuntime.ts:685`.
-                    if let Some(wait) = self.turn_wait.as_mut()
-                        && wait.as_mut().poll(cx).is_ready()
-                    {
-                        self.turn_wait = None;
-                        self.abort.abort();
-                    }
-                    let polled = match self.body.as_mut() {
-                        Some(body) => body.as_mut().poll(cx),
-                        // The body finished and the queue is drained: a buffered
-                        // failure surfaces after the last queued event, like a
-                        // throw from a TS generator that already yielded.
-                        None => {
-                            return match self.failure.take() {
-                                Some(failure) => Poll::Ready(Err(failure)),
-                                None => Poll::Ready(Ok(None)),
-                            };
-                        }
-                    };
-                    match polled {
+                        Poll::Ready(None) => self.events = None,
                         Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Ok(())) => self.body = None,
-                        Poll::Ready(Err(error)) => {
-                            self.failure = Some(module_error(error));
-                            self.body = None;
-                        }
                     }
+                }
+                // The body task has finished and the queue is drained: its
+                // outcome — sent before the channel closed — surfaces now,
+                // like a throw from a TS generator that already yielded, and
+                // exactly once; later pulls answer `done`.
+                match self.outcome.as_mut() {
+                    Some(outcome) => match outcome.poll_recv(cx) {
+                        Poll::Ready(Some(Ok(()))) => {
+                            self.outcome = None;
+                            Poll::Ready(Ok(None))
+                        }
+                        Poll::Ready(Some(Err(error))) => {
+                            self.outcome = None;
+                            Poll::Ready(Err(module_error(error)))
+                        }
+                        Poll::Ready(None) => {
+                            self.outcome = None;
+                            Poll::Ready(Err(ModuleError::new(
+                                "Model stream body ended without an outcome.",
+                            )))
+                        }
+                        Poll::Pending => Poll::Pending,
+                    },
+                    None => Poll::Ready(Ok(None)),
                 }
             })
             .await
@@ -598,20 +771,20 @@ impl ModelStream for RouterModelStream {
                 self.pending = None;
                 return Ok(());
             }
-            // Interrupt the provider request, then drop the body: a TS
+            // Interrupt the provider request, then stop the tasks: a TS
             // `return()` never runs the code after the suspension it returns
             // at, so outcome handling (health, `execute_failed`, terminal
-            // error events) must not fire after a partial pull. Dropping the
-            // body future also drops the provider connection, like undici
-            // losing its consumer. The interrupted body's error is discarded:
-            // `close_stream` is `await iterator.return()`, and a TS
-            // generator's early return never rejects
-            // (`sidecarDefaultModuleDispatcher.ts:153-158`). Undelivered
-            // queued events go with it — a closed generator is `done`.
+            // error events) must not fire after a partial pull. The aborted
+            // body's error is discarded: `close_stream` is
+            // `await iterator.return()`, and a TS generator's early return
+            // never rejects (`sidecarDefaultModuleDispatcher.ts:153-158`).
+            // Undelivered queued events go with it — a closed generator is
+            // `done`. The forwarder stops too: there is nothing left to
+            // cancel.
             self.abort.abort();
-            self.body = None;
+            self.stop_tasks();
             self.events = None;
-            self.failure = None;
+            self.outcome = None;
             Ok(())
         })
     }

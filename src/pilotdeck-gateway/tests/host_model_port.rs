@@ -14,6 +14,7 @@
 mod baseline;
 #[path = "common/model_mock.rs"]
 mod model_mock;
+use pilotdeck_gateway::storage::{StoreResult, TranscriptRead, TranscriptStore};
 use pilotdeck_gateway::{
     host::{
         ModuleError,
@@ -36,7 +37,7 @@ use pilotdeck_gateway::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     fs,
-    path::{Component, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -1139,4 +1140,747 @@ async fn default_options_compose_the_main_agent() {
         .expect("prepare");
     let decision = prepared.opaque.expect("router decision");
     assert_eq!(get(&decision, "isSubagent"), &JsValue::Bool(false));
+}
+
+/// A [`TranscriptStore`] that parks chosen appends: `gate(type)` blocks the
+/// next append of that type inside the record's blocking task — after it has
+/// signalled `arrived` — until the test releases it, pinning down exactly
+/// where a record stands when its pull is cancelled. One-shot: each gate
+/// parks one append.
+struct GatedStore {
+    inner: Arc<JsonlTranscriptStore>,
+    log: Trace,
+    tag: String,
+    arrived: tokio::sync::mpsc::UnboundedSender<String>,
+    gates: Mutex<Vec<(String, std::sync::mpsc::Receiver<()>)>>,
+}
+impl GatedStore {
+    fn gate(&self, ty: &str) -> std::sync::mpsc::Sender<()> {
+        let (release, gate) = std::sync::mpsc::channel();
+        self.gates.lock().unwrap().push((ty.into(), gate));
+        release
+    }
+}
+impl TranscriptStore for GatedStore {
+    fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
+        let ty = text(get(entry, "type"));
+        self.log.lock().unwrap().push(entry.clone());
+        let _ = self.arrived.send(format!("{}:{}", self.tag, ty));
+        let gated = {
+            let mut gates = self.gates.lock().unwrap();
+            gates
+                .iter()
+                .position(|(gated, _)| gated == &ty)
+                .map(|index| gates.remove(index))
+        };
+        if let Some((_, release)) = gated {
+            // Parks the record's blocking task until the test lets it
+            // through; dropping the release sender fails the append instead.
+            match release.recv() {
+                Ok(()) => {}
+                Err(_) => return Err(std::io::Error::other("gated record failure").into()),
+            }
+        }
+        self.inner.append(key, entry)
+    }
+    fn read(&self, key: &TranscriptKey, max_bytes: Option<u64>) -> StoreResult<TranscriptRead> {
+        self.inner.read(key, max_bytes)
+    }
+}
+
+/// The test side of a [`GatedStore`]: one shared arrival stream.
+struct Gate {
+    arrived: tokio::sync::mpsc::UnboundedReceiver<String>,
+}
+impl Gate {
+    async fn wait_for(&mut self, tag: &str, ty: &str) {
+        let want = format!("{tag}:{ty}");
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while self.arrived.recv().await.expect("arrival channel") != want {}
+        })
+        .await
+        .unwrap_or_else(|_| panic!("record {want} never arrived"));
+    }
+}
+
+/// The replay harness's recorder over an injectable store.
+fn recorder_at(
+    store: Arc<dyn TranscriptStore>,
+    scratch: &Path,
+    name: &str,
+) -> (Arc<Recorder>, PathBuf) {
+    let transcript_path = scratch.join(format!("{name}-{SESSION}.jsonl"));
+    let ids = AtomicUsize::new(0);
+    (
+        Arc::new(Recorder::with_sources(
+            store,
+            TranscriptKey {
+                project_root: PathBuf::from(PROJECT_ROOT),
+                pilot_home: scratch.join("home"),
+                session_id: SESSION.into(),
+                transcript_path: transcript_path.clone(),
+            },
+            Arc::new(|| Ok(NOW.to_string())),
+            Arc::new(move || Ok(format!("id-{}", ids.fetch_add(1, Ordering::SeqCst) + 1))),
+        )),
+        transcript_path,
+    )
+}
+
+/// `{sessionId, turnId, runId}`, like the TS driver's turn context.
+fn session_context(turn_id: &str) -> JsObject {
+    let mut context = JsObject::new();
+    context.insert("sessionId".into(), SESSION.into());
+    context.insert("turnId".into(), turn_id.into());
+    context.insert("runId".into(), turn_id.into());
+    context
+}
+
+/// The replay harness's router wiring: the `a/m` scenario, no fallback, the
+/// given invoker, router events collected into `trace`.
+fn test_router(invoker: Arc<dyn RouterModelInvocation>, trace: &Trace) -> Arc<RouterRuntime> {
+    let mut deps = RouterDeps::new(invoker);
+    let events = trace.clone();
+    deps.events = Arc::new(move |value| {
+        events
+            .lock()
+            .unwrap()
+            .push(obj(&[("kind", "router".into()), ("value", value)]));
+    });
+    deps.clock = Arc::new(|| 0.0);
+    let snapshot = obj(&[(
+        "config",
+        obj(&[(
+            "router",
+            obj(&[
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "scenarios",
+                    obj(&[(
+                        "default",
+                        parsed(r#"{"id":"a/m","provider":"a","model":"m"}"#),
+                    )]),
+                ),
+            ]),
+        )]),
+    )]);
+    Arc::new(
+        RouterRuntime::with_deps(RouterConfig::from_snapshot(&snapshot), deps)
+            .expect("router runtime"),
+    )
+}
+
+/// The replay harness's HTTP wiring for the focused tests: provider `a` at
+/// the loopback mock origin, the durable recorder.
+fn http_ports(
+    providers: &JsValue,
+    origin: &str,
+    recorder: Arc<Recorder>,
+    trace: &Trace,
+) -> model_port::ComposedPorts {
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert("url".into(), format!("{origin}/a/v1").as_str().into());
+    configured.insert("a".into(), JsValue::Object(provider));
+    let model_config = obj(&[("providers", JsValue::Object(configured))]);
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(HttpRouterInvocation::new(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+            calls: Arc::default(),
+        }),
+        Arc::new(HyperModelTransport::new()),
+        model_config.clone(),
+    ));
+    let session: JsString = SESSION.into();
+    model_port::ports(
+        test_router(invoker, trace),
+        model_config,
+        Some(DurableRecorder {
+            recorder,
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    )
+}
+
+async fn wait_client_closed(exchange: &Arc<Mutex<model_mock::Exchange>>, message: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let closed = exchange
+                .lock()
+                .unwrap()
+                .requests
+                .iter()
+                .any(|request| request.get("clientClosed") == Some(&JsValue::Bool(true)));
+            if closed {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{message}"));
+}
+
+fn assert_no_execute_failed(trace: &Trace) {
+    let trace = trace.lock().unwrap();
+    assert!(
+        trace
+            .iter()
+            .all(|entry| !json(entry).contains("pilotdeck_router_execute_failed")),
+        "the aborted body must not publish terminal side effects: {trace:?}"
+    );
+}
+
+fn transcript_types(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| text(get(&parsed(line), "type")))
+        .collect()
+}
+
+/// Fix round 2 (codex #1): the turn abort must reach the provider without a
+/// consumer pull. TS registers the abort listener on the response body when
+/// the stream starts (`streamModel.ts`'s `cancelReader`), so a turn cancelled
+/// while the consumer sits between pulls still closes the provider request —
+/// the forwarder task in `RouterModelStream` forwards it the moment it fires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turn_cancel_between_pulls_closes_the_provider() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("between-pulls");
+    // The `http-text-stream` reply's first two chunks (the `message_start`
+    // frame, then `content_block_start` + `content_block_delta`); the reply
+    // then holds the connection open, so no further body events arrive.
+    let http_case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| case_name(case) == "http-text-stream")
+        .unwrap()
+        .clone();
+    let frames = items(get(
+        &items(get(get(&http_case, "spec"), "replies"))[0],
+        "chunks",
+    ))
+    .to_vec();
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies: vec![obj(&[
+            (
+                "chunks",
+                JsValue::Array(
+                    frames
+                        .iter()
+                        .take(2)
+                        .map(|frame| obj(&[("text", frame.clone())]))
+                        .collect(),
+                ),
+            ),
+            ("end", "hold".into()),
+        ])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let (recorder, transcript_path) = recorder_at(
+        Arc::new(JsonlTranscriptStore::new()),
+        &scratch.0,
+        "between-pulls",
+    );
+    let trace: Trace = Arc::default();
+    let model_port::ComposedPorts { execution, .. } =
+        http_ports(&providers, &server.origin, recorder.clone(), &trace);
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let abort = AbortFlag::new();
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: Some(abort.clone()),
+        })
+        .await
+        .expect("stream");
+    let first = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&first, "type")), "request_started");
+    // No further pull and no close: the cancelled turn alone must close the
+    // provider request.
+    abort.abort();
+    wait_client_closed(
+        &exchange,
+        "a turn cancelled between pulls must close the provider request",
+    )
+    .await;
+    assert_no_execute_failed(&trace);
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+        ],
+        "only the pulled event is on disk"
+    );
+    stream.close().await.expect("close");
+}
+
+/// Fix round 2 (codex #1, recorder window): the turn abort must reach the
+/// provider even while the outer durable pull sits between its queue-take
+/// and the event's record. The gated store parks the pull exactly there; the
+/// parked record still lands (TS writes it synchronously inside the pull,
+/// `durableModelInvokerPort.ts`), and the pull delivers its event once the
+/// record completes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turn_cancel_during_record_await_closes_the_provider() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("record-await");
+    let http_case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| case_name(case) == "http-text-stream")
+        .unwrap()
+        .clone();
+    let frames = items(get(
+        &items(get(get(&http_case, "spec"), "replies"))[0],
+        "chunks",
+    ))
+    .to_vec();
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies: vec![obj(&[
+            (
+                "chunks",
+                JsValue::Array(
+                    frames
+                        .iter()
+                        .take(2)
+                        .map(|frame| obj(&[("text", frame.clone())]))
+                        .collect(),
+                ),
+            ),
+            ("end", "hold".into()),
+        ])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let (arrived, gate_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(GatedStore {
+        inner: Arc::new(JsonlTranscriptStore::new()),
+        log: Arc::default(),
+        tag: "main".into(),
+        arrived,
+        gates: Mutex::new(Vec::new()),
+    });
+    // Two one-shot gates on the event records: the first parks pull 1's own
+    // record (released right away), the second parks pull 2's.
+    let releases = [
+        store.gate("model_stream_event"),
+        store.gate("model_stream_event"),
+    ];
+    let mut gate = Gate { arrived: gate_rx };
+    let (recorder, transcript_path) = recorder_at(store.clone(), &scratch.0, "record-await");
+    let trace: Trace = Arc::default();
+    let model_port::ComposedPorts { execution, .. } =
+        http_ports(&providers, &server.origin, recorder.clone(), &trace);
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let abort = AbortFlag::new();
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: Some(abort.clone()),
+        })
+        .await
+        .expect("stream");
+    let mut first = stream.next();
+    tokio::select! {
+        result = &mut first => panic!("pull 1 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_stream_event") => {}
+    }
+    releases[0].send(()).unwrap();
+    let first_event = first.await.expect("pull").expect("event");
+    assert_eq!(text(get(&first_event, "type")), "request_started");
+    // Pull 2 takes its event from the queue and parks on the record.
+    let mut second = stream.next();
+    tokio::select! {
+        result = &mut second => panic!("pull 2 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_stream_event") => {}
+    }
+    // The turn cancels while the pull sits between its queue-take and the
+    // record: no further pull, no close.
+    abort.abort();
+    wait_client_closed(
+        &exchange,
+        "a turn cancelled during a record await must close the provider request",
+    )
+    .await;
+    assert_no_execute_failed(&trace);
+    // Let the parked record complete: the pull still delivers its event, and
+    // the record landed exactly once.
+    releases[1].send(()).unwrap();
+    let second_event = second.await.expect("pull").expect("event");
+    assert_eq!(text(get(&second_event, "type")), "message_start");
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+            "model_stream_event",
+        ],
+        "the two pulled events are on disk in pull order"
+    );
+    stream.close().await.expect("close");
+}
+
+/// Fix round 2 (codex #2): a pull cancelled while its request record is in
+/// flight must not let the next pull deliver events before the record lands.
+/// The record runs in its own task and the stream only advances once its
+/// completion is observed, so the retried pull waits for it first — TS
+/// records the request synchronously inside the first pull
+/// (`durableModelInvokerPort.ts`), so no event may precede it on disk, and
+/// the write happens exactly once no matter how many pulls were cancelled.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_pull_waits_for_the_request_record() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("request-record");
+    let (arrived, gate_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(GatedStore {
+        inner: Arc::new(JsonlTranscriptStore::new()),
+        log: Arc::default(),
+        tag: "main".into(),
+        arrived,
+        gates: Mutex::new(Vec::new()),
+    });
+    let release = store.gate("model_request");
+    let mut gate = Gate { arrived: gate_rx };
+    let (recorder, transcript_path) = recorder_at(store.clone(), &scratch.0, "request-record");
+    let trace: Trace = Arc::default();
+    let script = obj(&[(
+        "scripts",
+        JsValue::Array(vec![obj(&[(
+            "events",
+            JsValue::Array(vec![
+                parsed(r#"{"type":"message_start","messageId":"id"}"#),
+                parsed(r#"{"type":"text_delta","text":"ok"}"#),
+            ]),
+        )])]),
+    )]);
+    let router = test_router(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: script,
+            calls: Arc::default(),
+        }),
+        &trace,
+    );
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(&[("providers", providers.clone())]),
+        Some(DurableRecorder {
+            recorder: recorder.clone(),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: None,
+        })
+        .await
+        .expect("stream");
+    // Pull 1 parks on the gated request record, then the pull is cancelled.
+    let mut first = stream.next();
+    tokio::select! {
+        result = &mut first => panic!("pull 1 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_request") => {}
+    }
+    drop(first);
+    // The retried pull must wait for the in-flight record instead of
+    // delivering events first.
+    let mut retry = stream.next();
+    let () = tokio::select! {
+        result = &mut retry => panic!(
+            "the retried pull must wait for the request record, got {result:?}"
+        ),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+    };
+    release.send(()).unwrap();
+    let event = retry.await.expect("pull").expect("event");
+    assert_eq!(text(get(&event, "type")), "message_start");
+    stream.close().await.expect("close");
+    let log = store.log.lock().unwrap();
+    let requests = log
+        .iter()
+        .filter(|entry| text(get(entry, "type")) == "model_request")
+        .count();
+    let logged = log
+        .iter()
+        .map(|entry| text(get(entry, "type")))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        requests, 1,
+        "the request record lands exactly once: {logged:?}"
+    );
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+        ],
+        "the request is on disk before any event, TS order"
+    );
+}
+
+/// Fix round 2 (codex #2, failure half): a pull cancelled while its request
+/// record is in flight must not swallow the record's failure. The record
+/// runs in its own task, so its error — even when the pull that started it
+/// was cancelled in between — surfaces on the retried pull: the stream never
+/// proceeds to events without a request on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_pull_surfaces_the_request_record_failure() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("record-failure");
+    let (arrived, gate_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(GatedStore {
+        inner: Arc::new(JsonlTranscriptStore::new()),
+        log: Arc::default(),
+        tag: "main".into(),
+        arrived,
+        gates: Mutex::new(Vec::new()),
+    });
+    let release = store.gate("model_request");
+    let mut gate = Gate { arrived: gate_rx };
+    let (recorder, transcript_path) = recorder_at(store.clone(), &scratch.0, "record-failure");
+    let trace: Trace = Arc::default();
+    let script = obj(&[(
+        "scripts",
+        JsValue::Array(vec![obj(&[(
+            "events",
+            JsValue::Array(vec![parsed(r#"{"type":"message_start","messageId":"id"}"#)]),
+        )])]),
+    )]);
+    let router = test_router(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: script,
+            calls: Arc::default(),
+        }),
+        &trace,
+    );
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(&[("providers", providers.clone())]),
+        Some(DurableRecorder {
+            recorder: recorder.clone(),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: None,
+        })
+        .await
+        .expect("stream");
+    // Pull 1 parks on the gated request record, then the pull is cancelled
+    // and the record fails.
+    let mut first = stream.next();
+    tokio::select! {
+        result = &mut first => panic!("pull 1 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_request") => {}
+    }
+    drop(first);
+    drop(release);
+    let error = stream
+        .next()
+        .await
+        .expect_err("the retried pull must surface the request record failure");
+    assert!(
+        error
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("gated record failure"),
+        "{error:?}"
+    );
+    stream.close().await.expect("close");
+    // The failed record still wrote everything before it; the request and
+    // no events are on disk.
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec!["turn_started", "step_started"],
+        "no events may be recorded without the request"
+    );
+}
+
+/// Fix round 2 (codex #2, event half): a pull cancelled between the inner
+/// queue-take and its event record must neither lose the event nor skip its
+/// record. The event stays held in the stream until its record is observed
+/// complete, so the retried pull delivers the same event — never the next
+/// one, never a duplicate record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_pull_replays_the_held_event() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("held-event");
+    let (arrived, gate_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(GatedStore {
+        inner: Arc::new(JsonlTranscriptStore::new()),
+        log: Arc::default(),
+        tag: "main".into(),
+        arrived,
+        gates: Mutex::new(Vec::new()),
+    });
+    let release = store.gate("model_stream_event");
+    let mut gate = Gate { arrived: gate_rx };
+    let (recorder, transcript_path) = recorder_at(store.clone(), &scratch.0, "held-event");
+    let trace: Trace = Arc::default();
+    let script = obj(&[(
+        "scripts",
+        JsValue::Array(vec![obj(&[(
+            "events",
+            JsValue::Array(vec![
+                parsed(r#"{"type":"message_start","messageId":"id"}"#),
+                parsed(r#"{"type":"text_delta","text":"ok"}"#),
+            ]),
+        )])]),
+    )]);
+    let router = test_router(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: script,
+            calls: Arc::default(),
+        }),
+        &trace,
+    );
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(&[("providers", providers.clone())]),
+        Some(DurableRecorder {
+            recorder: recorder.clone(),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: None,
+        })
+        .await
+        .expect("stream");
+    // Pull 1 takes `message_start` from the queue, parks on its record, then
+    // the pull is cancelled.
+    let mut first = stream.next();
+    tokio::select! {
+        result = &mut first => panic!("pull 1 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_stream_event") => {}
+    }
+    drop(first);
+    release.send(()).unwrap();
+    let first_event = stream.next().await.expect("pull").expect("event");
+    assert_eq!(
+        text(get(&first_event, "type")),
+        "message_start",
+        "the retried pull delivers the held event, not the next one"
+    );
+    let second_event = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&second_event, "type")), "text_delta");
+    stream.close().await.expect("close");
+    let log = store.log.lock().unwrap();
+    let events = log
+        .iter()
+        .filter(|entry| text(get(entry, "type")) == "model_stream_event")
+        .map(|entry| text(get(get(entry, "event"), "type")))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events,
+        vec!["message_start", "text_delta"],
+        "each pulled event is recorded exactly once, in order"
+    );
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+            "model_stream_event",
+        ],
+        "the two pulled events are on disk in pull order"
+    );
 }
