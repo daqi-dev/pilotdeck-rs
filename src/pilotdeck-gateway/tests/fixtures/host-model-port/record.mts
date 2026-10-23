@@ -186,6 +186,61 @@ export async function record(baselineDir: string, scratchDir: string) {
       http: true,
       replies: [httpError(429), { chunks: [wireStart, wireText('ok'), wireUsage, wireEnd] }],
     },
+    // Fix round 1: the TS yield boundaries and the turn abortSignal the
+    // dispatcher wires (sidecarDefaultModuleDispatcher.ts:81,441 ->
+    // routerModelInvokerAdapter.ts:68).
+    {
+      // Content, then a provider error event, fully drained: execute_failed
+      // and the provider-health failure only fire behind the pulls that
+      // consumed the already-delivered events.
+      name: 'content-error-drain',
+      scripts: [{ events: [frame, text('ok'), failure()] }],
+    },
+    {
+      // Pull only the first event, then return(): the read-ahead stops at the
+      // pull boundary and no failure is published.
+      name: 'content-error-partial',
+      scripts: [{ events: [frame, text('ok'), failure()] }],
+      pulls: 1,
+    },
+    {
+      // abortSignal already aborted: the first pull records the request and
+      // answers done with no provider call at all (RouterRuntime.ts:685).
+      name: 'pre-aborted',
+      scripts: [],
+      abortPre: true,
+    },
+    {
+      // Turn abort after the first pull: the buffered read-ahead event still
+      // yields, the next provider read rethrows the raw AbortError.
+      name: 'sync-abort-mid-stream',
+      scripts: [{ events: ok }],
+      abortAfterPulls: 1,
+    },
+    {
+      // Turn abort while the first pull waits on the held response body: the
+      // wait interrupts and the provider connection drops (clientClosed).
+      name: 'http-abort-while-waiting',
+      http: true,
+      replies: [{ chunks: [], end: 'hold' }],
+      abortAtMs: 100,
+    },
+    {
+      // Turn abort mid-stream: every buffered event yields first, then the
+      // held-body wait interrupts with the raw AbortError.
+      name: 'http-abort-mid-stream',
+      http: true,
+      replies: [{ chunks: [wireStart, wireText('ok')], end: 'hold' }],
+      abortAtMs: 150,
+    },
+    {
+      // Pre-content framing plus a non-fallback-eligible terminal error:
+      // the drained pending events are TS yields (RouterRuntime.ts:873-877),
+      // so execute_failed, the replayed buffered events and the enriched
+      // error all stay behind the pulls that consume them.
+      name: 'pre-content-terminal-error',
+      scripts: [{ events: [frame, failure('server_error', false)] }],
+    },
   ];
 
   const cases = [];
@@ -344,9 +399,12 @@ export async function record(baselineDir: string, scratchDir: string) {
       toolExecution: { list: () => [], executeAll: async () => [] } as any,
     } as any);
 
+    // The module wire face of an error is `{message, code?}` with a STRING
+    // code (SDK_MANAGED_MODEL_DENIED etc.); AbortError's numeric `code: 20`
+    // never crosses either real module wire, so it stays out of the oracle.
     const errorOf = (error: any) => ({
       message: error.message,
-      ...(error.code === undefined ? {} : { code: error.code }),
+      ...(typeof error.code === 'string' ? { code: error.code } : {}),
     });
     const baseRequest = {
       provider: 'a',
@@ -395,7 +453,22 @@ export async function record(baselineDir: string, scratchDir: string) {
           const materialized = await bound.materializeRequest(prepared, candidate);
           trace.push({ kind: 'materialized', value: materialized });
         }
-        const iterator = bound.execution.stream({ prepared, context })[Symbol.asyncIterator]();
+        // The turn abort the dispatcher wires as context.abortSignal
+        // (sidecarDefaultModuleDispatcher.ts:81,441), driven per spec: aborted
+        // before the first pull, after N pulled events, or at a fixed delay
+        // while a pull waits on a held provider response.
+        const aborts = spec.abortPre === true
+          || spec.abortAfterPulls !== undefined
+          || spec.abortAtMs !== undefined;
+        const controller = aborts ? new AbortController() : undefined;
+        const streamContext = controller ? { ...context, abortSignal: controller.signal } : context;
+        const iterator = bound.execution.stream({ prepared, context: streamContext })[Symbol.asyncIterator]();
+        if (spec.abortPre) {
+          controller!.abort();
+        }
+        if (spec.abortAtMs !== undefined) {
+          setTimeout(() => controller!.abort(), spec.abortAtMs);
+        }
         const pulls = spec.pulls ?? Number.POSITIVE_INFINITY;
         let pulled = 0;
         let drained = false;
@@ -414,6 +487,9 @@ export async function record(baselineDir: string, scratchDir: string) {
           }
           trace.push({ kind: 'event', value: next.value });
           pulled += 1;
+          if (spec.abortAfterPulls !== undefined && pulled >= spec.abortAfterPulls) {
+            controller!.abort();
+          }
         }
         // Only an explicitly limited pull count closes the iterator early,
         // like the dispatcher's close_stream after partial stream_next calls.

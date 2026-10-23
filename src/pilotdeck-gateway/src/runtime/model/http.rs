@@ -34,6 +34,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::watch;
 
 use super::count_body::{field, is, put, text as header_text};
 use super::providers::{self, StreamState};
@@ -1014,6 +1015,10 @@ pub struct StreamOptions {
     /// Production always uses `UNDICI_BODY_TIMEOUT_MS`; undici's zero disables
     /// this timeout, but zero is not supported by our Node timer normalization.
     pub body_timeout_ms: f64,
+    /// The consumer pull boundary of the module port that owns this stream.
+    /// `None` for router-internal callers, whose sinks are driven to
+    /// completion without a consumer pacing them.
+    pub yield_gate: Option<YieldGate>,
 }
 impl Default for StreamOptions {
     fn default() -> Self {
@@ -1025,6 +1030,66 @@ impl Default for StreamOptions {
             }),
             clock: Arc::new(super::router::wall_clock),
             body_timeout_ms: UNDICI_BODY_TIMEOUT_MS,
+            yield_gate: None,
+        }
+    }
+}
+impl StreamOptions {
+    /// Suspend at the TS yield boundary: after an event becomes
+    /// consumer-visible, the provider stream stays suspended until the
+    /// consumer pulls it. A no-op without a gate or without outstanding
+    /// events, so pre-content buffering never blocks.
+    pub async fn yield_boundary(&self) {
+        if let Some(gate) = &self.yield_gate {
+            gate.demand().await;
+        }
+    }
+}
+
+/// The TS generator pull boundary between a provider stream and its
+/// consumer. A TS async generator suspends at every consumer-facing
+/// `yield`, so provider reads, retry handling and terminal side effects
+/// stay behind the pull that consumes the last delivered event
+/// (`RouterRuntime.ts:775-808`). The push-based Rust port reproduces that
+/// with two counters: the producer `deliver()`s when an event becomes
+/// consumer-visible and `demand()`s the boundary before producing more;
+/// the consumer `pull()`s when it takes a delivered event.
+#[derive(Clone, Default)]
+pub struct YieldGate {
+    /// `(delivered, pulled)`.
+    state: Arc<watch::Sender<(u64, u64)>>,
+}
+impl YieldGate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// An event became consumer-visible (`execute`'s sink).
+    pub fn deliver(&self) {
+        self.state.send_if_modified(|state| {
+            state.0 += 1;
+            true
+        });
+    }
+    /// The consumer took a delivered event.
+    pub fn pull(&self) {
+        self.state.send_if_modified(|state| {
+            state.1 += 1;
+            true
+        });
+    }
+    /// Wait until every delivered event has been pulled.
+    pub async fn demand(&self) {
+        let mut receiver = self.state.subscribe();
+        loop {
+            {
+                let state = receiver.borrow_and_update();
+                if state.0 <= state.1 {
+                    return;
+                }
+            }
+            if receiver.changed().await.is_err() {
+                return;
+            }
         }
     }
 }
@@ -1983,6 +2048,7 @@ async fn google_attempt(
                     guard.observe(&event, (options.clock)())?;
                     checkpoint.on_event(&event)?;
                     sink(StreamOutput::Event(event));
+                    options.yield_boundary().await;
                     if message_end {
                         return Ok(());
                     }
@@ -2070,6 +2136,7 @@ async fn stream_google_model(
         sink(StreamOutput::Event(request_started_event(
             provider, &current,
         )?));
+        options.yield_boundary().await;
 
         let (_, model) = providers::validate_model_request(&current, config)?;
         let model_id = field(&current, "model").clone();
@@ -2145,6 +2212,7 @@ async fn stream_google_model(
             canonical.insert("streamInterruption".into(), checkpoint.interruption());
         }
         sink(StreamOutput::Event(error_event(JsValue::Object(canonical))));
+        options.yield_boundary().await;
         return Ok(());
     }
     Ok(())
@@ -2175,6 +2243,7 @@ pub async fn stream_model(
         sink(StreamOutput::Event(request_started_event(
             &provider, &current,
         )?));
+        options.yield_boundary().await;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
 
@@ -2208,6 +2277,7 @@ pub async fn stream_model(
                         &error,
                         &checkpoint,
                     ))));
+                    options.yield_boundary().await;
                     return Ok(());
                 }
                 return Err(error);
@@ -2240,6 +2310,7 @@ pub async fn stream_model(
                     None,
                 ),
             ))));
+            options.yield_boundary().await;
             return Ok(());
         }
         if !(200..300).contains(&status) {
@@ -2275,9 +2346,11 @@ pub async fn stream_model(
                     &error,
                     &checkpoint,
                 ))));
+                options.yield_boundary().await;
                 return Ok(());
             }
             sink(StreamOutput::Event(error_event(JsValue::Object(error))));
+            options.yield_boundary().await;
             return Ok(());
         }
 
@@ -2322,6 +2395,7 @@ pub async fn stream_model(
                         guard.observe(&event, (options.clock)())?;
                         checkpoint.on_event(&event)?;
                         sink(StreamOutput::Event(event));
+                        options.yield_boundary().await;
                     }
                 }
                 if chunk.is_none() {
@@ -2372,6 +2446,7 @@ pub async fn stream_model(
                 &error,
                 &checkpoint,
             ))));
+            options.yield_boundary().await;
             return Ok(());
         }
         return Err(error);

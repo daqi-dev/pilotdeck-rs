@@ -11,6 +11,7 @@
 //! synchronous blocking would stall the host's callback shutdown path (#265).
 use super::wire;
 use crate::host::{HostError, HostFuture, JsObject, JsString, JsValue, ModuleError};
+use crate::runtime::model::router::AbortFlag;
 use std::{
     future::{Future, poll_fn},
     pin::Pin,
@@ -60,6 +61,10 @@ pub struct PrepareInput {
 pub struct StreamInput {
     pub prepared: PreparedInvocation,
     pub context: JsObject,
+    /// `context.abortSignal` (`dispatcher:81,441`): the turn-level
+    /// cancellation forwarded into the provider request. It rides alongside
+    /// the JS context because it is host state, not serializable payload.
+    pub abort: Option<AbortFlag>,
 }
 
 /// Host model execution port (`ModelInvokerPort` in the fixed TS baseline).
@@ -187,6 +192,12 @@ pub struct TurnContext {
     pub operation_deadline: Option<JsString>,
     pub workspace_id: Option<JsString>,
     pub storage_config_version: Option<JsString>,
+    /// `input.abortSignal` / `input.signal`: the turn-level cancellation the
+    /// driver arms (`agentLoopSidecarServer.ts:248-253` deadline included).
+    /// Every stream the turn opens forwards it to its provider request, so a
+    /// turn cancel interrupts a `stream_next` waiting on the provider without
+    /// going through `close_stream`'s stream mutex.
+    pub abort: Option<AbortFlag>,
 }
 
 #[derive(Default)]
@@ -339,6 +350,7 @@ impl Handler {
         let execution_port = self.execution.clone();
         let metadata_port = self.metadata.clone();
         let turn = self.turn.clone();
+        let turn_abort = turn.abort.clone();
         let state = self.state.clone();
         let materializer = self.materializer.clone();
         Box::pin(async move {
@@ -410,7 +422,13 @@ impl Handler {
                 let request = payload.and_then(|p| p.get("request"));
                 let prepared = current_prepared(prepared, request, false)?;
                 let execution = execution_of(&execution_port)?;
-                let mut stream = execution.stream(StreamInput { prepared, context }).await?;
+                let mut stream = execution
+                    .stream(StreamInput {
+                        prepared,
+                        context,
+                        abort: turn.abort.clone(),
+                    })
+                    .await?;
                 let mut events = Vec::new();
                 while let Some(event) = stream.next().await? {
                     events.push(event);
@@ -439,7 +457,15 @@ impl Handler {
                         // the provider), so contenders share one creation.
                         let entry = Arc::new(StreamEntry {
                             phase: tokio::sync::Mutex::new(StreamPhase::Creating(Box::pin(
-                                async move { execution.stream(StreamInput { prepared, context }).await },
+                                async move {
+                                    execution
+                                        .stream(StreamInput {
+                                            prepared,
+                                            context,
+                                            abort: turn_abort,
+                                        })
+                                        .await
+                                },
                             ))),
                         });
                         state.streams.push((preparation_id.clone(), entry.clone()));

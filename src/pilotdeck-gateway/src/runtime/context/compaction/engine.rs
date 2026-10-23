@@ -493,7 +493,7 @@ impl CompactionEngine {
         };
         let mut stream = tokio::select! { biased;
             _ = &mut aborted => return Err(abort_failure(signal)),
-            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new() }) => result?,
+            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new(), abort: None }) => result?,
         };
         let mut units = Vec::new();
         let mut usage = None;
