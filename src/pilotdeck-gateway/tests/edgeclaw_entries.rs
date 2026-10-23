@@ -424,18 +424,31 @@ fn replay(root: &Path, c: &Value) -> Value {
                 "pdrs-entries-mismatch-{}.json",
                 uuid::Uuid::new_v4()
             ));
-            fs::write(
-                &evidence,
-                serde_json::to_vec_pretty(
-                    &json!({"actual":actual,"expected":c["observations"][i]}),
-                )
-                .unwrap(),
+            let diff = serde_json::to_string_pretty(
+                &json!({"actual":actual,"expected":c["observations"][i]}),
             )
             .unwrap();
+            fs::write(&evidence, &diff).unwrap();
+            // Keep return/error differences visible before the potentially large
+            // disk tree, and bound CI output without splitting a UTF-8 character.
+            let preview = format!(
+                "actual result: {}\nexpected result: {}\n{diff}",
+                actual["result"], c["observations"][i]["result"]
+            );
+            let mut end = preview.len().min(4096);
+            while !preview.is_char_boundary(end) {
+                end -= 1;
+            }
             panic!(
-                "scenario {} observation {i} {op}; diff {}",
+                "scenario {} observation {i} {op}; diff {}\n{}{}",
                 c["name"],
-                evidence.display()
+                evidence.display(),
+                &preview[..end],
+                if end < preview.len() {
+                    "\n[diff preview truncated at 4 KiB; full diff in file]"
+                } else {
+                    ""
+                }
             );
         }
         observations.push(actual);
