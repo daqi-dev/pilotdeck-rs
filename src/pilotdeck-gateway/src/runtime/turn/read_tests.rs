@@ -8,9 +8,10 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/turn-read/oracle.json");
 
@@ -611,16 +612,109 @@ fn real_ts_turn_read_regenerates_identically() {
 
 /// A7.2-READ-LASTSEQ-DEPTH-001: the pathological-depth criterion of the
 /// decision card — at 100,000 nesting layers the ungated iterative join (see
-/// [`last_seq_to_number`]) returns bounded instead of overflowing the Rust
-/// stack. TS already threw its V8 `RangeError` around 2,540 layers (measured,
-/// caller-stack dependent), and this side deliberately does not replicate
-/// that cliff, so there is no TS golden past the depths the oracle pins; the
-/// result keeps the 2001-layer scenario's shape (`gap:true`, the stored deep
-/// `lastSeq` preserved as `nextSeq`). The deep value is built, cloned, and
-/// compared without recursion: construction wraps bottom-up in a loop, and
+/// [`last_seq_to_number`]) returns bounded, neither overflowing the Rust
+/// stack nor hanging. TS already threw its V8 `RangeError` around 2,540
+/// layers (measured, caller-stack dependent), and this side deliberately
+/// does not replicate that cliff, so there is no TS golden past the depths
+/// the oracle pins; the child keeps the 2001-layer scenario's result shape
+/// (`gap:true`, the stored deep `lastSeq` preserved as `nextSeq`).
+///
+/// The probe runs in a subprocess because an in-process timeout cannot see
+/// it: `InMemoryReader::get` returns an immediately ready future, so the
+/// join, the clone, and the gap comparison all run synchronously inside one
+/// poll and never yield — a `tokio::time::timeout` only fires between polls
+/// (Tokio 1.48 contract), so a slow-but-correct or spinning conversion would
+/// slip past it. The parent restarts this test binary for the child below
+/// and enforces a killable wall-clock deadline instead; the child must also
+/// print the completion marker, so a filter that matches nothing (this is a
+/// unit-test binary, where `--exact` needs the full module path) cannot pass
+/// as a vacuous exit-0.
+#[test]
+fn run_events_pathological_depth_last_seq_is_bounded() {
+    // Reap on every exit path, including failed try_wait and assertion
+    // unwinding.
+    struct ReapedChild(Child);
+    impl Drop for ReapedChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    const DEADLINE: Duration = Duration::from_secs(10);
+    const CHILD: &str = "runtime::turn::read::tests::run_events_pathological_depth_last_seq_child";
+    const MARKER: &str = "PDRS_LASTSEQ_DEPTH_CHILD_OK";
+    let start = Instant::now();
+    let mut child = ReapedChild(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CHILD, "--ignored", "--nocapture"])
+            .env("PDRS_TURN_READ_LASTSEQ_DEPTH_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let status = loop {
+        match child.0.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => panic!("pathological-depth child wait failed: {error}"),
+        }
+        assert!(
+            start.elapsed() < DEADLINE,
+            "100,000-layer lastSeq join exceeded 10 s; child killed and reaped"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = child
+        .0
+        .stdout
+        .take()
+        .map(|mut pipe| {
+            use std::io::Read;
+            let mut out = String::new();
+            let _ = pipe.read_to_string(&mut out);
+            out
+        })
+        .unwrap_or_default();
+    let stderr = child
+        .0
+        .stderr
+        .take()
+        .map(|mut pipe| {
+            use std::io::Read;
+            let mut out = String::new();
+            let _ = pipe.read_to_string(&mut out);
+            out
+        })
+        .unwrap_or_default();
+    assert!(
+        status.success(),
+        "100,000-layer lastSeq join child failed: {status}\n{stderr}"
+    );
+    assert!(
+        stdout.contains(MARKER),
+        "pathological-depth child exited without the completion marker; \
+         the probe itself did not run (empty or wrong filter?)\n{stdout}{stderr}"
+    );
+    assert!(
+        start.elapsed() < DEADLINE,
+        "100,000-layer lastSeq join exceeded 10 s"
+    );
+}
+
+/// Subprocess half of [`run_events_pathological_depth_last_seq_is_bounded`]:
+/// only ever spawned by the parent with `PDRS_TURN_READ_LASTSEQ_DEPTH_CHILD`
+/// set, so a direct run — including `--include-ignored` — fails fast instead
+/// of counting as a standalone pass. Keeps the result assertions the parent
+/// owes the decision card: `gap:true` with the stored deep `lastSeq` returned
+/// unchanged as `nextSeq`. The deep value is built, cloned, and compared
+/// without recursion: construction wraps bottom-up in a loop, and
 /// `JsValue`'s Clone / Drop / PartialEq are already iterative.
 #[tokio::test]
-async fn run_events_pathological_depth_last_seq_is_bounded() {
+#[ignore = "subprocess helper for the bounded pathological-depth probe"]
+async fn run_events_pathological_depth_last_seq_child() {
+    std::env::var_os("PDRS_TURN_READ_LASTSEQ_DEPTH_CHILD").expect("only invoked by parent");
     fn deep_array(layers: usize) -> JsValue {
         let mut value = JsValue::Array(vec![JsValue::Number(1.0)]);
         for _ in 1..layers {
@@ -652,9 +746,8 @@ async fn run_events_pathological_depth_last_seq_is_bounded() {
         after_seq: Some(JsValue::Number(6.0)),
         limit: None,
     };
-    let result = tokio::time::timeout(Duration::from_secs(2), run_events(Some(&reader), &input))
+    let result = run_events(Some(&reader), &input)
         .await
-        .expect("100,000-layer lastSeq join must not recurse the Rust stack (2 s)")
         .expect("deep lastSeq gap result");
     let expected = {
         let mut gap = JsObject::new();
@@ -664,6 +757,9 @@ async fn run_events_pathological_depth_last_seq_is_bounded() {
         JsValue::Object(gap)
     };
     assert_eq!(result, expected);
+    // The parent asserts on this marker, so an exit-0 that never ran the
+    // probe (empty `--exact` filter) cannot count as a pass.
+    println!("PDRS_LASTSEQ_DEPTH_CHILD_OK");
 }
 
 // ─────────────────────────────── concurrency
