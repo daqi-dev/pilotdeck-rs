@@ -319,7 +319,8 @@ fn load_configured_markdown(
     };
     dirs.into_iter()
         .flat_map(|dir| {
-            load_plugin_commands(name, &config::join_path(path, &dir)).unwrap_or_default()
+            markdown::load_plugin_commands_with_root(name, &config::join_path(path, &dir), path)
+                .unwrap_or_default()
         })
         .filter(|c| fallback != "skills" || c.is_skill)
         .collect()

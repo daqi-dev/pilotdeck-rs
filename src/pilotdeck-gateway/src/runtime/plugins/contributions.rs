@@ -33,14 +33,14 @@ pub struct PluginSkillContribution {
 /// `PluginMcpInstruction` (may have `None` for `instructions`).
 #[derive(Clone, Debug)]
 pub struct PluginMcpInstruction {
-    pub server_name: String,
+    pub server_name: JsString,
     pub instructions: Option<JsString>,
 }
 
 /// `PilotDeckMcpInstructionEntry` (always has `instructions`).
 #[derive(Clone, Debug)]
 pub struct PluginMcpInstructionEntry {
-    pub server_name: String,
+    pub server_name: JsString,
     pub instructions: JsString,
 }
 
@@ -483,8 +483,7 @@ pub(super) fn collect_mcp_instructions(
             continue;
         };
         for (server_name, raw) in obj.own_entries() {
-            let server_name = String::from_utf16_lossy(server_name.units());
-            if seen.contains(server_name.as_str()) {
+            if seen.contains(server_name) {
                 continue;
             }
             let Some(raw_obj) = raw.as_object() else {
@@ -499,14 +498,20 @@ pub(super) fn collect_mcp_instructions(
             let Some(instructions) = truncate_mcp_instruction(str_val) else {
                 continue;
             };
-            seen.insert(server_name.to_string());
+            seen.insert(server_name.clone());
             entries.push(PluginMcpInstructionEntry {
-                server_name: server_name.to_string(),
+                server_name: server_name.clone(),
                 instructions,
             });
         }
     }
-    locale_sort_by(&mut entries, |e| &e.server_name);
+    let locale = node_locale(|k| std::env::var(k).ok());
+    if let Ok(collator) = node_collator(&locale) {
+        entries
+            .sort_by(|a, b| collator.compare_utf16(a.server_name.units(), b.server_name.units()));
+    } else {
+        entries.sort_by(|a, b| a.server_name.cmp(&b.server_name));
+    }
     entries
 }
 

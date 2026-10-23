@@ -39,6 +39,13 @@ MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型
 
 #484 补充金样使用独立 `generate-regressions.mts` → `regressions.json`，原 `oracle.json` 不改。生成命令与上面相同，只替换脚本名，并逐字节比较两次 `regressions.json`。生成器同样绑定固定源树和完整导入闭包；输入通过磁盘 manifest 进入真实 TS runtime，结果中的 `inputJson` / `resultJson` 保留孤立代理的 JSON 转义。
 
-补充样本覆盖 2047/2048/2049 个 UTF-16 码元、CJK 跨字节边界、代理对在截断点两侧、孤立高低代理、ECMAScript trim、skills 的首次插入位置和各级优先覆盖，以及合法目录别名。`plugin_regressions` 回放 instructions 与别名，unit `skill_contributions_keep_ts_map_order` 回放 skills。目录环由独立 TS 子进程观测，3 秒超时后 SIGKILL 并由父进程清理临时目录；Rust 防环测试也通过子进程实现相同超时边界，避免 `spawn_blocking` 阻塞测试进程退出。安全偏离的具体范围与候选登记文字见 RESULT，不把 Rust 防环结果写成 TS 期望。
+补充样本覆盖 2047/2048/2049 个 UTF-16 码元、CJK 跨字节边界、代理对在截断点两侧、孤立高低代理、ECMAScript trim、skills 的首次插入位置和各级优先覆盖，以及目录别名的 TS 原始行为。`plugin_regressions` 回放 instructions 与别名，unit `skill_contributions_keep_ts_map_order` 回放 skills。目录环由独立 TS 子进程观测，3 秒超时后 SIGKILL 并由父进程清理临时目录；Rust 遍历测试通过子进程实现 1 秒超时边界，避免不可取消的遍历阻塞测试进程退出。安全偏离的具体范围与候选登记文字见 RESULT，不把 Rust 防环结果写成 TS 期望。
 
 仓库负控脚本现在也覆盖 `plugins.rs` / `contributions.rs` 的 publication 状态、refresh/dispose 等待、退休清理、共享 dispose、三种租约的 release 错误，以及 UTF-16、防环、合法别名、skills 插入序与同优先级覆盖。脚本支持 `lib:` / `regressions:` / `runtime:` 测试目标，仍要求实际断言失败、唯一变异锚点及 finally 字节恢复；编译失败与外部超时不计击杀。
+
+
+修复轮 1 的独立金样 `traversal.json` 由 `generate-traversal.mts` 生成，原 `oracle.json` / `regressions.json` 字节保持不变。沿用上面的 Node / PDRS_BASELINE / LANG 设置，分别执行两次 `generate-traversal.mts <输出目录>`，比较两个 `traversal.json`。样本记录真实 TS 对 k=3/7/10/20 互链团的 1000ms 限时观察、目录/文件/链式越界链接、不可读条目、65 层目录、4097 条目、合法目录别名的完整贡献路径，以及含孤立代理的 MCP serverName。TS 的超时记录只声称在截止时仍未返回。
+
+Rust 明确应用本轮授权的安全差异：每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径；不再声称与 TS 的双别名重复贡献等价。条目预算为 4096，目录深度为 64；超限返回 `Plugin markdown traversal limit exceeded.`，配置目录入口沿用错误转空贡献的 TS 处理边界，整目录丢弃，绝不发布截断结果。规范化后的条目必须位于规范化插件根内，否则跳过；直接调用两参数 `load_plugin_commands` 时以 base 本身为根。插件三个贡献族和 style-only 入口均传入实际插件根。旧金样的两条越界贡献由 `plugin_loader.rs::root_boundary_expected` 精确排除，仅用于兑现本轮安全期望，未改 TS 原始金样。
+
+`plugin_traversal` 的四个独立子进程测试要求各自 1 秒内完成；Drop 在全部退出路径 kill + wait。负控 `markdown-cycle` 临时恢复祖先集合算法并撤去总预算，必须命中 k=10 的 1 秒超时；另有目录越界、文件越界、链接链越界、配置根、深度、条目、首次别名路径、serverName 保真的独立负控。`negative-controls.py` 给每个 case 配固定的预期失败文本，并同时要求选定测试的 FAILED 行；失败文本不匹配、编译错误、无测试执行与外部超时都不算击杀。
