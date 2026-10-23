@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111"
+  },
+  "platform": "darwin",
+  "cases": [
+    {
+      "name": "dag-15",
+      "fileCount": 32769,
+      "totalSize": 98362
+    },
+    {
+      "name": "dag-16",
+      "fileCount": 1,
+      "totalSize": 58
+    },
+    {
+      "name": "dag-20",
+      "fileCount": 1,
+      "totalSize": 58
+    },
+    {
+      "name": "mutual",
+      "fileCount": 65,
+      "totalSize": 282
+    },
+    {
+      "name": "self-1",
+      "fileCount": 64,
+      "totalSize": 2016
+    }
+  ]
+}
